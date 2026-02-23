@@ -22,7 +22,7 @@ Or manually:
 ```bash
 uv sync                          # Install Python dependencies
 cd frontend && npm install       # Install JS dependencies
-mkdir -p uploads/cases uploads/hats  # Create upload directories
+mkdir -p uploads/cases uploads/hats uploads/branding  # Create upload directories
 ```
 
 ## Environment Variables
@@ -55,6 +55,22 @@ cd frontend && npm run build
 
 Then run the backend only — it serves the built SPA from `frontend/dist`.
 
+```bash
+uv run uvicorn headroom.app:app --host 0.0.0.0 --port 8000
+```
+
+To change the port, pass a different `--port` value:
+
+```bash
+uv run uvicorn headroom.app:app --host 0.0.0.0 --port 3000
+```
+
+You can also set the port via the `UVICORN_PORT` environment variable:
+
+```bash
+UVICORN_PORT=3000 uv run uvicorn headroom.app:app --host 0.0.0.0
+```
+
 ## Site Logo
 
 You can upload a custom logo through the web UI:
@@ -72,3 +88,7 @@ Logo files are stored in `uploads/branding/`.
 ```bash
 uv run pytest
 ```
+
+## License
+
+This project is licensed under the [GNU Affero General Public License v3.0](LICENSE).

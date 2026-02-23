@@ -1,9 +1,20 @@
 from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from headroom.models.case import Case
 from headroom.schemas.case import CaseCreate, CaseType, CaseUpdate
+
+
+async def _reload_case(db: AsyncSession, case_id: int) -> Case:
+    db.expire_all()
+    result = await db.execute(
+        select(Case)
+        .options(selectinload(Case.hats), selectinload(Case.room))
+        .where(Case.id == case_id)
+    )
+    return result.scalar_one()
 
 
 def _make_display_id(case_type: CaseType, seq: int) -> str:
@@ -27,21 +38,27 @@ async def create_case(db: AsyncSession, data: CaseCreate) -> Case:
         case_type=data.case_type,
         sequence_number=seq,
         display_id=display_id,
+        room_id=data.room_id,
     )
     db.add(case)
     await db.commit()
-    await db.refresh(case)
-    return case
+    return await _reload_case(db, case.id)
 
 
 async def list_cases(db: AsyncSession) -> list[Case]:
-    result = await db.execute(select(Case).order_by(Case.display_id))
+    result = await db.execute(
+        select(Case)
+        .options(selectinload(Case.hats), selectinload(Case.room))
+        .order_by(Case.display_id)
+    )
     return list(result.scalars().all())
 
 
 async def get_case_by_display_id(db: AsyncSession, display_id: str) -> Case:
     result = await db.execute(
-        select(Case).where(Case.display_id == display_id.upper())
+        select(Case)
+        .options(selectinload(Case.hats), selectinload(Case.room))
+        .where(Case.display_id == display_id.upper())
     )
     case = result.scalar_one_or_none()
     if not case:
@@ -58,9 +75,10 @@ async def update_case(
         case.case_type = data.case_type
         case.sequence_number = seq
         case.display_id = _make_display_id(data.case_type, seq)
+    if data.room_id is not None:
+        case.room_id = data.room_id
     await db.commit()
-    await db.refresh(case)
-    return case
+    return await _reload_case(db, case.id)
 
 
 async def delete_case(db: AsyncSession, display_id: str) -> None:

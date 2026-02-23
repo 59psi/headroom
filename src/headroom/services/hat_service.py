@@ -15,7 +15,10 @@ async def _reload_hat(db: AsyncSession, hat_id: int) -> Hat:
     db.expire_all()
     result = await db.execute(
         select(Hat)
-        .options(selectinload(Hat.case), selectinload(Hat.colors))
+        .options(
+            selectinload(Hat.case).selectinload(Case.room),
+            selectinload(Hat.colors),
+        )
         .where(Hat.id == hat_id)
     )
     return result.scalar_one()
@@ -103,7 +106,10 @@ async def list_hats(
 ) -> list[Hat]:
     query = (
         select(Hat)
-        .options(selectinload(Hat.case), selectinload(Hat.colors))
+        .options(
+            selectinload(Hat.case).selectinload(Case.room),
+            selectinload(Hat.colors),
+        )
     )
     if case_id is not None:
         query = query.where(Hat.case_id == case_id)
@@ -119,7 +125,10 @@ async def list_hats(
 async def get_hat(db: AsyncSession, hat_id: int) -> Hat:
     result = await db.execute(
         select(Hat)
-        .options(selectinload(Hat.case), selectinload(Hat.colors))
+        .options(
+            selectinload(Hat.case).selectinload(Case.room),
+            selectinload(Hat.colors),
+        )
         .where(Hat.id == hat_id)
     )
     hat = result.scalar_one_or_none()

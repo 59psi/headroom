@@ -2,17 +2,23 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from headroom.models.case import Case
 from headroom.models.hat import Hat
 from headroom.models.hat_color import HatColor
+from headroom.models.room import Room
 
 
 async def search_hats(
-    db: AsyncSession, query: str, *, exact_colors: bool = False
+    db: AsyncSession,
+    query: str,
+    *,
+    exact_colors: bool = False,
+    room_id: int | None = None,
 ) -> list[Hat]:
     """Multi-term AND search across hat fields and color names.
 
     Each term must match at least one field (style, condition, size,
-    or a color name/general_color).
+    a color name/general_color, or room name).
 
     When exact_colors is False (default), color terms match against
     general_color (e.g. "red", "dark gray"). When True, matches against
@@ -22,7 +28,13 @@ async def search_hats(
     if not terms:
         return []
 
-    stmt = select(Hat).options(selectinload(Hat.case), selectinload(Hat.colors))
+    stmt = select(Hat).options(
+        selectinload(Hat.case).selectinload(Case.room),
+        selectinload(Hat.colors),
+    )
+
+    if room_id is not None:
+        stmt = stmt.where(Hat.case.has(Case.room_id == room_id))
 
     color_field = HatColor.color_name if exact_colors else HatColor.general_color
 
@@ -36,6 +48,7 @@ async def search_hats(
             Hat.id.in_(
                 select(HatColor.hat_id).where(color_field.ilike(pattern))
             ),
+            Hat.case.has(Case.room.has(Room.name.ilike(pattern))),
         )
         stmt = stmt.where(term_filter)
 

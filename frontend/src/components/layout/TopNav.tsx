@@ -17,6 +17,7 @@ export function TopNav() {
         <div className="navbar-nav ms-auto">
           <NavLink to="/" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} end>Home</NavLink>
           <NavLink to="/cases" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>Cases</NavLink>
+          <NavLink to="/rooms" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>Rooms</NavLink>
           <NavLink to="/hats" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>Hats</NavLink>
           <NavLink to="/search" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>Search</NavLink>
           <NavLink to="/settings" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>

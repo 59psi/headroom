@@ -11,10 +11,12 @@ class CaseType(StrEnum):
 
 class CaseCreate(BaseModel):
     case_type: CaseType
+    room_id: int = 1
 
 
 class CaseUpdate(BaseModel):
     case_type: CaseType | None = None
+    room_id: int | None = None
 
 
 class HatSummary(BaseModel):
@@ -36,6 +38,8 @@ class CaseRead(BaseModel):
     hat_count: int
     beanie_count: int
     regular_count: int
+    room_id: int
+    room_name: str
     created_at: datetime
     updated_at: datetime
 

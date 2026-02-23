@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { listHats, getStyles, getSizes, getConditions } from '../api/hats';
+import { listHats, getStyles, getSizes, getConditions, getRooms } from '../api/hats';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ColorSwatches } from '../components/common/ColorSwatch';
 import { ConditionBadge } from '../components/common/ConditionBadge';
@@ -57,6 +57,7 @@ export function HatsPage() {
   const stylesQ = useQuery({ queryKey: ['meta', 'styles'], queryFn: getStyles });
   const sizesQ = useQuery({ queryKey: ['meta', 'sizes'], queryFn: getSizes });
   const conditionsQ = useQuery({ queryKey: ['meta', 'conditions'], queryFn: getConditions });
+  const roomsQ = useQuery({ queryKey: ['meta', 'rooms'], queryFn: getRooms });
 
   const [view, setView] = useState<'list' | 'gallery'>('gallery');
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -65,8 +66,9 @@ export function HatsPage() {
   const [filterCondition, setFilterCondition] = useState('');
   const [filterType, setFilterType] = useState('');
   const [filterColor, setFilterColor] = useState('');
+  const [filterRoom, setFilterRoom] = useState('');
 
-  const activeFilterCount = [filterStyle, filterSize, filterCondition, filterType, filterColor].filter(Boolean).length;
+  const activeFilterCount = [filterStyle, filterSize, filterCondition, filterType, filterColor, filterRoom].filter(Boolean).length;
 
   const availableColors = useMemo(() => {
     if (!data) return [];
@@ -86,9 +88,10 @@ export function HatsPage() {
       if (filterType === 'beanie' && !h.is_beanie) return false;
       if (filterType === 'regular' && h.is_beanie) return false;
       if (filterColor && !h.colors.some(c => c.general_color === filterColor)) return false;
+      if (filterRoom && h.room_id !== Number(filterRoom)) return false;
       return true;
     });
-  }, [data, filterStyle, filterSize, filterCondition, filterType, filterColor]);
+  }, [data, filterStyle, filterSize, filterCondition, filterType, filterColor, filterRoom]);
 
   if (isLoading) return <LoadingSpinner />;
   if (error) return (
@@ -181,12 +184,21 @@ export function HatsPage() {
                   ))}
                 </select>
               </div>
+              <div className="col-6 col-md-3">
+                <label className="form-label small text-secondary mb-1">Room</label>
+                <select className="form-select form-select-sm" value={filterRoom} onChange={e => setFilterRoom(e.target.value)}>
+                  <option value="">All</option>
+                  {roomsQ.data?.map(r => (
+                    <option key={r.value} value={r.value}>{r.label}</option>
+                  ))}
+                </select>
+              </div>
             </div>
             {activeFilterCount > 0 && (
               <button
                 type="button"
                 className="btn btn-link btn-sm text-danger mt-2 p-0"
-                onClick={() => { setFilterStyle(''); setFilterSize(''); setFilterCondition(''); setFilterType(''); setFilterColor(''); }}
+                onClick={() => { setFilterStyle(''); setFilterSize(''); setFilterCondition(''); setFilterType(''); setFilterColor(''); setFilterRoom(''); }}
               >Clear filters</button>
             )}
           </div>

@@ -22,6 +22,8 @@ export interface CaseRead {
   hat_count: number;
   beanie_count: number;
   regular_count: number;
+  room_id: number;
+  room_name: string;
   created_at: string;
   updated_at: string;
 }
@@ -44,6 +46,8 @@ export interface HatRead {
   style: string;
   is_beanie: boolean;
   colors: ColorTag[];
+  room_id: number | null;
+  room_name: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -58,9 +62,19 @@ export interface SearchResult {
   size: string;
   is_beanie: boolean;
   colors: ColorTag[];
+  room_id: number | null;
+  room_name: string | null;
 }
 
 export interface MetaOption {
   value: string;
   label: string;
+}
+
+export interface RoomRead {
+  id: number;
+  name: string;
+  case_count: number;
+  created_at: string;
+  updated_at: string;
 }

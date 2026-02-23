@@ -9,14 +9,14 @@ export function getCase(displayId: string) {
   return apiFetch<CaseDetail>(`/api/cases/${displayId}`);
 }
 
-export function createCase(caseType: string) {
+export function createCase(caseType: string, roomId: number = 1) {
   return apiFetch<CaseRead>('/api/cases', {
     method: 'POST',
-    body: JSON.stringify({ case_type: caseType }),
+    body: JSON.stringify({ case_type: caseType, room_id: roomId }),
   });
 }
 
-export function updateCase(displayId: string, data: { case_type?: string }) {
+export function updateCase(displayId: string, data: { case_type?: string; room_id?: number }) {
   return apiFetch<CaseRead>(`/api/cases/${displayId}`, {
     method: 'PUT',
     body: JSON.stringify(data),

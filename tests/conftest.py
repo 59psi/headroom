@@ -1,5 +1,6 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from headroom.database import Base, get_db
@@ -19,10 +20,19 @@ test_session_factory = async_sessionmaker(test_engine, expire_on_commit=False)
 @pytest.fixture(autouse=True)
 async def setup_db():
     from headroom.models import __all_models__  # noqa: F811
+    from headroom.models.room import Room
 
     _ = __all_models__
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    # Seed default room
+    async with test_session_factory() as session:
+        result = await session.execute(select(Room).where(Room.id == 1))
+        if not result.scalar_one_or_none():
+            session.add(Room(id=1, name="Default Room"))
+            await session.commit()
+
     yield
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)

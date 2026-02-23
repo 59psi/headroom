@@ -13,9 +13,10 @@ router = APIRouter(prefix="/api/search", tags=["search"])
 async def search(
     q: str = Query(..., min_length=1),
     exact_colors: bool = Query(False),
+    room_id: int | None = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
-    hats = await search_hats(db, q, exact_colors=exact_colors)
+    hats = await search_hats(db, q, exact_colors=exact_colors, room_id=room_id)
     return [
         SearchResult(
             id=h.id,
@@ -35,6 +36,8 @@ async def search(
                 )
                 for c in (h.colors or [])
             ],
+            room_id=h.case.room.id if h.case and h.case.room else None,
+            room_name=h.case.room.name if h.case and h.case.room else None,
         )
         for h in hats
     ]

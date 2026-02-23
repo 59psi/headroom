@@ -13,3 +13,5 @@ class SearchResult(BaseModel):
     size: str
     is_beanie: bool
     colors: list[ColorTag]
+    room_id: int | None
+    room_name: str | None

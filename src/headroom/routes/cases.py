@@ -26,6 +26,8 @@ def _case_to_read(case) -> CaseRead:
         hat_count=len(hats),
         beanie_count=beanie_count,
         regular_count=len(hats) - beanie_count,
+        room_id=case.room_id,
+        room_name=case.room.name if case.room else "Unknown",
         created_at=case.created_at,
         updated_at=case.updated_at,
     )
@@ -43,6 +45,8 @@ def _case_to_detail(case) -> CaseDetail:
         hat_count=len(hats),
         beanie_count=beanie_count,
         regular_count=len(hats) - beanie_count,
+        room_id=case.room_id,
+        room_name=case.room.name if case.room else "Unknown",
         created_at=case.created_at,
         updated_at=case.updated_at,
         hats=[

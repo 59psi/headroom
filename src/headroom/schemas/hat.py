@@ -67,6 +67,8 @@ class HatRead(BaseModel):
     style: HatStyle
     is_beanie: bool
     colors: list[ColorTag]
+    room_id: int | None
+    room_name: str | None
     created_at: datetime
     updated_at: datetime
 

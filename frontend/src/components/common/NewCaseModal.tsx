@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { createCase } from '../../api/cases';
+import { listRooms } from '../../api/rooms';
 
 interface Props {
   show: boolean;
@@ -10,12 +11,18 @@ interface Props {
 
 export function NewCaseModal({ show, onClose, onCreated }: Props) {
   const [caseType, setCaseType] = useState('archive');
+  const [roomId, setRoomId] = useState(1);
   const qc = useQueryClient();
 
+  const roomsQ = useQuery({ queryKey: ['rooms'], queryFn: listRooms, enabled: show });
+
   const mutation = useMutation({
-    mutationFn: () => createCase(caseType),
+    mutationFn: async () => {
+      const data = await createCase(caseType, roomId);
+      await qc.invalidateQueries({ queryKey: ['cases'] });
+      return data;
+    },
     onSuccess: (data) => {
-      qc.invalidateQueries({ queryKey: ['cases'] });
       onCreated(data.id);
       onClose();
     },
@@ -33,9 +40,15 @@ export function NewCaseModal({ show, onClose, onCreated }: Props) {
           </div>
           <div className="modal-body">
             <label className="form-label">Case Type</label>
-            <select className="form-select" value={caseType} onChange={e => setCaseType(e.target.value)}>
+            <select className="form-select mb-3" value={caseType} onChange={e => setCaseType(e.target.value)}>
               <option value="archive">Archive</option>
               <option value="daily_wear">Daily Wear</option>
+            </select>
+            <label className="form-label">Room</label>
+            <select className="form-select" value={roomId} onChange={e => setRoomId(Number(e.target.value))}>
+              {roomsQ.data?.map(r => (
+                <option key={r.id} value={r.id}>{r.name}</option>
+              ))}
             </select>
             {mutation.error && (
               <div className="alert alert-danger mt-3 mb-0">{String(mutation.error)}</div>

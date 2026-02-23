@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { searchHats } from '../api/search';
-import { getStyles, getSizes, getConditions } from '../api/hats';
+import { getStyles, getSizes, getConditions, getRooms } from '../api/hats';
 import { ColorSwatches } from '../components/common/ColorSwatch';
 import { ConditionBadge } from '../components/common/ConditionBadge';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
@@ -18,18 +18,22 @@ export function SearchPage() {
   const [filterCondition, setFilterCondition] = useState('');
   const [filterType, setFilterType] = useState('');
   const [filterColor, setFilterColor] = useState('');
+  const [filterRoom, setFilterRoom] = useState('');
 
   const stylesQ = useQuery({ queryKey: ['meta', 'styles'], queryFn: getStyles });
   const sizesQ = useQuery({ queryKey: ['meta', 'sizes'], queryFn: getSizes });
   const conditionsQ = useQuery({ queryKey: ['meta', 'conditions'], queryFn: getConditions });
+  const roomsQ = useQuery({ queryKey: ['meta', 'rooms'], queryFn: getRooms });
+
+  const roomIdParam = filterRoom ? Number(filterRoom) : undefined;
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['search', searchTerm, exactColors],
-    queryFn: () => searchHats(searchTerm, exactColors),
+    queryKey: ['search', searchTerm, exactColors, roomIdParam],
+    queryFn: () => searchHats(searchTerm, exactColors, roomIdParam),
     enabled: searchTerm.length > 0,
   });
 
-  const activeFilterCount = [filterStyle, filterSize, filterCondition, filterType, filterColor].filter(Boolean).length;
+  const activeFilterCount = [filterStyle, filterSize, filterCondition, filterType, filterColor, filterRoom].filter(Boolean).length;
 
   const availableColors = useMemo(() => {
     if (!data) return [];
@@ -64,6 +68,7 @@ export function SearchPage() {
     setFilterCondition('');
     setFilterType('');
     setFilterColor('');
+    setFilterRoom('');
   }
 
   return (
@@ -77,7 +82,7 @@ export function SearchPage() {
             className="form-control"
             value={query}
             onChange={e => setQuery(e.target.value)}
-            placeholder="Search by color, style, size..."
+            placeholder="Search by color, style, size, room..."
           />
           <button type="submit" className="btn btn-primary">Go</button>
         </div>
@@ -97,7 +102,7 @@ export function SearchPage() {
 
       {!searchTerm && (
         <div className="text-center py-5 text-secondary">
-          <p>Search across all hats by color, style, condition, or size</p>
+          <p>Search across all hats by color, style, condition, size, or room</p>
           <p className="small">Use multiple terms for AND search: "blue a-game"</p>
         </div>
       )}
@@ -167,6 +172,15 @@ export function SearchPage() {
                       <option value="">All</option>
                       {availableColors.map(c => (
                         <option key={c} value={c}>{c}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="col-6 col-md-3">
+                    <label className="form-label small text-secondary mb-1">Room</label>
+                    <select className="form-select form-select-sm" value={filterRoom} onChange={e => setFilterRoom(e.target.value)}>
+                      <option value="">All</option>
+                      {roomsQ.data?.map(r => (
+                        <option key={r.value} value={r.value}>{r.label}</option>
                       ))}
                     </select>
                   </div>

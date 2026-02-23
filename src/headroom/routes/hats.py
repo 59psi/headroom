@@ -17,6 +17,7 @@ router = APIRouter(prefix="/api/hats", tags=["hats"])
 
 
 def _hat_to_read(hat) -> HatRead:
+    room = hat.case.room if hat.case and hat.case.room else None
     return HatRead(
         id=hat.id,
         case_id=hat.case_id,
@@ -39,6 +40,8 @@ def _hat_to_read(hat) -> HatRead:
             )
             for c in (hat.colors or [])
         ],
+        room_id=room.id if room else None,
+        room_name=room.name if room else None,
         created_at=hat.created_at,
         updated_at=hat.updated_at,
     )

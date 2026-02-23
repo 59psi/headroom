@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import { listCases } from '../api/cases';
 import { listHats } from '../api/hats';
+import { listRooms } from '../api/rooms';
 import { getLogo } from '../api/settings';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { useEffect, useRef } from 'react';
@@ -9,6 +10,7 @@ import { useEffect, useRef } from 'react';
 export function HomePage() {
   const cases = useQuery({ queryKey: ['cases'], queryFn: listCases });
   const hats = useQuery({ queryKey: ['hats'], queryFn: () => listHats() });
+  const rooms = useQuery({ queryKey: ['rooms'], queryFn: listRooms });
   const logo = useQuery({ queryKey: ['settings', 'logo'], queryFn: getLogo });
   const carouselRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
@@ -27,6 +29,7 @@ export function HomePage() {
 
   const totalHats = hats.data?.length ?? 0;
   const totalCases = cases.data?.length ?? 0;
+  const totalRooms = rooms.data?.length ?? 0;
   const archiveCases = cases.data?.filter(c => c.case_type === 'archive').length ?? 0;
   const dailyCases = cases.data?.filter(c => c.case_type === 'daily_wear').length ?? 0;
 
@@ -61,6 +64,10 @@ export function HomePage() {
             <div className="col-6 col-md-3 mb-3">
               <div className="fs-4 fw-semibold">{dailyCases}</div>
               <div className="text-secondary small">Daily Wear</div>
+            </div>
+            <div className="col-6 col-md-3 mb-3">
+              <div className="fs-4 fw-semibold">{totalRooms}</div>
+              <div className="text-secondary small">Rooms</div>
             </div>
           </div>
         </div>

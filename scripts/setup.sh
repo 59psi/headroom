@@ -21,7 +21,10 @@ echo "Installing frontend dependencies..."
 cd frontend && npm install && cd ..
 
 echo "Creating upload directories..."
-mkdir -p uploads/cases uploads/hats
+mkdir -p uploads/cases uploads/hats uploads/branding
+
+echo "Initializing database..."
+uv run python -c "import asyncio; from headroom.database import init_db; asyncio.run(init_db())"
 
 echo ""
 echo "Setup complete! Next steps:"

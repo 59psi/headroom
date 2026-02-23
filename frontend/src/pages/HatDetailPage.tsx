@@ -105,6 +105,9 @@ export function HatDetailPage() {
                     {caseTypeLabel}
                   </span>
                 )}
+                {data.room_name && (
+                  <span className="badge ms-2 bg-info">{data.room_name}</span>
+                )}
               </div>
               <Link to={`/cases/${data.case_display_id}`} className="btn btn-outline-primary btn-sm">View Case</Link>
             </div>

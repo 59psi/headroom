@@ -1,6 +1,9 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from headroom.database import get_db
 from headroom.schemas.hat import HatCondition, HatSize, HatStyle
+from headroom.services import room_service
 
 router = APIRouter(prefix="/api/meta", tags=["meta"])
 
@@ -31,3 +34,9 @@ async def list_sizes():
 @router.get("/conditions")
 async def list_conditions():
     return [{"value": c.value, "label": c.value.replace("_", " ").title()} for c in HatCondition]
+
+
+@router.get("/rooms")
+async def list_rooms(db: AsyncSession = Depends(get_db)):
+    rooms = await room_service.list_rooms(db)
+    return [{"value": r.id, "label": r.name} for r in rooms]

@@ -1,15 +1,19 @@
 import { useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { createCase } from '../api/cases';
+import { listRooms } from '../api/rooms';
 
 export function NewCasePage() {
   const [caseType, setCaseType] = useState('archive');
+  const [roomId, setRoomId] = useState(1);
   const navigate = useNavigate();
   const qc = useQueryClient();
 
+  const roomsQ = useQuery({ queryKey: ['rooms'], queryFn: listRooms });
+
   const mutation = useMutation({
-    mutationFn: () => createCase(caseType),
+    mutationFn: () => createCase(caseType, roomId),
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ['cases'] });
       navigate(`/cases/${data.display_id}`);
@@ -27,6 +31,15 @@ export function NewCasePage() {
             <select className="form-select" value={caseType} onChange={e => setCaseType(e.target.value)}>
               <option value="archive">Archive</option>
               <option value="daily_wear">Daily Wear</option>
+            </select>
+          </div>
+
+          <div className="mb-3">
+            <label className="form-label">Room</label>
+            <select className="form-select" value={roomId} onChange={e => setRoomId(Number(e.target.value))}>
+              {roomsQ.data?.map(r => (
+                <option key={r.id} value={r.id}>{r.name}</option>
+              ))}
             </select>
           </div>
 

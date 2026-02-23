@@ -62,3 +62,7 @@ export function getSizes() {
 export function getConditions() {
   return apiFetch<MetaOption[]>('/api/meta/conditions');
 }
+
+export function getRooms() {
+  return apiFetch<{ value: number; label: string }[]>('/api/meta/rooms');
+}

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { listCases } from '../api/cases';
+import { getRooms } from '../api/hats';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import type { CaseRead } from '../types';
 
@@ -25,7 +26,7 @@ function CaseCard({ c }: { c: CaseRead }) {
       <div className="card-body d-flex justify-content-between align-items-center">
         <div>
           <div className="fw-bold fs-5">{c.display_id}</div>
-          <div className="text-secondary small">{typeLabel}</div>
+          <div className="text-secondary small">{typeLabel} &middot; {c.room_name}</div>
         </div>
         <div className="text-end">
           <div className="fw-semibold">{countLabel}</div>
@@ -37,7 +38,9 @@ function CaseCard({ c }: { c: CaseRead }) {
 
 export function CasesPage() {
   const { data, isLoading, error } = useQuery({ queryKey: ['cases'], queryFn: listCases });
+  const roomsQ = useQuery({ queryKey: ['meta', 'rooms'], queryFn: getRooms });
   const [typeFilter, setTypeFilter] = useState<'all' | 'archive' | 'daily_wear'>('all');
+  const [roomFilter, setRoomFilter] = useState('');
 
   if (isLoading) return <LoadingSpinner />;
   if (error) return (
@@ -48,7 +51,11 @@ export function CasesPage() {
     </div>
   );
 
-  const filtered = data?.filter(c => typeFilter === 'all' || c.case_type === typeFilter) ?? [];
+  const filtered = data?.filter(c => {
+    if (typeFilter !== 'all' && c.case_type !== typeFilter) return false;
+    if (roomFilter && c.room_id !== Number(roomFilter)) return false;
+    return true;
+  }) ?? [];
 
   return (
     <>
@@ -57,22 +64,35 @@ export function CasesPage() {
         <Link to="/cases/new" className="btn btn-primary">+ New</Link>
       </div>
 
-      <div className="btn-group btn-group-sm mb-3 w-100" role="group">
-        <button
-          type="button"
-          className={`btn ${typeFilter === 'all' ? 'btn-primary' : 'btn-outline-primary'}`}
-          onClick={() => setTypeFilter('all')}
-        >All</button>
-        <button
-          type="button"
-          className={`btn ${typeFilter === 'archive' ? 'btn-primary' : 'btn-outline-primary'}`}
-          onClick={() => setTypeFilter('archive')}
-        >Archive</button>
-        <button
-          type="button"
-          className={`btn ${typeFilter === 'daily_wear' ? 'btn-primary' : 'btn-outline-primary'}`}
-          onClick={() => setTypeFilter('daily_wear')}
-        >Daily Wear</button>
+      <div className="d-flex gap-2 mb-3">
+        <div className="btn-group btn-group-sm flex-grow-1" role="group">
+          <button
+            type="button"
+            className={`btn ${typeFilter === 'all' ? 'btn-primary' : 'btn-outline-primary'}`}
+            onClick={() => setTypeFilter('all')}
+          >All</button>
+          <button
+            type="button"
+            className={`btn ${typeFilter === 'archive' ? 'btn-primary' : 'btn-outline-primary'}`}
+            onClick={() => setTypeFilter('archive')}
+          >Archive</button>
+          <button
+            type="button"
+            className={`btn ${typeFilter === 'daily_wear' ? 'btn-primary' : 'btn-outline-primary'}`}
+            onClick={() => setTypeFilter('daily_wear')}
+          >Daily Wear</button>
+        </div>
+        <select
+          className="form-select form-select-sm"
+          style={{ maxWidth: 160 }}
+          value={roomFilter}
+          onChange={e => setRoomFilter(e.target.value)}
+        >
+          <option value="">All Rooms</option>
+          {roomsQ.data?.map(r => (
+            <option key={r.value} value={r.value}>{r.label}</option>
+          ))}
+        </select>
       </div>
 
       {!filtered.length ? (

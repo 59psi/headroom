@@ -77,6 +77,7 @@ export function CaseDetailPage() {
         <h1>{data.display_id}</h1>
         <div className="d-flex gap-2 align-items-center">
           <span className="badge bg-secondary">{typeLabel}</span>
+          <span className="badge bg-info">{data.room_name}</span>
           <Link to={`/cases/${displayId}/edit`} className="btn btn-outline-secondary btn-sm">Edit</Link>
         </div>
       </div>

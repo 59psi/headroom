@@ -84,3 +84,25 @@ async def test_delete_empty_case(client):
 async def test_invalid_case_type(client):
     resp = await client.post("/api/cases", json={"case_type": "invalid"})
     assert resp.status_code == 422
+
+
+@pytest.mark.anyio
+async def test_create_case_default_room(client):
+    resp = await client.post("/api/cases", json={"case_type": "archive"})
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["room_id"] == 1
+    assert data["room_name"] == "Default Room"
+
+
+@pytest.mark.anyio
+async def test_create_case_in_room(client):
+    # Create a room first
+    room_resp = await client.post("/api/rooms", json={"name": "Closet"})
+    room_id = room_resp.json()["id"]
+
+    resp = await client.post("/api/cases", json={"case_type": "archive", "room_id": room_id})
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["room_id"] == room_id
+    assert data["room_name"] == "Closet"
