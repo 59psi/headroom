@@ -1,5 +1,6 @@
 # Headroom
 
+![image](uploads/branding/logo.png)
 Hat collection tracker — FastAPI REST API + React SPA frontend.
 
 ## Prerequisites
