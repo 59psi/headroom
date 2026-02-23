@@ -58,6 +58,7 @@ class HatRead(BaseModel):
     position_in_case: int | None
     display_id: str | None
     case_display_id: str | None
+    case_type: str | None
     photo_path: str | None
     condition: HatCondition
     date_last_worn: date | None

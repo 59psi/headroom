@@ -5,6 +5,7 @@ import { getHat, updateHat, uploadHatPhoto, assignHat, updateHatColors, getStyle
 import { listCases } from '../api/cases';
 import { PhotoCapture } from '../components/photos/PhotoCapture';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
+import { NewCaseModal } from '../components/common/NewCaseModal';
 import type { ColorTag } from '../types';
 
 export function EditHatPage() {
@@ -27,6 +28,7 @@ export function EditHatPage() {
   const [photo, setPhoto] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [colors, setColors] = useState<ColorTag[]>([]);
+  const [showNewCase, setShowNewCase] = useState(false);
 
   useEffect(() => {
     if (hat.data) {
@@ -74,6 +76,14 @@ export function EditHatPage() {
   function handlePhotoCapture(file: File) {
     setPhoto(file);
     setPhotoPreview(URL.createObjectURL(file));
+  }
+
+  function handleCaseChange(value: string) {
+    if (value === '__new__') {
+      setShowNewCase(true);
+    } else {
+      setCaseId(value);
+    }
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -129,8 +139,9 @@ export function EditHatPage() {
 
             <div className="mb-3">
               <label className="form-label">Case Assignment</label>
-              <select className="form-select" value={caseId} onChange={e => setCaseId(e.target.value)}>
+              <select className="form-select" value={caseId} onChange={e => handleCaseChange(e.target.value)}>
                 <option value="">Unassigned</option>
+                <option value="__new__">+ Create New Case...</option>
                 {cases.data?.map(c => (
                   <option key={c.id} value={c.id}>
                     {c.display_id} ({c.case_type === 'archive' ? 'Archive' : 'Daily'} &middot; {c.hat_count} hats)
@@ -205,6 +216,12 @@ export function EditHatPage() {
           {mutation.isPending ? 'Saving...' : 'Save Changes'}
         </button>
       </form>
+
+      <NewCaseModal
+        show={showNewCase}
+        onClose={() => setShowNewCase(false)}
+        onCreated={(id) => setCaseId(String(id))}
+      />
     </>
   );
 }

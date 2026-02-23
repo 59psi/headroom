@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { listHats } from '../api/hats';
+import { listHats, getStyles, getSizes, getConditions } from '../api/hats';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ColorSwatches } from '../components/common/ColorSwatch';
 import { ConditionBadge } from '../components/common/ConditionBadge';
@@ -54,7 +54,30 @@ function GalleryItem({ hat }: { hat: HatRead }) {
 
 export function HatsPage() {
   const { data, isLoading, error } = useQuery({ queryKey: ['hats'], queryFn: () => listHats() });
+  const stylesQ = useQuery({ queryKey: ['meta', 'styles'], queryFn: getStyles });
+  const sizesQ = useQuery({ queryKey: ['meta', 'sizes'], queryFn: getSizes });
+  const conditionsQ = useQuery({ queryKey: ['meta', 'conditions'], queryFn: getConditions });
+
   const [view, setView] = useState<'list' | 'gallery'>('gallery');
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [filterStyle, setFilterStyle] = useState('');
+  const [filterSize, setFilterSize] = useState('');
+  const [filterCondition, setFilterCondition] = useState('');
+  const [filterType, setFilterType] = useState('');
+
+  const activeFilterCount = [filterStyle, filterSize, filterCondition, filterType].filter(Boolean).length;
+
+  const filteredData = useMemo(() => {
+    if (!data) return [];
+    return data.filter(h => {
+      if (filterStyle && h.style !== filterStyle) return false;
+      if (filterSize && h.size !== filterSize) return false;
+      if (filterCondition && h.condition !== filterCondition) return false;
+      if (filterType === 'beanie' && !h.is_beanie) return false;
+      if (filterType === 'regular' && h.is_beanie) return false;
+      return true;
+    });
+  }, [data, filterStyle, filterSize, filterCondition, filterType]);
 
   if (isLoading) return <LoadingSpinner />;
   if (error) return <div className="alert alert-danger">{String(error)}</div>;
@@ -64,6 +87,13 @@ export function HatsPage() {
       <div className="d-flex justify-content-between align-items-center mb-3">
         <h1>Hats</h1>
         <div className="d-flex gap-2 align-items-center">
+          <button
+            type="button"
+            className={`btn btn-sm ${activeFilterCount ? 'btn-primary' : 'btn-outline-secondary'}`}
+            onClick={() => setFiltersOpen(!filtersOpen)}
+          >
+            Filters{activeFilterCount > 0 && <span className="badge bg-white text-primary ms-1">{activeFilterCount}</span>}
+          </button>
           <div className="btn-group btn-group-sm" role="group">
             <button
               type="button"
@@ -86,19 +116,70 @@ export function HatsPage() {
         </div>
       </div>
 
-      {!data?.length ? (
+      {filtersOpen && (
+        <div className="card mb-3">
+          <div className="card-body">
+            <div className="row g-2">
+              <div className="col-6 col-md-3">
+                <label className="form-label small text-secondary mb-1">Style</label>
+                <select className="form-select form-select-sm" value={filterStyle} onChange={e => setFilterStyle(e.target.value)}>
+                  <option value="">All</option>
+                  {stylesQ.data?.map(s => (
+                    <option key={s.value} value={s.value}>{s.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="col-6 col-md-3">
+                <label className="form-label small text-secondary mb-1">Size</label>
+                <select className="form-select form-select-sm" value={filterSize} onChange={e => setFilterSize(e.target.value)}>
+                  <option value="">All</option>
+                  {sizesQ.data?.map(s => (
+                    <option key={s.value} value={s.value}>{s.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="col-6 col-md-3">
+                <label className="form-label small text-secondary mb-1">Condition</label>
+                <select className="form-select form-select-sm" value={filterCondition} onChange={e => setFilterCondition(e.target.value)}>
+                  <option value="">All</option>
+                  {conditionsQ.data?.map(c => (
+                    <option key={c.value} value={c.value}>{c.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="col-6 col-md-3">
+                <label className="form-label small text-secondary mb-1">Type</label>
+                <select className="form-select form-select-sm" value={filterType} onChange={e => setFilterType(e.target.value)}>
+                  <option value="">All</option>
+                  <option value="regular">Regular</option>
+                  <option value="beanie">Beanies</option>
+                </select>
+              </div>
+            </div>
+            {activeFilterCount > 0 && (
+              <button
+                type="button"
+                className="btn btn-link btn-sm text-danger mt-2 p-0"
+                onClick={() => { setFilterStyle(''); setFilterSize(''); setFilterCondition(''); setFilterType(''); }}
+              >Clear filters</button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {!filteredData.length ? (
         <div className="text-center py-5 text-secondary">
-          <p className="mb-3">No hats yet</p>
-          <Link to="/hats/new" className="btn btn-primary">Add First Hat</Link>
+          <p className="mb-3">{data?.length ? 'No matching hats' : 'No hats yet'}</p>
+          {!data?.length && <Link to="/hats/new" className="btn btn-primary">Add First Hat</Link>}
         </div>
       ) : view === 'gallery' ? (
         <div className="row row-cols-2 row-cols-md-3 row-cols-lg-4 g-3">
-          {data.map(h => (
+          {filteredData.map(h => (
             <div className="col" key={h.id}><GalleryItem hat={h} /></div>
           ))}
         </div>
       ) : (
-        data.map(h => <HatCard key={h.id} hat={h} />)
+        filteredData.map(h => <HatCard key={h.id} hat={h} />)
       )}
     </>
   );

@@ -23,6 +23,7 @@ def _hat_to_read(hat) -> HatRead:
         position_in_case=hat.position_in_case,
         display_id=hat.display_id,
         case_display_id=hat.case.display_id if hat.case else None,
+        case_type=hat.case.case_type if hat.case else None,
         photo_path=hat.photo_path,
         condition=hat.condition,
         date_last_worn=hat.date_last_worn,

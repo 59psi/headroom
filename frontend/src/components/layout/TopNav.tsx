@@ -2,7 +2,7 @@ import { NavLink } from 'react-router-dom';
 
 export function TopNav() {
   return (
-    <nav className="navbar navbar-expand navbar-light bg-white border-bottom d-none d-lg-block">
+    <nav className="navbar navbar-expand navbar-dark d-none d-lg-block">
       <div className="container">
         <NavLink to="/" className="navbar-brand fw-bold">Headroom</NavLink>
         <div className="navbar-nav">

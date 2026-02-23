@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { getCase, deleteCase, uploadCasePhoto } from '../api/cases';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
+import { ImageLightbox } from '../components/common/ImageLightbox';
 import { PhotoCapture } from '../components/photos/PhotoCapture';
 import { useState } from 'react';
 
@@ -41,6 +42,29 @@ export function CaseDetailPage() {
 
   const typeLabel = data.case_type === 'archive' ? 'Archive' : 'Daily Wear';
 
+  let capacityDisplay: React.ReactNode;
+  if (data.hat_count === 0) {
+    capacityDisplay = (
+      <div className="text-center text-secondary">
+        Empty — holds 4 hats or 6 beanies
+      </div>
+    );
+  } else if (data.beanie_count > 0) {
+    capacityDisplay = (
+      <div className="text-center">
+        <div className="fs-4 fw-bold">{data.beanie_count}/6</div>
+        <div className="text-secondary small">Beanies</div>
+      </div>
+    );
+  } else {
+    capacityDisplay = (
+      <div className="text-center">
+        <div className="fs-4 fw-bold">{data.regular_count}/4</div>
+        <div className="text-secondary small">Hats</div>
+      </div>
+    );
+  }
+
   return (
     <>
       <div className="d-flex justify-content-between align-items-center mb-3">
@@ -53,25 +77,20 @@ export function CaseDetailPage() {
 
       <div className="card mb-3">
         <div className="card-body">
-          <PhotoCapture
-            onCapture={handlePhotoUpload}
-            previewUrl={data.photo_path ? `/uploads/${data.photo_path}` : null}
-          />
+          {data.photo_path ? (
+            <>
+              <ImageLightbox src={`/uploads/${data.photo_path}`} alt={data.display_id} />
+              <div className="mt-2">
+                <PhotoCapture onCapture={handlePhotoUpload} hidePreview />
+              </div>
+            </>
+          ) : (
+            <PhotoCapture onCapture={handlePhotoUpload} previewUrl={null} />
+          )}
           {uploading && <div className="text-secondary small">Uploading...</div>}
 
-          <div className="row text-center mt-3">
-            <div className="col-4">
-              <div className="fs-4 fw-bold">{data.hat_count}</div>
-              <div className="text-secondary small">Total</div>
-            </div>
-            <div className="col-4">
-              <div className="fs-4 fw-bold">{data.regular_count}/4</div>
-              <div className="text-secondary small">Regular</div>
-            </div>
-            <div className="col-4">
-              <div className="fs-4 fw-bold">{data.beanie_count}/6</div>
-              <div className="text-secondary small">Beanies</div>
-            </div>
+          <div className="mt-3">
+            {capacityDisplay}
           </div>
         </div>
       </div>

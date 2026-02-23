@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { getHat, deleteHat, uploadHatPhoto } from '../api/hats';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ConditionBadge } from '../components/common/ConditionBadge';
+import { ImageLightbox } from '../components/common/ImageLightbox';
 import { PhotoCapture } from '../components/photos/PhotoCapture';
 import { useState } from 'react';
 
@@ -41,6 +42,8 @@ export function HatDetailPage() {
   if (isLoading) return <LoadingSpinner />;
   if (error || !data) return <div className="alert alert-danger">Hat not found</div>;
 
+  const caseTypeLabel = data.case_type === 'archive' ? 'Archive' : data.case_type === 'daily_wear' ? 'Daily Wear' : null;
+
   return (
     <>
       <div className="d-flex justify-content-between align-items-center mb-3">
@@ -50,10 +53,16 @@ export function HatDetailPage() {
 
       <div className="card mb-3">
         <div className="card-body">
-          <PhotoCapture
-            onCapture={handlePhotoUpload}
-            previewUrl={data.photo_path ? `/uploads/${data.photo_path}` : null}
-          />
+          {data.photo_path ? (
+            <>
+              <ImageLightbox src={`/uploads/${data.photo_path}`} alt={data.display_id || 'Hat photo'} />
+              <div className="mt-2">
+                <PhotoCapture onCapture={handlePhotoUpload} hidePreview />
+              </div>
+            </>
+          ) : (
+            <PhotoCapture onCapture={handlePhotoUpload} previewUrl={null} />
+          )}
           {uploading && <div className="text-secondary small">Uploading & detecting colors...</div>}
         </div>
       </div>
@@ -83,7 +92,14 @@ export function HatDetailPage() {
           <div className="text-secondary small mb-1">Case</div>
           {data.case_display_id ? (
             <div className="d-flex justify-content-between align-items-center">
-              <div className="fw-semibold fs-5">Stored in: {data.case_display_id}</div>
+              <div>
+                <span className="fw-semibold fs-5">Stored in: {data.case_display_id}</span>
+                {caseTypeLabel && (
+                  <span className={`badge ms-2 ${data.case_type === 'archive' ? 'bg-secondary' : 'bg-info'}`}>
+                    {caseTypeLabel}
+                  </span>
+                )}
+              </div>
               <Link to={`/cases/${data.case_display_id}`} className="btn btn-outline-primary btn-sm">View Case</Link>
             </div>
           ) : (

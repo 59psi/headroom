@@ -39,21 +39,32 @@ async def test_beanie_capacity_limit(client):
 
 
 @pytest.mark.anyio
-async def test_mixed_capacity(client):
-    """A case can hold 4 regular + 6 beanies simultaneously."""
+async def test_mixed_types_rejected(client):
+    """A case cannot hold both regular hats and beanies."""
     case = await _create_case(client)
-    for _ in range(4):
-        resp = await _create_hat(client, case_id=case["id"], style="a_game")
-        assert resp.status_code == 201
-    for _ in range(6):
-        resp = await _create_hat(client, case_id=case["id"], style="beanie")
-        assert resp.status_code == 201
-
-    # Both at max
     resp = await _create_hat(client, case_id=case["id"], style="a_game")
-    assert resp.status_code == 409
+    assert resp.status_code == 201
+
+    # Adding a beanie to a case with regular hats should fail
     resp = await _create_hat(client, case_id=case["id"], style="beanie")
     assert resp.status_code == 409
+    assert "cannot mix types" in resp.json()["detail"]
+
+
+@pytest.mark.anyio
+async def test_assign_rejects_wrong_type(client):
+    """Cannot assign a beanie to a case that already has regular hats."""
+    case = await _create_case(client)
+    await _create_hat(client, case_id=case["id"], style="a_game")
+
+    # Create unassigned beanie, try to assign to the regular-hat case
+    resp = await _create_hat(client, style="beanie")
+    beanie_id = resp.json()["id"]
+    resp = await client.patch(
+        f"/api/hats/{beanie_id}/assign", json={"case_id": case["id"]}
+    )
+    assert resp.status_code == 409
+    assert "cannot mix types" in resp.json()["detail"]
 
 
 @pytest.mark.anyio

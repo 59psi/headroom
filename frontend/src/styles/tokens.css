@@ -1,17 +1,23 @@
 :root {
-  --color-bg: #f8f9fa;
+  --color-bg: #f0f2f7;
   --color-surface: #ffffff;
-  --color-primary: #2563eb;
-  --color-primary-hover: #1d4ed8;
-  --color-text: #1f2937;
-  --color-text-secondary: #6b7280;
-  --color-border: #e5e7eb;
-  --color-danger: #dc2626;
-  --color-success: #16a34a;
+  --color-primary: #1e2a5e;
+  --color-primary-hover: #162049;
+  --color-primary-light: #e8eaf6;
+  --color-accent: #d4a843;
+  --color-accent-light: #fdf6e3;
+  --color-text: #1a1a2e;
+  --color-text-secondary: #5a5f7a;
+  --color-border: #d5d8e0;
+  --color-danger: #c0392b;
+  --color-success: #27ae60;
+  --shadow: 0 2px 8px rgba(30,42,94,0.08);
+  --shadow-lg: 0 8px 24px rgba(30,42,94,0.12);
+  --shadow-hover: 0 8px 28px rgba(30,42,94,0.18);
+  --gradient-primary: linear-gradient(135deg, #1e2a5e 0%, #2d3a7e 100%);
+  --gradient-hero: linear-gradient(135deg, #1e2a5e 0%, #2d3a7e 50%, #3d4a8e 100%);
   --radius: 12px;
   --radius-sm: 8px;
-  --shadow: 0 1px 3px rgba(0,0,0,0.1);
-  --shadow-lg: 0 4px 12px rgba(0,0,0,0.15);
   --nav-height: 64px;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
 }

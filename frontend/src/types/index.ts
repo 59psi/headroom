@@ -35,6 +35,7 @@ export interface HatRead {
   position_in_case: number | null;
   display_id: string | null;
   case_display_id: string | null;
+  case_type: 'archive' | 'daily_wear' | null;
   photo_path: string | null;
   condition: string;
   date_last_worn: string | null;

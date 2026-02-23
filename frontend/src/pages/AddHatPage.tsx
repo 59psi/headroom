@@ -5,6 +5,7 @@ import { createHat, uploadHatPhoto, getStyles, getSizes, getConditions } from '.
 import { listCases } from '../api/cases';
 import { PhotoCapture } from '../components/photos/PhotoCapture';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
+import { NewCaseModal } from '../components/common/NewCaseModal';
 
 export function AddHatPage() {
   const navigate = useNavigate();
@@ -18,6 +19,7 @@ export function AddHatPage() {
   const [dateLastWorn, setDateLastWorn] = useState('');
   const [photo, setPhoto] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [showNewCase, setShowNewCase] = useState(false);
 
   const styles = useQuery({ queryKey: ['meta', 'styles'], queryFn: getStyles });
   const sizes = useQuery({ queryKey: ['meta', 'sizes'], queryFn: getSizes });
@@ -46,6 +48,14 @@ export function AddHatPage() {
   function handlePhotoCapture(file: File) {
     setPhoto(file);
     setPhotoPreview(URL.createObjectURL(file));
+  }
+
+  function handleCaseChange(value: string) {
+    if (value === '__new__') {
+      setShowNewCase(true);
+    } else {
+      setCaseId(value);
+    }
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -100,8 +110,9 @@ export function AddHatPage() {
 
             <div className="mb-3">
               <label className="form-label">Assign to Case (optional)</label>
-              <select className="form-select" value={caseId} onChange={e => setCaseId(e.target.value)}>
+              <select className="form-select" value={caseId} onChange={e => handleCaseChange(e.target.value)}>
                 <option value="">Unassigned</option>
+                <option value="__new__">+ Create New Case...</option>
                 {cases.data?.map(c => (
                   <option key={c.id} value={c.id}>
                     {c.display_id} ({c.case_type === 'archive' ? 'Archive' : 'Daily'} &middot; {c.hat_count} hats)
@@ -129,6 +140,12 @@ export function AddHatPage() {
           {mutation.isPending ? 'Saving...' : 'Save Hat'}
         </button>
       </form>
+
+      <NewCaseModal
+        show={showNewCase}
+        onClose={() => setShowNewCase(false)}
+        onCreated={(id) => setCaseId(String(id))}
+      />
     </>
   );
 }

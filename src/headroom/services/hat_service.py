@@ -39,6 +39,20 @@ async def _validate_capacity(
     result = await db.execute(query)
     hats = list(result.scalars().all())
 
+    if hats:
+        existing_has_beanies = any(h.is_beanie for h in hats)
+        existing_has_regular = any(not h.is_beanie for h in hats)
+        if is_beanie and existing_has_regular:
+            raise HTTPException(
+                status_code=409,
+                detail="Case already contains regular hats — cannot mix types",
+            )
+        if not is_beanie and existing_has_beanies:
+            raise HTTPException(
+                status_code=409,
+                detail="Case already contains beanies — cannot mix types",
+            )
+
     beanie_count = sum(1 for h in hats if h.is_beanie)
     regular_count = len(hats) - beanie_count
 
