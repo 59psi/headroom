@@ -5,25 +5,58 @@ import { listHats } from '../api/hats';
 import { listRooms } from '../api/rooms';
 import { getLogo } from '../api/settings';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+
+function shuffleArray<T>(arr: T[]): T[] {
+  const shuffled = [...arr];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+}
 
 export function HomePage() {
   const cases = useQuery({ queryKey: ['cases'], queryFn: listCases });
   const hats = useQuery({ queryKey: ['hats'], queryFn: () => listHats() });
   const rooms = useQuery({ queryKey: ['rooms'], queryFn: listRooms });
   const logo = useQuery({ queryKey: ['settings', 'logo'], queryFn: getLogo });
-  const carouselRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
+  const [activeIndex, setActiveIndex] = useState(0);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  const hatsWithPhotos = useMemo(
+    () => shuffleArray(hats.data?.filter(h => h.photo_path) ?? []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [hats.dataUpdatedAt]
+  );
+
+  const goNext = useCallback(() => {
+    if (hatsWithPhotos.length <= 1) return;
+    setActiveIndex(prev => (prev + 1) % hatsWithPhotos.length);
+  }, [hatsWithPhotos.length]);
+
+  const goPrev = useCallback(() => {
+    if (hatsWithPhotos.length <= 1) return;
+    setActiveIndex(prev => (prev - 1 + hatsWithPhotos.length) % hatsWithPhotos.length);
+  }, [hatsWithPhotos.length]);
+
+  // Auto-advance every 5 seconds
   useEffect(() => {
-    if (!carouselRef.current) return;
-    const Carousel = (window as unknown as Record<string, unknown>).bootstrap as
-      | { Carousel: new (el: HTMLElement, opts: Record<string, unknown>) => unknown }
-      | undefined;
-    if (Carousel) {
-      new Carousel.Carousel(carouselRef.current, { ride: 'carousel', interval: 5000 });
+    if (hatsWithPhotos.length <= 1) return;
+    intervalRef.current = setInterval(goNext, 5000);
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, [hatsWithPhotos.length, goNext]);
+
+  // Reset timer on manual navigation
+  const resetTimer = useCallback(() => {
+    if (intervalRef.current) clearInterval(intervalRef.current);
+    if (hatsWithPhotos.length > 1) {
+      intervalRef.current = setInterval(goNext, 5000);
     }
-  }, [hats.data]);
+  }, [hatsWithPhotos.length, goNext]);
 
   if (cases.isLoading || hats.isLoading) return <LoadingSpinner />;
 
@@ -32,8 +65,6 @@ export function HomePage() {
   const totalRooms = rooms.data?.length ?? 0;
   const archiveCases = cases.data?.filter(c => c.case_type === 'archive').length ?? 0;
   const dailyCases = cases.data?.filter(c => c.case_type === 'daily_wear').length ?? 0;
-
-  const hatsWithPhotos = hats.data?.filter(h => h.photo_path) ?? [];
 
   return (
     <>
@@ -74,40 +105,35 @@ export function HomePage() {
       </div>
 
       {hatsWithPhotos.length > 0 && (
-        <div
-          ref={carouselRef}
-          id="homeCarousel"
-          className="carousel slide mb-3 hr-carousel"
-          data-bs-ride="carousel"
-          data-bs-interval="5000"
-        >
-          <div className="carousel-inner">
-            {hatsWithPhotos.map((h, i) => (
-              <div
-                key={h.id}
-                className={`carousel-item${i === 0 ? ' active' : ''}`}
-                style={{ cursor: 'pointer' }}
-                onClick={() => navigate(`/hats/${h.id}`)}
-              >
-                <img
-                  src={`/uploads/${h.photo_path}`}
-                  alt={h.display_id || `Hat #${h.id}`}
-                  className="d-block w-100"
-                  style={{ aspectRatio: '16/9', objectFit: 'cover' }}
-                />
-                <div className="carousel-caption">
-                  <h6 className="mb-0">{h.display_id || `Hat #${h.id}`}</h6>
-                  <small>{h.style.replace(/_/g, ' ')}</small>
-                </div>
-              </div>
-            ))}
+        <div className="mb-3 hr-carousel position-relative overflow-hidden rounded" style={{ cursor: 'pointer' }}>
+          <div
+            onClick={() => navigate(`/hats/${hatsWithPhotos[activeIndex].id}`)}
+          >
+            <img
+              src={`/uploads/${hatsWithPhotos[activeIndex].photo_path}`}
+              alt={hatsWithPhotos[activeIndex].display_id || `Hat #${hatsWithPhotos[activeIndex].id}`}
+              className="d-block w-100"
+              style={{ aspectRatio: '16/9', objectFit: 'cover' }}
+            />
+            <div className="carousel-caption">
+              <h6 className="mb-0">{hatsWithPhotos[activeIndex].display_id || `Hat #${hatsWithPhotos[activeIndex].id}`}</h6>
+              <small>{hatsWithPhotos[activeIndex].style.replace(/_/g, ' ')}</small>
+            </div>
           </div>
           {hatsWithPhotos.length > 1 && (
             <>
-              <button className="carousel-control-prev" type="button" data-bs-target="#homeCarousel" data-bs-slide="prev">
+              <button
+                className="carousel-control-prev"
+                type="button"
+                onClick={(e) => { e.stopPropagation(); goPrev(); resetTimer(); }}
+              >
                 <span className="carousel-control-prev-icon" />
               </button>
-              <button className="carousel-control-next" type="button" data-bs-target="#homeCarousel" data-bs-slide="next">
+              <button
+                className="carousel-control-next"
+                type="button"
+                onClick={(e) => { e.stopPropagation(); goNext(); resetTimer(); }}
+              >
                 <span className="carousel-control-next-icon" />
               </button>
             </>

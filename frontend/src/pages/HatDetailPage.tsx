@@ -133,18 +133,25 @@ export function HatDetailPage() {
                 </div>
               </>
             )}
-            <div className="text-secondary small mb-2">Detected Colors</div>
+            <div className="text-secondary small mb-2">Detected Colors (advanced)</div>
             <div className="d-flex gap-2 flex-wrap">
               {data.colors.map(c => (
                 <div key={c.dominance_rank} className="d-flex align-items-center gap-2">
-                  <div className="color-swatch" style={{ backgroundColor: c.hex_value, width: 24, height: 24 }} />
-                  <span className="small">{c.color_name}</span>
+                  <div className="color-swatch" style={{ backgroundColor: c.hex_value, width: 24, height: 24, borderRadius: 4, border: '1px solid rgba(0,0,0,0.1)' }} />
+                  <div>
+                    <div className="small">{c.general_color || c.color_name}</div>
+                    {c.general_color && c.color_name !== c.general_color && (
+                      <div className="text-muted" style={{ fontSize: '0.7rem' }}>{c.color_name} {c.hex_value}</div>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
           </div>
         </div>
       )}
+
+      <Link to="/hats/new" className="btn btn-primary w-100 mb-2">+ Add Another Hat</Link>
 
       <div className="d-flex gap-2">
         <Link to={`/hats/${data.id}/edit`} className="btn btn-outline-secondary flex-fill">Edit</Link>

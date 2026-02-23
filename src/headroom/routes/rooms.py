@@ -30,6 +30,12 @@ async def list_rooms(db: AsyncSession = Depends(get_db)):
     return [_room_to_read(r) for r in rooms]
 
 
+@router.get("/{room_id}", response_model=RoomRead)
+async def get_room(room_id: int, db: AsyncSession = Depends(get_db)):
+    room = await room_service.get_room(db, room_id)
+    return _room_to_read(room)
+
+
 @router.put("/{room_id}", response_model=RoomRead)
 async def update_room(
     room_id: int, data: RoomUpdate, db: AsyncSession = Depends(get_db)

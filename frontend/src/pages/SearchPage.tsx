@@ -2,7 +2,8 @@ import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { searchHats } from '../api/search';
-import { getStyles, getSizes, getConditions, getRooms } from '../api/hats';
+import { getStyles, getSizes, getConditions } from '../api/hats';
+import { getRoomOptions } from '../api/rooms';
 import { ColorSwatches } from '../components/common/ColorSwatch';
 import { ConditionBadge } from '../components/common/ConditionBadge';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
@@ -23,7 +24,7 @@ export function SearchPage() {
   const stylesQ = useQuery({ queryKey: ['meta', 'styles'], queryFn: getStyles });
   const sizesQ = useQuery({ queryKey: ['meta', 'sizes'], queryFn: getSizes });
   const conditionsQ = useQuery({ queryKey: ['meta', 'conditions'], queryFn: getConditions });
-  const roomsQ = useQuery({ queryKey: ['meta', 'rooms'], queryFn: getRooms });
+  const roomsQ = useQuery({ queryKey: ['meta', 'rooms'], queryFn: getRoomOptions });
 
   const roomIdParam = filterRoom ? Number(filterRoom) : undefined;
 
@@ -215,7 +216,8 @@ export function SearchPage() {
                       <ConditionBadge condition={hat.condition} />
                     </div>
                     <div className="text-secondary small mb-1">
-                      {hat.style.replace(/_/g, ' ')} &middot; {hat.size.replace(/_/g, ' ')}
+                      {hat.style.replace(/_/g, ' ')} · {hat.size.replace(/_/g, ' ')}
+                      {hat.room_name && <> · {hat.room_name}</>}
                     </div>
                     <ColorSwatches colors={hat.colors} />
                   </div>

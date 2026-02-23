@@ -1,7 +1,8 @@
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { listHats, getStyles, getSizes, getConditions, getRooms } from '../api/hats';
+import { listHats, getStyles, getSizes, getConditions } from '../api/hats';
+import { getRoomOptions } from '../api/rooms';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ColorSwatches } from '../components/common/ColorSwatch';
 import { ConditionBadge } from '../components/common/ConditionBadge';
@@ -22,7 +23,8 @@ function HatCard({ hat }: { hat: HatRead }) {
             <ConditionBadge condition={hat.condition} />
           </div>
           <div className="text-secondary small mb-1">
-            {hat.style.replace(/_/g, ' ')} &middot; {hat.size.replace(/_/g, ' ')}
+            {hat.style.replace(/_/g, ' ')} · {hat.size.replace(/_/g, ' ')}
+            {hat.room_name && <> · {hat.room_name}</>}
           </div>
           <ColorSwatches colors={hat.colors} />
         </div>
@@ -57,7 +59,7 @@ export function HatsPage() {
   const stylesQ = useQuery({ queryKey: ['meta', 'styles'], queryFn: getStyles });
   const sizesQ = useQuery({ queryKey: ['meta', 'sizes'], queryFn: getSizes });
   const conditionsQ = useQuery({ queryKey: ['meta', 'conditions'], queryFn: getConditions });
-  const roomsQ = useQuery({ queryKey: ['meta', 'rooms'], queryFn: getRooms });
+  const roomsQ = useQuery({ queryKey: ['meta', 'rooms'], queryFn: getRoomOptions });
 
   const [view, setView] = useState<'list' | 'gallery'>('gallery');
   const [filtersOpen, setFiltersOpen] = useState(false);

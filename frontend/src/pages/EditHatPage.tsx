@@ -144,7 +144,7 @@ export function EditHatPage() {
                 <option value="__new__">+ Create New Case...</option>
                 {cases.data?.map(c => (
                   <option key={c.id} value={c.id}>
-                    {c.display_id} ({c.case_type === 'archive' ? 'Archive' : 'Daily'} &middot; {c.hat_count} hats &middot; {c.room_name})
+                    {c.display_id} ({c.case_type === 'archive' ? 'Archive' : 'Daily'} · {c.hat_count} hats · {c.room_name})
                   </option>
                 ))}
               </select>
@@ -162,37 +162,51 @@ export function EditHatPage() {
             <h6 className="card-title text-secondary mb-3">Colors</h6>
 
             {colors.map((color, i) => (
-              <div key={i} className="d-flex align-items-center gap-2 mb-2">
-                <input
-                  type="color"
-                  className="form-control form-control-color"
-                  value={color.hex_value}
-                  onChange={e => {
-                    const updated = [...colors];
-                    updated[i] = { ...updated[i], hex_value: e.target.value };
-                    setColors(updated);
-                  }}
-                />
-                <input
-                  type="text"
-                  className="form-control"
-                  value={color.color_name}
-                  onChange={e => {
-                    const updated = [...colors];
-                    updated[i] = { ...updated[i], color_name: e.target.value };
-                    setColors(updated);
-                  }}
-                />
-                <span className="text-muted small" style={{ minWidth: '5em' }}>{color.hex_value}</span>
-                <button
-                  type="button"
-                  className="btn btn-outline-danger btn-sm"
-                  onClick={() => {
-                    const updated = colors.filter((_, j) => j !== i)
-                      .map((c, j) => ({ ...c, dominance_rank: j + 1 }));
-                    setColors(updated);
-                  }}
-                >&times;</button>
+              <div key={i} className="mb-2">
+                <div className="d-flex align-items-center gap-2">
+                  <input
+                    type="color"
+                    className="form-control form-control-color"
+                    value={color.hex_value}
+                    onChange={e => {
+                      const updated = [...colors];
+                      updated[i] = { ...updated[i], hex_value: e.target.value };
+                      setColors(updated);
+                    }}
+                  />
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="Color name"
+                    value={color.color_name}
+                    onChange={e => {
+                      const updated = [...colors];
+                      updated[i] = { ...updated[i], color_name: e.target.value };
+                      setColors(updated);
+                    }}
+                  />
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="General color"
+                    value={color.general_color}
+                    onChange={e => {
+                      const updated = [...colors];
+                      updated[i] = { ...updated[i], general_color: e.target.value };
+                      setColors(updated);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-outline-danger btn-sm"
+                    onClick={() => {
+                      const updated = colors.filter((_, j) => j !== i)
+                        .map((c, j) => ({ ...c, dominance_rank: j + 1 }));
+                      setColors(updated);
+                    }}
+                  >&times;</button>
+                </div>
+                <div className="text-muted" style={{ fontSize: '0.7rem', marginLeft: 44 }}>{color.hex_value}</div>
               </div>
             ))}
 

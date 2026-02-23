@@ -26,3 +26,8 @@ export function updateRoom(id: number, name: string) {
 export function deleteRoom(id: number) {
   return apiFetch<void>(`/api/rooms/${id}`, { method: 'DELETE' });
 }
+
+/** Room options for filter dropdowns (value/label format). */
+export function getRoomOptions() {
+  return apiFetch<{ value: number; label: string }[]>('/api/meta/rooms');
+}

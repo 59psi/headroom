@@ -56,6 +56,21 @@ async def test_cannot_delete_default_room(client):
 
 
 @pytest.mark.anyio
+async def test_get_room_by_id(client):
+    resp = await client.get("/api/rooms/1")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["id"] == 1
+    assert data["name"] == "Default Room"
+
+
+@pytest.mark.anyio
+async def test_get_room_not_found(client):
+    resp = await client.get("/api/rooms/9999")
+    assert resp.status_code == 404
+
+
+@pytest.mark.anyio
 async def test_rooms_meta_endpoint(client):
     resp = await client.get("/api/meta/rooms")
     assert resp.status_code == 200

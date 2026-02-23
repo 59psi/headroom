@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { listCases } from '../api/cases';
-import { getRooms } from '../api/hats';
+import { getRoomOptions } from '../api/rooms';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import type { CaseRead } from '../types';
 
@@ -26,7 +26,7 @@ function CaseCard({ c }: { c: CaseRead }) {
       <div className="card-body d-flex justify-content-between align-items-center">
         <div>
           <div className="fw-bold fs-5">{c.display_id}</div>
-          <div className="text-secondary small">{typeLabel} &middot; {c.room_name}</div>
+          <div className="text-secondary small">{typeLabel} · {c.room_name}</div>
         </div>
         <div className="text-end">
           <div className="fw-semibold">{countLabel}</div>
@@ -38,7 +38,7 @@ function CaseCard({ c }: { c: CaseRead }) {
 
 export function CasesPage() {
   const { data, isLoading, error } = useQuery({ queryKey: ['cases'], queryFn: listCases });
-  const roomsQ = useQuery({ queryKey: ['meta', 'rooms'], queryFn: getRooms });
+  const roomsQ = useQuery({ queryKey: ['meta', 'rooms'], queryFn: getRoomOptions });
   const [typeFilter, setTypeFilter] = useState<'all' | 'archive' | 'daily_wear'>('all');
   const [roomFilter, setRoomFilter] = useState('');
 
