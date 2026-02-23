@@ -1,0 +1,38 @@
+/* Color swatches */
+.color-swatches {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.color-swatch {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid var(--color-border);
+}
+
+/* Condition badges */
+.hr-badge-new { background: #dcfce7; color: #166534; }
+.hr-badge-new_with_tags { background: #dbeafe; color: #1e40af; }
+.hr-badge-worn { background: #fef3c7; color: #92400e; }
+
+/* Gallery view */
+.hr-gallery-item {
+  aspect-ratio: 1;
+  object-fit: cover;
+  width: 100%;
+  border-radius: var(--radius-sm);
+}
+
+.hr-gallery-placeholder {
+  aspect-ratio: 1;
+  width: 100%;
+  background: var(--color-border);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-secondary);
+  font-size: 0.85rem;
+}

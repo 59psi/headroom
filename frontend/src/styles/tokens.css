@@ -1,0 +1,33 @@
+:root {
+  --color-bg: #f8f9fa;
+  --color-surface: #ffffff;
+  --color-primary: #2563eb;
+  --color-primary-hover: #1d4ed8;
+  --color-text: #1f2937;
+  --color-text-secondary: #6b7280;
+  --color-border: #e5e7eb;
+  --color-danger: #dc2626;
+  --color-success: #16a34a;
+  --radius: 12px;
+  --radius-sm: 8px;
+  --shadow: 0 1px 3px rgba(0,0,0,0.1);
+  --shadow-lg: 0 4px 12px rgba(0,0,0,0.15);
+  --nav-height: 64px;
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+a {
+  color: var(--color-primary);
+  text-decoration: none;
+}
+
+input, select, textarea {
+  font-size: 16px; /* prevents iOS zoom */
+}
+
+/* Mobile bottom nav spacing */
+@media (max-width: 991.98px) {
+  body {
+    padding-bottom: calc(var(--nav-height) + var(--safe-bottom));
+  }
+}
