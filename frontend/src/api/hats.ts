@@ -1,5 +1,5 @@
 import { apiFetch } from './client';
-import type { HatRead, MetaOption } from '../types';
+import type { ColorTag, HatRead, MetaOption } from '../types';
 
 export function listHats(params?: Record<string, string>) {
   const qs = params ? '?' + new URLSearchParams(params).toString() : '';
@@ -34,6 +34,13 @@ export function uploadHatPhoto(id: number, file: File) {
   return apiFetch<HatRead>(`/api/hats/${id}/photo`, {
     method: 'POST',
     body: form,
+  });
+}
+
+export function updateHatColors(id: number, colors: ColorTag[]) {
+  return apiFetch<HatRead>(`/api/hats/${id}/colors`, {
+    method: 'PUT',
+    body: JSON.stringify({ colors }),
   });
 }
 

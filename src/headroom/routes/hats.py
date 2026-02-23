@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from headroom.config import settings
 from headroom.database import get_db
 from headroom.models.hat_color import HatColor
-from headroom.schemas.hat import ColorTag, HatAssign, HatCreate, HatRead, HatUpdate
+from headroom.schemas.hat import ColorTag, ColorsUpdate, HatAssign, HatCreate, HatRead, HatUpdate
 from headroom.services import hat_service
 from headroom.services.color_service import extract_colors
 from headroom.utils.photo import generate_filename, process_image, validate_image_content_type
@@ -86,6 +86,28 @@ async def assign_hat(
 ):
     hat = await hat_service.assign_hat(db, hat_id, data.case_id)
     return _hat_to_read(hat)
+
+
+@router.put("/{hat_id}/colors", response_model=HatRead)
+async def update_hat_colors(
+    hat_id: int, data: ColorsUpdate, db: AsyncSession = Depends(get_db)
+):
+    hat = await hat_service.get_hat(db, hat_id)
+
+    for color in list(hat.colors):
+        await db.delete(color)
+
+    for c in data.colors:
+        db.add(HatColor(
+            hat_id=hat.id,
+            color_name=c.color_name,
+            hex_value=c.hex_value,
+            dominance_rank=c.dominance_rank,
+        ))
+
+    await db.commit()
+    db.expire_all()
+    return _hat_to_read(await hat_service.get_hat(db, hat_id))
 
 
 @router.post("/{hat_id}/photo", response_model=HatRead)

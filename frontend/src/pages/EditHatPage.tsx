@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getHat, updateHat, uploadHatPhoto, assignHat, getStyles, getSizes, getConditions } from '../api/hats';
+import { getHat, updateHat, uploadHatPhoto, assignHat, updateHatColors, getStyles, getSizes, getConditions } from '../api/hats';
 import { listCases } from '../api/cases';
 import { PhotoCapture } from '../components/photos/PhotoCapture';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
+import type { ColorTag } from '../types';
 
 export function EditHatPage() {
   const { hatId } = useParams<{ hatId: string }>();
@@ -25,6 +26,7 @@ export function EditHatPage() {
   const [caseId, setCaseId] = useState('');
   const [photo, setPhoto] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [colors, setColors] = useState<ColorTag[]>([]);
 
   useEffect(() => {
     if (hat.data) {
@@ -36,6 +38,7 @@ export function EditHatPage() {
       if (hat.data.photo_path) {
         setPhotoPreview(`/uploads/${hat.data.photo_path}`);
       }
+      setColors(hat.data.colors.map(c => ({ ...c })));
     }
   }, [hat.data]);
 
@@ -56,6 +59,9 @@ export function EditHatPage() {
       if (photo) {
         await uploadHatPhoto(id, photo);
       }
+
+      // Handle color edits
+      await updateHatColors(id, colors);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['hat', id] });
@@ -137,6 +143,53 @@ export function EditHatPage() {
               <label className="form-label">Date Last Worn</label>
               <input type="date" className="form-control" value={dateLastWorn} onChange={e => setDateLastWorn(e.target.value)} />
             </div>
+          </div>
+        </div>
+
+        <div className="card mb-3">
+          <div className="card-body">
+            <h6 className="card-title text-secondary mb-3">Colors</h6>
+
+            {colors.map((color, i) => (
+              <div key={i} className="d-flex align-items-center gap-2 mb-2">
+                <input
+                  type="color"
+                  className="form-control form-control-color"
+                  value={color.hex_value}
+                  onChange={e => {
+                    const updated = [...colors];
+                    updated[i] = { ...updated[i], hex_value: e.target.value };
+                    setColors(updated);
+                  }}
+                />
+                <input
+                  type="text"
+                  className="form-control"
+                  value={color.color_name}
+                  onChange={e => {
+                    const updated = [...colors];
+                    updated[i] = { ...updated[i], color_name: e.target.value };
+                    setColors(updated);
+                  }}
+                />
+                <span className="text-muted small" style={{ minWidth: '5em' }}>{color.hex_value}</span>
+                <button
+                  type="button"
+                  className="btn btn-outline-danger btn-sm"
+                  onClick={() => {
+                    const updated = colors.filter((_, j) => j !== i)
+                      .map((c, j) => ({ ...c, dominance_rank: j + 1 }));
+                    setColors(updated);
+                  }}
+                >&times;</button>
+              </div>
+            ))}
+
+            <button
+              type="button"
+              className="btn btn-outline-secondary btn-sm"
+              onClick={() => setColors([...colors, { color_name: '', hex_value: '#000000', dominance_rank: colors.length + 1 }])}
+            >+ Add Color</button>
           </div>
         </div>
 

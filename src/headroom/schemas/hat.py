@@ -69,5 +69,9 @@ class HatRead(BaseModel):
     updated_at: datetime
 
 
+class ColorsUpdate(BaseModel):
+    colors: list[ColorTag]
+
+
 class HatAssign(BaseModel):
     case_id: int | None
