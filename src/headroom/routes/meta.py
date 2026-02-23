@@ -17,6 +17,7 @@ STYLE_LABELS: dict[str, str] = {
     "legend": "Legend",
     "caddy": "Caddy",
     "coast": "Coast",
+    "collab": "Collab",
     "beanie": "Beanie",
 }
 
