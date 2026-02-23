@@ -144,7 +144,7 @@ export function EditHatPage() {
                 <option value="__new__">+ Create New Case...</option>
                 {cases.data?.map(c => (
                   <option key={c.id} value={c.id}>
-                    {c.display_id} ({c.case_type === 'archive' ? 'Archive' : 'Daily'} &middot; {c.hat_count} hats)
+                    {c.display_id} ({c.case_type === 'archive' ? 'Archive' : 'Daily'} &middot; {c.hat_count} hats &middot; {c.room_name})
                   </option>
                 ))}
               </select>
