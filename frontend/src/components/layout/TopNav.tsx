@@ -10,7 +10,7 @@ export function TopNav() {
       <div className="container">
         <NavLink to="/" className="navbar-brand fw-bold d-flex align-items-center gap-2">
           {logo.data?.logo_path && (
-            <img src={`/uploads/${logo.data.logo_path}`} alt="" style={{ height: 28, objectFit: 'contain' }} />
+            <img src={`/uploads/${logo.data.logo_path}`} alt="" style={{ height: 56, objectFit: 'contain' }} />
           )}
           Headroom
         </NavLink>
