@@ -15,7 +15,7 @@ def _make_test_image(color=(255, 0, 0)):
 async def _create_hat_with_photo(client, style="a_game", color=(255, 0, 0)):
     resp = await client.post(
         "/api/hats",
-        json={"condition": "new", "size": "standard", "style": style},
+        json={"condition": "new", "size": "classic", "style": style},
     )
     hat_id = resp.json()["id"]
     photo = _make_test_image(color)
@@ -30,11 +30,11 @@ async def _create_hat_with_photo(client, style="a_game", color=(255, 0, 0)):
 async def test_search_by_style(client):
     await client.post(
         "/api/hats",
-        json={"condition": "new", "size": "standard", "style": "a_game"},
+        json={"condition": "new", "size": "classic", "style": "a_game"},
     )
     await client.post(
         "/api/hats",
-        json={"condition": "new", "size": "standard", "style": "beanie"},
+        json={"condition": "new", "size": "classic", "style": "beanie"},
     )
 
     resp = await client.get("/api/search?q=a_game")
@@ -48,11 +48,11 @@ async def test_search_by_style(client):
 async def test_search_by_condition(client):
     await client.post(
         "/api/hats",
-        json={"condition": "worn", "size": "standard", "style": "a_game"},
+        json={"condition": "worn", "size": "classic", "style": "a_game"},
     )
     await client.post(
         "/api/hats",
-        json={"condition": "new", "size": "standard", "style": "beanie"},
+        json={"condition": "new", "size": "classic", "style": "beanie"},
     )
 
     resp = await client.get("/api/search?q=worn")
@@ -76,11 +76,11 @@ async def test_search_by_size(client):
 async def test_search_multi_term_and(client):
     await client.post(
         "/api/hats",
-        json={"condition": "new", "size": "standard", "style": "a_game"},
+        json={"condition": "new", "size": "classic", "style": "a_game"},
     )
     await client.post(
         "/api/hats",
-        json={"condition": "worn", "size": "standard", "style": "a_game"},
+        json={"condition": "worn", "size": "classic", "style": "a_game"},
     )
 
     # Both terms must match
@@ -95,7 +95,7 @@ async def test_search_multi_term_and(client):
 async def test_search_no_results(client):
     await client.post(
         "/api/hats",
-        json={"condition": "new", "size": "standard", "style": "a_game"},
+        json={"condition": "new", "size": "classic", "style": "a_game"},
     )
 
     resp = await client.get("/api/search?q=nonexistent")

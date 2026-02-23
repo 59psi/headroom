@@ -38,7 +38,13 @@ export function CaseDetailPage() {
   }
 
   if (isLoading) return <LoadingSpinner />;
-  if (error || !data) return <div className="alert alert-danger">Case not found</div>;
+  if (error || !data) return (
+    <div className="text-center py-5">
+      <h5 className="text-secondary mb-2">Case not found</h5>
+      <p className="text-secondary small mb-3">This case may have been deleted or doesn't exist.</p>
+      <Link to="/cases" className="btn btn-outline-primary">Back to Cases</Link>
+    </div>
+  );
 
   const typeLabel = data.case_type === 'archive' ? 'Archive' : 'Daily Wear';
 
@@ -125,16 +131,17 @@ export function CaseDetailPage() {
         ))
       )}
 
-      {data.hat_count === 0 && (
-        <button
-          className="btn btn-danger w-100 mt-4"
-          onClick={() => {
-            if (confirm('Delete this empty case?')) removeMutation.mutate();
-          }}
-        >
-          Delete Case
-        </button>
-      )}
+      <button
+        className="btn btn-danger w-100 mt-4"
+        onClick={() => {
+          const msg = data.hat_count > 0
+            ? `Delete this case? Its ${data.hat_count} hat(s) will become unassigned.`
+            : 'Delete this empty case?';
+          if (confirm(msg)) removeMutation.mutate();
+        }}
+      >
+        Delete Case
+      </button>
     </>
   );
 }

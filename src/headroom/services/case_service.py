@@ -65,9 +65,9 @@ async def update_case(
 
 async def delete_case(db: AsyncSession, display_id: str) -> None:
     case = await get_case_by_display_id(db, display_id)
-    if case.hats:
-        raise HTTPException(
-            status_code=409, detail="Cannot delete case with hats assigned"
-        )
+    # Unassign all hats before deleting
+    for hat in list(case.hats):
+        hat.case_id = None
+        hat.position_in_case = None
     await db.delete(case)
     await db.commit()

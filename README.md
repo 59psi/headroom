@@ -54,6 +54,18 @@ cd frontend && npm run build
 
 Then run the backend only — it serves the built SPA from `frontend/dist`.
 
+## Site Logo
+
+You can upload a custom logo through the web UI:
+
+1. Navigate to **Settings** (gear icon in the navbar, or `/settings`)
+2. Click **Upload Logo** and select an image (JPEG, PNG, WebP, or HEIC)
+3. The image is automatically resized proportionally (max 96px tall) without skewing
+4. The logo appears in the navbar and the homepage hero section
+5. You can replace or remove the logo at any time from the same page
+
+Logo files are stored in `uploads/branding/`.
+
 ## Testing
 
 ```bash

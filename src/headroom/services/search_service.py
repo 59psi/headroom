@@ -6,17 +6,25 @@ from headroom.models.hat import Hat
 from headroom.models.hat_color import HatColor
 
 
-async def search_hats(db: AsyncSession, query: str) -> list[Hat]:
+async def search_hats(
+    db: AsyncSession, query: str, *, exact_colors: bool = False
+) -> list[Hat]:
     """Multi-term AND search across hat fields and color names.
 
     Each term must match at least one field (style, condition, size,
-    or a color name).
+    or a color name/general_color).
+
+    When exact_colors is False (default), color terms match against
+    general_color (e.g. "red", "dark gray"). When True, matches against
+    the specific CSS3 color_name (e.g. "darkslategray", "silver").
     """
     terms = query.strip().split()
     if not terms:
         return []
 
     stmt = select(Hat).options(selectinload(Hat.case), selectinload(Hat.colors))
+
+    color_field = HatColor.color_name if exact_colors else HatColor.general_color
 
     for term in terms:
         pattern = f"%{term}%"
@@ -26,7 +34,7 @@ async def search_hats(db: AsyncSession, query: str) -> list[Hat]:
             Hat.condition.ilike(pattern),
             Hat.size.ilike(pattern),
             Hat.id.in_(
-                select(HatColor.hat_id).where(HatColor.color_name.ilike(pattern))
+                select(HatColor.hat_id).where(color_field.ilike(pattern))
             ),
         )
         stmt = stmt.where(term_filter)

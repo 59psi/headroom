@@ -12,7 +12,7 @@ class HatCondition(StrEnum):
 
 class HatSize(StrEnum):
     small = "small"
-    standard = "standard"
+    classic = "classic"
     x_large = "x_large"
 
 
@@ -31,6 +31,7 @@ class HatStyle(StrEnum):
 
 class ColorTag(BaseModel):
     color_name: str
+    general_color: str = ""
     hex_value: str
     dominance_rank: int
 

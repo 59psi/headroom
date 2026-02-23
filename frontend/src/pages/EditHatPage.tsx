@@ -199,7 +199,7 @@ export function EditHatPage() {
             <button
               type="button"
               className="btn btn-outline-secondary btn-sm"
-              onClick={() => setColors([...colors, { color_name: '', hex_value: '#000000', dominance_rank: colors.length + 1 }])}
+              onClick={() => setColors([...colors, { color_name: '', general_color: '', hex_value: '#000000', dominance_rank: colors.length + 1 }])}
             >+ Add Color</button>
           </div>
         </div>

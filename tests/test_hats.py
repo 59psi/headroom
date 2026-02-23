@@ -9,7 +9,7 @@ async def _create_case(client, case_type="archive"):
 async def _create_hat(client, **overrides):
     data = {
         "condition": "new",
-        "size": "standard",
+        "size": "classic",
         "style": "a_game",
     }
     data.update(overrides)

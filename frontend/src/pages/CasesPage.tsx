@@ -40,7 +40,13 @@ export function CasesPage() {
   const [typeFilter, setTypeFilter] = useState<'all' | 'archive' | 'daily_wear'>('all');
 
   if (isLoading) return <LoadingSpinner />;
-  if (error) return <div className="alert alert-danger">{String(error)}</div>;
+  if (error) return (
+    <div className="text-center py-5">
+      <h5 className="text-secondary mb-2">No cases to display</h5>
+      <p className="text-secondary small mb-3">The case collection is empty or could not be loaded.</p>
+      <Link to="/cases/new" className="btn btn-primary">Create First Case</Link>
+    </div>
+  );
 
   const filtered = data?.filter(c => typeFilter === 'all' || c.case_type === typeFilter) ?? [];
 

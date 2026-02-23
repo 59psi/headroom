@@ -64,8 +64,18 @@ export function HatsPage() {
   const [filterSize, setFilterSize] = useState('');
   const [filterCondition, setFilterCondition] = useState('');
   const [filterType, setFilterType] = useState('');
+  const [filterColor, setFilterColor] = useState('');
 
-  const activeFilterCount = [filterStyle, filterSize, filterCondition, filterType].filter(Boolean).length;
+  const activeFilterCount = [filterStyle, filterSize, filterCondition, filterType, filterColor].filter(Boolean).length;
+
+  const availableColors = useMemo(() => {
+    if (!data) return [];
+    const colors = new Set<string>();
+    data.forEach(h => h.colors.forEach(c => {
+      if (c.general_color) colors.add(c.general_color);
+    }));
+    return [...colors].sort();
+  }, [data]);
 
   const filteredData = useMemo(() => {
     if (!data) return [];
@@ -75,12 +85,19 @@ export function HatsPage() {
       if (filterCondition && h.condition !== filterCondition) return false;
       if (filterType === 'beanie' && !h.is_beanie) return false;
       if (filterType === 'regular' && h.is_beanie) return false;
+      if (filterColor && !h.colors.some(c => c.general_color === filterColor)) return false;
       return true;
     });
-  }, [data, filterStyle, filterSize, filterCondition, filterType]);
+  }, [data, filterStyle, filterSize, filterCondition, filterType, filterColor]);
 
   if (isLoading) return <LoadingSpinner />;
-  if (error) return <div className="alert alert-danger">{String(error)}</div>;
+  if (error) return (
+    <div className="text-center py-5">
+      <h5 className="text-secondary mb-2">No hats to display</h5>
+      <p className="text-secondary small mb-3">The hat collection is empty or could not be loaded.</p>
+      <Link to="/hats/new" className="btn btn-primary">Add First Hat</Link>
+    </div>
+  );
 
   return (
     <>
@@ -155,12 +172,21 @@ export function HatsPage() {
                   <option value="beanie">Beanies</option>
                 </select>
               </div>
+              <div className="col-6 col-md-3">
+                <label className="form-label small text-secondary mb-1">Color</label>
+                <select className="form-select form-select-sm" value={filterColor} onChange={e => setFilterColor(e.target.value)}>
+                  <option value="">All</option>
+                  {availableColors.map(c => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+              </div>
             </div>
             {activeFilterCount > 0 && (
               <button
                 type="button"
                 className="btn btn-link btn-sm text-danger mt-2 p-0"
-                onClick={() => { setFilterStyle(''); setFilterSize(''); setFilterCondition(''); setFilterType(''); }}
+                onClick={() => { setFilterStyle(''); setFilterSize(''); setFilterCondition(''); setFilterType(''); setFilterColor(''); }}
               >Clear filters</button>
             )}
           </div>

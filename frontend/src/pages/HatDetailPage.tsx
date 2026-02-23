@@ -40,7 +40,13 @@ export function HatDetailPage() {
   }
 
   if (isLoading) return <LoadingSpinner />;
-  if (error || !data) return <div className="alert alert-danger">Hat not found</div>;
+  if (error || !data) return (
+    <div className="text-center py-5">
+      <h5 className="text-secondary mb-2">Hat not found</h5>
+      <p className="text-secondary small mb-3">This hat may have been deleted or doesn't exist.</p>
+      <Link to="/hats" className="btn btn-outline-primary">Back to Hats</Link>
+    </div>
+  );
 
   const caseTypeLabel = data.case_type === 'archive' ? 'Archive' : data.case_type === 'daily_wear' ? 'Daily Wear' : null;
 
@@ -114,6 +120,16 @@ export function HatDetailPage() {
       {data.colors.length > 0 && (
         <div className="card mb-3">
           <div className="card-body">
+            {data.colors.some(c => c.general_color) && (
+              <>
+                <div className="text-secondary small mb-2">Colors</div>
+                <div className="d-flex gap-2 flex-wrap mb-3">
+                  {[...new Set(data.colors.map(c => c.general_color).filter(Boolean))].map(gc => (
+                    <span key={gc} className="badge bg-light text-dark border">{gc}</span>
+                  ))}
+                </div>
+              </>
+            )}
             <div className="text-secondary small mb-2">Detected Colors</div>
             <div className="d-flex gap-2 flex-wrap">
               {data.colors.map(c => (

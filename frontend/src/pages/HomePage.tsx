@@ -2,12 +2,14 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import { listCases } from '../api/cases';
 import { listHats } from '../api/hats';
+import { getLogo } from '../api/settings';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { useEffect, useRef } from 'react';
 
 export function HomePage() {
   const cases = useQuery({ queryKey: ['cases'], queryFn: listCases });
   const hats = useQuery({ queryKey: ['hats'], queryFn: () => listHats() });
+  const logo = useQuery({ queryKey: ['settings', 'logo'], queryFn: getLogo });
   const carouselRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
 
@@ -17,7 +19,7 @@ export function HomePage() {
       | { Carousel: new (el: HTMLElement, opts: Record<string, unknown>) => unknown }
       | undefined;
     if (Carousel) {
-      new Carousel.Carousel(carouselRef.current, { ride: 'carousel', interval: 3500 });
+      new Carousel.Carousel(carouselRef.current, { ride: 'carousel', interval: 5000 });
     }
   }, [hats.data]);
 
@@ -33,6 +35,9 @@ export function HomePage() {
   return (
     <>
       <div className="hr-hero mb-3">
+        {logo.data?.logo_path && (
+          <img src={`/uploads/${logo.data.logo_path}`} alt="" className="hr-logo" />
+        )}
         <h1 className="mb-1">Headroom</h1>
         <p className="mb-0 opacity-75">Your hat collection, organized.</p>
       </div>
@@ -67,7 +72,7 @@ export function HomePage() {
           id="homeCarousel"
           className="carousel slide mb-3 hr-carousel"
           data-bs-ride="carousel"
-          data-bs-interval="3500"
+          data-bs-interval="5000"
         >
           <div className="carousel-inner">
             {hatsWithPhotos.map((h, i) => (

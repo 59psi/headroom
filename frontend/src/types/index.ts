@@ -1,5 +1,6 @@
 export interface ColorTag {
   color_name: string;
+  general_color: string;
   hex_value: string;
   dominance_rank: number;
 }

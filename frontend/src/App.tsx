@@ -11,6 +11,7 @@ import { HatDetailPage } from './pages/HatDetailPage';
 import { AddHatPage } from './pages/AddHatPage';
 import { EditHatPage } from './pages/EditHatPage';
 import { SearchPage } from './pages/SearchPage';
+import { SettingsPage } from './pages/SettingsPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -37,6 +38,7 @@ export function App() {
             <Route path="/hats/:hatId" element={<HatDetailPage />} />
             <Route path="/hats/:hatId/edit" element={<EditHatPage />} />
             <Route path="/search" element={<SearchPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
           </Route>
         </Routes>
       </BrowserRouter>

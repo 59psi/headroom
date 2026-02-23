@@ -7,7 +7,7 @@ async def _create_case(client, case_type="archive"):
 
 
 async def _create_hat(client, **overrides):
-    data = {"condition": "new", "size": "standard", "style": "a_game"}
+    data = {"condition": "new", "size": "classic", "style": "a_game"}
     data.update(overrides)
     return await client.post("/api/hats", json=data)
 
@@ -83,8 +83,17 @@ async def test_assign_respects_capacity(client):
 
 
 @pytest.mark.anyio
-async def test_delete_case_with_hats_blocked(client):
+async def test_delete_case_unassigns_hats(client):
     case = await _create_case(client)
-    await _create_hat(client, case_id=case["id"])
+    resp = await _create_hat(client, case_id=case["id"])
+    hat_id = resp.json()["id"]
+
+    # Delete the case
     resp = await client.delete(f"/api/cases/{case['display_id']}")
-    assert resp.status_code == 409
+    assert resp.status_code == 204
+
+    # Hat should now be unassigned
+    resp = await client.get(f"/api/hats/{hat_id}")
+    assert resp.status_code == 200
+    assert resp.json()["case_id"] is None
+    assert resp.json()["display_id"] is None

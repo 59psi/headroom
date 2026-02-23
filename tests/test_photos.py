@@ -71,7 +71,7 @@ async def test_upload_case_photo(client):
 async def test_upload_hat_photo(client):
     resp = await client.post(
         "/api/hats",
-        json={"condition": "new", "size": "standard", "style": "a_game"},
+        json={"condition": "new", "size": "classic", "style": "a_game"},
     )
     hat_id = resp.json()["id"]
 
@@ -91,7 +91,7 @@ async def test_upload_hat_photo(client):
 async def test_upload_invalid_type(client):
     resp = await client.post(
         "/api/hats",
-        json={"condition": "new", "size": "standard", "style": "a_game"},
+        json={"condition": "new", "size": "classic", "style": "a_game"},
     )
     hat_id = resp.json()["id"]
 
@@ -106,7 +106,7 @@ async def test_upload_invalid_type(client):
 async def test_replace_photo_deletes_old(client):
     resp = await client.post(
         "/api/hats",
-        json={"condition": "new", "size": "standard", "style": "a_game"},
+        json={"condition": "new", "size": "classic", "style": "a_game"},
     )
     hat_id = resp.json()["id"]
 

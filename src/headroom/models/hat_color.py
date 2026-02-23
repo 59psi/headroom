@@ -12,6 +12,7 @@ class HatColor(Base):
         Integer, ForeignKey("hats.id", ondelete="CASCADE")
     )
     color_name: Mapped[str] = mapped_column(String(50), index=True)
+    general_color: Mapped[str] = mapped_column(String(30), index=True, default="")
     hex_value: Mapped[str] = mapped_column(String(7))
     dominance_rank: Mapped[int] = mapped_column(Integer)
 

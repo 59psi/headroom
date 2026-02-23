@@ -13,7 +13,7 @@ export function AddHatPage() {
   const [searchParams] = useSearchParams();
 
   const [style, setStyle] = useState('a_game');
-  const [size, setSize] = useState('standard');
+  const [size, setSize] = useState('classic');
   const [condition, setCondition] = useState('new');
   const [caseId, setCaseId] = useState(searchParams.get('caseId') || '');
   const [dateLastWorn, setDateLastWorn] = useState('');

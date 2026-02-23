@@ -33,6 +33,7 @@ def _hat_to_read(hat) -> HatRead:
         colors=[
             ColorTag(
                 color_name=c.color_name,
+                general_color=c.general_color or "",
                 hex_value=c.hex_value,
                 dominance_rank=c.dominance_rank,
             )
@@ -102,6 +103,7 @@ async def update_hat_colors(
         db.add(HatColor(
             hat_id=hat.id,
             color_name=c.color_name,
+            general_color=c.general_color or "",
             hex_value=c.hex_value,
             dominance_rank=c.dominance_rank,
         ))

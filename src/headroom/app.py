@@ -19,6 +19,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     settings.upload_dir.mkdir(parents=True, exist_ok=True)
     (settings.upload_dir / "cases").mkdir(exist_ok=True)
     (settings.upload_dir / "hats").mkdir(exist_ok=True)
+    (settings.upload_dir / "branding").mkdir(exist_ok=True)
     await init_db()
     yield
 
