@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   cancelImportJob,
@@ -24,7 +24,23 @@ export function BulkImportPage() {
   const qc = useQueryClient();
   const fileInput = useRef<HTMLInputElement>(null);
   const [files, setFiles] = useState<File[]>([]);
-  const [activeJobId, setActiveJobId] = useState<number | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  // ?job=N takes precedence so the Web Share Target redirect lands us
+  // straight on the active job.
+  const queryJobId = searchParams.get('job');
+  const [activeJobId, setActiveJobId] = useState<number | null>(
+    queryJobId ? Number(queryJobId) : null
+  );
+
+  // Keep state and URL in sync — clear ?job= when the user backs out.
+  useEffect(() => {
+    if (activeJobId == null && queryJobId) {
+      setSearchParams({}, { replace: true });
+    }
+    if (activeJobId != null && !queryJobId) {
+      setSearchParams({ job: String(activeJobId) }, { replace: true });
+    }
+  }, [activeJobId, queryJobId, setSearchParams]);
 
   const styles = useQuery({ queryKey: ['meta', 'styles'], queryFn: getStyles });
   const sizes = useQuery({ queryKey: ['meta', 'sizes'], queryFn: getSizes });

@@ -9,6 +9,7 @@ from headroom.routes.meta import router as meta_router
 from headroom.routes.rooms import router as rooms_router
 from headroom.routes.search import router as search_router
 from headroom.routes.settings import router as settings_router
+from headroom.routes.share import router as share_router
 
 api_router = APIRouter()
 api_router.include_router(health_router)
@@ -22,3 +23,4 @@ api_router.include_router(meta_router)
 api_router.include_router(search_router)
 api_router.include_router(settings_router)
 api_router.include_router(admin_router)
+api_router.include_router(share_router)

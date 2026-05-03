@@ -4,6 +4,29 @@ All notable changes are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] — 2026-05-03 — _Share-to-Headroom + version display_
+
+### Added
+- **Web Share Target API** in `manifest.json` — Android Chrome users who
+  install Headroom as a PWA get a "Share to Headroom" entry in the system
+  share sheet automatically. Selected photos route through the existing
+  bulk-import job worker. New backend endpoint `POST /share` accepts the
+  multipart payload, queues an import job, and 303-redirects into
+  `/hats/import?job=N` so the SPA renders progress.
+- **iOS Shortcut recipe** in Settings — step-by-step instructions for
+  building a one-time Shortcut that POSTs photos from the iOS Photos
+  share sheet to `/api/hats/import`. Auto-fills the URL with the running
+  origin so users can copy it as-is.
+- **App version in the footer.** `vite.config.ts` reads `package.json`
+  and bakes the version into the bundle as `__APP_VERSION__`. Footer
+  always shows the running build.
+- `BulkImportPage` now reads `?job=N` from the URL so the share-target
+  redirect lands on the active job.
+
+### Bumped
+- Project version → `0.6.0` (synced across `pyproject.toml` and
+  `frontend/package.json`).
+
 ## [0.5.0] — 2026-05-03 — _Polish_
 
 PWA install + photo crop on upload. Pure UX wins, no data model touches.
