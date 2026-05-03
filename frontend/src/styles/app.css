@@ -1185,9 +1185,8 @@ button.card:hover::before,
   .d-lg-flex { display: flex !important; }
 }
 
-@media (max-width: 991.98px) {
-  .d-lg-none { display: initial; }
-}
+/* Below lg, .d-lg-none must NOT impose a display value — let the element's
+   own rules win (e.g. .bottom-nav needs its display:flex). */
 
 .flex-fill { flex: 1 1 auto !important; }
 .flex-grow-1 { flex-grow: 1 !important; }
