@@ -15,6 +15,20 @@ services:
       # HEADROOM_ANTHROPIC_API_KEY: "sk-ant-..."
       HEADROOM_REMBG_MODEL: "u2netp"
       HEADROOM_CORS_ORIGINS: '["http://localhost:8000"]'
+      # Optional: set this to require Bearer auth on /api/settings/api-key
+      # endpoints. Leave unset for the open single-user-on-LAN default.
+      # HEADROOM_ADMIN_TOKEN: "change-me-to-something-long"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health/ready', timeout=5).status==200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
 volumes:
   headroom-data:

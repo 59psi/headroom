@@ -40,7 +40,7 @@ class Hat(Base):
     resale_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     # Analysis bookkeeping
-    analysis_status: Mapped[str | None] = mapped_column(String(20), nullable=True)  # pending/ok/error/skipped
+    analysis_status: Mapped[str | None] = mapped_column(String(20), nullable=True)  # ok/error/skipped
     analysis_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     analyzed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 

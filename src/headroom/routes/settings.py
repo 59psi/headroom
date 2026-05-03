@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from PIL import Image
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from headroom.auth import require_admin
 from headroom.config import settings
 from headroom.database import get_db
 from headroom.schemas.settings import ApiKeyStatus, ApiKeyTestResult, ApiKeyUpdate
@@ -101,7 +102,7 @@ async def get_api_key_status(db: AsyncSession = Depends(get_db)):
     )
 
 
-@router.put("/api-key", response_model=ApiKeyStatus)
+@router.put("/api-key", response_model=ApiKeyStatus, dependencies=[Depends(require_admin)])
 async def set_api_key(data: ApiKeyUpdate, db: AsyncSession = Depends(get_db)):
     await settings_service.set_anthropic_key(db, data.api_key)
     key, source = await settings_service.get_anthropic_key(db)
@@ -112,12 +113,12 @@ async def set_api_key(data: ApiKeyUpdate, db: AsyncSession = Depends(get_db)):
     )
 
 
-@router.delete("/api-key", status_code=204)
+@router.delete("/api-key", status_code=204, dependencies=[Depends(require_admin)])
 async def delete_api_key(db: AsyncSession = Depends(get_db)):
     await settings_service.clear_anthropic_key(db)
 
 
-@router.post("/api-key/test", response_model=ApiKeyTestResult)
+@router.post("/api-key/test", response_model=ApiKeyTestResult, dependencies=[Depends(require_admin)])
 async def test_api_key(db: AsyncSession = Depends(get_db)):
     key, _source = await settings_service.get_anthropic_key(db)
     if not key:

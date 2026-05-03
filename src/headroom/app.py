@@ -1,9 +1,11 @@
+import logging
+import os
 import shutil
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -12,9 +14,26 @@ from headroom.config import settings
 from headroom.database import init_db
 from headroom.routes import api_router
 
+logger = logging.getLogger(__name__)
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-FRONTEND_DIST = PROJECT_ROOT / "frontend" / "dist"
+FRONTEND_DIST = (PROJECT_ROOT / "frontend" / "dist").resolve()
 SEED_BRANDING = PROJECT_ROOT / "seed" / "branding"
+
+
+def _configure_logging() -> None:
+    """Apply a sane default logger config so warnings actually reach stdout.
+
+    Only runs if the root logger has no handlers — uvicorn / pytest may have
+    already configured logging, in which case we defer to them.
+    """
+    if logging.getLogger().handlers:
+        return
+    level = os.environ.get("HEADROOM_LOG_LEVEL", "INFO").upper()
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
 
 
 def _seed_branding(target: Path) -> None:
@@ -42,6 +61,7 @@ def _seed_branding(target: Path) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    _configure_logging()
     settings.upload_dir.mkdir(parents=True, exist_ok=True)
     (settings.upload_dir / "cases").mkdir(exist_ok=True)
     (settings.upload_dir / "hats").mkdir(exist_ok=True)
@@ -49,7 +69,30 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     branding_dir.mkdir(exist_ok=True)
     _seed_branding(branding_dir)
     await init_db()
+    if not settings.admin_token:
+        logger.warning(
+            "HEADROOM_ADMIN_TOKEN is not set — Anthropic API key endpoints "
+            "are unauthenticated. Safe on a trusted LAN, dangerous if exposed."
+        )
+    logger.info("Headroom started · model=%s · uploads=%s",
+                settings.anthropic_model, settings.upload_dir)
     yield
+
+
+def _safe_spa_path(full_path: str) -> Path | None:
+    """Resolve a SPA-fallback request and return a path inside FRONTEND_DIST or None.
+
+    Defends against path traversal: an attacker requesting `/%2e%2e/data/headroom.db`
+    must NOT escape the static frontend bundle. Resolve the candidate, then verify
+    it's within the frontend root before serving.
+    """
+    try:
+        candidate = (FRONTEND_DIST / full_path).resolve(strict=False)
+    except (OSError, RuntimeError):
+        return None
+    if candidate != FRONTEND_DIST and not candidate.is_relative_to(FRONTEND_DIST):
+        return None
+    return candidate
 
 
 def create_app() -> FastAPI:
@@ -72,7 +115,6 @@ def create_app() -> FastAPI:
             name="uploads",
         )
 
-    # Serve built frontend (SPA fallback)
     if FRONTEND_DIST.exists():
         app.mount(
             "/assets",
@@ -82,11 +124,15 @@ def create_app() -> FastAPI:
 
         @app.get("/{full_path:path}")
         async def serve_spa(request: Request, full_path: str):
-            # Serve index.html for all non-API, non-static routes (SPA routing)
-            file_path = FRONTEND_DIST / full_path
-            if file_path.is_file():
-                return FileResponse(file_path)
-            return FileResponse(FRONTEND_DIST / "index.html")
+            # Confine the lookup to the frontend bundle — see _safe_spa_path docstring.
+            safe = _safe_spa_path(full_path)
+            if safe is not None and safe.is_file():
+                return FileResponse(safe)
+            # SPA fallback: hand back index.html for client-side routing.
+            index = FRONTEND_DIST / "index.html"
+            if not index.is_file():
+                raise HTTPException(status_code=404, detail="Frontend not built")
+            return FileResponse(index)
 
     return app
 

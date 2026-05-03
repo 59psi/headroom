@@ -1,5 +1,6 @@
 import shutil
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
@@ -16,9 +17,14 @@ from headroom.schemas.hat import (
     HatRead,
     HatUpdate,
 )
-from headroom.services import hat_service
-from headroom.services.hat_analysis_pipeline import finalize_hat_photo
-from headroom.utils.photo import generate_filename, process_image, validate_image_content_type
+from headroom.services import hat_service, settings_service
+from headroom.services.claude_analysis import ClaudeAnalysisError, analyze_hat_image
+from headroom.services.hat_analysis_pipeline import _apply_analysis, finalize_hat_photo
+from headroom.utils.photo import (
+    generate_filename,
+    process_image_async,
+    validate_image_content_type,
+)
 
 router = APIRouter(prefix="/api/hats", tags=["hats"])
 
@@ -159,8 +165,10 @@ async def upload_hat_photo(
         tmp_path = Path(tmp.name)
 
     output_path = upload_dir / filename
-    final_path = process_image(tmp_path, output_path)
-    tmp_path.unlink(missing_ok=True)
+    try:
+        final_path = await process_image_async(tmp_path, output_path)
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
     # Delete old photo
     if hat.photo_path:
@@ -185,14 +193,6 @@ async def reanalyze_hat(hat_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Photo file missing on disk")
 
     # Re-running analysis re-uses the existing photo; bg removal already done.
-    from headroom.services.claude_analysis import (
-        ClaudeAnalysisError,
-        analyze_hat_image,
-    )
-    from headroom.services.hat_analysis_pipeline import _apply_analysis
-    from headroom.services import settings_service
-    from datetime import datetime, timezone
-
     api_key, _source = await settings_service.get_anthropic_key(db)
     if not api_key:
         raise HTTPException(status_code=400, detail="No Anthropic API key configured")

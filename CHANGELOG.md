@@ -4,6 +4,64 @@ All notable changes are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.1] — 2026-05-02 — _post-archaeology hardening_
+
+A focused security + reliability pass driven by a full-repo `/code-archaeology`
+run. Closes the critical issues the audit surfaced and lifts the diagnosis
+from "ready with conditions" toward "ready."
+
+### Security
+- **CRITICAL: Path traversal in SPA fallback handler closed.**
+  `app.py:_safe_spa_path` now resolves the requested path and verifies it's
+  inside `FRONTEND_DIST` before serving via `is_relative_to`. Previously
+  `GET /%2e%2e/data/headroom.db` would return the SQLite database (and the
+  Anthropic key inside it) to any caller. Verified against the live
+  container: traversal attempts now return the 662-byte `index.html`
+  fallback, not the 49KB DB. (`tests/test_security.py`)
+- **Optional admin-token guard** on `/api/settings/api-key` PUT/DELETE/test
+  via `HEADROOM_ADMIN_TOKEN`. Unset → endpoints stay open (single-user-LAN
+  default) with a startup warning. Set → `Authorization: Bearer <token>`
+  required, constant-time compare. (`src/headroom/auth.py`)
+
+### Reliability / performance
+- **Dropped the upload concurrency footgun.** `background_removal.py` no
+  longer wraps `asyncio.to_thread` in a process-global `asyncio.Lock`;
+  inference now runs on whatever worker threads asyncio's executor provides.
+  A small `_init_lock` still guards the one-shot ONNX session creation.
+- **Pillow no longer blocks the event loop.** `utils/photo.process_image_async`
+  wraps the existing sync function via `asyncio.to_thread`; the hat upload
+  route uses it. Concurrent uploads no longer wedge other requests.
+- **Real `/health/ready` endpoint** that probes the DB (`SELECT 1`),
+  upload-dir writability, and reports API-key configuration.
+  `docker-compose.yml` now points the container `HEALTHCHECK` at it.
+- **Default logging is now visible.** `app.py` calls `logging.basicConfig`
+  on startup if no root handlers are configured, so `logger.warning` calls
+  in `background_removal` and `hat_analysis_pipeline` actually reach
+  `docker logs`. Level via `HEADROOM_LOG_LEVEL`.
+- **Docker log rotation.** `docker-compose.yml` pins `max-size: 10m` and
+  `max-file: 5` on the JSON log driver — no more silent SD-card fill from
+  unbounded uvicorn access logs.
+- **Function-local imports in `reanalyze_hat` removed.** Routes now have
+  clean top-level imports for `analyze_hat_image`, `_apply_analysis`,
+  `settings_service`. (`routes/hats.py`)
+
+### Tests
+- **+8 tests** covering the gaps the archaeology surfaced (72 total, all green):
+  - `tests/test_pipeline_e2e.py` — happy-path Claude analysis with
+    structured-response stub, reanalyze, and error-path coverage. The
+    test the v0.2.0 release was missing.
+  - `tests/test_security.py` — path-traversal regression + admin-token
+    enforcement.
+  - `tests/test_health.py` — readiness probe.
+
+### Cleanup
+- Removed unused `beautifulsoup4` dependency.
+- Removed dead duplicate-branch in `utils/photo.py:25-28`.
+- Removed vestigial `pending` from the `analysis_status` comment in `models/hat.py`
+  (no code path ever wrote it).
+- Clarified `anthropic_model` default with an inline comment + pointer to the
+  `/api/settings/api-key/test` verification endpoint.
+
 ## [0.2.0] — 2026-05-02 — _"Outrun"_
 
 The big one. Full UI rebuild + AI-powered hat identification.
