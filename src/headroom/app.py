@@ -143,17 +143,21 @@ def create_app() -> FastAPI:
             name="frontend-assets",
         )
 
+        # Stamp index.html / manifest.json with no-cache so a fresh deploy is
+        # picked up immediately. Hashed /assets/* are safe to cache as-is —
+        # the filename changes on every build so stale entries are inert.
+        SPA_HEADERS = {"Cache-Control": "no-cache, must-revalidate"}
+
         @app.get("/{full_path:path}")
         async def serve_spa(request: Request, full_path: str):
             # Confine the lookup to the frontend bundle — see _safe_spa_path docstring.
             safe = _safe_spa_path(full_path)
             if safe is not None and safe.is_file():
-                return FileResponse(safe)
-            # SPA fallback: hand back index.html for client-side routing.
+                return FileResponse(safe, headers=SPA_HEADERS)
             index = FRONTEND_DIST / "index.html"
             if not index.is_file():
                 raise HTTPException(status_code=404, detail="Frontend not built")
-            return FileResponse(index)
+            return FileResponse(index, headers=SPA_HEADERS)
 
     return app
 
