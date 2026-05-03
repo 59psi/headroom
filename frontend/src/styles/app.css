@@ -19,9 +19,6 @@
 
 main.container {
   animation: fadeIn 0.25s ease-out;
-  max-width: 1100px;
-  padding-left: 16px;
-  padding-right: 16px;
   padding-top: 16px;
   padding-bottom: 16px;
 }
@@ -78,7 +75,17 @@ h5, h6 { font-size: 0.95rem; text-transform: uppercase; }
 .font-mono { font-family: var(--font-mono) !important; }
 
 /* ===== Container override (bootstrap) ============================ */
-.container { max-width: 1100px; }
+.container {
+  max-width: 1100px;
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: 20px;
+  padding-right: 20px;
+}
+
+@media (min-width: 768px) {
+  .container { padding-left: 28px; padding-right: 28px; }
+}
 
 /* ===== Brand wordmark ============================================ */
 .hr-wordmark {
@@ -950,7 +957,7 @@ button.card:hover::before,
 .navbar .navbar-brand {
   display: inline-flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: 0.75rem;
   font-family: var(--font-display);
   font-weight: 400;
   font-size: 1.4rem;
@@ -962,11 +969,20 @@ button.card:hover::before,
   -webkit-text-fill-color: transparent;
   filter: drop-shadow(0 0 8px rgba(255, 46, 182, 0.4));
   text-decoration: none;
+  line-height: 1;
 }
 
 .navbar .navbar-brand img {
-  height: 44px;
-  filter: drop-shadow(0 0 8px rgba(255, 46, 182, 0.4));
+  height: 52px;
+  width: auto;
+  object-fit: contain;
+  filter: drop-shadow(0 0 10px rgba(255, 46, 182, 0.55));
+}
+
+/* Mobile: tighten things up so the wordmark + logo never overflow */
+@media (max-width: 991.98px) {
+  .navbar .navbar-brand { font-size: 1.2rem; gap: 0.55rem; }
+  .navbar .navbar-brand img { height: 42px; }
 }
 
 .navbar-nav {
