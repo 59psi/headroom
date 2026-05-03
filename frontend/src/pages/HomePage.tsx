@@ -144,80 +144,80 @@ export function HomePage() {
         </div>
       </div>
 
-      {valuation.totalNew > 0 && (
-        <div className="card hr-feature mb-3">
-          <div className="card-body">
-            <div className="d-flex justify-content-between align-items-start gap-2 flex-wrap mb-3">
-              <div>
-                <div className="card-title mb-1">Valuation Overview</div>
-                <div className="text-secondary small">
-                  Across {valuation.appraisedHatCount} appraised hat{valuation.appraisedHatCount === 1 ? '' : 's'}.
-                  Resale = manual override, else condition-based estimate (NWT 65% · New 45% · Worn 30%).
-                </div>
+      <div className="card hr-feature mb-3">
+        <div className="card-body">
+          <div className="d-flex justify-content-between align-items-start gap-2 flex-wrap mb-3">
+            <div>
+              <div className="card-title mb-1">Valuation Overview</div>
+              <div className="text-secondary small">
+                {valuation.totalNew > 0
+                  ? <>Across {valuation.appraisedHatCount} appraised hat{valuation.appraisedHatCount === 1 ? '' : 's'}. Resale = manual override, else condition-based estimate (NWT 65% · New 45% · Worn 30%).</>
+                  : <>No appraised hats yet — upload a photo with Claude configured to populate this.</>
+                }
               </div>
             </div>
-
-            <div className="row g-2 mb-3">
-              <div className="col-6">
-                <div className="hr-metric">
-                  <div className="hr-metric-label">Original (new)</div>
-                  <div className="hr-metric-value hr-price hr-price-large">
-                    ${valuation.totalNew.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                  </div>
-                </div>
-              </div>
-              <div className="col-6">
-                <div className="hr-metric">
-                  <div className="hr-metric-label">Est. resale</div>
-                  <div className="hr-metric-value hr-price hr-price-large">
-                    ${valuation.totalResale.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                  </div>
-                  <div className="text-muted" style={{ fontSize: '0.7rem', marginTop: 2 }}>
-                    {valuation.totalNew > 0
-                      ? `${Math.round((valuation.totalResale / valuation.totalNew) * 100)}% of new`
-                      : ''}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="d-flex justify-content-between align-items-center mb-2">
-              <div className="hr-tier-label">By condition</div>
-              <Link to="/valuation" className="btn btn-outline-primary btn-sm">
-                Full breakdown →
-              </Link>
-            </div>
-            {(['new_with_tags', 'new', 'worn'] as const).map(key => {
-              const b = valuation.buckets[key];
-              if (b.count === 0) return null;
-              return (
-                <div key={key} className="hr-color-row" style={{ paddingTop: '0.5rem' }}>
-                  <div className="flex-grow-1">
-                    <div className="fw-semibold">{b.label}</div>
-                    <div className="text-muted small font-mono">
-                      {b.count} hat{b.count === 1 ? '' : 's'}
-                    </div>
-                  </div>
-                  <div className="text-end">
-                    <div className="font-mono small">
-                      <span className="text-secondary">new </span>
-                      <span style={{ color: 'var(--neon-cyan)' }}>
-                        ${b.newTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                      </span>
-                    </div>
-                    <div className="font-mono small">
-                      <span className="text-secondary">resale </span>
-                      <span style={{ color: 'var(--neon-pink)' }}>
-                        ${b.resaleTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+            <Link to="/valuation" className="btn btn-outline-primary btn-sm">
+              Full breakdown →
+            </Link>
           </div>
+
+          {valuation.totalNew > 0 && (
+            <>
+              <div className="row g-2 mb-3">
+                <div className="col-6">
+                  <div className="hr-metric">
+                    <div className="hr-metric-label">Original (new)</div>
+                    <div className="hr-metric-value hr-price hr-price-large">
+                      ${valuation.totalNew.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    </div>
+                  </div>
+                </div>
+                <div className="col-6">
+                  <div className="hr-metric">
+                    <div className="hr-metric-label">Est. resale</div>
+                    <div className="hr-metric-value hr-price hr-price-large">
+                      ${valuation.totalResale.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    </div>
+                    <div className="text-muted" style={{ fontSize: '0.7rem', marginTop: 2 }}>
+                      {`${Math.round((valuation.totalResale / valuation.totalNew) * 100)}% of new`}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="hr-tier-label mb-2">By condition</div>
+              {(['new_with_tags', 'new', 'worn'] as const).map(key => {
+                const b = valuation.buckets[key];
+                if (b.count === 0) return null;
+                return (
+                  <div key={key} className="hr-color-row" style={{ paddingTop: '0.5rem' }}>
+                    <div className="flex-grow-1">
+                      <div className="fw-semibold">{b.label}</div>
+                      <div className="text-muted small font-mono">
+                        {b.count} hat{b.count === 1 ? '' : 's'}
+                      </div>
+                    </div>
+                    <div className="text-end">
+                      <div className="font-mono small">
+                        <span className="text-secondary">new </span>
+                        <span style={{ color: 'var(--neon-cyan)' }}>
+                          ${b.newTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                        </span>
+                      </div>
+                      <div className="font-mono small">
+                        <span className="text-secondary">resale </span>
+                        <span style={{ color: 'var(--neon-pink)' }}>
+                          ${b.resaleTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </>
+          )}
         </div>
-      )}
+      </div>
 
       {hatsWithPhotos.length > 0 && (
         <div
