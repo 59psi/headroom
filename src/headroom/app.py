@@ -1,3 +1,4 @@
+import shutil
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -11,7 +12,32 @@ from headroom.config import settings
 from headroom.database import init_db
 from headroom.routes import api_router
 
-FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+FRONTEND_DIST = PROJECT_ROOT / "frontend" / "dist"
+SEED_BRANDING = PROJECT_ROOT / "seed" / "branding"
+
+
+def _seed_branding(target: Path) -> None:
+    """Copy bundled default branding into the uploads volume on first boot.
+
+    Idempotent — only copies files whose names are not already present, so a
+    user-uploaded logo is never overwritten on restart.
+    """
+    if not SEED_BRANDING.is_dir():
+        return
+    target.mkdir(parents=True, exist_ok=True)
+    for src in SEED_BRANDING.iterdir():
+        if not src.is_file():
+            continue
+        dest = target / src.name
+        if dest.exists():
+            continue
+        # Don't seed if a logo of *any* extension is already present
+        if src.stem == "logo" and any(
+            (target / f"logo{ext}").exists() for ext in (".png", ".jpg", ".jpeg", ".webp")
+        ):
+            continue
+        shutil.copy2(src, dest)
 
 
 @asynccontextmanager
@@ -19,7 +45,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     settings.upload_dir.mkdir(parents=True, exist_ok=True)
     (settings.upload_dir / "cases").mkdir(exist_ok=True)
     (settings.upload_dir / "hats").mkdir(exist_ok=True)
-    (settings.upload_dir / "branding").mkdir(exist_ok=True)
+    branding_dir = settings.upload_dir / "branding"
+    branding_dir.mkdir(exist_ok=True)
+    _seed_branding(branding_dir)
     await init_db()
     yield
 

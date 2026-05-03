@@ -68,12 +68,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN groupadd --system --gid 1000 headroom \
     && useradd --system --uid 1000 --gid headroom --home-dir /home/headroom --create-home headroom
 
-# Bring in venv + cached rembg model + source + built SPA
+# Bring in venv + cached rembg model + source + built SPA + seed assets
 COPY --from=python-base /opt/venv /opt/venv
 COPY --from=python-base --chown=headroom:headroom /root/.u2net /home/headroom/.u2net
 COPY --from=python-base --chown=headroom:headroom /app/src /app/src
 COPY --from=frontend --chown=headroom:headroom /build/dist /app/frontend/dist
 COPY --chown=headroom:headroom pyproject.toml /app/
+COPY --chown=headroom:headroom seed /app/seed
 
 WORKDIR /app
 RUN mkdir -p /data/uploads/cases /data/uploads/hats /data/uploads/branding \
