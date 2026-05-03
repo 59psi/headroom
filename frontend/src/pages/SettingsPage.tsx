@@ -6,6 +6,8 @@ import {
   getApiKeyStatus, setApiKey, deleteApiKey, testApiKey,
   getModel, setModel, clearModel,
   getRecentErrors, listBackups, backupDownloadUrl,
+  getActivityLog, getEbayCreds, setEbayCreds, deleteEbayCreds,
+  inventoryReportUrl,
 } from '../api/settings';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 
@@ -40,6 +42,11 @@ export function SettingsPage() {
   const model = useQuery({ queryKey: ['settings', 'model'], queryFn: getModel });
   const errors = useQuery({ queryKey: ['admin', 'recent-errors'], queryFn: () => getRecentErrors(20) });
   const backups = useQuery({ queryKey: ['admin', 'backups'], queryFn: listBackups });
+  const activity = useQuery({ queryKey: ['admin', 'activity'], queryFn: () => getActivityLog(50) });
+  const ebay = useQuery({ queryKey: ['admin', 'ebay'], queryFn: getEbayCreds });
+
+  const [ebayAppId, setEbayAppId] = useState('');
+  const [ebayCertId, setEbayCertId] = useState('');
 
   useEffect(() => {
     if (!model.data?.model_id) return;
@@ -99,6 +106,20 @@ export function SettingsPage() {
       qc.invalidateQueries({ queryKey: ['settings', 'model'] });
       setTestResult(null);
     },
+  });
+
+  const saveEbayMut = useMutation({
+    mutationFn: () => setEbayCreds({ app_id: ebayAppId.trim(), cert_id: ebayCertId.trim() }),
+    onSuccess: () => {
+      setEbayAppId('');
+      setEbayCertId('');
+      qc.invalidateQueries({ queryKey: ['admin', 'ebay'] });
+    },
+  });
+
+  const deleteEbayMut = useMutation({
+    mutationFn: deleteEbayCreds,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'ebay'] }),
   });
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -308,6 +329,121 @@ export function SettingsPage() {
               ))}
             </div>
           )}
+        </div>
+      </div>
+
+      {/* === eBay credentials === */}
+      <div className="card mb-3">
+        <div className="card-body">
+          <div className="card-title">eBay Comparable Listings (optional)</div>
+          <p className="text-secondary small mb-3">
+            When configured, hat analysis pulls live comparable-listings prices
+            from eBay's Browse API. Free 5,000 calls/day; get an App ID + Cert ID
+            at{' '}
+            <a href="https://developer.ebay.com/" target="_blank" rel="noopener noreferrer">
+              developer.ebay.com
+            </a>.
+          </p>
+          {ebay.data?.configured ? (
+            <div className="mb-3">
+              <div className="hr-metric mb-2">
+                <div className="hr-metric-label">Active App ID · {ebay.data.marketplace}</div>
+                <div className="hr-metric-value font-mono">{ebay.data.app_id_masked}</div>
+              </div>
+              <button
+                type="button"
+                className="btn btn-outline-danger btn-sm"
+                onClick={() => { if (confirm('Remove eBay credentials?')) deleteEbayMut.mutate(); }}
+              >Remove</button>
+            </div>
+          ) : (
+            <p className="text-muted small mb-3">
+              Not configured — eBay tile shows the search deep-link only, no live prices.
+            </p>
+          )}
+          <label className="form-label">App ID (Client ID)</label>
+          <input
+            type="text"
+            className="form-control mb-2"
+            value={ebayAppId}
+            onChange={e => setEbayAppId(e.target.value)}
+            autoComplete="off"
+          />
+          <label className="form-label">Cert ID (Client Secret)</label>
+          <input
+            type="password"
+            className="form-control mb-2"
+            value={ebayCertId}
+            onChange={e => setEbayCertId(e.target.value)}
+            autoComplete="off"
+          />
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => saveEbayMut.mutate()}
+            disabled={!ebayAppId.trim() || !ebayCertId.trim() || saveEbayMut.isPending}
+          >
+            {saveEbayMut.isPending ? 'Saving…' : 'Save'}
+          </button>
+          {saveEbayMut.error && (
+            <div className="alert alert-danger mt-3 mb-0 small">{String(saveEbayMut.error)}</div>
+          )}
+        </div>
+      </div>
+
+      {/* === Activity log === */}
+      <div className="card mb-3">
+        <div className="card-body">
+          <div className="d-flex justify-content-between align-items-center mb-2">
+            <div className="card-title mb-0">Recent Activity</div>
+            <button
+              type="button"
+              className="btn btn-outline-secondary btn-sm"
+              onClick={() => qc.invalidateQueries({ queryKey: ['admin', 'activity'] })}
+              disabled={activity.isFetching}
+            >{activity.isFetching ? '…' : 'Refresh'}</button>
+          </div>
+          {(activity.data?.length ?? 0) === 0 ? (
+            <p className="text-secondary small mb-0">No activity logged yet.</p>
+          ) : (
+            <div>
+              {activity.data?.slice(0, 25).map(row => (
+                <div key={row.id} className="hr-color-row" style={{ paddingTop: '0.5rem' }}>
+                  <div className="flex-grow-1" style={{ minWidth: 0 }}>
+                    <div className="small" style={{
+                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                    }}>{row.summary}</div>
+                    <div className="text-muted small font-mono" style={{ fontSize: '0.7rem' }}>
+                      {row.kind}
+                    </div>
+                  </div>
+                  <div className="text-muted small font-mono" style={{ fontSize: '0.7rem' }}>
+                    {new Date(row.occurred_at).toLocaleString()}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* === Inventory report === */}
+      <div className="card mb-3">
+        <div className="card-body">
+          <div className="card-title">Inventory Report</div>
+          <p className="text-secondary small mb-3">
+            Print-friendly HTML — use your browser's <strong>Print → Save as PDF</strong>
+            to export. Includes thumbnails, totals, brand / model, condition, location,
+            and best-available current value for every hat.
+          </p>
+          <div className="d-flex gap-2 flex-wrap">
+            <a href={inventoryReportUrl()} target="_blank" rel="noopener noreferrer" className="btn btn-primary">
+              Open Report (active hats)
+            </a>
+            <a href={inventoryReportUrl({ includeDisposed: true })} target="_blank" rel="noopener noreferrer" className="btn btn-outline-primary">
+              Include Disposed
+            </a>
+          </div>
         </div>
       </div>
 

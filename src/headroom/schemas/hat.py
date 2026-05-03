@@ -94,8 +94,30 @@ class HatRead(BaseModel):
     analysis_error: str | None = None
     analyzed_at: datetime | None = None
 
+    # v0.3 — disposition
+    disposed_at: datetime | None = None
+    disposed_via: str | None = None
+    disposed_price: float | None = None
+    disposed_to: str | None = None
+    disposed_notes: str | None = None
+
+    # v0.4 — eBay comps
+    ebay_avg_price: float | None = None
+    ebay_median_price: float | None = None
+    ebay_listing_count: int | None = None
+    ebay_search_url: str | None = None
+    ebay_checked_at: datetime | None = None
+
     created_at: datetime
     updated_at: datetime
+
+
+class HatDispose(BaseModel):
+    via: str  # sold | gifted | lost | trashed | trade
+    price: float | None = None
+    to: str | None = None
+    notes: str | None = None
+    disposed_at: datetime | None = None
 
 
 class ColorsUpdate(BaseModel):

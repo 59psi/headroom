@@ -31,6 +31,18 @@ _HAT_COLUMN_DDL: dict[str, str] = {
     "analysis_status": "ALTER TABLE hats ADD COLUMN analysis_status VARCHAR(20)",
     "analysis_error": "ALTER TABLE hats ADD COLUMN analysis_error TEXT",
     "analyzed_at": "ALTER TABLE hats ADD COLUMN analyzed_at DATETIME",
+    # v0.3 — disposition (sold/gifted/lost/trashed/trade)
+    "disposed_at": "ALTER TABLE hats ADD COLUMN disposed_at DATETIME",
+    "disposed_via": "ALTER TABLE hats ADD COLUMN disposed_via VARCHAR(20)",
+    "disposed_price": "ALTER TABLE hats ADD COLUMN disposed_price FLOAT",
+    "disposed_to": "ALTER TABLE hats ADD COLUMN disposed_to VARCHAR(120)",
+    "disposed_notes": "ALTER TABLE hats ADD COLUMN disposed_notes TEXT",
+    # v0.4 — eBay live comparable-listings prices
+    "ebay_avg_price": "ALTER TABLE hats ADD COLUMN ebay_avg_price FLOAT",
+    "ebay_median_price": "ALTER TABLE hats ADD COLUMN ebay_median_price FLOAT",
+    "ebay_listing_count": "ALTER TABLE hats ADD COLUMN ebay_listing_count INTEGER",
+    "ebay_search_url": "ALTER TABLE hats ADD COLUMN ebay_search_url VARCHAR(500)",
+    "ebay_checked_at": "ALTER TABLE hats ADD COLUMN ebay_checked_at DATETIME",
 }
 
 

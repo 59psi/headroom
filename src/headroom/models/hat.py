@@ -44,6 +44,20 @@ class Hat(Base):
     analysis_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     analyzed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
+    # v0.3 — disposition (sold/gifted/lost/trashed/trade)
+    disposed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    disposed_via: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    disposed_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    disposed_to: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    disposed_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # v0.4 — eBay live comparable-listings prices
+    ebay_avg_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ebay_median_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ebay_listing_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ebay_search_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    ebay_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()
     )

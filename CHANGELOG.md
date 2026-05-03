@@ -4,6 +4,100 @@ All notable changes are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] — 2026-05-03 — _Polish_
+
+PWA install + photo crop on upload. Pure UX wins, no data model touches.
+
+### Added
+- **Installable PWA.** Proper `manifest.json` (192px + 512px + maskable
+  icons, standalone display, theme color, background color) and
+  `apple-touch-icon` link in `index.html`. Generated PNG icons from the
+  seed logo via Pillow on every build. iOS "Add to Home Screen" now
+  produces a fullscreen Headroom app with the brand icon.
+- **Photo edit on upload** via `react-easy-crop` (~30KB gzipped, no peer
+  deps). PhotoCapture flow now: pick → crop modal (free aspect, 90°
+  rotate, zoom slider) → upload. Cropping happens client-side via canvas;
+  backend pipeline is unchanged. Cancelling the crop modal uploads the
+  original.
+
+## [0.4.0] — 2026-05-03 — _Real Numbers_
+
+Live eBay comparable-listings prices replace the heuristic resale guess.
+Insurance-grade inventory report.
+
+### Added
+- **eBay Browse-API integration.** `services/ebay_service.py` does OAuth
+  client-credentials → token cache → search by `brand + model + style`,
+  returns mean / median / count of currently-listed comparable prices.
+  Refreshes automatically when Claude finishes analysis (best-effort,
+  never fails the upload). Per-hat refresh button on the detail page.
+  New Hat columns: `ebay_avg_price`, `ebay_median_price`,
+  `ebay_listing_count`, `ebay_search_url`, `ebay_checked_at`.
+- **Settings UI for eBay creds** — admin-gated `app_id` + `cert_id` +
+  `marketplace` (default `EBAY_US`), masked on read, env-var fallback
+  via `HEADROOM_EBAY_APP_ID` / `HEADROOM_EBAY_CERT_ID`.
+- **Inventory Report** — `GET /api/admin/inventory-report?include_disposed=&include_photos=`
+  returns a self-contained HTML page with a print stylesheet (A4,
+  page-break-inside avoid). Two-column totals tile + per-hat row with
+  thumbnail, brand/model, condition, location, original retail, and
+  best-available current value. Settings page button opens the report
+  in a new tab; user uses browser Print → Save as PDF. Zero new heavy
+  deps (vs. WeasyPrint's 200MB cairo / xhtml2pdf).
+- **Hat detail Valuation card** now shows three tiles side-by-side:
+  New Retail / eBay Median / Resale (manual), plus a refresh button
+  and deep-link buttons to both eBay search and the existing Melin
+  Recap link.
+
+### Notes
+- The free Browse-API tier is 5,000 calls/day; with caching + the rare
+  brand/model identifier changes you'll be nowhere near it.
+- Browse API surfaces *currently listed* items, not sold prices —
+  asking prices skew higher than realized values. Marketplace Insights
+  (sold prices) requires partner approval; deferred.
+
+## [0.3.0] — 2026-05-03 — _Inventory Loop_
+
+Hats in fast, hats tracked, hats out, all audited.
+
+### Added
+- **Activity log** — append-only `activity_log` table with `kind /
+  entity_type / entity_id / summary / details(JSON)`. Hooks at every
+  hat-service write path emit rows automatically. `/api/admin/activity-log`
+  endpoint with filtering by `kind` and `entity_type`. Daily prune task
+  (configurable retention via `HEADROOM_ACTIVITY_LOG_RETENTION_DAYS=90`).
+  New "Recent Activity" card on the Settings page.
+- **Sale / disposition tracking.** Five new Hat columns: `disposed_at`,
+  `disposed_via` (sold/gifted/lost/trashed/trade), `disposed_price`,
+  `disposed_to`, `disposed_notes`. Soft-delete only — undoable via
+  `DELETE /api/hats/{id}/dispose`. Disposed hats free their case slot
+  but remain in the DB (history preserved). `GET /api/hats?status=`
+  defaults to `active`; `disposed` and `all` available. Hat detail
+  page gets a Disposition card with a modal form for disposing +
+  an "Undo — restore" action. Valuation page surfaces realized values.
+- **Bulk photo import.** Multipart upload of up to 100 photos creates
+  an `import_jobs` row + `import_job_items` per file, queues a single
+  background asyncio worker that runs the existing pipeline one-at-a-time
+  (resize → bg-remove → Claude → DB). Per-file status, hat-id link
+  on completion, cancellation. Survives container restart (queued
+  items re-enqueue at boot). New `/hats/import` page with drag-drop
+  + per-file progress + defaults (style/size/condition/case) applied
+  to every hat.
+
+### Changed
+- `_validate_capacity` skips disposed hats — sold/lost hats no longer
+  count against case capacity.
+- `_get_next_position` excludes disposed hats — the slot reopens.
+
+### Tests: 81 → 93 (+12)
+- `tests/test_disposition.py` — dispose + undispose + status filter +
+  capacity-respecting-disposed.
+- `tests/test_activity_log.py` — log emission, count endpoint, filters.
+- `tests/test_import.py` — job creation, item structure, content-type
+  rejection, cancellation. Worker disabled in conftest so jobs stay
+  queued for assertion.
+
+---
+
 ## [0.2.2] — 2026-05-02 — _author-question follow-ups_
 
 Closes the action items from the 10 reviewer questions in the archaeology bundle's

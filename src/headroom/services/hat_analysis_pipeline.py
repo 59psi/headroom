@@ -30,6 +30,7 @@ from headroom.services.claude_analysis import (
     HatAnalysis,
     analyze_hat_image,
 )
+from headroom.services.ebay_service import EbayError, find_comps
 from headroom.services.melin_recap import build_resale_pointer
 
 logger = logging.getLogger(__name__)
@@ -81,6 +82,16 @@ async def finalize_hat_photo(
         return hat
 
     _apply_analysis(hat, analysis)
+
+    # eBay comp refresh — best-effort, never fail the upload over it.
+    if hat.brand and hat.model_name:
+        try:
+            comps = await find_comps(db, brand=hat.brand, model=hat.model_name, style=hat.style)
+            for k, v in comps.items():
+                setattr(hat, k, v)
+        except EbayError as exc:
+            logger.info("eBay comp refresh skipped for hat %s: %s", hat.id, exc)
+
     return hat
 
 

@@ -1,10 +1,11 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { getHat, deleteHat, uploadHatPhoto, reanalyzeHat } from '../api/hats';
+import { getHat, deleteHat, uploadHatPhoto, reanalyzeHat, refreshEbayForHat, undisposeHat } from '../api/hats';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ConditionBadge } from '../components/common/ConditionBadge';
 import { ImageLightbox } from '../components/common/ImageLightbox';
 import { PhotoCapture } from '../components/photos/PhotoCapture';
+import { DisposeModal } from '../components/common/DisposeModal';
 import type { HatRead } from '../types';
 import { useState } from 'react';
 
@@ -42,6 +43,8 @@ export function HatDetailPage() {
   const qc = useQueryClient();
   const [uploading, setUploading] = useState(false);
   const [reanalyzing, setReanalyzing] = useState(false);
+  const [disposeOpen, setDisposeOpen] = useState(false);
+  const [refreshingEbay, setRefreshingEbay] = useState(false);
 
   const id = Number(hatId);
   const { data, isLoading, error } = useQuery({
@@ -172,39 +175,133 @@ export function HatDetailPage() {
       </div>
 
       {/* Pricing */}
-      {(data.estimated_new_price !== null || data.resale_price_url) && (
+      {(data.estimated_new_price !== null || data.resale_price_url || data.ebay_search_url) && (
         <div className="card mb-3">
           <div className="card-body">
-            <div className="card-title">Valuation</div>
+            <div className="d-flex justify-content-between align-items-center mb-2">
+              <div className="card-title mb-0">Valuation</div>
+              {data.brand && data.model_name && (
+                <button
+                  type="button"
+                  className="btn btn-outline-secondary btn-sm"
+                  onClick={async () => {
+                    setRefreshingEbay(true);
+                    try {
+                      await refreshEbayForHat(id);
+                      qc.invalidateQueries({ queryKey: ['hat', id] });
+                    } finally { setRefreshingEbay(false); }
+                  }}
+                  disabled={refreshingEbay}
+                  title="Refresh eBay comparable-listings prices"
+                >
+                  {refreshingEbay ? '↻ eBay…' : '↻ eBay'}
+                </button>
+              )}
+            </div>
             <div className="row g-2">
-              <div className="col-6">
+              <div className="col-4">
                 <PriceTile
                   label="New Retail"
                   value={data.estimated_new_price ?? null}
                   source={data.estimated_new_price_source}
                 />
               </div>
-              <div className="col-6">
+              <div className="col-4">
                 <PriceTile
-                  label="Resale"
+                  label="eBay Median"
+                  value={data.ebay_median_price ?? null}
+                  source={data.ebay_listing_count != null
+                    ? `${data.ebay_listing_count} listings`
+                    : 'configure eBay key'}
+                />
+              </div>
+              <div className="col-4">
+                <PriceTile
+                  label="Resale (manual)"
                   value={data.resale_price ?? null}
                   source={data.resale_price_source}
                 />
               </div>
             </div>
-            {data.resale_price_url && (
-              <a
-                href={data.resale_price_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn btn-outline-primary btn-sm w-100 mt-3"
-              >
-                Browse on {data.resale_price_source || 'Resale Marketplace'} →
-              </a>
-            )}
+            <div className="d-flex gap-2 flex-wrap mt-3">
+              {data.ebay_search_url && (
+                <a
+                  href={data.ebay_search_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn btn-outline-primary btn-sm flex-fill"
+                >
+                  Browse eBay →
+                </a>
+              )}
+              {data.resale_price_url && (
+                <a
+                  href={data.resale_price_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn btn-outline-primary btn-sm flex-fill"
+                >
+                  Browse {data.resale_price_source || 'Resale'} →
+                </a>
+              )}
+            </div>
           </div>
         </div>
       )}
+
+      {/* Disposition */}
+      <div className="card mb-3">
+        <div className="card-body">
+          <div className="card-title">Disposition</div>
+          {data.disposed_at ? (
+            <>
+              <div className="hr-metric mb-2">
+                <div className="hr-metric-label">{data.disposed_via?.toUpperCase()} on {new Date(data.disposed_at).toLocaleDateString()}</div>
+                {data.disposed_price != null && (
+                  <div className="hr-metric-value hr-price">
+                    ${data.disposed_price.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                  </div>
+                )}
+                {data.disposed_to && (
+                  <div className="text-secondary small" style={{ marginTop: 4 }}>
+                    {data.disposed_to}
+                  </div>
+                )}
+                {data.disposed_notes && (
+                  <div className="text-muted small" style={{ marginTop: 4, fontStyle: 'italic' }}>
+                    "{data.disposed_notes}"
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                className="btn btn-outline-secondary btn-sm"
+                onClick={async () => {
+                  if (!confirm('Restore this hat to active inventory?')) return;
+                  await undisposeHat(id);
+                  qc.invalidateQueries({ queryKey: ['hat', id] });
+                  qc.invalidateQueries({ queryKey: ['hats'] });
+                }}
+              >
+                Undo — restore to active
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="text-secondary small mb-2">
+                Mark this hat as sold, gifted, traded, lost, or trashed. Soft-delete only — undoable.
+              </p>
+              <button
+                type="button"
+                className="btn btn-outline-primary btn-sm"
+                onClick={() => setDisposeOpen(true)}
+              >
+                Mark as Disposed
+              </button>
+            </>
+          )}
+        </div>
+      </div>
 
       {/* Specs */}
       <div className="card mb-3">
@@ -299,6 +396,8 @@ export function HatDetailPage() {
           Delete
         </button>
       </div>
+
+      <DisposeModal hatId={data.id} show={disposeOpen} onClose={() => setDisposeOpen(false)} />
     </>
   );
 }

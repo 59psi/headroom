@@ -14,6 +14,7 @@ from headroom.schemas.hat import (
     ColorsUpdate,
     HatAssign,
     HatCreate,
+    HatDispose,
     HatRead,
     HatUpdate,
 )
@@ -70,6 +71,16 @@ def _hat_to_read(hat) -> HatRead:
         analysis_status=hat.analysis_status,
         analysis_error=hat.analysis_error,
         analyzed_at=hat.analyzed_at,
+        disposed_at=hat.disposed_at,
+        disposed_via=hat.disposed_via,
+        disposed_price=hat.disposed_price,
+        disposed_to=hat.disposed_to,
+        disposed_notes=hat.disposed_notes,
+        ebay_avg_price=hat.ebay_avg_price,
+        ebay_median_price=hat.ebay_median_price,
+        ebay_listing_count=hat.ebay_listing_count,
+        ebay_search_url=hat.ebay_search_url,
+        ebay_checked_at=hat.ebay_checked_at,
         created_at=hat.created_at,
         updated_at=hat.updated_at,
     )
@@ -86,11 +97,12 @@ async def list_hats(
     case_id: int | None = Query(None),
     style: str | None = Query(None),
     condition: str | None = Query(None),
+    status: str = Query("active", pattern="^(active|disposed|all)$"),
     offset: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
 ):
-    hats = await hat_service.list_hats(db, case_id, style, condition, offset, limit)
+    hats = await hat_service.list_hats(db, case_id, style, condition, status, offset, limit)
     return [_hat_to_read(h) for h in hats]
 
 
@@ -118,6 +130,26 @@ async def assign_hat(
     hat_id: int, data: HatAssign, db: AsyncSession = Depends(get_db)
 ):
     hat = await hat_service.assign_hat(db, hat_id, data.case_id)
+    return _hat_to_read(hat)
+
+
+@router.post("/{hat_id}/dispose", response_model=HatRead)
+async def dispose_hat(
+    hat_id: int, data: HatDispose, db: AsyncSession = Depends(get_db)
+):
+    """Mark a hat as sold/gifted/lost/trashed/trade. Soft delete — undoable."""
+    hat = await hat_service.dispose_hat(
+        db, hat_id,
+        via=data.via, price=data.price, to=data.to, notes=data.notes,
+        disposed_at=data.disposed_at,
+    )
+    return _hat_to_read(hat)
+
+
+@router.delete("/{hat_id}/dispose", response_model=HatRead)
+async def undispose_hat(hat_id: int, db: AsyncSession = Depends(get_db)):
+    """Restore a previously-disposed hat back to active status."""
+    hat = await hat_service.undispose_hat(db, hat_id)
     return _hat_to_read(hat)
 
 

@@ -14,6 +14,7 @@ import { RoomsPage } from './pages/RoomsPage';
 import { SearchPage } from './pages/SearchPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { ValuationPage } from './pages/ValuationPage';
+import { BulkImportPage } from './pages/BulkImportPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -37,6 +38,7 @@ export function App() {
             <Route path="/cases/:displayId/edit" element={<EditCasePage />} />
             <Route path="/hats" element={<HatsPage />} />
             <Route path="/hats/new" element={<AddHatPage />} />
+            <Route path="/hats/import" element={<BulkImportPage />} />
             <Route path="/hats/:hatId" element={<HatDetailPage />} />
             <Route path="/hats/:hatId/edit" element={<EditHatPage />} />
             <Route path="/rooms" element={<RoomsPage />} />

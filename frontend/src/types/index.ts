@@ -66,8 +66,59 @@ export interface HatRead {
   analysis_error: string | null;
   analyzed_at: string | null;
 
+  // v0.3 disposition
+  disposed_at: string | null;
+  disposed_via: string | null;
+  disposed_price: number | null;
+  disposed_to: string | null;
+  disposed_notes: string | null;
+
+  // v0.4 eBay
+  ebay_avg_price: number | null;
+  ebay_median_price: number | null;
+  ebay_listing_count: number | null;
+  ebay_search_url: string | null;
+  ebay_checked_at: string | null;
+
   created_at: string;
   updated_at: string;
+}
+
+export interface ImportJobItem {
+  id: number;
+  filename: string;
+  status: 'queued' | 'processing' | 'done' | 'error' | 'skipped' | 'cancelled';
+  hat_id: number | null;
+  error: string | null;
+  bytes: number;
+}
+
+export interface ImportJob {
+  id: number;
+  created_at: string;
+  finished_at: string | null;
+  total: number;
+  done: number;
+  errors: number;
+  skipped: number;
+  status: 'queued' | 'running' | 'done' | 'cancelled';
+  items: ImportJobItem[];
+}
+
+export interface ActivityRow {
+  id: number;
+  occurred_at: string;
+  kind: string;
+  entity_type: string;
+  entity_id: number | null;
+  summary: string;
+  details: string | null;
+}
+
+export interface EbayCredsStatus {
+  configured: boolean;
+  app_id_masked: string | null;
+  marketplace: string;
 }
 
 export interface SearchResult {

@@ -12,9 +12,9 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from headroom.config import settings
-from headroom.database import init_db
+from headroom.database import async_session, init_db
 from headroom.routes import api_router
-from headroom.services import backup_service
+from headroom.services import activity_service, backup_service, import_service
 
 logger = logging.getLogger(__name__)
 
@@ -89,15 +89,35 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             )
         )
 
+    # Bulk-import worker — single async task, drains the import queue.
+    if os.environ.get("HEADROOM_IMPORT_WORKER_ENABLED", "true").lower() in ("1", "true", "yes"):
+        await import_service.start_worker()
+
+    # Activity-log retention pruner — runs once per day in the background
+    async def _prune_loop():
+        while True:
+            try:
+                await asyncio.sleep(24 * 3600)
+                async with async_session() as db:
+                    await activity_service.prune_activity(db)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("activity_log prune loop error: %s", exc)
+
+    prune_task = asyncio.create_task(_prune_loop())
+
     try:
         yield
     finally:
-        if backup_task is not None:
-            backup_task.cancel()
-            try:
-                await backup_task
-            except asyncio.CancelledError:
-                pass
+        for task in (backup_task, prune_task):
+            if task is not None:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+        await import_service.stop_worker()
 
 
 def _safe_spa_path(full_path: str) -> Path | None:

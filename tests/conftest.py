@@ -1,7 +1,8 @@
 import os
 
-# Disable scheduled backups before app code imports run.
+# Disable scheduled backups + the import worker before app code imports run.
 os.environ.setdefault("HEADROOM_BACKUP_ENABLED", "false")
+os.environ.setdefault("HEADROOM_IMPORT_WORKER_ENABLED", "false")
 
 import pytest
 from httpx import ASGITransport, AsyncClient

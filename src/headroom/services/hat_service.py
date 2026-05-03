@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -6,9 +8,13 @@ from sqlalchemy.orm import selectinload
 from headroom.models.case import Case
 from headroom.models.hat import Hat
 from headroom.schemas.hat import HatCreate, HatStyle, HatUpdate
+from headroom.services.activity_service import log_activity
 
 MAX_REGULAR = 4
 MAX_BEANIE = 6
+
+# Disposition `via` values accepted by the API.
+DISPOSITION_VIAS = {"sold", "gifted", "lost", "trashed", "trade"}
 
 
 async def _reload_hat(db: AsyncSession, hat_id: int) -> Hat:
@@ -27,7 +33,7 @@ async def _reload_hat(db: AsyncSession, hat_id: int) -> Hat:
 async def _get_next_position(db: AsyncSession, case_id: int) -> int:
     result = await db.execute(
         select(func.coalesce(func.max(Hat.position_in_case), 0)).where(
-            Hat.case_id == case_id
+            Hat.case_id == case_id, Hat.disposed_at.is_(None)
         )
     )
     return result.scalar_one() + 1
@@ -36,7 +42,8 @@ async def _get_next_position(db: AsyncSession, case_id: int) -> int:
 async def _validate_capacity(
     db: AsyncSession, case_id: int, is_beanie: bool, exclude_hat_id: int | None = None
 ) -> None:
-    query = select(Hat).where(Hat.case_id == case_id)
+    # Disposed hats no longer occupy a slot.
+    query = select(Hat).where(Hat.case_id == case_id, Hat.disposed_at.is_(None))
     if exclude_hat_id:
         query = query.where(Hat.id != exclude_hat_id)
     result = await db.execute(query)
@@ -93,6 +100,11 @@ async def create_hat(db: AsyncSession, data: HatCreate) -> Hat:
     )
     db.add(hat)
     await db.commit()
+    await log_activity(
+        db, kind="hat.created", entity_type="hat", entity_id=hat.id,
+        summary=f"Hat #{hat.id} created · style={data.style} size={data.size}",
+    )
+    await db.commit()
     return await _reload_hat(db, hat.id)
 
 
@@ -101,6 +113,7 @@ async def list_hats(
     case_id: int | None = None,
     style: str | None = None,
     condition: str | None = None,
+    status: str = "active",
     offset: int = 0,
     limit: int = 50,
 ) -> list[Hat]:
@@ -117,6 +130,11 @@ async def list_hats(
         query = query.where(Hat.style == style)
     if condition:
         query = query.where(Hat.condition == condition)
+    if status == "active":
+        query = query.where(Hat.disposed_at.is_(None))
+    elif status == "disposed":
+        query = query.where(Hat.disposed_at.is_not(None))
+    # status == "all" → no filter
     query = query.order_by(Hat.id).offset(offset).limit(limit)
     result = await db.execute(query)
     return list(result.scalars().all())
@@ -151,12 +169,24 @@ async def update_hat(db: AsyncSession, hat_id: int, data: HatUpdate) -> Hat:
         setattr(hat, field, value)
 
     await db.commit()
+    if update_data:
+        await log_activity(
+            db, kind="hat.updated", entity_type="hat", entity_id=hat_id,
+            summary=f"Hat #{hat_id} updated",
+            details={"fields": list(update_data.keys())},
+        )
+        await db.commit()
     return await _reload_hat(db, hat_id)
 
 
 async def delete_hat(db: AsyncSession, hat_id: int) -> None:
     hat = await get_hat(db, hat_id)
     await db.delete(hat)
+    await db.commit()
+    await log_activity(
+        db, kind="hat.deleted", entity_type="hat", entity_id=hat_id,
+        summary=f"Hat #{hat_id} permanently deleted",
+    )
     await db.commit()
 
 
@@ -175,5 +205,73 @@ async def assign_hat(db: AsyncSession, hat_id: int, case_id: int | None) -> Hat:
         hat.case_id = None
         hat.position_in_case = None
 
+    await db.commit()
+    await log_activity(
+        db, kind="hat.assigned", entity_type="hat", entity_id=hat_id,
+        summary=f"Hat #{hat_id} {'assigned to case ' + str(case_id) if case_id else 'unassigned'}",
+    )
+    await db.commit()
+    return await _reload_hat(db, hat_id)
+
+
+async def dispose_hat(
+    db: AsyncSession,
+    hat_id: int,
+    *,
+    via: str,
+    price: float | None = None,
+    to: str | None = None,
+    notes: str | None = None,
+    disposed_at: datetime | None = None,
+) -> Hat:
+    if via not in DISPOSITION_VIAS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid disposal kind. Must be one of: {', '.join(sorted(DISPOSITION_VIAS))}",
+        )
+    hat = await get_hat(db, hat_id)
+    hat.disposed_at = disposed_at or datetime.now(timezone.utc)
+    hat.disposed_via = via
+    hat.disposed_price = price
+    hat.disposed_to = to
+    hat.disposed_notes = notes
+    # Free the case slot — disposed hats stay tied to their last case for
+    # history but no longer count against capacity (see _validate_capacity).
+    # We deliberately don't unassign so the case detail page can show
+    # "previously held" hats if we want that later. Capacity check ignores
+    # disposed hats already.
+    await db.commit()
+    await log_activity(
+        db, kind="hat.disposed", entity_type="hat", entity_id=hat_id,
+        summary=f"Hat #{hat_id} disposed via {via}" + (f" for ${price:.2f}" if price else ""),
+        details={"via": via, "price": price, "to": to},
+    )
+    await db.commit()
+    return await _reload_hat(db, hat_id)
+
+
+async def undispose_hat(db: AsyncSession, hat_id: int) -> Hat:
+    hat = await get_hat(db, hat_id)
+    if hat.disposed_at is None:
+        return hat
+    # If the original case is still around AND has space, the hat returns
+    # there. Otherwise it becomes unassigned.
+    target_case_id = hat.case_id
+    hat.disposed_at = None
+    hat.disposed_via = None
+    hat.disposed_price = None
+    hat.disposed_to = None
+    hat.disposed_notes = None
+    if target_case_id is not None:
+        try:
+            await _validate_capacity(db, target_case_id, hat.is_beanie, exclude_hat_id=hat.id)
+        except HTTPException:
+            hat.case_id = None
+            hat.position_in_case = None
+    await db.commit()
+    await log_activity(
+        db, kind="hat.undisposed", entity_type="hat", entity_id=hat_id,
+        summary=f"Hat #{hat_id} restored from disposed state",
+    )
     await db.commit()
     return await _reload_hat(db, hat_id)

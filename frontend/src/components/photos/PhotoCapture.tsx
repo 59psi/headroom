@@ -1,4 +1,5 @@
-import { useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { PhotoCropper } from './PhotoCropper';
 
 interface Props {
   onCapture: (file: File) => void;
@@ -8,10 +9,31 @@ interface Props {
 
 export function PhotoCapture({ onCapture, previewUrl, hidePreview }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const [pending, setPending] = useState<{ file: File; url: string } | null>(null);
+
+  // Revoke the temporary blob URL when we're done with it
+  useEffect(() => {
+    return () => {
+      if (pending) URL.revokeObjectURL(pending.url);
+    };
+  }, [pending]);
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    if (file) onCapture(file);
+    if (!file) return;
+    setPending({ file, url: URL.createObjectURL(file) });
+    e.target.value = '';
+  }
+
+  function useOriginal() {
+    if (!pending) return;
+    onCapture(pending.file);
+    setPending(null);
+  }
+
+  function handleCropped(cropped: File) {
+    onCapture(cropped);
+    setPending(null);
   }
 
   return (
@@ -58,6 +80,15 @@ export function PhotoCapture({ onCapture, previewUrl, hidePreview }: Props) {
         onChange={handleChange}
         hidden
       />
+
+      {pending && (
+        <PhotoCropper
+          imageUrl={pending.url}
+          filename={pending.file.name}
+          onCancel={useOriginal /* skipping crop = use original */}
+          onCropped={handleCropped}
+        />
+      )}
     </div>
   );
 }

@@ -12,6 +12,34 @@ container on a Raspberry Pi, looks like 1986.
 
 ---
 
+## What's new
+
+### v0.5 — "Polish"
+- **Installable PWA.** Add to Home Screen on iOS / Android gives a
+  fullscreen Headroom app with proper icons.
+- **Photo edit on upload** — crop + 90° rotate before saving, no need
+  to touch the photo elsewhere.
+
+### v0.4 — "Real Numbers"
+- **Live eBay comparable-listings prices.** Hat detail Valuation card
+  shows New Retail / eBay Median / Resale tiles side-by-side. Refreshes
+  automatically when Claude finishes analysis. Configure App ID + Cert
+  ID in Settings (free 5,000 calls/day on the developer tier).
+- **Insurance-grade inventory report.** One-click HTML report with
+  thumbnails, totals, and best-available current value per hat. Use
+  browser Print → Save as PDF for an inventory or insurance rider.
+
+### v0.3 — "Inventory Loop"
+- **Bulk photo import** — drag a folder of up to 100 photos at
+  `/hats/import`, watch them populate the gallery as the background
+  worker processes them through the Claude pipeline one-at-a-time.
+- **Sale / disposition tracking** — mark a hat as sold (with price +
+  buyer note) / gifted / traded / lost / trashed. Soft-delete only;
+  undoable. Disposed hats free their case slot. Surfaces realized
+  values on the Valuation page.
+- **Activity log** — append-only audit trail of every significant
+  change. Recent activity card on the Settings page.
+
 ## What's new in 0.2 — "Outrun"
 
 - 🎨 **Total UI rebuild** — synthwave/retro-80s design system. Neon magenta on
@@ -139,6 +167,10 @@ we link out for live comparables instead. You can always set
 | `HEADROOM_BACKUP_ENABLED` | `true` | Set to `false` to disable scheduled backups (one-click download still works). |
 | `HEADROOM_BACKUP_INTERVAL_HOURS` | `24` | How often the background scheduler writes a tarball to `/data/backups/`. |
 | `HEADROOM_BACKUP_RETENTION_DAYS` | `7` | How many timestamped backups to keep on disk. Older ones are pruned after each new write. |
+| `HEADROOM_IMPORT_WORKER_ENABLED` | `true` | Set to `false` to disable the bulk-import background worker. |
+| `HEADROOM_ACTIVITY_LOG_RETENTION_DAYS` | `90` | Days of activity_log rows to keep. Pruned daily. |
+| `HEADROOM_EBAY_APP_ID` | _(unset)_ | Default eBay Browse-API App ID. DB-stored value takes precedence. |
+| `HEADROOM_EBAY_CERT_ID` | _(unset)_ | Default eBay Browse-API Cert ID. |
 
 ---
 

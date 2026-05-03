@@ -165,6 +165,7 @@ export function HatsPage() {
               <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><rect x="0" y="0" width="7" height="7" rx="1"/><rect x="9" y="0" width="7" height="7" rx="1"/><rect x="0" y="9" width="7" height="7" rx="1"/><rect x="9" y="9" width="7" height="7" rx="1"/></svg>
             </button>
           </div>
+          <Link to="/hats/import" className="btn btn-outline-primary btn-sm" title="Bulk import">⇪</Link>
           <Link to="/hats/new" className="btn btn-primary btn-sm">+ New</Link>
         </div>
       </div>

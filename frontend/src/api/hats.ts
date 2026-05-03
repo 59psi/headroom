@@ -41,6 +41,23 @@ export function reanalyzeHat(id: number) {
   return apiFetch<HatRead>(`/api/hats/${id}/reanalyze`, { method: 'POST' });
 }
 
+export function disposeHat(id: number, data: {
+  via: string; price?: number | null; to?: string | null; notes?: string | null;
+}) {
+  return apiFetch<HatRead>(`/api/hats/${id}/dispose`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export function undisposeHat(id: number) {
+  return apiFetch<HatRead>(`/api/hats/${id}/dispose`, { method: 'DELETE' });
+}
+
+export function refreshEbayForHat(id: number) {
+  return apiFetch<unknown>(`/api/admin/ebay/refresh/${id}`, { method: 'POST' });
+}
+
 export function updateHatColors(id: number, colors: ColorTag[]) {
   return apiFetch<HatRead>(`/api/hats/${id}/colors`, {
     method: 'PUT',
