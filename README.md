@@ -14,6 +14,18 @@ container on a Raspberry Pi, looks like 1986.
 
 ## What's new
 
+### v0.6 — "Share to Headroom"
+- **Android Chrome share sheet** — install Headroom as a PWA and a
+  "Share to Headroom" entry appears in the system share menu. Selecting
+  multiple photos drops them straight into a bulk-import job. No setup
+  beyond Install app.
+- **iOS Shortcut recipe** in Settings — Apple doesn't support Web Share
+  Target on iOS yet, so there's a step-by-step recipe for a one-time
+  Shortcut that posts photos from the Photos share sheet directly to
+  the bulk-import endpoint. Build it once, share forever.
+- **Version always visible.** Footer shows the running build's version
+  (baked from `package.json` at build time).
+
 ### v0.5 — "Polish"
 - **Installable PWA.** Add to Home Screen on iOS / Android gives a
   fullscreen Headroom app with proper icons.
@@ -103,6 +115,23 @@ For production: `cd frontend && npm run build`, then run uvicorn — the FastAPI
 app serves the built SPA from `frontend/dist`.
 
 ---
+
+## Adding hats fast
+
+Three paths, in order of friction:
+
+1. **One at a time** — `Hats → + New`. Crop modal pops on photo pick. ~10s per hat.
+2. **Bulk** — `Hats → ⇪` (or `/hats/import`). Pick up to 100 photos at once
+   from the iOS / Android Photos picker. Background worker grinds through them
+   one-at-a-time. Watch progress live; tap any finished item to jump to the hat.
+3. **Share sheet** — share photos from the Photos app directly into Headroom.
+   Auto-creates an import job and lands you on the progress page.
+   - **Android Chrome**: install Headroom as a PWA (browser menu →
+     Install app). "Share to Headroom" appears in the system share sheet
+     automatically. Multi-select supported.
+   - **iOS Safari**: open `Settings → Share Photos to Headroom` in the app
+     for the one-time Shortcut recipe. After building the Shortcut once,
+     iOS Photos → Share → "Add to Headroom" works the same way.
 
 ## Configuring the AI features
 
