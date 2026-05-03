@@ -181,7 +181,12 @@ export function HomePage() {
               </div>
             </div>
 
-            <div className="hr-tier-label mb-2">By condition</div>
+            <div className="d-flex justify-content-between align-items-center mb-2">
+              <div className="hr-tier-label">By condition</div>
+              <Link to="/valuation" className="btn btn-outline-primary btn-sm">
+                Full breakdown →
+              </Link>
+            </div>
             {(['new_with_tags', 'new', 'worn'] as const).map(key => {
               const b = valuation.buckets[key];
               if (b.count === 0) return null;

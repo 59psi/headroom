@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import cast
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -70,11 +70,17 @@ async def recent_errors_count(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/backup")
-async def download_backup():
-    """Stream a one-shot tar.gz of the /data volume (DB + uploads)."""
-    filename = backup_service.streaming_filename()
+async def download_backup(
+    include_uploads: bool = Query(True, description="Include uploads/ tree (photos)"),
+):
+    """Stream a one-shot tar.gz of /data.
+
+    `include_uploads=false` returns a DB-only snapshot — much smaller and
+    much faster when the photo tree is large.
+    """
+    filename = backup_service.streaming_filename(include_uploads=include_uploads)
     return StreamingResponse(
-        backup_service.stream_backup(),
+        backup_service.stream_backup(include_uploads=include_uploads),
         media_type="application/gzip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

@@ -45,10 +45,13 @@ def _db_path() -> Path | None:
     return Path.cwd() / raw
 
 
-def _build_tarball_sync(target_path: Path | None = None) -> bytes | None:
-    """Build a tar.gz of DB + uploads. If target_path given, also write to disk.
+def _build_tarball_sync(target_path: Path | None = None, include_uploads: bool = True) -> bytes | None:
+    """Build a tar.gz of the DB (and optionally uploads). Always gzipped.
 
-    Returns the bytes when target_path is None (for streaming), else None.
+    `include_uploads=False` produces a DB-only snapshot — useful when the
+    photo tree gets large and you only want the metadata captured. Photos
+    are JPEG/PNG (already compressed), so gzipping them gains little; if
+    you keep originals elsewhere you might never want them in the backup.
     """
     db = _db_path()
     uploads = settings.upload_dir
@@ -57,11 +60,12 @@ def _build_tarball_sync(target_path: Path | None = None) -> bytes | None:
     sink = open(target_path, "wb") if target_path else (buf := io.BytesIO())
 
     try:
-        with tarfile.open(fileobj=sink, mode="w:gz") as tar:
+        # gzip level 6 — same as the default; balances compression and CPU
+        # on a Pi. JPEGs barely compress regardless, the DB compresses well.
+        with tarfile.open(fileobj=sink, mode="w:gz", compresslevel=6) as tar:
             if db is not None and db.exists():
                 tar.add(db, arcname=f"data/{db.name}")
-            if uploads.exists():
-                # arcname keeps relative structure under data/uploads/
+            if include_uploads and uploads.exists():
                 tar.add(uploads, arcname="data/uploads")
         if buf is not None:
             return buf.getvalue()
@@ -71,7 +75,7 @@ def _build_tarball_sync(target_path: Path | None = None) -> bytes | None:
             sink.close()
 
 
-async def stream_backup() -> AsyncGenerator[bytes, None]:
+async def stream_backup(include_uploads: bool = True) -> AsyncGenerator[bytes, None]:
     """Build the tarball off the event loop, then yield it as one chunk.
 
     Streaming-the-tar-as-it's-built would be more elegant but tarfile's
@@ -79,14 +83,15 @@ async def stream_backup() -> AsyncGenerator[bytes, None]:
     sizes we expect on a Pi (a few hundred MB at most) one buffered chunk
     is fine.
     """
-    payload = await asyncio.to_thread(_build_tarball_sync, None)
+    payload = await asyncio.to_thread(_build_tarball_sync, None, include_uploads)
     if payload:
         yield payload
 
 
-def _timestamped_name() -> str:
+def _timestamped_name(suffix: str = "") -> str:
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
-    return f"{BACKUP_PREFIX}{ts}{BACKUP_SUFFIX}"
+    extra = f"-{suffix}" if suffix else ""
+    return f"{BACKUP_PREFIX}{ts}{extra}{BACKUP_SUFFIX}"
 
 
 def _list_backups_sync() -> list[Path]:
@@ -152,8 +157,8 @@ async def scheduled_backup_loop(interval_hours: float, retention: int) -> None:
         raise
 
 
-def streaming_filename() -> str:
-    return _timestamped_name()
+def streaming_filename(include_uploads: bool = True) -> str:
+    return _timestamped_name(suffix="" if include_uploads else "db-only")
 
 
 # --- Env-var sourced config (kept here, not in pydantic Settings, so a misset

@@ -9,12 +9,15 @@ import {
 } from '../api/settings';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 
-const KNOWN_MODELS = [
-  'claude-sonnet-4-6',
-  'claude-sonnet-4-5',
-  'claude-opus-4-7',
-  'claude-haiku-4-5-20251001',
+// Curated list of Claude models known to support vision + tool use.
+// "Other…" reveals a free-text input for anything not in the list.
+const KNOWN_MODELS: { id: string; label: string }[] = [
+  { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6 — balanced (default)' },
+  { id: 'claude-sonnet-4-5', label: 'Sonnet 4.5 — older, cheaper' },
+  { id: 'claude-opus-4-7', label: 'Opus 4.7 — most capable, pricier' },
+  { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5 — fastest, cheapest' },
 ];
+const OTHER = '__other__';
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -29,6 +32,7 @@ export function SettingsPage() {
   const [uploading, setUploading] = useState(false);
   const [keyDraft, setKeyDraft] = useState('');
   const [modelDraft, setModelDraft] = useState('');
+  const [modelSelect, setModelSelect] = useState<string>('');
   const [testResult, setTestResult] = useState<{ ok: boolean; detail: string } | null>(null);
 
   const logo = useQuery({ queryKey: ['settings', 'logo'], queryFn: getLogo });
@@ -38,7 +42,13 @@ export function SettingsPage() {
   const backups = useQuery({ queryKey: ['admin', 'backups'], queryFn: listBackups });
 
   useEffect(() => {
-    if (model.data?.model_id && !modelDraft) setModelDraft(model.data.model_id);
+    if (!model.data?.model_id) return;
+    const id = model.data.model_id;
+    if (!modelDraft) setModelDraft(id);
+    if (!modelSelect) {
+      const matches = KNOWN_MODELS.some(m => m.id === id);
+      setModelSelect(matches ? id : OTHER);
+    }
   }, [model.data?.model_id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const uploadMut = useMutation({
@@ -191,21 +201,34 @@ export function SettingsPage() {
               <div className="hr-metric-value font-mono">{modelStatus.model_id}</div>
             </div>
           )}
-          <label className="form-label">Model ID</label>
-          <div className="d-flex gap-2 flex-wrap">
+          <label className="form-label">Model</label>
+          <select
+            className="form-select mb-2"
+            value={modelSelect}
+            onChange={e => {
+              const v = e.target.value;
+              setModelSelect(v);
+              if (v !== OTHER) setModelDraft(v);
+              else setModelDraft('');
+            }}
+          >
+            {KNOWN_MODELS.map(m => (
+              <option key={m.id} value={m.id}>{m.label}</option>
+            ))}
+            <option value={OTHER}>Other (enter custom ID)…</option>
+          </select>
+          {modelSelect === OTHER && (
             <input
               type="text"
-              className="form-control flex-grow-1"
-              style={{ minWidth: 200 }}
-              list="known-models"
-              placeholder="claude-sonnet-4-6"
+              className="form-control mb-2"
+              placeholder="claude-…"
               value={modelDraft}
               onChange={e => setModelDraft(e.target.value)}
               autoComplete="off"
+              autoFocus
             />
-            <datalist id="known-models">
-              {KNOWN_MODELS.map(m => <option key={m} value={m} />)}
-            </datalist>
+          )}
+          <div className="d-flex gap-2 flex-wrap">
             <button
               type="button"
               className="btn btn-primary"
@@ -293,17 +316,27 @@ export function SettingsPage() {
         <div className="card-body">
           <div className="card-title">Backups</div>
           <p className="text-secondary small mb-3">
-            One-click backup downloads a tar.gz of the database + uploaded photos.
-            Scheduled rolling backups run inside the container and are kept under
-            <code> /data/backups/</code>.
+            Backups are gzipped tarballs of <code>/data</code>. Scheduled rolling
+            backups run inside the container and are kept under <code>/data/backups/</code>.
+            Use <strong>DB only</strong> when the photo tree is large and you only
+            need the metadata captured (photos are JPEG/PNG so they barely compress
+            anyway).
           </p>
-          <a
-            href={backupDownloadUrl()}
-            className="btn btn-primary mb-3"
-            download
-          >
-            ↓ Download Backup Now
-          </a>
+          <div className="d-flex gap-2 mb-2 flex-wrap">
+            <a href={backupDownloadUrl(true)} className="btn btn-primary" download>
+              ↓ Full Backup
+            </a>
+            <a href={backupDownloadUrl(false)} className="btn btn-outline-primary" download>
+              ↓ DB Only
+            </a>
+          </div>
+          <p className="text-muted small mb-3" style={{ fontSize: '0.75rem' }}>
+            <strong>Full</strong> = SQLite DB + every uploaded photo (hats, cases, branding).
+            Restore by dropping the extracted <code>data/</code> back into <code>/data/</code>.
+            <br/>
+            <strong>DB only</strong> = just <code>headroom.db</code>. All hat metadata, cases,
+            colors, prices — but no photos. Faster to download.
+          </p>
           {backups.data && backups.data.length > 0 && (
             <div>
               <div className="hr-tier-label mb-2">Scheduled snapshots ({backups.data.length})</div>

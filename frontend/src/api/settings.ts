@@ -67,6 +67,6 @@ export function listBackups() {
 }
 
 /** Returns the URL for the on-demand backup download (anchor target). */
-export function backupDownloadUrl(): string {
-  return '/api/admin/backup';
+export function backupDownloadUrl(includeUploads = true): string {
+  return includeUploads ? '/api/admin/backup' : '/api/admin/backup?include_uploads=false';
 }

@@ -13,6 +13,7 @@ import { EditHatPage } from './pages/EditHatPage';
 import { RoomsPage } from './pages/RoomsPage';
 import { SearchPage } from './pages/SearchPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { ValuationPage } from './pages/ValuationPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -40,6 +41,7 @@ export function App() {
             <Route path="/hats/:hatId/edit" element={<EditHatPage />} />
             <Route path="/rooms" element={<RoomsPage />} />
             <Route path="/search" element={<SearchPage />} />
+            <Route path="/valuation" element={<ValuationPage />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Route>
         </Routes>
