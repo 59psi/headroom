@@ -134,8 +134,11 @@ we link out for live comparables instead. You can always set
 | `HEADROOM_ANTHROPIC_MODEL` | `claude-sonnet-4-6` | Claude model to use for vision |
 | `HEADROOM_REMBG_MODEL` | `u2netp` | rembg model name (`u2netp` is Pi-friendly; `u2net` / `isnet-general-use` are higher quality but ~170MB) |
 | `HEADROOM_HTTP_TIMEOUT` | `30.0` | Outbound HTTP timeout in seconds |
-| `HEADROOM_ADMIN_TOKEN` | _(unset)_ | If set, `/api/settings/api-key` PUT/DELETE/test require `Authorization: Bearer <token>`. Unset → endpoints are open (single-user-LAN default) with a startup warning. |
+| `HEADROOM_ADMIN_TOKEN` | _(unset)_ | If set, `/api/settings/api-key` and `/api/admin/*` require `Authorization: Bearer <token>`. Unset → endpoints are open (single-user-LAN default) with a startup warning. |
 | `HEADROOM_LOG_LEVEL` | `INFO` | Default log level when no root handlers are configured (i.e. when running uvicorn directly). |
+| `HEADROOM_BACKUP_ENABLED` | `true` | Set to `false` to disable scheduled backups (one-click download still works). |
+| `HEADROOM_BACKUP_INTERVAL_HOURS` | `24` | How often the background scheduler writes a tarball to `/data/backups/`. |
+| `HEADROOM_BACKUP_RETENTION_DAYS` | `7` | How many timestamped backups to keep on disk. Older ones are pruned after each new write. |
 
 ---
 

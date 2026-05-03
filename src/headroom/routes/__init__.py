@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 
+from headroom.routes.admin import router as admin_router
 from headroom.routes.cases import router as cases_router
 from headroom.routes.hats import router as hats_router
 from headroom.routes.health import router as health_router
@@ -16,3 +17,4 @@ api_router.include_router(rooms_router)
 api_router.include_router(meta_router)
 api_router.include_router(search_router)
 api_router.include_router(settings_router)
+api_router.include_router(admin_router)

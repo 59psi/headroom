@@ -69,8 +69,10 @@ async def finalize_hat_photo(
         hat.analyzed_at = datetime.now(timezone.utc)
         return hat
 
+    model_id, _model_source = await settings_service.get_anthropic_model(db)
+
     try:
-        analysis: HatAnalysis = await analyze_hat_image(canonical_path, api_key)
+        analysis: HatAnalysis = await analyze_hat_image(canonical_path, api_key, model=model_id)
     except ClaudeAnalysisError as exc:
         logger.warning("Hat analysis failed for hat %s: %s", hat.id, exc)
         hat.analysis_status = "error"

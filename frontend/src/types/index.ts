@@ -107,3 +107,22 @@ export interface ApiKeyTestResult {
   ok: boolean;
   detail: string;
 }
+
+export interface ModelStatus {
+  model_id: string;
+  source: 'database' | 'environment' | 'default';
+}
+
+export interface RecentError {
+  hat_id: number;
+  display_id: string | null;
+  analysis_error: string | null;
+  analyzed_at: string | null;
+  photo_path: string | null;
+}
+
+export interface BackupInfo {
+  filename: string;
+  size_bytes: number;
+  created_at: string;
+}

@@ -83,8 +83,15 @@ export function HatsPage() {
   const [filterColor, setFilterColor] = useState('');
   const [filterRoom, setFilterRoom] = useState('');
   const [filterBrand, setFilterBrand] = useState('');
+  // 'all' (default) | 'unassigned' (case_id IS NULL) | 'assigned'
+  const [filterAssignment, setFilterAssignment] = useState<'all' | 'unassigned' | 'assigned'>('all');
 
-  const activeFilterCount = [filterStyle, filterSize, filterCondition, filterType, filterColor, filterRoom, filterBrand].filter(Boolean).length;
+  const activeFilterCount = [filterStyle, filterSize, filterCondition, filterType, filterColor, filterRoom, filterBrand, filterAssignment === 'all' ? '' : filterAssignment].filter(Boolean).length;
+
+  const unassignedCount = useMemo(
+    () => (data ?? []).filter(h => h.case_id == null).length,
+    [data]
+  );
 
   const availableColors = useMemo(() => {
     if (!data) return [];
@@ -111,9 +118,11 @@ export function HatsPage() {
       if (filterColor && !h.colors.some(c => c.general_color === filterColor)) return false;
       if (filterRoom && h.room_id !== Number(filterRoom)) return false;
       if (filterBrand && h.brand !== filterBrand) return false;
+      if (filterAssignment === 'unassigned' && h.case_id != null) return false;
+      if (filterAssignment === 'assigned' && h.case_id == null) return false;
       return true;
     });
-  }, [data, filterStyle, filterSize, filterCondition, filterType, filterColor, filterRoom, filterBrand]);
+  }, [data, filterStyle, filterSize, filterCondition, filterType, filterColor, filterRoom, filterBrand, filterAssignment]);
 
   if (isLoading) return <LoadingSpinner />;
   if (error) return (
@@ -159,6 +168,32 @@ export function HatsPage() {
           <Link to="/hats/new" className="btn btn-primary btn-sm">+ New</Link>
         </div>
       </div>
+
+      {/* Quick chips: assignment + unassigned shortcut */}
+      {(unassignedCount > 0 || filterAssignment !== 'all') && (
+        <div className="d-flex gap-2 mb-3 flex-wrap">
+          <button
+            type="button"
+            className={`btn btn-sm ${filterAssignment === 'all' ? 'btn-primary' : 'btn-outline-secondary'}`}
+            onClick={() => setFilterAssignment('all')}
+          >All</button>
+          <button
+            type="button"
+            className={`btn btn-sm ${filterAssignment === 'assigned' ? 'btn-primary' : 'btn-outline-secondary'}`}
+            onClick={() => setFilterAssignment('assigned')}
+          >In a Case</button>
+          <button
+            type="button"
+            className={`btn btn-sm ${filterAssignment === 'unassigned' ? 'btn-primary' : 'btn-outline-secondary'}`}
+            onClick={() => setFilterAssignment('unassigned')}
+          >
+            Unassigned
+            {unassignedCount > 0 && (
+              <span className="badge bg-white ms-1">{unassignedCount}</span>
+            )}
+          </button>
+        </div>
+      )}
 
       {filtersOpen && (
         <div className="card mb-3">
@@ -234,7 +269,7 @@ export function HatsPage() {
                 type="button"
                 className="btn btn-link btn-sm mt-2 p-0"
                 style={{ color: 'var(--neon-red)' }}
-                onClick={() => { setFilterStyle(''); setFilterSize(''); setFilterCondition(''); setFilterType(''); setFilterColor(''); setFilterRoom(''); setFilterBrand(''); }}
+                onClick={() => { setFilterStyle(''); setFilterSize(''); setFilterCondition(''); setFilterType(''); setFilterColor(''); setFilterRoom(''); setFilterBrand(''); setFilterAssignment('all'); }}
               >Clear filters</button>
             )}
           </div>

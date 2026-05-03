@@ -161,10 +161,15 @@ def _read_image_b64(image_path: Path) -> tuple[str, str]:
     return base64.standard_b64encode(raw).decode("ascii"), media_type
 
 
-async def analyze_hat_image(image_path: Path, api_key: str) -> HatAnalysis:
+async def analyze_hat_image(
+    image_path: Path,
+    api_key: str,
+    model: str | None = None,
+) -> HatAnalysis:
     """Call Claude vision and return a structured HatAnalysis.
 
-    Raises ClaudeAnalysisError on any recoverable failure (auth, parse, etc.).
+    `model` overrides the default. Raises ClaudeAnalysisError on any
+    recoverable failure (auth, parse, etc.).
     """
     if not api_key:
         raise ClaudeAnalysisError("No Anthropic API key configured.")
@@ -172,10 +177,11 @@ async def analyze_hat_image(image_path: Path, api_key: str) -> HatAnalysis:
     b64, media_type = _read_image_b64(image_path)
 
     client = AsyncAnthropic(api_key=api_key, timeout=config_settings.http_timeout)
+    model_id = model or config_settings.anthropic_model
 
     try:
         message = await client.messages.create(
-            model=config_settings.anthropic_model,
+            model=model_id,
             max_tokens=1024,
             system=[
                 {
@@ -242,21 +248,22 @@ async def analyze_hat_image(image_path: Path, api_key: str) -> HatAnalysis:
         raise ClaudeAnalysisError(f"Could not parse Claude response: {exc}") from exc
 
 
-async def verify_api_key(api_key: str) -> tuple[bool, str]:
-    """Cheap reachability check for an API key. Returns (ok, message)."""
+async def verify_api_key(api_key: str, model: str | None = None) -> tuple[bool, str]:
+    """Cheap reachability check for a key + model combo. Returns (ok, message)."""
     if not api_key:
         return False, "No API key provided."
     client = AsyncAnthropic(api_key=api_key, timeout=10.0)
+    model_id = model or config_settings.anthropic_model
     try:
         await client.messages.create(
-            model=config_settings.anthropic_model,
+            model=model_id,
             max_tokens=4,
             messages=[{"role": "user", "content": "ping"}],
         )
-        return True, "Key is valid."
+        return True, f"OK — model '{model_id}' reachable."
     except AuthenticationError:
         return False, "Authentication failed — check the key."
     except APIError as exc:
-        return False, f"API error: {exc}"
+        return False, f"API error (model '{model_id}'): {exc}"
     except Exception as exc:  # noqa: BLE001 — surfaced to UI
         return False, f"Unexpected error: {exc}"

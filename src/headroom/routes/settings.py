@@ -9,7 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from headroom.auth import require_admin
 from headroom.config import settings
 from headroom.database import get_db
-from headroom.schemas.settings import ApiKeyStatus, ApiKeyTestResult, ApiKeyUpdate
+from headroom.schemas.settings import (
+    ApiKeyStatus,
+    ApiKeyTestResult,
+    ApiKeyUpdate,
+    ModelStatus,
+    ModelUpdate,
+)
 from headroom.services import settings_service
 from headroom.services.claude_analysis import verify_api_key
 from headroom.utils.photo import validate_image_content_type
@@ -123,5 +129,28 @@ async def test_api_key(db: AsyncSession = Depends(get_db)):
     key, _source = await settings_service.get_anthropic_key(db)
     if not key:
         return ApiKeyTestResult(ok=False, detail="No API key configured.")
-    ok, detail = await verify_api_key(key)
+    model, _msrc = await settings_service.get_anthropic_model(db)
+    ok, detail = await verify_api_key(key, model=model)
     return ApiKeyTestResult(ok=ok, detail=detail)
+
+
+# ---------------------------- Claude model -------------------------- #
+
+
+@router.get("/model", response_model=ModelStatus)
+async def get_model(db: AsyncSession = Depends(get_db)):
+    model_id, source = await settings_service.get_anthropic_model(db)
+    return ModelStatus(model_id=model_id, source=source)
+
+
+@router.put("/model", response_model=ModelStatus, dependencies=[Depends(require_admin)])
+async def set_model(data: ModelUpdate, db: AsyncSession = Depends(get_db)):
+    await settings_service.set_anthropic_model(db, data.model_id)
+    model_id, source = await settings_service.get_anthropic_model(db)
+    return ModelStatus(model_id=model_id, source=source)
+
+
+@router.delete("/model", status_code=204, dependencies=[Depends(require_admin)])
+async def clear_model(db: AsyncSession = Depends(get_db)):
+    """Reset to env / built-in default."""
+    await settings_service.clear_anthropic_model(db)

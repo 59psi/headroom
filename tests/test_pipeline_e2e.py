@@ -36,7 +36,7 @@ def stub_claude(monkeypatch):
     async def _fake_get_key(_db):
         return "sk-ant-test-fixture", "database"
 
-    async def _fake_analyze(_image_path, _api_key):
+    async def _fake_analyze(_image_path, _api_key, model=None):  # noqa: ARG001
         return HatAnalysis(
             brand="Melin",
             model_name="A-Game Hydro",
@@ -142,7 +142,7 @@ async def test_claude_error_marks_hat_status_error(client, monkeypatch):
     async def _fake_get_key(_db):
         return "sk-ant-fixture", "database"
 
-    async def _boom(_path, _key):
+    async def _boom(_path, _key, model=None):  # noqa: ARG001
         raise ClaudeAnalysisError("Invalid Anthropic API key.")
 
     monkeypatch.setattr(

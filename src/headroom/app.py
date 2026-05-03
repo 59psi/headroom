@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import shutil
@@ -13,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from headroom.config import settings
 from headroom.database import init_db
 from headroom.routes import api_router
+from headroom.services import backup_service
 
 logger = logging.getLogger(__name__)
 
@@ -71,12 +73,31 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await init_db()
     if not settings.admin_token:
         logger.warning(
-            "HEADROOM_ADMIN_TOKEN is not set — Anthropic API key endpoints "
-            "are unauthenticated. Safe on a trusted LAN, dangerous if exposed."
+            "HEADROOM_ADMIN_TOKEN is not set — admin endpoints are "
+            "unauthenticated. Safe on a trusted LAN, dangerous if exposed."
         )
-    logger.info("Headroom started · model=%s · uploads=%s",
+    logger.info("Headroom started · default-model=%s · uploads=%s",
                 settings.anthropic_model, settings.upload_dir)
-    yield
+
+    # Scheduled backups — disabled in tests (no upload_dir parent at /data)
+    backup_task: asyncio.Task | None = None
+    if backup_service.backup_enabled():
+        backup_task = asyncio.create_task(
+            backup_service.scheduled_backup_loop(
+                interval_hours=backup_service.backup_interval_hours(),
+                retention=backup_service.backup_retention(),
+            )
+        )
+
+    try:
+        yield
+    finally:
+        if backup_task is not None:
+            backup_task.cancel()
+            try:
+                await backup_task
+            except asyncio.CancelledError:
+                pass
 
 
 def _safe_spa_path(full_path: str) -> Path | None:

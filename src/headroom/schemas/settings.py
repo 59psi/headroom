@@ -1,4 +1,6 @@
-from pydantic import BaseModel, Field
+from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ApiKeyStatus(BaseModel):
@@ -16,3 +18,33 @@ class ApiKeyUpdate(BaseModel):
 class ApiKeyTestResult(BaseModel):
     ok: bool
     detail: str
+
+
+class ModelStatus(BaseModel):
+    """Active Claude model id + where it came from."""
+
+    # `model_` prefix is reserved by pydantic — opt out so the natural name works.
+    model_config = ConfigDict(protected_namespaces=())
+
+    model_id: str
+    source: str  # "database" | "environment" | "default"
+
+
+class ModelUpdate(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
+    model_id: str = Field(min_length=3, max_length=120)
+
+
+class RecentError(BaseModel):
+    hat_id: int
+    display_id: str | None
+    analysis_error: str | None
+    analyzed_at: datetime | None
+    photo_path: str | None
+
+
+class BackupInfo(BaseModel):
+    filename: str
+    size_bytes: int
+    created_at: datetime

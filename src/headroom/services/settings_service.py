@@ -5,6 +5,7 @@ from headroom.config import settings as config_settings
 from headroom.models.app_setting import AppSetting
 
 ANTHROPIC_KEY_NAME = "anthropic_api_key"
+ANTHROPIC_MODEL_NAME = "anthropic_model"
 
 
 def mask_key(key: str) -> str:
@@ -54,3 +55,27 @@ async def set_anthropic_key(db: AsyncSession, value: str) -> None:
 
 async def clear_anthropic_key(db: AsyncSession) -> None:
     await _set_setting(db, ANTHROPIC_KEY_NAME, None)
+
+
+async def get_anthropic_model(db: AsyncSession) -> tuple[str, str]:
+    """Resolve the active Claude model id. Returns (model, source).
+
+    Order: database setting > environment variable > built-in default.
+    Always returns a non-empty string.
+    """
+    db_value = await _get_setting(db, ANTHROPIC_MODEL_NAME)
+    if db_value:
+        return db_value, "database"
+    # config_settings.anthropic_model has a built-in default, so we can't tell
+    # env-vs-default from the value alone. Inspect __pydantic_fields_set__.
+    if "anthropic_model" in config_settings.model_fields_set:
+        return config_settings.anthropic_model, "environment"
+    return config_settings.anthropic_model, "default"
+
+
+async def set_anthropic_model(db: AsyncSession, value: str) -> None:
+    await _set_setting(db, ANTHROPIC_MODEL_NAME, value.strip())
+
+
+async def clear_anthropic_model(db: AsyncSession) -> None:
+    await _set_setting(db, ANTHROPIC_MODEL_NAME, None)

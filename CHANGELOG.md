@@ -4,6 +4,57 @@ All notable changes are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.2] — 2026-05-02 — _author-question follow-ups_
+
+Closes the action items from the 10 reviewer questions in the archaeology bundle's
+`00-READ-FIRST.md`. Six questions, six fixes.
+
+### Added
+- **Configurable Claude model in Settings UI.** New `app_settings.anthropic_model`
+  row, `GET/PUT/DELETE /api/settings/model`, datalist of known model ids on the
+  Settings page. Resolution: DB > env > built-in default. (`anthropic_model` is
+  passed all the way through `analyze_hat_image(model=…)`.)
+- **In-app "Recent Analysis Errors" view** (`/api/admin/recent-errors`) listing
+  the last 20 hats whose analysis failed, newest first, with thumbnail + error
+  message + timestamp. Companion `/api/admin/recent-errors/count` powers a
+  pulsing red badge on the Settings nav item — surfaces silent pipeline failures
+  without anyone tailing `docker logs`.
+- **One-click backup download** (`GET /api/admin/backup`) — streams a gzipped
+  tar of `/data/{headroom.db, uploads/}` with an `attachment` content-disposition.
+- **Scheduled rolling backups.** Background asyncio task writes a timestamped
+  tar.gz to `/data/backups/` every 24 h (configurable: `HEADROOM_BACKUP_INTERVAL_HOURS`,
+  `HEADROOM_BACKUP_RETENTION_DAYS=7`, `HEADROOM_BACKUP_ENABLED`). Cancelled
+  cleanly on lifespan exit. Initial snapshot at startup so a fresh deploy isn't
+  one bad sector away from total loss.
+- **"Unassigned / In a Case / All" quick-chips** on the Hats page (auto-shown
+  when there are unassigned hats), so case-orphaned hats are never invisible.
+- **`/api/admin/*` route group** behind `require_admin` — same Bearer-token gate
+  as the api-key endpoints.
+
+### Changed
+- `verify_api_key` now takes a model parameter and reports it in the success
+  message (`"OK — model 'X' reachable."`) so the test button validates the
+  active model+key combo rather than just the key.
+- Bumped version to 0.2.2.
+
+### Removed
+- Stray dev SQLite files (`headroom.db`, `frontend/headroom.db`) — both were
+  gitignored, just disk hygiene.
+
+### Tests: 72 → 81 (+9)
+- `tests/test_admin.py` — model setting CRUD + validation, recent-errors
+  endpoints, backup gzip download (verifies content-type + payload size +
+  attachment header), admin auth gate when token is set.
+
+### Verified
+- Live container: `/api/settings/model` GET → default → PUT → database → DELETE → default.
+- Backup: GET returns valid gzip (~27 KB on a fresh DB), starts with the right
+  Content-Disposition header, `file(1)` confirms gzip integrity.
+- Container logs show `basicConfig` working, scheduler started, initial snapshot
+  written, and the unset-token warning fires.
+
+---
+
 ## [0.2.1] — 2026-05-02 — _post-archaeology hardening_
 
 A focused security + reliability pass driven by a full-repo `/code-archaeology`
