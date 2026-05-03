@@ -71,23 +71,16 @@ export function HomePage() {
     touchStartX.current = null;
   }
 
-  if (cases.isLoading || hats.isLoading) return <LoadingSpinner />;
-
-  const totalHats = hats.data?.length ?? 0;
-  const totalCases = cases.data?.length ?? 0;
-  const totalRooms = rooms.data?.length ?? 0;
-  const archiveCases = cases.data?.filter(c => c.case_type === 'archive').length ?? 0;
-  const dailyCases = cases.data?.filter(c => c.case_type === 'daily_wear').length ?? 0;
-
-  // Resale heuristic — applied only when the hat doesn't have a user-set
-  // resale_price. Rough industry rules of thumb for branded headwear.
-  const RESALE_MULTIPLIER: Record<string, number> = {
-    new_with_tags: 0.65,
-    new: 0.45,
-    worn: 0.30,
-  };
-
+  // ALL hooks must run on every render in the same order — Rules of Hooks.
+  // The valuation useMemo MUST live above the early-return below.
   const valuation = useMemo(() => {
+    // Resale heuristic — applied only when the hat doesn't have a user-set
+    // resale_price. Rough industry rules of thumb for branded headwear.
+    const RESALE_MULTIPLIER: Record<string, number> = {
+      new_with_tags: 0.65,
+      new: 0.45,
+      worn: 0.30,
+    };
     const buckets: Record<string, { count: number; newTotal: number; resaleTotal: number; label: string }> = {
       new_with_tags: { count: 0, newTotal: 0, resaleTotal: 0, label: 'New w/ Tags' },
       new: { count: 0, newTotal: 0, resaleTotal: 0, label: 'New' },
@@ -109,6 +102,14 @@ export function HomePage() {
     const totalResale = Object.values(buckets).reduce((s, b) => s + b.resaleTotal, 0);
     return { buckets, totalNew, totalResale, appraisedHatCount };
   }, [hats.data]);
+
+  if (cases.isLoading || hats.isLoading) return <LoadingSpinner />;
+
+  const totalHats = hats.data?.length ?? 0;
+  const totalCases = cases.data?.length ?? 0;
+  const totalRooms = rooms.data?.length ?? 0;
+  const archiveCases = cases.data?.filter(c => c.case_type === 'archive').length ?? 0;
+  const dailyCases = cases.data?.filter(c => c.case_type === 'daily_wear').length ?? 0;
 
   return (
     <>
