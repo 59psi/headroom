@@ -40,9 +40,9 @@ export function CaseDetailPage() {
   if (isLoading) return <LoadingSpinner />;
   if (error || !data) return (
     <div className="text-center py-5">
-      <h5 className="text-secondary mb-2">Case not found</h5>
+      <h5 className="mb-2">Case not found</h5>
       <p className="text-secondary small mb-3">This case may have been deleted or doesn't exist.</p>
-      <Link to="/cases" className="btn btn-outline-primary">Back to Cases</Link>
+      <Link to="/cases" className="btn btn-outline-primary">← Back to Cases</Link>
     </div>
   );
 
@@ -50,31 +50,27 @@ export function CaseDetailPage() {
 
   let capacityDisplay: React.ReactNode;
   if (data.hat_count === 0) {
-    capacityDisplay = (
-      <div className="text-center text-secondary">
-        Empty — holds 4 hats or 6 beanies
-      </div>
-    );
+    capacityDisplay = <div className="text-center text-muted small">Empty — holds 4 hats or 6 beanies</div>;
   } else if (data.beanie_count > 0) {
     capacityDisplay = (
       <div className="text-center">
-        <div className="fs-4 fw-bold">{data.beanie_count}/6</div>
-        <div className="text-secondary small">Beanies</div>
+        <div className="font-display" style={{ fontSize: '1.4rem', color: 'var(--neon-pink)' }}>{data.beanie_count}/6</div>
+        <div className="hr-tier-label">Beanies</div>
       </div>
     );
   } else {
     capacityDisplay = (
       <div className="text-center">
-        <div className="fs-4 fw-bold">{data.regular_count}/4</div>
-        <div className="text-secondary small">Hats</div>
+        <div className="font-display" style={{ fontSize: '1.4rem', color: 'var(--neon-pink)' }}>{data.regular_count}/4</div>
+        <div className="hr-tier-label">Hats</div>
       </div>
     );
   }
 
   return (
     <>
-      <div className="d-flex justify-content-between align-items-center mb-3">
-        <h1>{data.display_id}</h1>
+      <div className="d-flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
+        <h1 className="font-mono" style={{ color: 'var(--neon-cyan)' }}>{data.display_id}</h1>
         <div className="d-flex gap-2 align-items-center">
           <span className="badge bg-secondary">{typeLabel}</span>
           <span className="badge bg-info">{data.room_name}</span>
@@ -94,11 +90,9 @@ export function CaseDetailPage() {
           ) : (
             <PhotoCapture onCapture={handlePhotoUpload} previewUrl={null} />
           )}
-          {uploading && <div className="text-secondary small">Uploading...</div>}
+          {uploading && <div className="text-secondary small mt-2 font-mono" style={{ letterSpacing: '0.08em' }}>↑ Uploading…</div>}
 
-          <div className="mt-3">
-            {capacityDisplay}
-          </div>
+          <div className="mt-3">{capacityDisplay}</div>
         </div>
       </div>
 
@@ -114,15 +108,15 @@ export function CaseDetailPage() {
         </div>
       ) : (
         data.hats.map(h => (
-          <Link key={h.id} to={`/hats/${h.id}`} className="card mb-2 text-decoration-none text-body">
+          <Link key={h.id} to={`/hats/${h.id}`} className="card mb-2 text-decoration-none">
             <div className="card-body d-flex align-items-center gap-3">
               {h.photo_path ? (
-                <img src={`/uploads/${h.photo_path}`} alt="" className="rounded" style={{ width: 56, height: 56, objectFit: 'cover' }} />
+                <img src={`/uploads/${h.photo_path}`} alt="" className="hr-thumb" style={{ width: 56, height: 56 }} />
               ) : (
-                <div className="rounded" style={{ width: 56, height: 56, background: 'var(--color-border)' }} />
+                <div className="rounded" style={{ width: 56, height: 56, background: 'rgba(0,0,0,0.3)', border: '1px dashed var(--border)' }} />
               )}
               <div>
-                <div className="fw-semibold">{h.display_id}</div>
+                <div className="font-mono fw-semibold" style={{ color: 'var(--neon-cyan)' }}>{h.display_id}</div>
                 <div className="text-secondary small">
                   {h.style.replace(/_/g, ' ')} {h.is_beanie ? '(beanie)' : ''}
                 </div>

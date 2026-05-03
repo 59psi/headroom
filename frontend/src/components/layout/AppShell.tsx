@@ -7,7 +7,7 @@ export function AppShell() {
   return (
     <>
       <TopNav />
-      <main className="container py-3">
+      <main className="container">
         <Outlet />
       </main>
       <Footer />

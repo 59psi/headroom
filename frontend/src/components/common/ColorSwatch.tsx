@@ -10,13 +10,13 @@ export function ColorSwatches({ colors, showLabels = true }: { colors: ColorTag[
           <div
             key={c.dominance_rank}
             className="color-swatch"
-            style={{ backgroundColor: c.hex_value }}
+            style={{ backgroundColor: c.hex_value, color: c.hex_value }}
             title={`${c.general_color || c.color_name} (${c.hex_value})`}
           />
         ))}
       </div>
       {showLabels && uniqueGenerals.length > 0 && (
-        <div className="text-secondary" style={{ fontSize: '0.7rem', marginTop: 2 }}>
+        <div className="text-secondary small" style={{ marginTop: 6, letterSpacing: '0.04em' }}>
           {uniqueGenerals.join(' · ')}
         </div>
       )}

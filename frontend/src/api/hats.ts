@@ -37,6 +37,10 @@ export function uploadHatPhoto(id: number, file: File) {
   });
 }
 
+export function reanalyzeHat(id: number) {
+  return apiFetch<HatRead>(`/api/hats/${id}/reanalyze`, { method: 'POST' });
+}
+
 export function updateHatColors(id: number, colors: ColorTag[]) {
   return apiFetch<HatRead>(`/api/hats/${id}/colors`, {
     method: 'PUT',

@@ -64,12 +64,8 @@ export function SearchPage() {
   }
 
   function clearFilters() {
-    setFilterStyle('');
-    setFilterSize('');
-    setFilterCondition('');
-    setFilterType('');
-    setFilterColor('');
-    setFilterRoom('');
+    setFilterStyle(''); setFilterSize(''); setFilterCondition('');
+    setFilterType(''); setFilterColor(''); setFilterRoom('');
   }
 
   return (
@@ -83,38 +79,39 @@ export function SearchPage() {
             className="form-control"
             value={query}
             onChange={e => setQuery(e.target.value)}
-            placeholder="Search by color, style, size, room..."
+            placeholder="Color, brand, style, size, room…"
           />
-          <button type="submit" className="btn btn-primary">Go</button>
+          <button type="submit" className="btn btn-primary">GO</button>
         </div>
-        <div className="form-check mt-2">
+        <div className="d-flex align-items-center gap-2 mt-2">
           <input
             type="checkbox"
             className="form-check-input"
             id="exactColors"
             checked={exactColors}
             onChange={e => setExactColors(e.target.checked)}
+            style={{ marginTop: 0 }}
           />
-          <label className="form-check-label small text-secondary" htmlFor="exactColors">
-            Search exact detected colors (e.g. "darkslategray" instead of "gray")
+          <label className="form-check-label small text-secondary mb-0" htmlFor="exactColors">
+            Match exact color names (e.g. <span className="font-mono">darkslategray</span>)
           </label>
         </div>
       </form>
 
       {!searchTerm && (
         <div className="text-center py-5 text-secondary">
-          <p>Search across all hats by color, style, condition, size, or room</p>
-          <p className="small">Use multiple terms for AND search: "blue a-game"</p>
+          <p>Search across every hat by color, brand, style, condition, size, or room</p>
+          <p className="small">Multi-term AND: <span className="font-mono">blue a_game</span></p>
         </div>
       )}
 
-      {isLoading && <LoadingSpinner />}
+      {isLoading && <LoadingSpinner label="Searching" />}
       {error && <div className="alert alert-danger">{String(error)}</div>}
 
       {data && searchTerm && (
         <>
-          <div className="d-flex justify-content-between align-items-center mb-3">
-            <div className="text-secondary small">
+          <div className="d-flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
+            <div className="text-secondary small font-mono">
               {filteredData.length} of {data.length} result{data.length !== 1 ? 's' : ''} for "{searchTerm}"
             </div>
             {data.length > 0 && (
@@ -123,7 +120,7 @@ export function SearchPage() {
                 className={`btn btn-sm ${activeFilterCount ? 'btn-primary' : 'btn-outline-secondary'}`}
                 onClick={() => setFiltersOpen(!filtersOpen)}
               >
-                Filters{activeFilterCount > 0 && <span className="badge bg-white text-primary ms-1">{activeFilterCount}</span>}
+                Filters{activeFilterCount > 0 && <span className="badge bg-white ms-1">{activeFilterCount}</span>}
               </button>
             )}
           </div>
@@ -133,34 +130,28 @@ export function SearchPage() {
               <div className="card-body">
                 <div className="row g-2">
                   <div className="col-6 col-md-3">
-                    <label className="form-label small text-secondary mb-1">Style</label>
+                    <label className="form-label">Style</label>
                     <select className="form-select form-select-sm" value={filterStyle} onChange={e => setFilterStyle(e.target.value)}>
                       <option value="">All</option>
-                      {stylesQ.data?.map(s => (
-                        <option key={s.value} value={s.value}>{s.label}</option>
-                      ))}
+                      {stylesQ.data?.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
                     </select>
                   </div>
                   <div className="col-6 col-md-3">
-                    <label className="form-label small text-secondary mb-1">Size</label>
+                    <label className="form-label">Size</label>
                     <select className="form-select form-select-sm" value={filterSize} onChange={e => setFilterSize(e.target.value)}>
                       <option value="">All</option>
-                      {sizesQ.data?.map(s => (
-                        <option key={s.value} value={s.value}>{s.label}</option>
-                      ))}
+                      {sizesQ.data?.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
                     </select>
                   </div>
                   <div className="col-6 col-md-3">
-                    <label className="form-label small text-secondary mb-1">Condition</label>
+                    <label className="form-label">Condition</label>
                     <select className="form-select form-select-sm" value={filterCondition} onChange={e => setFilterCondition(e.target.value)}>
                       <option value="">All</option>
-                      {conditionsQ.data?.map(c => (
-                        <option key={c.value} value={c.value}>{c.label}</option>
-                      ))}
+                      {conditionsQ.data?.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
                     </select>
                   </div>
                   <div className="col-6 col-md-3">
-                    <label className="form-label small text-secondary mb-1">Type</label>
+                    <label className="form-label">Type</label>
                     <select className="form-select form-select-sm" value={filterType} onChange={e => setFilterType(e.target.value)}>
                       <option value="">All</option>
                       <option value="regular">Regular</option>
@@ -168,28 +159,25 @@ export function SearchPage() {
                     </select>
                   </div>
                   <div className="col-6 col-md-3">
-                    <label className="form-label small text-secondary mb-1">Color</label>
+                    <label className="form-label">Color</label>
                     <select className="form-select form-select-sm" value={filterColor} onChange={e => setFilterColor(e.target.value)}>
                       <option value="">All</option>
-                      {availableColors.map(c => (
-                        <option key={c} value={c}>{c}</option>
-                      ))}
+                      {availableColors.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
                   </div>
                   <div className="col-6 col-md-3">
-                    <label className="form-label small text-secondary mb-1">Room</label>
+                    <label className="form-label">Room</label>
                     <select className="form-select form-select-sm" value={filterRoom} onChange={e => setFilterRoom(e.target.value)}>
                       <option value="">All</option>
-                      {roomsQ.data?.map(r => (
-                        <option key={r.value} value={r.value}>{r.label}</option>
-                      ))}
+                      {roomsQ.data?.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
                     </select>
                   </div>
                 </div>
                 {activeFilterCount > 0 && (
                   <button
                     type="button"
-                    className="btn btn-link btn-sm text-danger mt-2 p-0"
+                    className="btn btn-link btn-sm mt-2 p-0"
+                    style={{ color: 'var(--neon-red)' }}
                     onClick={clearFilters}
                   >Clear filters</button>
                 )}
@@ -203,23 +191,23 @@ export function SearchPage() {
             </div>
           ) : (
             filteredData.map(hat => (
-              <Link key={hat.id} to={`/hats/${hat.id}`} className="card mb-2 text-decoration-none text-body">
-                <div className="card-body d-flex gap-3">
+              <Link key={hat.id} to={`/hats/${hat.id}`} className="card mb-2 text-decoration-none">
+                <div className="card-body d-flex gap-3 align-items-center">
                   {hat.photo_path ? (
-                    <img src={`/uploads/${hat.photo_path}`} alt="" className="rounded flex-shrink-0" style={{ width: 72, height: 72, objectFit: 'cover' }} />
+                    <img src={`/uploads/${hat.photo_path}`} alt="" className="hr-thumb flex-shrink-0" style={{ width: 72, height: 72 }} />
                   ) : (
-                    <div className="rounded flex-shrink-0" style={{ width: 72, height: 72, background: 'var(--color-border)' }} />
+                    <div className="rounded flex-shrink-0" style={{ width: 72, height: 72, background: 'rgba(0,0,0,0.3)', border: '1px dashed var(--border)' }} />
                   )}
                   <div className="flex-grow-1" style={{ minWidth: 0 }}>
                     <div className="d-flex justify-content-between align-items-start">
-                      <div className="fw-semibold">{hat.display_id || `#${hat.id}`}</div>
+                      <div className="font-mono fw-semibold" style={{ color: 'var(--neon-cyan)' }}>{hat.display_id || `#${hat.id}`}</div>
                       <ConditionBadge condition={hat.condition} />
                     </div>
-                    <div className="text-secondary small mb-1">
+                    <div className="text-muted small mb-1" style={{ marginTop: 4 }}>
                       {hat.style.replace(/_/g, ' ')} · {hat.size.replace(/_/g, ' ')}
                       {hat.room_name && <> · {hat.room_name}</>}
                     </div>
-                    <ColorSwatches colors={hat.colors} />
+                    <ColorSwatches colors={hat.colors} showLabels={false} />
                   </div>
                 </div>
               </Link>

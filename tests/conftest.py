@@ -10,11 +10,30 @@ from headroom.database import Base, get_db
 def anyio_backend(request):
     return request.param
 
+
 # In-memory SQLite for tests
 TEST_DATABASE_URL = "sqlite+aiosqlite://"
 
 test_engine = create_async_engine(TEST_DATABASE_URL, echo=False)
 test_session_factory = async_sessionmaker(test_engine, expire_on_commit=False)
+
+
+@pytest.fixture(autouse=True)
+def stub_background_removal(monkeypatch):
+    """rembg is heavy and downloads model weights on first use — never run it in tests.
+
+    The pipeline accepts `None` as 'background removal failed' and falls back
+    to the processed JPEG, which is exactly what we want for the test contract.
+    """
+    async def _noop(_input, _output):
+        return None
+
+    monkeypatch.setattr(
+        "headroom.services.background_removal.remove_background", _noop
+    )
+    monkeypatch.setattr(
+        "headroom.services.hat_analysis_pipeline.remove_background", _noop
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -26,7 +45,6 @@ async def setup_db():
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    # Seed default room
     async with test_session_factory() as session:
         result = await session.execute(select(Room).where(Room.id == 1))
         if not result.scalar_one_or_none():

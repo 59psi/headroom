@@ -26,6 +26,21 @@ async def _create_hat_with_photo(client, style="a_game", color=(255, 0, 0)):
     return hat_id
 
 
+async def _create_hat_with_colors(client, colors, style="a_game"):
+    """Create a hat and seed colors via the explicit /colors endpoint.
+
+    Tests should use this rather than relying on photo-upload-driven analysis,
+    which requires an Anthropic API key in the new pipeline.
+    """
+    resp = await client.post(
+        "/api/hats",
+        json={"condition": "new", "size": "classic", "style": style},
+    )
+    hat_id = resp.json()["id"]
+    await client.put(f"/api/hats/{hat_id}/colors", json={"colors": colors})
+    return hat_id
+
+
 @pytest.mark.anyio
 async def test_search_by_style(client):
     await client.post(
@@ -112,7 +127,18 @@ async def test_search_empty_query(client):
 @pytest.mark.anyio
 async def test_search_by_general_color(client):
     """Default search matches against general_color (e.g. 'red')."""
-    hat_id = await _create_hat_with_photo(client, color=(255, 0, 0))
+    hat_id = await _create_hat_with_colors(
+        client,
+        colors=[
+            {
+                "color_name": "crimson",
+                "general_color": "red",
+                "hex_value": "#dc143c",
+                "dominance_rank": 1,
+                "tier": "primary",
+            }
+        ],
+    )
 
     resp = await client.get("/api/search?q=red")
     assert resp.status_code == 200
@@ -122,18 +148,21 @@ async def test_search_by_general_color(client):
 
 @pytest.mark.anyio
 async def test_search_exact_colors(client):
-    """With exact_colors=true, search matches CSS3 color_name."""
-    hat_id = await _create_hat_with_photo(client, color=(255, 0, 0))
+    """With exact_colors=true, search matches the specific color_name."""
+    hat_id = await _create_hat_with_colors(
+        client,
+        colors=[
+            {
+                "color_name": "darkslategray",
+                "general_color": "gray",
+                "hex_value": "#2f4f4f",
+                "dominance_rank": 1,
+                "tier": "primary",
+            }
+        ],
+    )
 
-    # Get the hat to find its exact CSS3 color_name
-    hat_resp = await client.get(f"/api/hats/{hat_id}")
-    hat_data = hat_resp.json()
-    if not hat_data["colors"]:
-        pytest.skip("No colors detected")
-
-    exact_name = hat_data["colors"][0]["color_name"]
-
-    resp = await client.get(f"/api/search?q={exact_name}&exact_colors=true")
+    resp = await client.get("/api/search?q=darkslategray&exact_colors=true")
     assert resp.status_code == 200
     results = resp.json()
     assert any(r["id"] == hat_id for r in results)

@@ -3,9 +3,11 @@ import { useState } from 'react';
 interface Props {
   src: string;
   alt?: string;
+  /** When true, render a square photo with the synthwave canvas backdrop. */
+  hat?: boolean;
 }
 
-export function ImageLightbox({ src, alt = '' }: Props) {
+export function ImageLightbox({ src, alt = '', hat = false }: Props) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -13,8 +15,16 @@ export function ImageLightbox({ src, alt = '' }: Props) {
       <img
         src={src}
         alt={alt}
-        className="img-fluid rounded"
-        style={{ width: '50%', aspectRatio: '4/3', objectFit: 'cover', cursor: 'pointer' }}
+        className={hat ? 'hr-hat-photo' : 'rounded'}
+        style={{
+          width: '100%',
+          maxWidth: hat ? 480 : '100%',
+          margin: '0 auto',
+          aspectRatio: hat ? '1' : '4/3',
+          objectFit: hat ? 'contain' : 'cover',
+          cursor: 'pointer',
+          display: 'block',
+        }}
         onClick={() => setOpen(true)}
       />
       {open && (
@@ -22,8 +32,9 @@ export function ImageLightbox({ src, alt = '' }: Props) {
           <button
             className="hr-lightbox-close"
             onClick={e => { e.stopPropagation(); setOpen(false); }}
+            aria-label="Close"
           >
-            &times;
+            ×
           </button>
           <img
             src={src}

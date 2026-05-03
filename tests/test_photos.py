@@ -1,11 +1,8 @@
 import io
-import tempfile
-from pathlib import Path
 
 import pytest
 from PIL import Image
 
-from headroom.services.color_service import extract_colors
 from headroom.utils.photo import process_image
 
 
@@ -43,18 +40,6 @@ async def test_process_image_converts_png(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_extract_dominant_color(tmp_path):
-    img = Image.new("RGB", (200, 200), (255, 0, 0))
-    path = tmp_path / "red.jpg"
-    img.save(path, "JPEG")
-
-    colors = extract_colors(path, count=3)
-    assert len(colors) >= 1
-    assert colors[0]["dominance_rank"] == 1
-    assert colors[0]["hex_value"].startswith("#")
-
-
-@pytest.mark.anyio
 async def test_upload_case_photo(client):
     await client.post("/api/cases", json={"case_type": "archive"})
     photo = _make_test_image_file()
@@ -68,7 +53,8 @@ async def test_upload_case_photo(client):
 
 
 @pytest.mark.anyio
-async def test_upload_hat_photo(client):
+async def test_upload_hat_photo_no_api_key(client):
+    """Without an API key, upload still succeeds; analysis is marked skipped."""
     resp = await client.post(
         "/api/hats",
         json={"condition": "new", "size": "classic", "style": "a_game"},
@@ -84,7 +70,8 @@ async def test_upload_hat_photo(client):
     data = resp.json()
     assert data["photo_path"] is not None
     assert "hats/" in data["photo_path"]
-    assert len(data["colors"]) >= 1
+    assert data["analysis_status"] == "skipped"
+    assert data["colors"] == []
 
 
 @pytest.mark.anyio

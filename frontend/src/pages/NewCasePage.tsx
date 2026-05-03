@@ -52,7 +52,7 @@ export function NewCasePage() {
             onClick={() => mutation.mutate()}
             disabled={mutation.isPending}
           >
-            {mutation.isPending ? 'Creating...' : 'Create Case'}
+            {mutation.isPending ? 'Creating…' : 'Create Case'}
           </button>
         </div>
       </div>

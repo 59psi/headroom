@@ -15,22 +15,40 @@ export function PhotoCapture({ onCapture, previewUrl, hidePreview }: Props) {
   }
 
   return (
-    <div className="mb-3">
+    <div>
       {!hidePreview && (
         previewUrl ? (
-          <img src={previewUrl} alt="Preview" className="img-fluid rounded mb-2" style={{ aspectRatio: '4/3', objectFit: 'cover', width: '100%' }} />
+          <img
+            src={previewUrl}
+            alt="Preview"
+            className="hr-hat-photo mb-2"
+            style={{ aspectRatio: '1', objectFit: 'contain', width: '100%', display: 'block' }}
+          />
         ) : (
-          <div className="d-flex align-items-center justify-content-center rounded mb-2 text-secondary" style={{ width: '100%', aspectRatio: '4/3', background: 'var(--color-border)' }}>
-            No photo
+          <div
+            className="d-flex align-items-center justify-content-center mb-2 text-muted"
+            style={{
+              width: '100%',
+              aspectRatio: '1',
+              background: 'rgba(0, 0, 0, 0.3)',
+              border: '1px dashed var(--border)',
+              borderRadius: 'var(--radius-sm)',
+              fontFamily: 'var(--font-heading)',
+              fontSize: '0.75rem',
+              letterSpacing: '0.12em',
+              textTransform: 'uppercase',
+            }}
+          >
+            No Photo
           </div>
         )
       )}
       <button
         type="button"
-        className="btn btn-outline-secondary w-100"
+        className="btn btn-outline-primary w-100"
         onClick={() => inputRef.current?.click()}
       >
-        {hidePreview ? 'Change Photo' : previewUrl ? 'Change Photo' : 'Take Photo'}
+        {hidePreview ? 'Replace Photo' : previewUrl ? 'Change Photo' : 'Capture / Upload'}
       </button>
       <input
         ref={inputRef}

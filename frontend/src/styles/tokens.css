@@ -1,46 +1,152 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300..700;1,9..40,300..700&display=swap');
+/* ===== Headroom — Synthwave / Outrun Design Tokens ===== */
+@import url('https://fonts.googleapis.com/css2?family=Audiowide&family=Orbitron:wght@500;600;700;900&family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap');
 
 :root {
-  --color-bg: #f0f2f7;
-  --color-surface: #ffffff;
-  --color-primary: #2e3f7a;
-  --color-primary-hover: #243266;
-  --color-primary-light: #e8eaf6;
-  --color-accent: #d4a843;
-  --color-accent-light: #fdf6e3;
-  --color-text: #1a1a2e;
-  --color-text-secondary: #5a5f7a;
-  --color-border: #d5d8e0;
-  --color-danger: #c0392b;
-  --color-success: #27ae60;
-  --shadow: 0 2px 8px rgba(30,42,94,0.08);
-  --shadow-lg: 0 8px 24px rgba(30,42,94,0.12);
-  --shadow-hover: 0 8px 28px rgba(30,42,94,0.18);
-  --gradient-primary: linear-gradient(135deg, #2e3f7a 0%, #3d4f9a 100%);
-  --gradient-hero: linear-gradient(135deg, #2e3f7a 0%, #3d4f9a 50%, #4d5faa 100%);
-  --radius: 12px;
-  --radius-sm: 8px;
-  --nav-height: 64px;
+  /* === Canvas ====================================================== */
+  --bg-deep: #060011;          /* page background */
+  --bg-surface: #0f0524;       /* base surfaces */
+  --bg-card: #160a30;          /* cards */
+  --bg-card-hover: #1c0f3e;
+  --bg-elevated: #21134a;      /* dropdown / modal */
+  --bg-input: #0c041f;
+
+  /* === Borders & lines ============================================ */
+  --border: #2a1659;
+  --border-soft: rgba(255, 255, 255, 0.06);
+  --border-bright: #4a2a99;
+
+  /* === Text ======================================================== */
+  --text: #f5e9ff;
+  --text-secondary: #b6a3d6;
+  --text-muted: #7c6aa3;
+  --text-on-neon: #06010f;
+
+  /* === Neon palette =============================================== */
+  --neon-pink: #ff2eb6;
+  --neon-pink-soft: rgba(255, 46, 182, 0.6);
+  --neon-cyan: #00f0ff;
+  --neon-cyan-soft: rgba(0, 240, 255, 0.6);
+  --neon-purple: #b14eff;
+  --neon-orange: #ff8c42;
+  --neon-yellow: #ffe156;
+  --neon-green: #39ff14;
+  --neon-red: #ff3860;
+
+  /* === Aliases for legacy bootstrap overrides ====================== */
+  --color-bg: var(--bg-deep);
+  --color-surface: var(--bg-card);
+  --color-primary: var(--neon-pink);
+  --color-primary-hover: #ff5cc8;
+  --color-primary-light: rgba(255, 46, 182, 0.12);
+  --color-accent: var(--neon-cyan);
+  --color-accent-light: rgba(0, 240, 255, 0.12);
+  --color-text: var(--text);
+  --color-text-secondary: var(--text-secondary);
+  --color-border: var(--border);
+  --color-danger: var(--neon-red);
+  --color-success: var(--neon-green);
+
+  /* === Gradients =================================================== */
+  --gradient-sunset: linear-gradient(135deg, #ff6b35 0%, #ff2eb6 50%, #b14eff 100%);
+  --gradient-pink-cyan: linear-gradient(135deg, #ff2eb6 0%, #00f0ff 100%);
+  --gradient-cyan-purple: linear-gradient(135deg, #00f0ff 0%, #b14eff 100%);
+  --gradient-card: linear-gradient(180deg, rgba(255, 255, 255, 0.04) 0%, rgba(255, 255, 255, 0) 100%);
+  --gradient-primary: var(--gradient-pink-cyan);
+  --gradient-hero: var(--gradient-sunset);
+
+  /* === Shadows / Glows ============================================ */
+  --shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.6);
+  --shadow-hover: 0 18px 50px rgba(0, 0, 0, 0.7);
+  --glow-pink: 0 0 20px rgba(255, 46, 182, 0.45), 0 0 40px rgba(255, 46, 182, 0.18);
+  --glow-cyan: 0 0 20px rgba(0, 240, 255, 0.45), 0 0 40px rgba(0, 240, 255, 0.18);
+  --glow-purple: 0 0 20px rgba(177, 78, 255, 0.45), 0 0 40px rgba(177, 78, 255, 0.18);
+
+  /* === Typography ================================================= */
+  --font-display: 'Audiowide', 'Orbitron', system-ui, sans-serif;
+  --font-heading: 'Orbitron', system-ui, sans-serif;
+  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* === Geometry =================================================== */
+  --radius: 14px;
+  --radius-sm: 10px;
+  --radius-pill: 999px;
+  --nav-height: 68px;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
 }
 
-a {
-  color: var(--color-primary);
-  text-decoration: none;
+/* ===== Base ======================================================= */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--bg-deep);
+  color-scheme: dark;
 }
 
 body {
-  font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  letter-spacing: -0.01em;
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(ellipse 1200px 600px at 80% -10%, rgba(177, 78, 255, 0.18), transparent 60%),
+    radial-gradient(ellipse 900px 500px at 0% 110%, rgba(255, 46, 182, 0.18), transparent 65%),
+    radial-gradient(ellipse 700px 400px at 50% 50%, rgba(0, 240, 255, 0.06), transparent 70%),
+    var(--bg-deep);
+  background-attachment: fixed;
+  color: var(--text);
+  font-family: var(--font-body);
+  font-feature-settings: 'cv02', 'cv11', 'ss01';
+  letter-spacing: -0.005em;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-input, select, textarea {
+/* Subtle perspective grid behind everything (desktop only — perf on mobile) */
+@media (min-width: 992px) {
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background:
+      linear-gradient(to right, rgba(177, 78, 255, 0.06) 1px, transparent 1px) 0 0 / 60px 60px,
+      linear-gradient(to bottom, rgba(177, 78, 255, 0.06) 1px, transparent 1px) 0 0 / 60px 60px;
+    mask-image: radial-gradient(ellipse 80% 60% at 50% 100%, #000 0%, transparent 70%);
+  }
+}
+
+#root {
+  position: relative;
+  z-index: 1;
+}
+
+a {
+  color: var(--neon-cyan);
+  text-decoration: none;
+  transition: color 0.15s ease, text-shadow 0.15s ease;
+}
+
+a:hover {
+  color: var(--neon-pink);
+  text-shadow: 0 0 8px rgba(255, 46, 182, 0.5);
+}
+
+::selection {
+  background: var(--neon-pink);
+  color: var(--text-on-neon);
+}
+
+input, select, textarea, button {
+  font-family: inherit;
   font-size: 16px; /* prevents iOS zoom */
 }
 
-/* Mobile bottom nav spacing */
+/* Mobile bottom-nav spacer */
 @media (max-width: 991.98px) {
   body {
     padding-bottom: calc(var(--nav-height) + var(--safe-bottom));

@@ -1,17 +1,47 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { getHat, deleteHat, uploadHatPhoto } from '../api/hats';
+import { getHat, deleteHat, uploadHatPhoto, reanalyzeHat } from '../api/hats';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ConditionBadge } from '../components/common/ConditionBadge';
 import { ImageLightbox } from '../components/common/ImageLightbox';
 import { PhotoCapture } from '../components/photos/PhotoCapture';
+import type { HatRead } from '../types';
 import { useState } from 'react';
+
+function AnalysisStatus({ hat }: { hat: HatRead }) {
+  if (!hat.analysis_status) return null;
+  const status = hat.analysis_status;
+  const label = status === 'ok' ? 'Analyzed' : status === 'skipped' ? 'No API key' : 'Analysis failed';
+  return (
+    <span className={`hr-analysis-status ${status}`} title={hat.analysis_error || undefined}>
+      <span className="dot" />
+      {label}
+    </span>
+  );
+}
+
+function PriceTile({ label, value, source }: { label: string; value: number | null; source?: string | null }) {
+  return (
+    <div className="hr-metric">
+      <div className="hr-metric-label">{label}</div>
+      {value !== null && value !== undefined ? (
+        <>
+          <div className="hr-metric-value hr-price">${value.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
+          {source && <div className="text-muted" style={{ fontSize: '0.65rem', marginTop: 2 }}>{source}</div>}
+        </>
+      ) : (
+        <div className="hr-metric-value text-muted" style={{ fontSize: '0.95rem' }}>—</div>
+      )}
+    </div>
+  );
+}
 
 export function HatDetailPage() {
   const { hatId } = useParams<{ hatId: string }>();
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [uploading, setUploading] = useState(false);
+  const [reanalyzing, setReanalyzing] = useState(false);
 
   const id = Number(hatId);
   const { data, isLoading, error } = useQuery({
@@ -25,6 +55,16 @@ export function HatDetailPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['hats'] });
       navigate('/hats');
+    },
+  });
+
+  const reanalyzeMut = useMutation({
+    mutationFn: () => reanalyzeHat(id),
+    onMutate: () => setReanalyzing(true),
+    onSettled: () => setReanalyzing(false),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['hat', id] });
+      qc.invalidateQueries({ queryKey: ['hats'] });
     },
   });
 
@@ -42,9 +82,9 @@ export function HatDetailPage() {
   if (isLoading) return <LoadingSpinner />;
   if (error || !data) return (
     <div className="text-center py-5">
-      <h5 className="text-secondary mb-2">Hat not found</h5>
+      <h5 className="mb-2">Hat not found</h5>
       <p className="text-secondary small mb-3">This hat may have been deleted or doesn't exist.</p>
-      <Link to="/hats" className="btn btn-outline-primary">Back to Hats</Link>
+      <Link to="/hats" className="btn btn-outline-primary">← Back to Hats</Link>
     </div>
   );
 
@@ -52,102 +92,197 @@ export function HatDetailPage() {
 
   return (
     <>
-      <div className="d-flex justify-content-between align-items-center mb-3">
-        <h1>{data.display_id || `Hat #${data.id}`}</h1>
-        <ConditionBadge condition={data.condition} />
+      <div className="d-flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
+        <h1 className="font-mono" style={{ color: 'var(--neon-cyan)' }}>
+          {data.display_id || `Hat #${data.id}`}
+        </h1>
+        <div className="d-flex gap-2 align-items-center">
+          <AnalysisStatus hat={data} />
+          <ConditionBadge condition={data.condition} />
+        </div>
       </div>
+
+      {data.brand && (
+        <div className="card hr-feature mb-3">
+          <div className="card-body">
+            <div className="card-title">Identification</div>
+            <div className="d-flex justify-content-between align-items-start gap-2 flex-wrap">
+              <div>
+                <div className="font-display" style={{ fontSize: '1.5rem', color: 'var(--neon-pink)', letterSpacing: '0.04em' }}>
+                  {data.brand}
+                </div>
+                {data.model_name && (
+                  <div className="font-mono fs-5" style={{ color: 'var(--text)', marginTop: 2 }}>
+                    {data.model_name}
+                  </div>
+                )}
+                {data.style_descriptor && (
+                  <div className="text-secondary small" style={{ marginTop: 4 }}>
+                    {data.style_descriptor}
+                  </div>
+                )}
+              </div>
+              {data.model_confidence && (
+                <span className={`badge ${data.model_confidence === 'high' ? 'bg-info' : data.model_confidence === 'medium' ? 'bg-warning' : 'bg-secondary'}`}>
+                  {data.model_confidence} conf
+                </span>
+              )}
+            </div>
+            {data.design_notes && (
+              <p className="text-secondary mt-3 mb-0" style={{ fontStyle: 'italic', lineHeight: 1.5 }}>
+                "{data.design_notes}"
+              </p>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="card mb-3">
         <div className="card-body">
           {data.photo_path ? (
             <>
-              <ImageLightbox src={`/uploads/${data.photo_path}`} alt={data.display_id || 'Hat photo'} />
-              <div className="mt-2">
+              <ImageLightbox src={`/uploads/${data.photo_path}`} alt={data.display_id || 'Hat photo'} hat />
+              <div className="mt-3 d-flex gap-2">
                 <PhotoCapture onCapture={handlePhotoUpload} hidePreview />
+                {data.photo_path && (
+                  <button
+                    type="button"
+                    className="btn btn-outline-secondary"
+                    onClick={() => reanalyzeMut.mutate()}
+                    disabled={reanalyzing || data.analysis_status === 'skipped'}
+                    title={data.analysis_status === 'skipped' ? 'Configure API key in Settings first' : 'Re-run Claude analysis'}
+                  >
+                    {reanalyzing ? '↻ Analyzing…' : '↻ Reanalyze'}
+                  </button>
+                )}
               </div>
+              {reanalyzeMut.error && (
+                <div className="alert alert-danger mt-2 mb-0">{String(reanalyzeMut.error)}</div>
+              )}
             </>
           ) : (
             <PhotoCapture onCapture={handlePhotoUpload} previewUrl={null} />
           )}
-          {uploading && <div className="text-secondary small">Uploading & detecting colors...</div>}
+          {uploading && (
+            <div className="text-secondary small mt-2 font-mono" style={{ letterSpacing: '0.08em' }}>
+              ↑ Uploading · removing background · analyzing with Claude…
+            </div>
+          )}
         </div>
       </div>
 
+      {/* Pricing */}
+      {(data.estimated_new_price !== null || data.resale_price_url) && (
+        <div className="card mb-3">
+          <div className="card-body">
+            <div className="card-title">Valuation</div>
+            <div className="row g-2">
+              <div className="col-6">
+                <PriceTile
+                  label="New Retail"
+                  value={data.estimated_new_price ?? null}
+                  source={data.estimated_new_price_source}
+                />
+              </div>
+              <div className="col-6">
+                <PriceTile
+                  label="Resale"
+                  value={data.resale_price ?? null}
+                  source={data.resale_price_source}
+                />
+              </div>
+            </div>
+            {data.resale_price_url && (
+              <a
+                href={data.resale_price_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn btn-outline-primary btn-sm w-100 mt-3"
+              >
+                Browse on {data.resale_price_source || 'Resale Marketplace'} →
+              </a>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Specs */}
       <div className="card mb-3">
         <div className="card-body">
-          <div className="row">
-            <div className="col-6 mb-3">
-              <div className="text-secondary small">Style</div>
-              <div className="fw-semibold">{data.style.replace(/_/g, ' ')}</div>
-            </div>
-            <div className="col-6 mb-3">
-              <div className="text-secondary small">Size</div>
-              <div className="fw-semibold">{data.size.replace(/_/g, ' ')}</div>
-            </div>
-            <div className="col-6">
-              <div className="text-secondary small">Last Worn</div>
-              <div className="fw-semibold">{data.date_last_worn || '\u2014'}</div>
-            </div>
+          <div className="card-title">Specs</div>
+          <div className="row g-2">
+            <div className="col-6"><div className="hr-metric"><div className="hr-metric-label">Style</div><div className="hr-metric-value">{data.style.replace(/_/g, ' ')}</div></div></div>
+            <div className="col-6"><div className="hr-metric"><div className="hr-metric-label">Size</div><div className="hr-metric-value">{data.size.replace(/_/g, ' ')}</div></div></div>
+            <div className="col-6"><div className="hr-metric"><div className="hr-metric-label">Last Worn</div><div className="hr-metric-value" style={{ fontSize: '0.95rem' }}>{data.date_last_worn || '—'}</div></div></div>
+            <div className="col-6"><div className="hr-metric"><div className="hr-metric-label">Type</div><div className="hr-metric-value" style={{ fontSize: '0.95rem' }}>{data.is_beanie ? 'Beanie' : 'Regular'}</div></div></div>
           </div>
         </div>
       </div>
 
-      {/* Prominent case info */}
+      {/* Case info */}
       <div className={`card mb-3 ${!data.case_display_id ? 'border-warning' : ''}`}>
         <div className="card-body">
-          <div className="text-secondary small mb-1">Case</div>
+          <div className="card-title">Case</div>
           {data.case_display_id ? (
-            <div className="d-flex justify-content-between align-items-center">
-              <div>
-                <span className="fw-semibold fs-5">Stored in: {data.case_display_id}</span>
+            <div className="d-flex justify-content-between align-items-center gap-2 flex-wrap">
+              <div className="d-flex align-items-center gap-2 flex-wrap">
+                <span className="font-mono fs-5" style={{ color: 'var(--neon-cyan)' }}>{data.case_display_id}</span>
                 {caseTypeLabel && (
-                  <span className={`badge ms-2 ${data.case_type === 'archive' ? 'bg-secondary' : 'bg-info'}`}>
+                  <span className={`badge ${data.case_type === 'archive' ? 'bg-secondary' : 'bg-info'}`}>
                     {caseTypeLabel}
                   </span>
                 )}
                 {data.room_name && (
-                  <span className="badge ms-2 bg-info">{data.room_name}</span>
+                  <span className="badge bg-info">{data.room_name}</span>
                 )}
               </div>
               <Link to={`/cases/${data.case_display_id}`} className="btn btn-outline-primary btn-sm">View Case</Link>
             </div>
           ) : (
-            <div className="d-flex justify-content-between align-items-center">
-              <div className="text-warning fw-semibold">Not assigned to a case</div>
+            <div className="d-flex justify-content-between align-items-center gap-2 flex-wrap">
+              <div style={{ color: 'var(--neon-yellow)' }}>Not assigned to a case</div>
               <Link to={`/hats/${data.id}/edit`} className="btn btn-outline-warning btn-sm">Assign</Link>
             </div>
           )}
         </div>
       </div>
 
+      {/* Colors */}
       {data.colors.length > 0 && (
         <div className="card mb-3">
           <div className="card-body">
-            {data.colors.some(c => c.general_color) && (
-              <>
-                <div className="text-secondary small mb-2">Colors</div>
-                <div className="d-flex gap-2 flex-wrap mb-3">
-                  {[...new Set(data.colors.map(c => c.general_color).filter(Boolean))].map(gc => (
-                    <span key={gc} className="badge bg-light text-dark border">{gc}</span>
-                  ))}
+            <div className="card-title">Color Palette</div>
+            {data.colors.map(c => (
+              <div key={c.dominance_rank} className="hr-color-row">
+                <div
+                  className="color-swatch"
+                  style={{ width: 32, height: 32, backgroundColor: c.hex_value, color: c.hex_value }}
+                />
+                <div className="flex-grow-1">
+                  <div className="fw-semibold">{c.general_color || c.color_name}</div>
+                  {c.color_name && c.color_name !== c.general_color && (
+                    <div className="text-muted small font-mono">{c.color_name}</div>
+                  )}
                 </div>
-              </>
-            )}
-            <div className="text-secondary small mb-2">Detected Colors (advanced)</div>
-            <div className="d-flex gap-2 flex-wrap">
-              {data.colors.map(c => (
-                <div key={c.dominance_rank} className="d-flex align-items-center gap-2">
-                  <div className="color-swatch" style={{ backgroundColor: c.hex_value, width: 24, height: 24, borderRadius: 4, border: '1px solid rgba(0,0,0,0.1)' }} />
-                  <div>
-                    <div className="small">{c.general_color || c.color_name}</div>
-                    {c.general_color && c.color_name !== c.general_color && (
-                      <div className="text-muted" style={{ fontSize: '0.7rem' }}>{c.color_name} {c.hex_value}</div>
-                    )}
-                  </div>
+                <div className="text-end">
+                  <div className="hr-tier-label">{c.tier || 'primary'}</div>
+                  <div className="text-muted font-mono small">{c.hex_value}</div>
                 </div>
-              ))}
-            </div>
+              </div>
+            ))}
           </div>
+        </div>
+      )}
+
+      {data.analysis_status === 'skipped' && (
+        <div className="alert alert-info mb-3">
+          Configure your Anthropic API key in <Link to="/settings" style={{ color: 'inherit', textDecoration: 'underline' }}>Settings</Link> to enable AI brand/color/price detection.
+        </div>
+      )}
+
+      {data.analysis_status === 'error' && data.analysis_error && (
+        <div className="alert alert-danger mb-3 small">
+          Analysis error: {data.analysis_error}
         </div>
       )}
 

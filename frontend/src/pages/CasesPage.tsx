@@ -19,17 +19,22 @@ function CaseCard({ c }: { c: CaseRead }) {
   }
 
   return (
-    <Link to={`/cases/${c.display_id}`} className="card mb-2 text-decoration-none text-body">
+    <Link to={`/cases/${c.display_id}`} className="card text-decoration-none h-100">
       {c.photo_path && (
-        <img src={`/uploads/${c.photo_path}`} alt={c.display_id} className="card-img-top" style={{ aspectRatio: '4/3', objectFit: 'cover' }} />
+        <img
+          src={`/uploads/${c.photo_path}`}
+          alt={c.display_id}
+          className="hr-photo-raster"
+          style={{ width: '100%', aspectRatio: '4/3', display: 'block' }}
+        />
       )}
-      <div className="card-body d-flex justify-content-between align-items-center">
+      <div className="card-body d-flex justify-content-between align-items-center gap-2">
         <div>
-          <div className="fw-bold fs-5">{c.display_id}</div>
+          <div className="font-mono fw-bold fs-5" style={{ color: 'var(--neon-cyan)' }}>{c.display_id}</div>
           <div className="text-secondary small">{typeLabel} · {c.room_name}</div>
         </div>
         <div className="text-end">
-          <div className="fw-semibold">{countLabel}</div>
+          <div className="font-mono fw-semibold" style={{ color: 'var(--neon-pink)' }}>{countLabel}</div>
         </div>
       </div>
     </Link>
@@ -45,7 +50,7 @@ export function CasesPage() {
   if (isLoading) return <LoadingSpinner />;
   if (error) return (
     <div className="text-center py-5">
-      <h5 className="text-secondary mb-2">No cases to display</h5>
+      <h5 className="mb-2">No cases to display</h5>
       <p className="text-secondary small mb-3">The case collection is empty or could not be loaded.</p>
       <Link to="/cases/new" className="btn btn-primary">Create First Case</Link>
     </div>
@@ -59,32 +64,32 @@ export function CasesPage() {
 
   return (
     <>
-      <div className="d-flex justify-content-between align-items-center mb-3">
+      <div className="d-flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
         <h1>Cases</h1>
-        <Link to="/cases/new" className="btn btn-primary">+ New</Link>
+        <Link to="/cases/new" className="btn btn-primary btn-sm">+ New</Link>
       </div>
 
-      <div className="d-flex gap-2 mb-3">
-        <div className="btn-group btn-group-sm flex-grow-1" role="group">
+      <div className="d-flex gap-2 mb-3 flex-wrap">
+        <div className="btn-group flex-grow-1" role="group">
           <button
             type="button"
-            className={`btn ${typeFilter === 'all' ? 'btn-primary' : 'btn-outline-primary'}`}
+            className={`btn btn-sm ${typeFilter === 'all' ? 'btn-primary' : 'btn-outline-primary'}`}
             onClick={() => setTypeFilter('all')}
           >All</button>
           <button
             type="button"
-            className={`btn ${typeFilter === 'archive' ? 'btn-primary' : 'btn-outline-primary'}`}
+            className={`btn btn-sm ${typeFilter === 'archive' ? 'btn-primary' : 'btn-outline-primary'}`}
             onClick={() => setTypeFilter('archive')}
           >Archive</button>
           <button
             type="button"
-            className={`btn ${typeFilter === 'daily_wear' ? 'btn-primary' : 'btn-outline-primary'}`}
+            className={`btn btn-sm ${typeFilter === 'daily_wear' ? 'btn-primary' : 'btn-outline-primary'}`}
             onClick={() => setTypeFilter('daily_wear')}
           >Daily Wear</button>
         </div>
         <select
           className="form-select form-select-sm"
-          style={{ maxWidth: 160 }}
+          style={{ maxWidth: 180 }}
           value={roomFilter}
           onChange={e => setRoomFilter(e.target.value)}
         >

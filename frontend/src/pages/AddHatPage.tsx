@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { createHat, uploadHatPhoto, getStyles, getSizes, getConditions } from '../api/hats';
 import { listCases } from '../api/cases';
+import { getApiKeyStatus } from '../api/settings';
 import { PhotoCapture } from '../components/photos/PhotoCapture';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { NewCaseModal } from '../components/common/NewCaseModal';
@@ -25,6 +26,7 @@ export function AddHatPage() {
   const sizes = useQuery({ queryKey: ['meta', 'sizes'], queryFn: getSizes });
   const conditions = useQuery({ queryKey: ['meta', 'conditions'], queryFn: getConditions });
   const cases = useQuery({ queryKey: ['cases'], queryFn: listCases });
+  const apiKey = useQuery({ queryKey: ['settings', 'api-key'], queryFn: getApiKeyStatus });
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -69,17 +71,24 @@ export function AddHatPage() {
     <>
       <h1 className="mb-3">Add Hat</h1>
 
+      {photo && apiKey.data && !apiKey.data.configured && (
+        <div className="alert alert-warning mb-3">
+          No Anthropic API key configured — photo will save, but Claude won't run.
+          Set one in <a href="/settings" style={{ color: 'inherit', textDecoration: 'underline' }}>Settings</a> for brand / color / price detection.
+        </div>
+      )}
+
       <form onSubmit={handleSubmit}>
         <div className="card mb-3">
           <div className="card-body">
-            <h6 className="card-title text-secondary mb-3">Photo</h6>
+            <div className="card-title">Photo</div>
             <PhotoCapture onCapture={handlePhotoCapture} previewUrl={photoPreview} />
           </div>
         </div>
 
         <div className="card mb-3">
           <div className="card-body">
-            <h6 className="card-title text-secondary mb-3">Details</h6>
+            <div className="card-title">Details</div>
 
             <div className="mb-3">
               <label className="form-label">Style</label>
@@ -112,7 +121,7 @@ export function AddHatPage() {
               <label className="form-label">Assign to Case (optional)</label>
               <select className="form-select" value={caseId} onChange={e => handleCaseChange(e.target.value)}>
                 <option value="">Unassigned</option>
-                <option value="__new__">+ Create New Case...</option>
+                <option value="__new__">+ Create New Case…</option>
                 {cases.data?.map(c => (
                   <option key={c.id} value={c.id}>
                     {c.display_id} ({c.case_type === 'archive' ? 'Archive' : 'Daily'} · {c.hat_count} hats · {c.room_name})
@@ -137,7 +146,7 @@ export function AddHatPage() {
           className="btn btn-primary w-100 btn-lg"
           disabled={mutation.isPending}
         >
-          {mutation.isPending ? 'Saving...' : 'Save Hat'}
+          {mutation.isPending ? 'Saving · Claude analyzing…' : 'Save Hat'}
         </button>
       </form>
 

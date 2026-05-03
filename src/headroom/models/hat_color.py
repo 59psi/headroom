@@ -15,5 +15,7 @@ class HatColor(Base):
     general_color: Mapped[str] = mapped_column(String(30), index=True, default="")
     hex_value: Mapped[str] = mapped_column(String(7))
     dominance_rank: Mapped[int] = mapped_column(Integer)
+    # primary | secondary | tertiary | accent
+    tier: Mapped[str] = mapped_column(String(12), default="primary")
 
     hat: Mapped["Hat"] = relationship(back_populates="colors")  # noqa: F821

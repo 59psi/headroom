@@ -2,10 +2,15 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from PIL import Image
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.config import settings
+from headroom.database import get_db
+from headroom.schemas.settings import ApiKeyStatus, ApiKeyTestResult, ApiKeyUpdate
+from headroom.services import settings_service
+from headroom.services.claude_analysis import verify_api_key
 from headroom.utils.photo import validate_image_content_type
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -13,8 +18,10 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 LOGO_MAX_HEIGHT = 96
 
 
+# ---------------------------- Logo ----------------------------------- #
+
+
 def _get_logo_path() -> Path | None:
-    """Find existing logo file in uploads/branding/."""
     branding_dir = settings.upload_dir / "branding"
     if not branding_dir.exists():
         return None
@@ -40,12 +47,10 @@ async def upload_logo(photo: UploadFile):
     branding_dir = settings.upload_dir / "branding"
     branding_dir.mkdir(parents=True, exist_ok=True)
 
-    # Remove existing logo
     existing = _get_logo_path()
     if existing:
         existing.unlink(missing_ok=True)
 
-    # Save to temp
     suffix = Path(photo.filename or "logo.png").suffix.lower()
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         shutil.copyfileobj(photo.file, tmp)
@@ -54,7 +59,6 @@ async def upload_logo(photo: UploadFile):
     try:
         img = Image.open(tmp_path)
         if img.mode in ("RGBA", "P", "LA"):
-            # Keep transparency — save as PNG
             out_ext = ".png"
             save_fmt = "PNG"
         else:
@@ -62,7 +66,6 @@ async def upload_logo(photo: UploadFile):
             out_ext = ".png"
             save_fmt = "PNG"
 
-        # Resize proportionally to fit max height
         if img.height > LOGO_MAX_HEIGHT:
             ratio = LOGO_MAX_HEIGHT / img.height
             new_w = int(img.width * ratio)
@@ -81,3 +84,43 @@ async def delete_logo():
     existing = _get_logo_path()
     if existing:
         existing.unlink(missing_ok=True)
+
+
+# ---------------------------- API key -------------------------------- #
+
+
+@router.get("/api-key", response_model=ApiKeyStatus)
+async def get_api_key_status(db: AsyncSession = Depends(get_db)):
+    key, source = await settings_service.get_anthropic_key(db)
+    if not key:
+        return ApiKeyStatus(configured=False)
+    return ApiKeyStatus(
+        configured=True,
+        source=source,
+        masked=settings_service.mask_key(key),
+    )
+
+
+@router.put("/api-key", response_model=ApiKeyStatus)
+async def set_api_key(data: ApiKeyUpdate, db: AsyncSession = Depends(get_db)):
+    await settings_service.set_anthropic_key(db, data.api_key)
+    key, source = await settings_service.get_anthropic_key(db)
+    return ApiKeyStatus(
+        configured=bool(key),
+        source=source,
+        masked=settings_service.mask_key(key) if key else None,
+    )
+
+
+@router.delete("/api-key", status_code=204)
+async def delete_api_key(db: AsyncSession = Depends(get_db)):
+    await settings_service.clear_anthropic_key(db)
+
+
+@router.post("/api-key/test", response_model=ApiKeyTestResult)
+async def test_api_key(db: AsyncSession = Depends(get_db)):
+    key, _source = await settings_service.get_anthropic_key(db)
+    if not key:
+        return ApiKeyTestResult(ok=False, detail="No API key configured.")
+    ok, detail = await verify_api_key(key)
+    return ApiKeyTestResult(ok=ok, detail=detail)

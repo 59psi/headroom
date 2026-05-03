@@ -8,25 +8,33 @@ import { ColorSwatches } from '../components/common/ColorSwatch';
 import { ConditionBadge } from '../components/common/ConditionBadge';
 import type { HatRead } from '../types';
 
-function HatCard({ hat }: { hat: HatRead }) {
+function HatRow({ hat }: { hat: HatRead }) {
   return (
-    <Link to={`/hats/${hat.id}`} className="card mb-2 text-decoration-none text-body">
-      <div className="card-body d-flex gap-3">
+    <Link to={`/hats/${hat.id}`} className="card mb-2 text-decoration-none">
+      <div className="card-body d-flex gap-3 align-items-center">
         {hat.photo_path ? (
-          <img src={`/uploads/${hat.photo_path}`} alt="" className="rounded flex-shrink-0" style={{ width: 72, height: 72, objectFit: 'cover' }} />
+          <img src={`/uploads/${hat.photo_path}`} alt="" className="hr-thumb flex-shrink-0" style={{ width: 80, height: 80 }} />
         ) : (
-          <div className="rounded flex-shrink-0" style={{ width: 72, height: 72, background: 'var(--color-border)' }} />
+          <div className="rounded flex-shrink-0" style={{ width: 80, height: 80, background: 'rgba(0,0,0,0.3)', border: '1px dashed var(--border)' }} />
         )}
         <div className="flex-grow-1" style={{ minWidth: 0 }}>
-          <div className="d-flex justify-content-between align-items-start">
-            <div className="fw-semibold">{hat.display_id || `#${hat.id}`}</div>
+          <div className="d-flex justify-content-between align-items-start gap-2">
+            <div>
+              <div className="fw-bold font-mono" style={{ color: 'var(--neon-cyan)' }}>{hat.display_id || `#${hat.id}`}</div>
+              {hat.brand && (
+                <div className="text-secondary small">
+                  <span style={{ color: 'var(--neon-pink)' }}>{hat.brand}</span>
+                  {hat.model_name && <> · {hat.model_name}</>}
+                </div>
+              )}
+            </div>
             <ConditionBadge condition={hat.condition} />
           </div>
-          <div className="text-secondary small mb-1">
+          <div className="text-muted small mb-1" style={{ marginTop: 4 }}>
             {hat.style.replace(/_/g, ' ')} · {hat.size.replace(/_/g, ' ')}
             {hat.room_name && <> · {hat.room_name}</>}
           </div>
-          <ColorSwatches colors={hat.colors} />
+          <ColorSwatches colors={hat.colors} showLabels={false} />
         </div>
       </div>
     </Link>
@@ -35,20 +43,25 @@ function HatCard({ hat }: { hat: HatRead }) {
 
 function GalleryItem({ hat }: { hat: HatRead }) {
   return (
-    <Link to={`/hats/${hat.id}`} className="text-decoration-none text-body">
-      <div className="card h-100">
-        {hat.photo_path ? (
-          <img src={`/uploads/${hat.photo_path}`} alt="" className="card-img-top hr-gallery-item" />
-        ) : (
-          <div className="hr-gallery-placeholder">No photo</div>
-        )}
-        <div className="card-body py-2 px-2">
-          <div className="fw-semibold small">{hat.display_id || `#${hat.id}`}</div>
-          <div className="text-secondary" style={{ fontSize: '0.75rem' }}>
-            {hat.style.replace(/_/g, ' ')}
-          </div>
-          <ColorSwatches colors={hat.colors} />
+    <Link to={`/hats/${hat.id}`} className="card text-decoration-none h-100">
+      {hat.photo_path ? (
+        <img src={`/uploads/${hat.photo_path}`} alt="" className="hr-gallery-item" />
+      ) : (
+        <div className="hr-gallery-placeholder">No photo</div>
+      )}
+      <div className="card-body py-2 px-2">
+        <div className="fw-bold font-mono small" style={{ color: 'var(--neon-cyan)' }}>
+          {hat.display_id || `#${hat.id}`}
         </div>
+        {hat.brand && (
+          <div className="small" style={{ color: 'var(--neon-pink)', fontSize: '0.75rem', marginTop: 2 }}>
+            {hat.brand}{hat.model_name ? ` · ${hat.model_name}` : ''}
+          </div>
+        )}
+        <div className="text-muted" style={{ fontSize: '0.72rem', marginTop: 2 }}>
+          {hat.style.replace(/_/g, ' ')}
+        </div>
+        <ColorSwatches colors={hat.colors} showLabels={false} />
       </div>
     </Link>
   );
@@ -69,8 +82,9 @@ export function HatsPage() {
   const [filterType, setFilterType] = useState('');
   const [filterColor, setFilterColor] = useState('');
   const [filterRoom, setFilterRoom] = useState('');
+  const [filterBrand, setFilterBrand] = useState('');
 
-  const activeFilterCount = [filterStyle, filterSize, filterCondition, filterType, filterColor, filterRoom].filter(Boolean).length;
+  const activeFilterCount = [filterStyle, filterSize, filterCondition, filterType, filterColor, filterRoom, filterBrand].filter(Boolean).length;
 
   const availableColors = useMemo(() => {
     if (!data) return [];
@@ -79,6 +93,11 @@ export function HatsPage() {
       if (c.general_color) colors.add(c.general_color);
     }));
     return [...colors].sort();
+  }, [data]);
+
+  const availableBrands = useMemo(() => {
+    if (!data) return [];
+    return [...new Set(data.map(h => h.brand).filter(Boolean) as string[])].sort();
   }, [data]);
 
   const filteredData = useMemo(() => {
@@ -91,14 +110,15 @@ export function HatsPage() {
       if (filterType === 'regular' && h.is_beanie) return false;
       if (filterColor && !h.colors.some(c => c.general_color === filterColor)) return false;
       if (filterRoom && h.room_id !== Number(filterRoom)) return false;
+      if (filterBrand && h.brand !== filterBrand) return false;
       return true;
     });
-  }, [data, filterStyle, filterSize, filterCondition, filterType, filterColor, filterRoom]);
+  }, [data, filterStyle, filterSize, filterCondition, filterType, filterColor, filterRoom, filterBrand]);
 
   if (isLoading) return <LoadingSpinner />;
   if (error) return (
     <div className="text-center py-5">
-      <h5 className="text-secondary mb-2">No hats to display</h5>
+      <h5 className="mb-2">No hats to display</h5>
       <p className="text-secondary small mb-3">The hat collection is empty or could not be loaded.</p>
       <Link to="/hats/new" className="btn btn-primary">Add First Hat</Link>
     </div>
@@ -106,7 +126,7 @@ export function HatsPage() {
 
   return (
     <>
-      <div className="d-flex justify-content-between align-items-center mb-3">
+      <div className="d-flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
         <h1>Hats</h1>
         <div className="d-flex gap-2 align-items-center">
           <button
@@ -114,22 +134,24 @@ export function HatsPage() {
             className={`btn btn-sm ${activeFilterCount ? 'btn-primary' : 'btn-outline-secondary'}`}
             onClick={() => setFiltersOpen(!filtersOpen)}
           >
-            Filters{activeFilterCount > 0 && <span className="badge bg-white text-primary ms-1">{activeFilterCount}</span>}
+            Filters{activeFilterCount > 0 && <span className="badge bg-white ms-1">{activeFilterCount}</span>}
           </button>
-          <div className="btn-group btn-group-sm" role="group">
+          <div className="btn-group" role="group">
             <button
               type="button"
-              className={`btn ${view === 'list' ? 'btn-primary' : 'btn-outline-primary'}`}
+              className={`btn btn-sm ${view === 'list' ? 'btn-primary' : 'btn-outline-primary'}`}
               onClick={() => setView('list')}
               title="List view"
+              aria-label="List view"
             >
               <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><rect x="0" y="1" width="16" height="3" rx="1"/><rect x="0" y="6.5" width="16" height="3" rx="1"/><rect x="0" y="12" width="16" height="3" rx="1"/></svg>
             </button>
             <button
               type="button"
-              className={`btn ${view === 'gallery' ? 'btn-primary' : 'btn-outline-primary'}`}
+              className={`btn btn-sm ${view === 'gallery' ? 'btn-primary' : 'btn-outline-primary'}`}
               onClick={() => setView('gallery')}
               title="Gallery view"
+              aria-label="Gallery view"
             >
               <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><rect x="0" y="0" width="7" height="7" rx="1"/><rect x="9" y="0" width="7" height="7" rx="1"/><rect x="0" y="9" width="7" height="7" rx="1"/><rect x="9" y="9" width="7" height="7" rx="1"/></svg>
             </button>
@@ -143,7 +165,7 @@ export function HatsPage() {
           <div className="card-body">
             <div className="row g-2">
               <div className="col-6 col-md-3">
-                <label className="form-label small text-secondary mb-1">Style</label>
+                <label className="form-label">Style</label>
                 <select className="form-select form-select-sm" value={filterStyle} onChange={e => setFilterStyle(e.target.value)}>
                   <option value="">All</option>
                   {stylesQ.data?.map(s => (
@@ -152,7 +174,7 @@ export function HatsPage() {
                 </select>
               </div>
               <div className="col-6 col-md-3">
-                <label className="form-label small text-secondary mb-1">Size</label>
+                <label className="form-label">Size</label>
                 <select className="form-select form-select-sm" value={filterSize} onChange={e => setFilterSize(e.target.value)}>
                   <option value="">All</option>
                   {sizesQ.data?.map(s => (
@@ -161,7 +183,7 @@ export function HatsPage() {
                 </select>
               </div>
               <div className="col-6 col-md-3">
-                <label className="form-label small text-secondary mb-1">Condition</label>
+                <label className="form-label">Condition</label>
                 <select className="form-select form-select-sm" value={filterCondition} onChange={e => setFilterCondition(e.target.value)}>
                   <option value="">All</option>
                   {conditionsQ.data?.map(c => (
@@ -170,7 +192,7 @@ export function HatsPage() {
                 </select>
               </div>
               <div className="col-6 col-md-3">
-                <label className="form-label small text-secondary mb-1">Type</label>
+                <label className="form-label">Type</label>
                 <select className="form-select form-select-sm" value={filterType} onChange={e => setFilterType(e.target.value)}>
                   <option value="">All</option>
                   <option value="regular">Regular</option>
@@ -178,7 +200,7 @@ export function HatsPage() {
                 </select>
               </div>
               <div className="col-6 col-md-3">
-                <label className="form-label small text-secondary mb-1">Color</label>
+                <label className="form-label">Color</label>
                 <select className="form-select form-select-sm" value={filterColor} onChange={e => setFilterColor(e.target.value)}>
                   <option value="">All</option>
                   {availableColors.map(c => (
@@ -187,7 +209,7 @@ export function HatsPage() {
                 </select>
               </div>
               <div className="col-6 col-md-3">
-                <label className="form-label small text-secondary mb-1">Room</label>
+                <label className="form-label">Room</label>
                 <select className="form-select form-select-sm" value={filterRoom} onChange={e => setFilterRoom(e.target.value)}>
                   <option value="">All</option>
                   {roomsQ.data?.map(r => (
@@ -195,12 +217,24 @@ export function HatsPage() {
                   ))}
                 </select>
               </div>
+              {availableBrands.length > 0 && (
+                <div className="col-6 col-md-3">
+                  <label className="form-label">Brand</label>
+                  <select className="form-select form-select-sm" value={filterBrand} onChange={e => setFilterBrand(e.target.value)}>
+                    <option value="">All</option>
+                    {availableBrands.map(b => (
+                      <option key={b} value={b}>{b}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
             {activeFilterCount > 0 && (
               <button
                 type="button"
-                className="btn btn-link btn-sm text-danger mt-2 p-0"
-                onClick={() => { setFilterStyle(''); setFilterSize(''); setFilterCondition(''); setFilterType(''); setFilterColor(''); setFilterRoom(''); }}
+                className="btn btn-link btn-sm mt-2 p-0"
+                style={{ color: 'var(--neon-red)' }}
+                onClick={() => { setFilterStyle(''); setFilterSize(''); setFilterCondition(''); setFilterType(''); setFilterColor(''); setFilterRoom(''); setFilterBrand(''); }}
               >Clear filters</button>
             )}
           </div>
@@ -219,7 +253,7 @@ export function HatsPage() {
           ))}
         </div>
       ) : (
-        filteredData.map(h => <HatCard key={h.id} hat={h} />)
+        filteredData.map(h => <HatRow key={h.id} hat={h} />)
       )}
     </>
   );

@@ -8,10 +8,10 @@ import type { RoomRead } from '../types';
 function RoomCard({ room, onEdit, onDelete }: { room: RoomRead; onEdit: (id: number, name: string) => void; onDelete: (id: number) => void }) {
   return (
     <div className="card mb-2">
-      <div className="card-body d-flex justify-content-between align-items-center">
+      <div className="card-body d-flex justify-content-between align-items-center gap-2 flex-wrap">
         <div>
-          <div className="fw-bold fs-5">{room.name}</div>
-          <div className="text-secondary small">
+          <div className="fw-bold fs-5" style={{ color: 'var(--text)' }}>{room.name}</div>
+          <div className="text-muted small font-mono">
             {room.case_count} case{room.case_count !== 1 ? 's' : ''}
           </div>
         </div>
@@ -88,8 +88,8 @@ export function RoomsPage() {
   if (roomsQ.isLoading) return <LoadingSpinner />;
   if (roomsQ.error) return (
     <div className="text-center py-5">
-      <h5 className="text-secondary mb-2">Could not load rooms</h5>
-      <Link to="/" className="btn btn-outline-primary">Back to Home</Link>
+      <h5 className="mb-2">Could not load rooms</h5>
+      <Link to="/" className="btn btn-outline-primary">← Back</Link>
     </div>
   );
 
@@ -97,7 +97,7 @@ export function RoomsPage() {
 
   return (
     <>
-      <div className="d-flex justify-content-between align-items-center mb-3">
+      <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
         <h1>Rooms</h1>
       </div>
 
@@ -106,22 +106,22 @@ export function RoomsPage() {
         The Default Room cannot be deleted.
       </p>
 
-      {/* Rename modal inline */}
       {editingId && (
         <div className="card mb-3 border-primary">
           <div className="card-body">
-            <label className="form-label small text-secondary">Rename Room</label>
-            <div className="d-flex gap-2">
+            <label className="form-label">Rename Room</label>
+            <div className="d-flex gap-2 flex-wrap">
               <input
                 type="text"
-                className="form-control"
+                className="form-control flex-grow-1"
+                style={{ minWidth: 200 }}
                 value={editName}
                 onChange={e => setEditName(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') saveEdit(); if (e.key === 'Escape') setEditingId(null); }}
                 autoFocus
               />
               <button className="btn btn-primary" onClick={saveEdit} disabled={updateMut.isPending}>
-                {updateMut.isPending ? 'Saving...' : 'Save'}
+                {updateMut.isPending ? 'Saving…' : 'Save'}
               </button>
               <button className="btn btn-outline-secondary" onClick={() => setEditingId(null)}>Cancel</button>
             </div>
@@ -135,11 +135,12 @@ export function RoomsPage() {
 
       <div className="card mt-3">
         <div className="card-body">
-          <label className="form-label small text-secondary">Add Room</label>
-          <div className="d-flex gap-2">
+          <label className="form-label">Add Room</label>
+          <div className="d-flex gap-2 flex-wrap">
             <input
               type="text"
-              className="form-control"
+              className="form-control flex-grow-1"
+              style={{ minWidth: 200 }}
               placeholder="Room name"
               value={newRoomName}
               onChange={e => setNewRoomName(e.target.value)}
@@ -150,7 +151,7 @@ export function RoomsPage() {
               disabled={!newRoomName.trim() || createMut.isPending}
               onClick={() => createMut.mutate()}
             >
-              {createMut.isPending ? 'Adding...' : 'Add Room'}
+              {createMut.isPending ? 'Adding…' : 'Add Room'}
             </button>
           </div>
         </div>

@@ -1,7 +1,7 @@
 [project]
 name = "headroom"
-version = "0.1.0"
-description = "Headroom web API"
+version = "0.2.0"
+description = "Headroom — AI-powered hat collection tracker"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -13,8 +13,11 @@ dependencies = [
     "python-multipart",
     "Pillow",
     "pillow-heif",
-    "colorthief",
-    "webcolors",
+    "anthropic>=0.40.0",
+    "httpx",
+    "beautifulsoup4",
+    "rembg[cpu]>=2.0.50",
+    "onnxruntime",
 ]
 
 [dependency-groups]
@@ -22,7 +25,6 @@ dev = [
     "pytest",
     "anyio[trio]",
     "pytest-anyio",
-    "httpx",
 ]
 
 [build-system]

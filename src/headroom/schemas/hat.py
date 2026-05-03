@@ -35,6 +35,7 @@ class ColorTag(BaseModel):
     general_color: str = ""
     hex_value: str
     dominance_rank: int
+    tier: str = "primary"
 
     model_config = {"from_attributes": True}
 
@@ -52,6 +53,12 @@ class HatUpdate(BaseModel):
     size: HatSize | None = None
     style: HatStyle | None = None
     date_last_worn: date | None = None
+    brand: str | None = None
+    model_name: str | None = None
+    style_descriptor: str | None = None
+    design_notes: str | None = None
+    estimated_new_price: float | None = None
+    resale_price: float | None = None
 
 
 class HatRead(BaseModel):
@@ -70,6 +77,23 @@ class HatRead(BaseModel):
     colors: list[ColorTag]
     room_id: int | None
     room_name: str | None
+
+    # AI / pricing fields
+    brand: str | None = None
+    model_name: str | None = None
+    model_confidence: str | None = None
+    style_descriptor: str | None = None
+    design_notes: str | None = None
+    estimated_new_price: float | None = None
+    estimated_new_price_source: str | None = None
+    resale_price: float | None = None
+    resale_price_source: str | None = None
+    resale_price_url: str | None = None
+    resale_checked_at: datetime | None = None
+    analysis_status: str | None = None
+    analysis_error: str | None = None
+    analyzed_at: datetime | None = None
+
     created_at: datetime
     updated_at: datetime
 

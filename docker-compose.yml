@@ -1,0 +1,20 @@
+services:
+  headroom:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: headroom:latest
+    container_name: headroom
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - headroom-data:/data
+    environment:
+      # Provide your Anthropic key here OR via the Settings UI (DB takes precedence).
+      # HEADROOM_ANTHROPIC_API_KEY: "sk-ant-..."
+      HEADROOM_REMBG_MODEL: "u2netp"
+      HEADROOM_CORS_ORIGINS: '["http://localhost:8000"]'
+
+volumes:
+  headroom-data:

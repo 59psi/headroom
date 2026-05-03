@@ -8,9 +8,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from headroom.config import settings
 from headroom.database import get_db
 from headroom.models.hat_color import HatColor
-from headroom.schemas.hat import ColorTag, ColorsUpdate, HatAssign, HatCreate, HatRead, HatUpdate
+from headroom.schemas.hat import (
+    ColorTag,
+    ColorsUpdate,
+    HatAssign,
+    HatCreate,
+    HatRead,
+    HatUpdate,
+)
 from headroom.services import hat_service
-from headroom.services.color_service import extract_colors
+from headroom.services.hat_analysis_pipeline import finalize_hat_photo
 from headroom.utils.photo import generate_filename, process_image, validate_image_content_type
 
 router = APIRouter(prefix="/api/hats", tags=["hats"])
@@ -37,11 +44,26 @@ def _hat_to_read(hat) -> HatRead:
                 general_color=c.general_color or "",
                 hex_value=c.hex_value,
                 dominance_rank=c.dominance_rank,
+                tier=getattr(c, "tier", "primary") or "primary",
             )
             for c in (hat.colors or [])
         ],
         room_id=room.id if room else None,
         room_name=room.name if room else None,
+        brand=hat.brand,
+        model_name=hat.model_name,
+        model_confidence=hat.model_confidence,
+        style_descriptor=hat.style_descriptor,
+        design_notes=hat.design_notes,
+        estimated_new_price=hat.estimated_new_price,
+        estimated_new_price_source=hat.estimated_new_price_source,
+        resale_price=hat.resale_price,
+        resale_price_source=hat.resale_price_source,
+        resale_price_url=hat.resale_price_url,
+        resale_checked_at=hat.resale_checked_at,
+        analysis_status=hat.analysis_status,
+        analysis_error=hat.analysis_error,
+        analyzed_at=hat.analyzed_at,
         created_at=hat.created_at,
         updated_at=hat.updated_at,
     )
@@ -109,6 +131,7 @@ async def update_hat_colors(
             general_color=c.general_color or "",
             hex_value=c.hex_value,
             dominance_rank=c.dominance_rank,
+            tier=c.tier or "primary",
         ))
 
     await db.commit()
@@ -144,16 +167,47 @@ async def upload_hat_photo(
         old_path = settings.upload_dir / hat.photo_path
         old_path.unlink(missing_ok=True)
 
-    hat.photo_path = f"hats/{final_path.name}"
+    # Pipeline: bg removal + Claude analysis (in-place mutation of `hat`)
+    await finalize_hat_photo(db, hat, final_path)
+    await db.commit()
+    db.expire_all()
+    return _hat_to_read(await hat_service.get_hat(db, hat_id))
 
-    # Extract colors and replace existing
-    for color in list(hat.colors):
-        await db.delete(color)
 
-    color_data = extract_colors(final_path)
-    for cd in color_data:
-        db.add(HatColor(hat_id=hat.id, **cd))
+@router.post("/{hat_id}/reanalyze", response_model=HatRead)
+async def reanalyze_hat(hat_id: int, db: AsyncSession = Depends(get_db)):
+    """Re-run Claude analysis against the current photo without re-uploading."""
+    hat = await hat_service.get_hat(db, hat_id)
+    if not hat.photo_path:
+        raise HTTPException(status_code=400, detail="Hat has no photo to analyze")
+    photo_path = settings.upload_dir / hat.photo_path
+    if not photo_path.exists():
+        raise HTTPException(status_code=404, detail="Photo file missing on disk")
 
+    # Re-running analysis re-uses the existing photo; bg removal already done.
+    from headroom.services.claude_analysis import (
+        ClaudeAnalysisError,
+        analyze_hat_image,
+    )
+    from headroom.services.hat_analysis_pipeline import _apply_analysis
+    from headroom.services import settings_service
+    from datetime import datetime, timezone
+
+    api_key, _source = await settings_service.get_anthropic_key(db)
+    if not api_key:
+        raise HTTPException(status_code=400, detail="No Anthropic API key configured")
+
+    try:
+        analysis = await analyze_hat_image(photo_path, api_key)
+    except ClaudeAnalysisError as exc:
+        hat.analysis_status = "error"
+        hat.analysis_error = str(exc)
+        hat.analyzed_at = datetime.now(timezone.utc)
+        await db.commit()
+        db.expire_all()
+        return _hat_to_read(await hat_service.get_hat(db, hat_id))
+
+    _apply_analysis(hat, analysis)
     await db.commit()
     db.expire_all()
     return _hat_to_read(await hat_service.get_hat(db, hat_id))

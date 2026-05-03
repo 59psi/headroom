@@ -68,7 +68,7 @@ export function EditCasePage() {
       <form onSubmit={handleSubmit}>
         <div className="card mb-3">
           <div className="card-body">
-            <h6 className="card-title text-secondary mb-3">Photo</h6>
+            <div className="card-title">Photo</div>
             <PhotoCapture onCapture={handlePhotoCapture} previewUrl={photoPreview} />
           </div>
         </div>
@@ -102,7 +102,7 @@ export function EditCasePage() {
           className="btn btn-primary w-100 btn-lg"
           disabled={mutation.isPending}
         >
-          {mutation.isPending ? 'Saving...' : 'Save Changes'}
+          {mutation.isPending ? 'Saving…' : 'Save Changes'}
         </button>
       </form>
     </>

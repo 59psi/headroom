@@ -31,12 +31,12 @@ export function NewCaseModal({ show, onClose, onCreated }: Props) {
   if (!show) return null;
 
   return (
-    <div className="modal d-block" tabIndex={-1} style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
-      <div className="modal-dialog modal-dialog-centered">
+    <div className="modal" onClick={onClose}>
+      <div className="modal-dialog" onClick={e => e.stopPropagation()}>
         <div className="modal-content">
           <div className="modal-header">
             <h5 className="modal-title">Create New Case</h5>
-            <button type="button" className="btn-close" onClick={onClose} />
+            <button type="button" className="btn-close" onClick={onClose} aria-label="Close" />
           </div>
           <div className="modal-body">
             <label className="form-label">Case Type</label>
@@ -62,7 +62,7 @@ export function NewCaseModal({ show, onClose, onCreated }: Props) {
               onClick={() => mutation.mutate()}
               disabled={mutation.isPending}
             >
-              {mutation.isPending ? 'Creating...' : 'Create Case'}
+              {mutation.isPending ? 'Creating…' : 'Create Case'}
             </button>
           </div>
         </div>
