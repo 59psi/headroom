@@ -4,6 +4,28 @@ All notable changes are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.6.1] — 2026-05-03 — _user style is ground truth + tap-to-edit colors_
+
+### Changed
+- **Owner-selected style is now ground truth for Claude.** When a hat is
+  uploaded with `style=trenches`, the analysis prompt explicitly tells
+  Claude that line is authoritative — Claude identifies the specific
+  variant within the Trenches line (Hydro / Icon / Infinity / etc.) and
+  is told NOT to pick a model from a different line. If the photo seems
+  inconsistent, Claude lowers `model_confidence` rather than overriding.
+  `analyze_hat_image()` gains a `selected_style` parameter; the upload
+  pipeline + reanalyze route both pass `hat.style`. Fixes the case where
+  a Trenches snapback was being labeled as an A-Game Hydro.
+
+### Added
+- **Tap-to-edit color rows** on the Hat detail page. Every color in the
+  palette is now a button that opens a modal with: a big color preview
+  that triggers the system color wheel (iOS Safari opens its native
+  picker), a hex text field, specific name + general (filter) name
+  fields, and a tier dropdown. Save / remove / cancel. New "+ Add Color"
+  button at the top of the palette card. Backed by the existing
+  `PUT /api/hats/{id}/colors` endpoint.
+
 ## [0.6.0] — 2026-05-03 — _Share-to-Headroom + version display_
 
 ### Added

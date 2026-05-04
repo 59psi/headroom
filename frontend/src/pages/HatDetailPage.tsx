@@ -6,6 +6,7 @@ import { ConditionBadge } from '../components/common/ConditionBadge';
 import { ImageLightbox } from '../components/common/ImageLightbox';
 import { PhotoCapture } from '../components/photos/PhotoCapture';
 import { DisposeModal } from '../components/common/DisposeModal';
+import { ColorEditModal } from '../components/common/ColorEditModal';
 import type { HatRead } from '../types';
 import { useState } from 'react';
 
@@ -45,6 +46,8 @@ export function HatDetailPage() {
   const [reanalyzing, setReanalyzing] = useState(false);
   const [disposeOpen, setDisposeOpen] = useState(false);
   const [refreshingEbay, setRefreshingEbay] = useState(false);
+  // null = closed, -1 = adding, >= 1 = editing that dominance_rank
+  const [colorEditOpen, setColorEditOpen] = useState<number | null>(null);
 
   const id = Number(hatId);
   const { data, isLoading, error } = useQuery({
@@ -344,13 +347,36 @@ export function HatDetailPage() {
         </div>
       </div>
 
-      {/* Colors */}
-      {data.colors.length > 0 && (
-        <div className="card mb-3">
-          <div className="card-body">
-            <div className="card-title">Color Palette</div>
-            {data.colors.map(c => (
-              <div key={c.dominance_rank} className="hr-color-row">
+      {/* Colors — tap any row to edit */}
+      <div className="card mb-3">
+        <div className="card-body">
+          <div className="d-flex justify-content-between align-items-center mb-2">
+            <div className="card-title mb-0">Color Palette</div>
+            <button
+              type="button"
+              className="btn btn-outline-primary btn-sm"
+              onClick={() => setColorEditOpen(-1)}
+            >
+              + Add Color
+            </button>
+          </div>
+          {data.colors.length === 0 ? (
+            <p className="text-muted small mb-0">
+              No colors yet — tap "Add Color" to seed the palette manually, or run Reanalyze.
+            </p>
+          ) : (
+            data.colors.map(c => (
+              <button
+                key={c.dominance_rank}
+                type="button"
+                className="hr-color-row"
+                onClick={() => setColorEditOpen(c.dominance_rank)}
+                style={{
+                  width: '100%', background: 'transparent', border: 0,
+                  textAlign: 'left', cursor: 'pointer',
+                }}
+                title="Tap to edit"
+              >
                 <div
                   className="color-swatch"
                   style={{ width: 32, height: 32, backgroundColor: c.hex_value, color: c.hex_value }}
@@ -365,11 +391,11 @@ export function HatDetailPage() {
                   <div className="hr-tier-label">{c.tier || 'primary'}</div>
                   <div className="text-muted font-mono small">{c.hex_value}</div>
                 </div>
-              </div>
-            ))}
-          </div>
+              </button>
+            ))
+          )}
         </div>
-      )}
+      </div>
 
       {data.analysis_status === 'skipped' && (
         <div className="alert alert-info mb-3">
@@ -398,6 +424,14 @@ export function HatDetailPage() {
       </div>
 
       <DisposeModal hatId={data.id} show={disposeOpen} onClose={() => setDisposeOpen(false)} />
+      {colorEditOpen !== null && (
+        <ColorEditModal
+          hatId={data.id}
+          colors={data.colors}
+          editingRank={colorEditOpen >= 0 ? colorEditOpen : null}
+          onClose={() => setColorEditOpen(null)}
+        />
+      )}
     </>
   );
 }

@@ -231,7 +231,10 @@ async def reanalyze_hat(hat_id: int, db: AsyncSession = Depends(get_db)):
     model_id, _msrc = await settings_service.get_anthropic_model(db)
 
     try:
-        analysis = await analyze_hat_image(photo_path, api_key, model=model_id)
+        analysis = await analyze_hat_image(
+            photo_path, api_key,
+            model=model_id, selected_style=hat.style,
+        )
     except ClaudeAnalysisError as exc:
         hat.analysis_status = "error"
         hat.analysis_error = str(exc)

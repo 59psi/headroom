@@ -24,7 +24,7 @@ def stub_pipeline(monkeypatch):
     async def _fake_get_key(_db):
         return "sk-ant-test", "database"
 
-    async def _fake_analyze(_path, _key, model=None):  # noqa: ARG001
+    async def _fake_analyze(_path, _key, model=None, selected_style=None):  # noqa: ARG001
         return HatAnalysis(
             brand="Melin",
             model_name="A-Game Hydro",

@@ -42,6 +42,14 @@ When given a single hat photo you will:
      the brand's typical pricing tiers.
   6. Add a 1–2 sentence design notes blurb.
 
+CRITICAL — owner-provided style:
+The owner may tell you the model line they've identified the hat as (e.g.
+"Melin Trenches"). When provided, treat that as ground truth. Identify the
+specific Melin **variant** within that line (sub-models / colorways /
+material like Hydro, Icon, Infinity, Thermal etc), but DO NOT pick a model
+from a different line. If the photo seems inconsistent with their stated
+line, prefer their answer and lower model_confidence to "low".
+
 Always respond by calling the `record_hat_analysis` tool. Never reply in plain
 text. If you genuinely cannot tell something, set the field to null and lower
 the confidence rating.
@@ -165,11 +173,14 @@ async def analyze_hat_image(
     image_path: Path,
     api_key: str,
     model: str | None = None,
+    selected_style: str | None = None,
 ) -> HatAnalysis:
     """Call Claude vision and return a structured HatAnalysis.
 
-    `model` overrides the default. Raises ClaudeAnalysisError on any
-    recoverable failure (auth, parse, etc.).
+    `model` overrides the default. `selected_style` is the owner's chosen
+    style enum (e.g. "trenches", "a_game") — when provided, Claude treats
+    it as ground truth for the model line. Raises ClaudeAnalysisError on
+    any recoverable failure (auth, parse, etc.).
     """
     if not api_key:
         raise ClaudeAnalysisError("No Anthropic API key configured.")
@@ -178,6 +189,18 @@ async def analyze_hat_image(
 
     client = AsyncAnthropic(api_key=api_key, timeout=config_settings.http_timeout)
     model_id = model or config_settings.anthropic_model
+
+    user_text = "Analyze this hat photo using the tool."
+    if selected_style and selected_style != "beanie":
+        # Style enum values use underscores ("a_game"); render them with
+        # spaces and Title Case so the prompt reads naturally.
+        pretty = selected_style.replace("_", " ").title()
+        user_text = (
+            f"The owner has identified this hat as a Melin {pretty}. "
+            f"That model line is ground truth — identify the specific "
+            f"variant within the {pretty} line (do not pick a different line). "
+            f"Use the tool to record your analysis."
+        )
 
     try:
         message = await client.messages.create(
@@ -206,7 +229,7 @@ async def analyze_hat_image(
                         },
                         {
                             "type": "text",
-                            "text": "Analyze this hat photo using the tool.",
+                            "text": user_text,
                         },
                     ],
                 }
