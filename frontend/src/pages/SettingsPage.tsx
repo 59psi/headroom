@@ -6,7 +6,7 @@ import {
   getApiKeyStatus, setApiKey, deleteApiKey, testApiKey,
   getModel, setModel, clearModel,
   getRecentErrors, listBackups, backupDownloadUrl,
-  getActivityLog, getEbayCreds, setEbayCreds, deleteEbayCreds,
+  getActivityLog, getEbayCreds, setEbayCreds, deleteEbayCreds, testEbayCreds,
   inventoryReportUrl,
 } from '../api/settings';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
@@ -47,6 +47,7 @@ export function SettingsPage() {
 
   const [ebayAppId, setEbayAppId] = useState('');
   const [ebayCertId, setEbayCertId] = useState('');
+  const [ebayTestResult, setEbayTestResult] = useState<{ ok: boolean; stage: string; detail: string } | null>(null);
 
   useEffect(() => {
     if (!model.data?.model_id) return;
@@ -119,7 +120,15 @@ export function SettingsPage() {
 
   const deleteEbayMut = useMutation({
     mutationFn: deleteEbayCreds,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'ebay'] }),
+    onSuccess: () => {
+      setEbayTestResult(null);
+      qc.invalidateQueries({ queryKey: ['admin', 'ebay'] });
+    },
+  });
+
+  const testEbayMut = useMutation({
+    mutationFn: testEbayCreds,
+    onSuccess: (data) => setEbayTestResult(data),
   });
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -338,11 +347,12 @@ export function SettingsPage() {
           <div className="card-title">eBay Comparable Listings (optional)</div>
           <p className="text-secondary small mb-3">
             When configured, hat analysis pulls live comparable-listings prices
-            from eBay's Browse API. Free 5,000 calls/day; get an App ID + Cert ID
-            at{' '}
+            from eBay's Browse API. Free 5,000 calls/day. Get a key at{' '}
             <a href="https://developer.ebay.com/" target="_blank" rel="noopener noreferrer">
               developer.ebay.com
-            </a>.
+            </a>{' '}— go to <em>My Account → Application Keysets</em> and copy
+            the <strong>Production</strong> App ID + Cert ID (Sandbox keys won't
+            work — they fail with a 401).
           </p>
           {ebay.data?.configured ? (
             <div className="mb-3">
@@ -350,11 +360,31 @@ export function SettingsPage() {
                 <div className="hr-metric-label">Active App ID · {ebay.data.marketplace}</div>
                 <div className="hr-metric-value font-mono">{ebay.data.app_id_masked}</div>
               </div>
-              <button
-                type="button"
-                className="btn btn-outline-danger btn-sm"
-                onClick={() => { if (confirm('Remove eBay credentials?')) deleteEbayMut.mutate(); }}
-              >Remove</button>
+              <div className="d-flex gap-2 flex-wrap">
+                <button
+                  type="button"
+                  className="btn btn-outline-secondary btn-sm"
+                  onClick={() => testEbayMut.mutate()}
+                  disabled={testEbayMut.isPending}
+                >
+                  {testEbayMut.isPending ? 'Testing…' : 'Test connection'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-outline-danger btn-sm"
+                  onClick={() => { if (confirm('Remove eBay credentials?')) deleteEbayMut.mutate(); }}
+                >Remove</button>
+              </div>
+              {ebayTestResult && (
+                <div className={`alert ${ebayTestResult.ok ? 'alert-success' : 'alert-danger'} mt-3 mb-0 small`}>
+                  {ebayTestResult.ok ? '✓ ' : '✗ '}{ebayTestResult.detail}
+                  {!ebayTestResult.ok && (
+                    <div className="text-muted small mt-1" style={{ fontSize: '0.7rem' }}>
+                      Failed at: <code>{ebayTestResult.stage}</code>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           ) : (
             <p className="text-muted small mb-3">

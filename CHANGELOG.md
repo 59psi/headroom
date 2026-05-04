@@ -4,6 +4,29 @@ All notable changes are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.6.2] — 2026-05-04 — _eBay diagnostics_
+
+### Added
+- **"Test connection" button** on the eBay Settings card. Probes OAuth +
+  a sample Browse search end-to-end and surfaces a structured
+  `{ok, stage, detail}` so the user knows whether OAuth succeeded, the
+  Browse query worked, or the creds aren't configured at all.
+  Backend: new `POST /api/admin/ebay/test` endpoint and
+  `ebay_service.verify_creds()` that runs the full probe and reports
+  which stage failed.
+
+### Changed
+- **Specific error message for sandbox-vs-production keyset mismatch.**
+  When eBay returns 401 on the OAuth call (the most common failure mode —
+  user pastes Sandbox keys against the production endpoint), the error
+  now reads: "401 Unauthorized from eBay OAuth. Most likely your App ID
+  + Cert ID are for the sandbox keyset, but Headroom calls production.
+  Generate a PRODUCTION keyset at developer.ebay.com → My Account →
+  Application Keysets, then re-paste both values." Previously this
+  surfaced as an opaque `502 Bad Gateway`.
+- Settings card help text now explicitly calls out **Production**
+  (vs Sandbox) as the required keyset type.
+
 ## [0.6.1] — 2026-05-03 — _user style is ground truth + tap-to-edit colors_
 
 ### Changed

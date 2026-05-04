@@ -62,12 +62,69 @@ async def _ensure_token(app_id: str, cert_id: str) -> str:
             data={"grant_type": "client_credentials", "scope": "https://api.ebay.com/oauth/api_scope"},
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
+    if resp.status_code == 401:
+        # Most common cause: sandbox keyset against production endpoint, or
+        # swapped App ID / Cert ID. Surface that specifically.
+        raise EbayError(
+            "401 Unauthorized from eBay OAuth. Most likely your App ID + Cert ID "
+            "are for the sandbox keyset, but Headroom calls production. "
+            "Generate a PRODUCTION keyset at developer.ebay.com → My Account → "
+            "Application Keysets, then re-paste both values."
+        )
     if resp.status_code != 200:
         raise EbayError(f"Token request failed: {resp.status_code} {resp.text[:200]}")
     body = resp.json()
     _token = body["access_token"]
     _token_expires_at = time.time() + int(body.get("expires_in", 7200))
     return _token
+
+
+async def verify_creds(db: AsyncSession) -> dict:
+    """Probe the eBay credentials end-to-end. Returns a structured diagnostic.
+
+    Tries: load creds → OAuth → cheap Browse search. Reports which stage
+    failed so the UI can show something more useful than "502 Bad Gateway".
+    """
+    app_id, cert_id, marketplace = await _get_creds(db)
+    if not app_id or not cert_id:
+        return {"ok": False, "stage": "creds", "detail": "No App ID + Cert ID configured."}
+
+    # Force a fresh token on every test so we don't accept a stale-cached one.
+    global _token, _token_expires_at
+    _token = None
+    _token_expires_at = 0.0
+
+    try:
+        token = await _ensure_token(app_id, cert_id)
+    except EbayError as exc:
+        return {"ok": False, "stage": "oauth", "detail": str(exc)}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "stage": "oauth", "detail": f"Network/transport error: {exc}"}
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                EBAY_BROWSE,
+                params={"q": "melin hat", "limit": 1},
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "X-EBAY-C-MARKETPLACE-ID": marketplace,
+                    "Accept": "application/json",
+                },
+            )
+        if resp.status_code != 200:
+            return {
+                "ok": False, "stage": "browse",
+                "detail": f"Browse API {resp.status_code}: {resp.text[:180]}",
+            }
+        body = resp.json()
+        n = len(body.get("itemSummaries") or [])
+        return {
+            "ok": True, "stage": "ok",
+            "detail": f"OAuth + Browse working. Sample query 'melin hat' returned {n} item(s).",
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "stage": "browse", "detail": f"Browse request failed: {exc}"}
 
 
 class EbayError(Exception):

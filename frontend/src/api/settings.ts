@@ -100,6 +100,12 @@ export function deleteEbayCreds() {
   return apiFetch<void>('/api/admin/ebay/creds', { method: 'DELETE' });
 }
 
+export function testEbayCreds() {
+  return apiFetch<{ ok: boolean; stage: string; detail: string }>(
+    '/api/admin/ebay/test', { method: 'POST' },
+  );
+}
+
 // ---- Bulk import ---- //
 
 export function createImportJob(files: File[], defaults: { case_id?: number | null; condition?: string; size?: string; style?: string }): Promise<{ id: number; total: number; status: string }> {

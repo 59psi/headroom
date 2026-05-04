@@ -210,6 +210,12 @@ async def delete_ebay_creds(db: AsyncSession = Depends(get_db)):
     await settings_service._set_setting(db, ebay_service.EBAY_CERT_ID_KEY, None)  # noqa: SLF001
 
 
+@router.post("/ebay/test")
+async def test_ebay_creds(db: AsyncSession = Depends(get_db)):
+    """End-to-end probe of OAuth + Browse search. Returns {ok, stage, detail}."""
+    return await ebay_service.verify_creds(db)
+
+
 @router.post("/ebay/refresh/{hat_id}")
 async def refresh_ebay_for_hat(hat_id: int, db: AsyncSession = Depends(get_db)):
     """Refresh eBay comp prices for a single hat. Returns the updated price block."""
