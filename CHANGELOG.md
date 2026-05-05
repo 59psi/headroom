@@ -4,6 +4,32 @@ All notable changes are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.6.3] — 2026-05-04 — _eBay env detection + raw error surfacing_
+
+### Added
+- **eBay env detection.** `/api/admin/ebay/creds` now returns
+  `detected_env: "production" | "sandbox" | "unknown"` by inspecting the
+  saved App ID for `-PRD-` or `-SBX-` (eBay's keyset format). Settings
+  page renders a colored chip next to the masked App ID — green for
+  production, red for sandbox, with an explicit warning banner when
+  sandbox keys are saved ("These are SANDBOX keys — they will fail with
+  401. Replace with a Production keyset").
+- **Defensive paste handling.** PUT /api/admin/ebay/creds now strips
+  surrounding quotes (`'`, `"`, `` ` ``) in addition to whitespace, in
+  case the user pastes from a code block / env-var docs that included
+  delimiters.
+
+### Changed
+- **eBay OAuth errors now surface eBay's actual response.** Previously
+  any non-200 from the token endpoint just displayed my generic guess.
+  Now we parse eBay's structured `{error, error_description}` and lead
+  with that — e.g. `"eBay OAuth returned 401 (invalid_client) — client
+  authentication failed"`. The "probably sandbox" hint is appended only
+  for 401s, not as the only message.
+- Server-side: failed OAuth responses are now logged at WARNING with
+  the full status code, error code, description, and (truncated) raw
+  body so `docker logs headroom` is useful for debugging.
+
 ## [0.6.2] — 2026-05-04 — _eBay diagnostics_
 
 ### Added

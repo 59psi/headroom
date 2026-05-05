@@ -1,6 +1,6 @@
 [project]
 name = "headroom"
-version = "0.6.2"
+version = "0.6.3"
 description = "Headroom — AI-powered hat collection tracker"
 readme = "README.md"
 requires-python = ">=3.12"

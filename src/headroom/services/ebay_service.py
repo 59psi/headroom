@@ -62,21 +62,49 @@ async def _ensure_token(app_id: str, cert_id: str) -> str:
             data={"grant_type": "client_credentials", "scope": "https://api.ebay.com/oauth/api_scope"},
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
+    if resp.status_code == 200:
+        body = resp.json()
+        _token = body["access_token"]
+        _token_expires_at = time.time() + int(body.get("expires_in", 7200))
+        return _token
+
+    # Failure path — try to extract eBay's structured `error` + `error_description`
+    # so the user sees what's actually wrong instead of a generic guess.
+    raw = resp.text or ""
+    err_code = ""
+    err_desc = ""
+    try:
+        body = resp.json()
+        err_code = str(body.get("error") or "")
+        err_desc = str(body.get("error_description") or "")
+    except Exception:  # noqa: BLE001
+        pass
+
+    logger.warning(
+        "eBay OAuth failed: status=%s error=%r desc=%r raw=%s",
+        resp.status_code, err_code, err_desc, raw[:300],
+    )
+
+    # Build the user-facing message. Lead with what eBay actually said, then
+    # add a hint for the most common failure mode.
+    parts = [f"eBay OAuth returned {resp.status_code}"]
+    if err_code:
+        parts.append(f"({err_code})")
+    if err_desc:
+        parts.append(f"— {err_desc}")
+    elif not err_code:
+        # No structured body, fall back to raw text
+        parts.append(f"— {raw[:180] or 'no body'}")
+
     if resp.status_code == 401:
-        # Most common cause: sandbox keyset against production endpoint, or
-        # swapped App ID / Cert ID. Surface that specifically.
-        raise EbayError(
-            "401 Unauthorized from eBay OAuth. Most likely your App ID + Cert ID "
-            "are for the sandbox keyset, but Headroom calls production. "
-            "Generate a PRODUCTION keyset at developer.ebay.com → My Account → "
-            "Application Keysets, then re-paste both values."
+        parts.append(
+            ". Most common cause: pasted Sandbox keys instead of Production. "
+            "developer.ebay.com → My Account → Application Keysets → use the "
+            "PRODUCTION column, not Sandbox. App ID + Cert ID must come from "
+            "the same row."
         )
-    if resp.status_code != 200:
-        raise EbayError(f"Token request failed: {resp.status_code} {resp.text[:200]}")
-    body = resp.json()
-    _token = body["access_token"]
-    _token_expires_at = time.time() + int(body.get("expires_in", 7200))
-    return _token
+
+    raise EbayError(" ".join(parts))
 
 
 async def verify_creds(db: AsyncSession) -> dict:

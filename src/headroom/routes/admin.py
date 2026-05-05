@@ -40,6 +40,21 @@ class EbayCredsStatus(BaseModel):
     configured: bool
     app_id_masked: str | None = None
     marketplace: str = "EBAY_US"
+    detected_env: str | None = None  # "production" | "sandbox" | "unknown"
+
+
+def _detect_ebay_env(app_id: str | None) -> str | None:
+    """eBay App IDs follow `<user>-<app>-<env>-<r1>-<r2>`. The middle env
+    segment is PRD (production) or SBX (sandbox). Detecting this lets us
+    flag a sandbox key paste before the user even hits Test."""
+    if not app_id:
+        return None
+    upper = app_id.upper()
+    if "-PRD-" in upper:
+        return "production"
+    if "-SBX-" in upper:
+        return "sandbox"
+    return "unknown"
 
 
 class EbayCredsUpdate(BaseModel):
@@ -188,19 +203,26 @@ async def get_ebay_creds(db: AsyncSession = Depends(get_db)):
         configured=bool(app_id and cert_id),
         app_id_masked=settings_service.mask_key(app_id) if app_id else None,
         marketplace=marketplace,
+        detected_env=_detect_ebay_env(app_id),
     )
 
 
 @router.put("/ebay/creds", response_model=EbayCredsStatus)
 async def set_ebay_creds(data: EbayCredsUpdate, db: AsyncSession = Depends(get_db)):
-    await settings_service._set_setting(db, ebay_service.EBAY_APP_ID_KEY, data.app_id.strip())  # noqa: SLF001
-    await settings_service._set_setting(db, ebay_service.EBAY_CERT_ID_KEY, data.cert_id.strip())  # noqa: SLF001
+    # Defensive normalization: strip surrounding whitespace AND any quotes
+    # the user might have copied along with the value (very common when
+    # pasting from a code snippet or env-var docs).
+    def _clean(v: str) -> str:
+        return v.strip().strip("'\"`")
+    await settings_service._set_setting(db, ebay_service.EBAY_APP_ID_KEY, _clean(data.app_id))  # noqa: SLF001
+    await settings_service._set_setting(db, ebay_service.EBAY_CERT_ID_KEY, _clean(data.cert_id))  # noqa: SLF001
     await settings_service._set_setting(db, ebay_service.EBAY_MARKETPLACE_KEY, data.marketplace.strip() or "EBAY_US")  # noqa: SLF001
     app_id, _cert, marketplace = await ebay_service._get_creds(db)  # noqa: SLF001
     return EbayCredsStatus(
         configured=True,
         app_id_masked=settings_service.mask_key(app_id) if app_id else None,
         marketplace=marketplace,
+        detected_env=_detect_ebay_env(app_id),
     )
 
 

@@ -119,6 +119,7 @@ export interface EbayCredsStatus {
   configured: boolean;
   app_id_masked: string | null;
   marketplace: string;
+  detected_env: 'production' | 'sandbox' | 'unknown' | null;
 }
 
 export interface SearchResult {
