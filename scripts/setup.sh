@@ -3,6 +3,8 @@
 # Headroom setup — installs every dependency, then prepares the app.
 #
 #   ./scripts/setup.sh                 # full setup (deps + Docker engine + build)
+#   ./scripts/setup.sh --docker-only   # ONLY install the Docker engine, then exit
+#                                      # (for the `docker compose up` path)
 #   ./scripts/setup.sh --no-docker     # skip the Docker engine install
 #   ./scripts/setup.sh --skip-build    # skip the production SPA build
 #
@@ -20,14 +22,18 @@ cd "$(dirname "$0")/.."
 
 INSTALL_DOCKER=1
 BUILD_SPA=1
+DOCKER_ONLY=0
 for arg in "$@"; do
   case "$arg" in
+    --docker-only) DOCKER_ONLY=1 ;;
     --no-docker)  INSTALL_DOCKER=0 ;;
     --skip-build) BUILD_SPA=0 ;;
-    -h|--help)    sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)    sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Unknown option: $arg (try --help)"; exit 1 ;;
   esac
 done
+[ "$DOCKER_ONLY" -eq 1 ] && [ "$INSTALL_DOCKER" -eq 0 ] \
+  && { echo "--docker-only and --no-docker are mutually exclusive"; exit 1; }
 
 log()  { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33mWARN\033[0m %s\n' "$*"; }
@@ -158,6 +164,13 @@ ensure_docker() {
 # ------------------------------------------------------------------ #
 # Run it
 # ------------------------------------------------------------------ #
+if [ "$DOCKER_ONLY" -eq 1 ]; then
+  ensure_docker
+  echo ""
+  log "Docker engine ready. Next: docker compose up --build"
+  exit 0
+fi
+
 ensure_uv
 ensure_node
 [ "$INSTALL_DOCKER" -eq 1 ] && ensure_docker

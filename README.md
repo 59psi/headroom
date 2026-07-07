@@ -17,11 +17,23 @@ container on a Raspberry Pi, looks like 1986.
 ### Docker (recommended — works on Mac, Linux, Pi)
 
 ```bash
+# 1. Clone
 git clone https://github.com/59psi/headroom.git && cd headroom
+
+# 2. Install + start a Docker engine (skips itself if one is already running)
+./scripts/setup.sh --docker-only
+
+# 3. Build + run, attached so you can watch the first boot
 docker compose up --build
 ```
 
-Run it attached (no `-d`) the first time so you can watch the build and boot.
+Step 2 installs a complete, Docker-Desktop-free engine:
+[colima](https://github.com/abiosoft/colima) + docker CLI + compose/buildx
+via Homebrew on macOS, native Docker Engine via apt/dnf on Linux. If
+`docker info` already works on your machine it changes nothing. **Linux:**
+the script adds you to the `docker` group — log out/in (or `newgrp docker`)
+before step 3.
+
 When uvicorn reports it's listening, open http://localhost:8000 and head to
 **Settings** to paste your Anthropic API key. Once it works, Ctrl-C and
 relaunch it in the background:
@@ -35,12 +47,10 @@ docker compose up --build -d    # detached; follow logs with: docker compose log
 > your terminal returns immediately while the container is still building
 > and booting — give it a minute before declaring it broken.
 
-> **`unknown shorthand flag: 'd' in -d`** (or `docker: 'compose' is not a
-> docker command`) means your Docker install is missing the Compose v2
-> plugin. Run `./scripts/setup.sh` — it installs a complete,
-> Docker-Desktop-free engine: [colima](https://github.com/abiosoft/colima) +
-> docker CLI + compose/buildx via Homebrew on macOS, native Docker Engine
-> via apt/dnf on Linux.
+> Errors like **`unknown shorthand flag: 'd' in -d`**, **`docker: 'compose'
+> is not a docker command`**, or **`Cannot connect to the Docker daemon`**
+> all mean your Docker install is incomplete (missing Compose v2 plugin or
+> no running engine). Step 2 fixes all of them.
 
 To pre-bake your API key as a fallback default, edit
 [`docker-compose.yml`](docker-compose.yml) and uncomment the

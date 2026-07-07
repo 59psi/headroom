@@ -28,7 +28,10 @@ All notable changes are documented here. This project follows
   Also builds the production SPA by default (`--skip-build` to opt out)
   so `uv run uvicorn` serves the full app straight after setup. Remote
   installers are downloaded to a temp file and executed — never piped
-  from curl into a shell.
+  from curl into a shell. `--docker-only` installs/starts just the
+  Docker engine and exits — it's step 2 of the README's Docker quick
+  start, so `docker compose up --build` never assumes an engine that
+  isn't there.
 - **README restructured around "Run it".** Run instructions moved to the
   top (they were buried under five versions of release notes — now a
   short "What's new" that links to this file). First Docker run is shown
