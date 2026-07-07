@@ -4,6 +4,41 @@ All notable changes are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.6.4] — 2026-07-06 — _self-installing setup + fresh-install logo fix_
+
+### Fixed
+- **Seeded logo now loads on the very first boot.** `create_app()` only
+  mounted `/uploads` if the uploads directory already existed at import
+  time — but the lifespan creates and seeds it *after* the factory runs.
+  On a fresh install (Docker bind mount, zip distribution, or a cwd
+  without `uploads/`) the logo 404'd — or worse, the SPA catch-all served
+  `index.html` with a 200 for it — until the server was restarted. The
+  mount is now unconditional (`check_dir=False`); the lifespan still owns
+  directory creation and runs before the first request. Regression test:
+  `test_uploads_mount_survives_missing_dir_at_import`.
+
+### Changed
+- **`scripts/setup.sh` now installs its own prerequisites** instead of
+  erroring when they're missing. Installs (only what's absent, safe to
+  re-run): uv (brew / Astral installer), Node 20+ (brew / NodeSource on
+  apt & dnf), Python 3.12 (via uv itself), and — unless `--no-docker` —
+  a Docker engine **without Docker Desktop**: colima + docker CLI +
+  compose/buildx plugins via brew on macOS, native Docker Engine via
+  get.docker.com on Linux (incl. docker group setup + systemd enable).
+  Also builds the production SPA by default (`--skip-build` to opt out)
+  so `uv run uvicorn` serves the full app straight after setup. Remote
+  installers are downloaded to a temp file and executed — never piped
+  from curl into a shell.
+- **README restructured around "Run it".** Run instructions moved to the
+  top (they were buried under five versions of release notes — now a
+  short "What's new" that links to this file). First Docker run is shown
+  attached so build/boot progress is visible; `-d` is introduced second,
+  with a troubleshooting note for the `unknown shorthand flag: 'd'`
+  error (= missing Compose v2 plugin → run `./scripts/setup.sh`).
+  Placeholder `<repo-url>` replaced with the real clone URL, and the
+  Development section now uses the npm scripts that actually exist
+  (`npm run build`, `npm run typecheck`).
+
 ## [0.6.3] — 2026-05-04 — _eBay env detection + raw error surfacing_
 
 ### Added

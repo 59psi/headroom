@@ -149,12 +149,15 @@ def create_app() -> FastAPI:
 
     app.include_router(api_router)
 
-    if settings.upload_dir.exists():
-        app.mount(
-            "/uploads",
-            StaticFiles(directory=str(settings.upload_dir)),
-            name="uploads",
-        )
+    # check_dir=False: the uploads dir is created by the lifespan (which runs
+    # before the first request), not at import time. Gating the mount on the
+    # directory already existing broke the seeded logo on a fresh install —
+    # the SPA catch-all would serve index.html for /uploads/* until a restart.
+    app.mount(
+        "/uploads",
+        StaticFiles(directory=str(settings.upload_dir), check_dir=False),
+        name="uploads",
+    )
 
     if FRONTEND_DIST.exists():
         app.mount(

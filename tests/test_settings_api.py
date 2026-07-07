@@ -61,3 +61,41 @@ async def test_reanalyze_without_api_key(client):
     # No photo yet → 400
     resp = await client.post(f"/api/hats/{hat_id}/reanalyze")
     assert resp.status_code == 400
+
+
+# ---------------------------- Logo serving ---------------------------- #
+
+
+@pytest.mark.anyio
+async def test_uploads_mount_survives_missing_dir_at_import(tmp_path, monkeypatch):
+    """Fresh-install bug: uploads/ may not exist when create_app() runs.
+
+    The lifespan creates the directory and seeds the default logo *after* the
+    app factory has run, so the /uploads mount must not be gated on the
+    directory already existing — otherwise the logo 404s until a restart.
+    """
+    from httpx import ASGITransport, AsyncClient
+
+    from headroom.app import create_app
+    from headroom.config import settings as app_settings
+
+    upload_dir = tmp_path / "uploads"
+    assert not upload_dir.exists()
+    monkeypatch.setattr(app_settings, "upload_dir", upload_dir)
+
+    app = create_app()
+
+    # Simulate what the lifespan does on first boot: create dirs + seed logo
+    branding = upload_dir / "branding"
+    branding.mkdir(parents=True, exist_ok=True)
+    (branding / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/uploads/branding/logo.png")
+    assert resp.status_code == 200, (
+        "seeded logo must be served on first boot, not only after a restart"
+    )
+    # Without the /uploads mount the SPA catch-all serves index.html with a
+    # 200 — a "successful" broken image. Require the actual PNG bytes.
+    assert resp.content == b"\x89PNG\r\n\x1a\n"

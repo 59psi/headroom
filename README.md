@@ -2,7 +2,7 @@
 
 > _The Outrun-grade vault for your hat collection._
 
-![logo](uploads/branding/logo.png)
+![logo](seed/branding/logo.png)
 
 Headroom is a self-hosted hat collection tracker with **AI-powered identification**.
 Snap a photo and Claude Vision figures out the brand, model, dominant colors, and
@@ -12,107 +12,76 @@ container on a Raspberry Pi, looks like 1986.
 
 ---
 
-## What's new
-
-### v0.6 — "Share to Headroom"
-- **Android Chrome share sheet** — install Headroom as a PWA and a
-  "Share to Headroom" entry appears in the system share menu. Selecting
-  multiple photos drops them straight into a bulk-import job. No setup
-  beyond Install app.
-- **iOS Shortcut recipe** in Settings — Apple doesn't support Web Share
-  Target on iOS yet, so there's a step-by-step recipe for a one-time
-  Shortcut that posts photos from the Photos share sheet directly to
-  the bulk-import endpoint. Build it once, share forever.
-- **Version always visible.** Footer shows the running build's version
-  (baked from `package.json` at build time).
-
-### v0.5 — "Polish"
-- **Installable PWA.** Add to Home Screen on iOS / Android gives a
-  fullscreen Headroom app with proper icons.
-- **Photo edit on upload** — crop + 90° rotate before saving, no need
-  to touch the photo elsewhere.
-
-### v0.4 — "Real Numbers"
-- **Live eBay comparable-listings prices.** Hat detail Valuation card
-  shows New Retail / eBay Median / Resale tiles side-by-side. Refreshes
-  automatically when Claude finishes analysis. Configure App ID + Cert
-  ID in Settings (free 5,000 calls/day on the developer tier).
-- **Insurance-grade inventory report.** One-click HTML report with
-  thumbnails, totals, and best-available current value per hat. Use
-  browser Print → Save as PDF for an inventory or insurance rider.
-
-### v0.3 — "Inventory Loop"
-- **Bulk photo import** — drag a folder of up to 100 photos at
-  `/hats/import`, watch them populate the gallery as the background
-  worker processes them through the Claude pipeline one-at-a-time.
-- **Sale / disposition tracking** — mark a hat as sold (with price +
-  buyer note) / gifted / traded / lost / trashed. Soft-delete only;
-  undoable. Disposed hats free their case slot. Surfaces realized
-  values on the Valuation page.
-- **Activity log** — append-only audit trail of every significant
-  change. Recent activity card on the Settings page.
-
-## What's new in 0.2 — "Outrun"
-
-- 🎨 **Total UI rebuild** — synthwave/retro-80s design system. Neon magenta on
-  near-black. Sunset gradients. Audiowide + Orbitron typography. Mobile/iPad-first
-  with bottom nav, large tap targets, and a sticky filter bar.
-- 🧠 **Claude Vision analysis** — every hat photo is sent to `claude-sonnet-4-6`
-  via tool-use to extract brand, specific model, style descriptor, primary /
-  secondary / tertiary colors with hex, design notes, and an estimated new
-  retail price.
-- ✂️ **Automatic background removal** — `rembg` (ONNX-based, Pi-friendly)
-  cuts the hat out and saves it as a transparent PNG.
-- 💰 **Pricing tiles** — best-effort original retail price (from Claude) and a
-  deep link into [Melin Recap](https://www.melinrecap.com) for live resale
-  comparables on Melin hats.
-- 🔑 **Settings UI for the API key** — store the Anthropic key in the database
-  via the Settings page (masked on read), or fall back to an environment
-  variable. Includes a "Test connection" button.
-- 🔄 **Reanalyze** — re-run Claude on an existing photo without re-uploading.
-- 🐳 **Dockerfile + docker-compose** — multi-stage build, runs as a non-root
-  user, pre-caches the rembg model, multi-arch (amd64 + arm64 for Pi 4 / 5).
-
-See [CHANGELOG.md](CHANGELOG.md) for the full diff.
-
----
-
-## Quick start
+## Run it
 
 ### Docker (recommended — works on Mac, Linux, Pi)
 
 ```bash
-git clone <repo-url> && cd headroom
-docker compose up -d --build
+git clone https://github.com/59psi/headroom.git && cd headroom
+docker compose up --build
 ```
 
-Then open http://localhost:8000 and head to **Settings** to paste your
-Anthropic API key.
+Run it attached (no `-d`) the first time so you can watch the build and boot.
+When uvicorn reports it's listening, open http://localhost:8000 and head to
+**Settings** to paste your Anthropic API key. Once it works, Ctrl-C and
+relaunch it in the background:
 
-> The first build takes a few minutes (it pre-downloads the rembg model so
-> your Pi doesn't have to). Subsequent builds are cached.
+```bash
+docker compose up --build -d    # detached; follow logs with: docker compose logs -f
+```
+
+> **The first build takes a few minutes** (it pre-downloads the rembg model
+> so your Pi doesn't have to); later builds are cached. Note that with `-d`
+> your terminal returns immediately while the container is still building
+> and booting — give it a minute before declaring it broken.
+
+> **`unknown shorthand flag: 'd' in -d`** (or `docker: 'compose' is not a
+> docker command`) means your Docker install is missing the Compose v2
+> plugin. Run `./scripts/setup.sh` — it installs a complete,
+> Docker-Desktop-free engine: [colima](https://github.com/abiosoft/colima) +
+> docker CLI + compose/buildx via Homebrew on macOS, native Docker Engine
+> via apt/dnf on Linux.
 
 To pre-bake your API key as a fallback default, edit
 [`docker-compose.yml`](docker-compose.yml) and uncomment the
 `HEADROOM_ANTHROPIC_API_KEY` line.
 
-### Local dev (no Docker)
+### Local (no Docker)
 
-Prereqs: Python 3.12+, [uv](https://docs.astral.sh/uv/), Node.js 20+, npm.
+Prereqs: git + curl. The setup script installs everything else it needs —
+uv, Python 3.12, Node 20+, backend and frontend deps.
 
 ```bash
-git clone <repo-url> && cd headroom
-./scripts/setup.sh        # uv sync + npm install + create upload dirs
+git clone https://github.com/59psi/headroom.git && cd headroom
+./scripts/setup.sh --no-docker   # drop the flag to also install a Docker engine
+uv run uvicorn headroom.app:app --host 0.0.0.0 --port 8000
+```
 
+That's it — setup builds the SPA, and the backend serves it at
+http://localhost:8000.
+
+### Dev mode (hot reload)
+
+```bash
 # terminal 1 — backend (port 8000)
 uv run uvicorn headroom.app:app --reload
 
-# terminal 2 — frontend dev server (port 5173, proxies to backend)
+# terminal 2 — frontend dev server (port 5173, proxies /api + /uploads to :8000)
 cd frontend && npm run dev
 ```
 
-For production: `cd frontend && npm run build`, then run uvicorn — the FastAPI
-app serves the built SPA from `frontend/dist`.
+---
+
+## What's new
+
+**v0.6 — "Share to Headroom"**: share photos straight from the system share
+sheet into a bulk-import job — native share-target on Android Chrome (install
+as PWA), one-time Shortcut recipe for iOS (in Settings). Recent highlights:
+live eBay comparable prices + insurance-grade inventory report (v0.4), bulk
+photo import, disposition tracking + activity log (v0.3), and the synthwave
+rebuild with the Claude Vision analysis pipeline (v0.2).
+
+See [CHANGELOG.md](CHANGELOG.md) for the full history.
 
 ---
 
@@ -210,7 +179,7 @@ The Docker image is built as multi-arch (amd64 + arm64). On a Pi 4 / 5 running
 
 ```bash
 # Build on the Pi (slow first build, fine after)
-docker compose up -d --build
+docker compose up --build -d
 
 # Or build on a beefier machine and push:
 docker buildx build --platform linux/arm64,linux/amd64 \
@@ -229,12 +198,13 @@ periodically.
 ## Development
 
 ```bash
-uv run uvicorn headroom.app:app --reload   # Backend (port 8000)
-cd frontend && npm run dev                  # Frontend (port 5173)
-cd frontend && npm run build                # Production SPA build
-cd frontend && npx tsc -b --noEmit         # Type-check
-uv run pytest                               # All tests
-uv run pytest tests/test_search.py -k color # Single test
+./scripts/setup.sh                           # One-shot setup (--help for flags)
+uv run uvicorn headroom.app:app --reload     # Backend (port 8000)
+cd frontend && npm run dev                   # Frontend (port 5173)
+cd frontend && npm run build                 # Type-check + production SPA build
+cd frontend && npm run typecheck             # Type-check only
+uv run pytest                                # All tests
+uv run pytest tests/test_search.py -k color  # Single test
 ```
 
 Tests use in-memory SQLite, mock out `rembg` (it's heavy), and never call the
