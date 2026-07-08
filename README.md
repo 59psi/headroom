@@ -166,11 +166,21 @@ Prompt caching is enabled on the system prompt, so repeat analyses are cheap.
 
 ### Resale prices (Melin)
 
-When Claude identifies a hat as a Melin model, the hat record gets a deep link
-to the matching filter page on melinrecap.com. We deliberately don't fabricate a
-single resale number — the marketplace is JS-rendered and prices fluctuate, so
-we link out for live comparables instead. You can always set
-`resale_price` manually from the Edit Hat page.
+When a hat is identified as Melin (by Claude or by the fallback's logo
+detection), the record gets both:
+
+- a **deep link** to the matching style filter on melinrecap.com, and
+- a **live median asking price** pulled from the marketplace's public API
+  (melinrecap is a Treet marketplace on Sharetribe Flex — we query the same
+  anonymous, public-read listings API its own frontend uses; no scraping, no
+  headless browser). Comps are narrowed to the specific model when enough
+  title matches exist, otherwise the style category; the source label says
+  which (e.g. "median of 83 live model listings").
+
+If the marketplace API is unreachable, the hat degrades to link-only with a
+null price — and you can always set `resale_price` manually from the Edit
+Hat page. Set `HEADROOM_MELIN_CLIENT_ID` if Treet ever rotates the public
+client id.
 
 ---
 
@@ -183,6 +193,7 @@ we link out for live comparables instead. You can always set
 | `HEADROOM_CORS_ORIGINS` | `["http://localhost:5173"]` | Allowed CORS origins (JSON list) |
 | `HEADROOM_ANTHROPIC_API_KEY` | _(unset)_ | Default API key (overridden by DB value) |
 | `HEADROOM_GOOGLE_VISION_API_KEY` | _(unset)_ | Google Cloud Vision key for fallback brand (logo) detection when Claude is unavailable. DB value wins. |
+| `HEADROOM_MELIN_CLIENT_ID` | _(baked in)_ | Public Sharetribe client id for melinrecap.com live resale stats. Override only if Treet rotates it. |
 | `HEADROOM_ANTHROPIC_MODEL` | `claude-sonnet-4-6` | Claude model to use for vision |
 | `HEADROOM_REMBG_MODEL` | `u2netp` | rembg model name (`u2netp` is Pi-friendly; `u2net` / `isnet-general-use` are higher quality but ~170MB) |
 | `HEADROOM_HTTP_TIMEOUT` | `30.0` | Outbound HTTP timeout in seconds |

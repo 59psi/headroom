@@ -23,6 +23,7 @@ from headroom.services.claude_analysis import ClaudeAnalysisError, analyze_hat_i
 from headroom.services.hat_analysis_pipeline import (
     _apply_analysis,
     finalize_hat_photo,
+    refresh_melin_resale,
     run_fallback_analysis,
 )
 from headroom.utils.photo import (
@@ -262,6 +263,7 @@ async def reanalyze_hat(hat_id: int, db: AsyncSession = Depends(get_db)):
         return _hat_to_read(await hat_service.get_hat(db, hat_id))
 
     _apply_analysis(hat, analysis)
+    await refresh_melin_resale(hat)
     await db.commit()
     db.expire_all()
     return _hat_to_read(await hat_service.get_hat(db, hat_id))

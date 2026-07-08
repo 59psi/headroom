@@ -4,6 +4,29 @@ All notable changes are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.8.0] — 2026-07-07 — _live Melin Recap resale prices_
+
+### Added
+- **Live median resale price from melinrecap.com.** The site is a Treet
+  marketplace on Sharetribe Flex; its frontend queries the public Flex
+  Marketplace API with an anonymous public-read token whose client id is
+  embedded in their JS bundle. `melin_recap.py` now does the same — one
+  `listings/query` per analysis (style category, up to 100 listings),
+  narrowed to the specific model when ≥3 title matches exist. Median asking
+  price lands in `resale_price` with a transparent source label ("Melin
+  Recap · median of 83 live model listings"). No scraping, no headless
+  browser — Pi-friendly, and verified live (A-Game Hydro → $63.90 across
+  83 listings).
+- Runs in every analysis path: Claude success, reanalyze, and the v0.7.0
+  fallback when logo detection identifies a Melin (which now also gets the
+  deep-link pointer).
+- `HEADROOM_MELIN_CLIENT_ID` env override in case Treet rotates the id;
+  anonymous token cached ~20 min with a retry-once-on-401.
+- Conftest guard: the Sharetribe seam is stubbed suite-wide so tests can
+  never hit the live marketplace; 7 new tests (116 total) cover median
+  math, model-vs-category sampling, persistence, and API-failure degrade
+  (which is byte-for-byte the old link-only behavior).
+
 ## [0.7.0] — 2026-07-07 — _analysis fallback: mask colors + Google logo brand_
 
 ### Added

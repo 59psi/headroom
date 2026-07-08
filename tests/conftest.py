@@ -43,6 +43,24 @@ def isolated_upload_dir(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_live_melin_marketplace(monkeypatch):
+    """Tests never call the live Sharetribe API (house rule: no external APIs).
+
+    `_query_listings` is the single network seam in melin_recap; raising
+    MelinRecapError exercises the degrade-to-link-only path. Individual tests
+    re-patch it with canned data.
+    """
+    from headroom.services.melin_recap import MelinRecapError
+
+    async def _no_network(_params):
+        raise MelinRecapError("live marketplace disabled in tests")
+
+    monkeypatch.setattr(
+        "headroom.services.melin_recap._query_listings", _no_network
+    )
+
+
+@pytest.fixture(autouse=True)
 def stub_background_removal(monkeypatch):
     """rembg is heavy and downloads model weights on first use — never run it in tests.
 

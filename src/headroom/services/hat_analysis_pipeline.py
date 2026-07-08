@@ -37,7 +37,12 @@ from headroom.services.claude_analysis import (
 from headroom.services.color_extraction import extract_hat_colors
 from headroom.services.ebay_service import EbayError, find_comps
 from headroom.services.google_vision import GoogleVisionError, detect_brand_logo
-from headroom.services.melin_recap import build_resale_pointer
+from headroom.services.melin_recap import (
+    MelinRecapError,
+    build_resale_pointer,
+    fetch_resale_stats,
+    is_melin,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +112,33 @@ async def finalize_hat_photo(
         except EbayError as exc:
             logger.info("eBay comp refresh skipped for hat %s: %s", hat.id, exc)
 
+    await refresh_melin_resale(hat)
+
     return hat
+
+
+async def refresh_melin_resale(hat: Hat) -> None:
+    """Fill resale_price with a live Melin Recap median. Best-effort.
+
+    Runs for Melin hats only; leaves the deep-link pointer fields alone and
+    the price null when the marketplace API is unreachable (the pre-live
+    behavior).
+    """
+    if not is_melin(hat.brand):
+        return
+    try:
+        stats = await fetch_resale_stats(hat.style, hat.model_name)
+    except MelinRecapError as exc:
+        logger.info("Melin Recap stats skipped for hat %s: %s", hat.id, exc)
+        return
+    if not stats:
+        return
+    hat.resale_price = stats["median"]
+    scope = "model" if stats["sample"] == "model" else "style"
+    hat.resale_price_source = (
+        f"Melin Recap · median of {stats['count']} live {scope} listings"
+    )
+    hat.resale_checked_at = datetime.now(timezone.utc)
 
 
 async def run_fallback_analysis(
@@ -160,6 +191,13 @@ async def run_fallback_analysis(
     if brand:
         hat.brand = brand
         provided.append("brand via Google logo detection")
+        pointer = build_resale_pointer(hat.brand, hat.style)
+        if pointer:
+            hat.resale_price = pointer["resale_price"]
+            hat.resale_price_source = pointer["resale_price_source"]
+            hat.resale_price_url = pointer["resale_price_url"]
+            hat.resale_checked_at = datetime.now(timezone.utc)
+        await refresh_melin_resale(hat)
 
     hat.analysis_status = "fallback"
     hat.analysis_error = (
