@@ -26,6 +26,12 @@ All notable changes are documented here. This project follows
   never hit the live marketplace; 7 new tests (116 total) cover median
   math, model-vs-category sampling, persistence, and API-failure degrade
   (which is byte-for-byte the old link-only behavior).
+- **Standalone guides**: `docs/OPERATIONS.md` (deployment, configuration,
+  health checks, backup/restore with the archive's actual `data/` layout,
+  upgrades, security posture, Pi notes, troubleshooting) and
+  `docs/USAGE.md` (first-run setup, rooms/cases/hats model, all three
+  import paths, analysis status pills, pricing signals, search,
+  disposition, reports, PWA install). Linked from the README header.
 
 ## [0.7.0] — 2026-07-07 — _analysis fallback: mask colors + Google logo brand_
 

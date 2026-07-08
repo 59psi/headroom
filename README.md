@@ -10,6 +10,10 @@ estimated retail price. The background gets stripped automatically so every hat
 floats on a synthwave canvas. Designed mobile/iPad-first, runs in a Docker
 container on a Raspberry Pi, looks like 1986.
 
+**Docs:** [Usage guide](docs/USAGE.md) — the app end-to-end ·
+[Operations guide](docs/OPERATIONS.md) — deploy, configure, back up,
+upgrade, troubleshoot · [CHANGELOG](CHANGELOG.md)
+
 ---
 
 ## Run it
