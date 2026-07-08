@@ -134,6 +134,45 @@ async def test_api_key(db: AsyncSession = Depends(get_db)):
     return ApiKeyTestResult(ok=ok, detail=detail)
 
 
+# ------------------------ Google Vision key -------------------------- #
+# Fallback brand detection (logo) when Claude is unavailable. Same shape as
+# the Anthropic key routes: masked status out, raw key never returned.
+
+
+@router.get("/google-vision-key", response_model=ApiKeyStatus)
+async def get_google_vision_key_status(db: AsyncSession = Depends(get_db)):
+    key, source = await settings_service.get_google_vision_key(db)
+    if not key:
+        return ApiKeyStatus(configured=False)
+    return ApiKeyStatus(
+        configured=True,
+        source=source,
+        masked=settings_service.mask_key(key),
+    )
+
+
+@router.put(
+    "/google-vision-key",
+    response_model=ApiKeyStatus,
+    dependencies=[Depends(require_admin)],
+)
+async def set_google_vision_key(data: ApiKeyUpdate, db: AsyncSession = Depends(get_db)):
+    await settings_service.set_google_vision_key(db, data.api_key)
+    key, source = await settings_service.get_google_vision_key(db)
+    return ApiKeyStatus(
+        configured=bool(key),
+        source=source,
+        masked=settings_service.mask_key(key) if key else None,
+    )
+
+
+@router.delete(
+    "/google-vision-key", status_code=204, dependencies=[Depends(require_admin)]
+)
+async def delete_google_vision_key(db: AsyncSession = Depends(get_db)):
+    await settings_service.clear_google_vision_key(db)
+
+
 # ---------------------------- Claude model -------------------------- #
 
 

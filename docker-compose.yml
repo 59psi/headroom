@@ -13,6 +13,9 @@ services:
     environment:
       # Provide your Anthropic key here OR via the Settings UI (DB takes precedence).
       # HEADROOM_ANTHROPIC_API_KEY: "sk-ant-..."
+      # Optional: Google Cloud Vision key for fallback brand detection when
+      # Claude is unavailable (colors always fall back locally, no key needed).
+      # HEADROOM_GOOGLE_VISION_API_KEY: "AIzaSy..."
       HEADROOM_REMBG_MODEL: "u2netp"
       HEADROOM_CORS_ORIGINS: '["http://localhost:8000"]'
       # Optional: set this to require Bearer auth on /api/settings/api-key

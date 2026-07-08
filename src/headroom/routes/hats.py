@@ -20,7 +20,11 @@ from headroom.schemas.hat import (
 )
 from headroom.services import hat_service, settings_service
 from headroom.services.claude_analysis import ClaudeAnalysisError, analyze_hat_image
-from headroom.services.hat_analysis_pipeline import _apply_analysis, finalize_hat_photo
+from headroom.services.hat_analysis_pipeline import (
+    _apply_analysis,
+    finalize_hat_photo,
+    run_fallback_analysis,
+)
 from headroom.utils.photo import (
     generate_filename,
     process_image_async,
@@ -227,7 +231,18 @@ async def reanalyze_hat(hat_id: int, db: AsyncSession = Depends(get_db)):
     # Re-running analysis re-uses the existing photo; bg removal already done.
     api_key, _source = await settings_service.get_anthropic_key(db)
     if not api_key:
-        raise HTTPException(status_code=400, detail="No Anthropic API key configured")
+        # No Claude — try the fallback (mask colors + Google logo brand).
+        applied = await run_fallback_analysis(
+            db, hat, photo_path, reason="No Anthropic API key configured"
+        )
+        if not applied:
+            raise HTTPException(
+                status_code=400,
+                detail="No Anthropic API key configured (and no fallback data available)",
+            )
+        await db.commit()
+        db.expire_all()
+        return _hat_to_read(await hat_service.get_hat(db, hat_id))
     model_id, _msrc = await settings_service.get_anthropic_model(db)
 
     try:
@@ -239,6 +254,9 @@ async def reanalyze_hat(hat_id: int, db: AsyncSession = Depends(get_db)):
         hat.analysis_status = "error"
         hat.analysis_error = str(exc)
         hat.analyzed_at = datetime.now(timezone.utc)
+        await run_fallback_analysis(
+            db, hat, photo_path, reason=f"Claude analysis failed: {exc}"
+        )
         await db.commit()
         db.expire_all()
         return _hat_to_read(await hat_service.get_hat(db, hat_id))

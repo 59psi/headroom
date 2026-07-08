@@ -6,6 +6,7 @@ from headroom.models.app_setting import AppSetting
 
 ANTHROPIC_KEY_NAME = "anthropic_api_key"
 ANTHROPIC_MODEL_NAME = "anthropic_model"
+GOOGLE_VISION_KEY_NAME = "google_vision_api_key"
 
 
 def mask_key(key: str) -> str:
@@ -55,6 +56,27 @@ async def set_anthropic_key(db: AsyncSession, value: str) -> None:
 
 async def clear_anthropic_key(db: AsyncSession) -> None:
     await _set_setting(db, ANTHROPIC_KEY_NAME, None)
+
+
+async def get_google_vision_key(db: AsyncSession) -> tuple[str | None, str | None]:
+    """Resolve the active Google Vision key. Returns (key, source).
+
+    Order: database setting > environment variable.
+    """
+    db_value = await _get_setting(db, GOOGLE_VISION_KEY_NAME)
+    if db_value:
+        return db_value, "database"
+    if config_settings.google_vision_api_key:
+        return config_settings.google_vision_api_key, "environment"
+    return None, None
+
+
+async def set_google_vision_key(db: AsyncSession, value: str) -> None:
+    await _set_setting(db, GOOGLE_VISION_KEY_NAME, value.strip())
+
+
+async def clear_google_vision_key(db: AsyncSession) -> None:
+    await _set_setting(db, GOOGLE_VISION_KEY_NAME, None)
 
 
 async def get_anthropic_model(db: AsyncSession) -> tuple[str, str]:

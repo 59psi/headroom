@@ -1162,6 +1162,13 @@ button.card:hover::before,
   border: 1px solid rgba(255, 56, 96, 0.4);
 }
 
+/* Partial (no-Claude) analysis: colors from the cutout mask ± logo brand */
+.hr-analysis-status.fallback {
+  background: rgba(255, 140, 66, 0.12);
+  color: var(--neon-orange);
+  border: 1px solid rgba(255, 140, 66, 0.4);
+}
+
 .hr-analysis-status .dot {
   width: 6px;
   height: 6px;

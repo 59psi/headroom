@@ -4,6 +4,43 @@ All notable changes are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.7.0] — 2026-07-07 — _analysis fallback: mask colors + Google logo brand_
+
+### Added
+- **No-Claude fallback analysis** (`analysis_status="fallback"`). When no
+  Anthropic key is configured — or a Claude call fails — hats no longer come
+  out blank:
+  - **Colors, zero keys required.** Dominant colors are extracted locally
+    from the rembg cutout's alpha mask (pixels with alpha ≥ 200 only), so
+    **background colors are rejected by construction** — the mask *is* the
+    segmentation. Median-cut quantization + a curated ~25-name palette fills
+    `color_name`/`general_color`/`hex_value`/`tier` (searchable like the
+    Claude-derived colors). If bg-removal failed for a photo, no colors are
+    guessed from the contaminated frame.
+  - **Brand via Google Cloud Vision logo detection** (optional). New
+    Settings card + `GET/PUT/DELETE /api/settings/google-vision-key`
+    (masked reads, admin-guarded writes, DB > `HEADROOM_GOOGLE_VISION_API_KEY`
+    env — same pattern as the Anthropic key). REST + API key, no Google SDK
+    dependency. Logos below 0.6 confidence are ignored.
+  - Model name, price, and design notes stay empty — **Reanalyze** with a
+    Claude key upgrades a fallback hat to full identification. Reanalyze now
+    also *runs* the fallback when no Claude key is set (was a hard 400), and
+    Claude-error reanalyzes degrade to fallback data instead of error-only.
+  - UI: orange "Basic ID (fallback)" pill + info banner on the hat detail
+    page; eBay comps remain Claude-gated (no model name to search with).
+- 15 new tests (109 total): background rejection proven against synthetic
+  RGBA fixtures with poisoned transparent pixels, Vision JSON parsing, all
+  pipeline degradation paths, reanalyze fallback, key-route masking.
+
+### Fixed
+- **Test suite no longer writes into the developer's real `uploads/`
+  directory.** `settings.upload_dir` is a relative path and conftest never
+  redirected it, so every photo-upload test had been depositing tiny
+  synthetic images into `uploads/hats/` (177 files accumulated since
+  February). New autouse `isolated_upload_dir` fixture points each test at
+  a temp dir with the lifespan's directory tree pre-created. Stray
+  sub-10KB artifacts in a real uploads folder can be safely removed.
+
 ## [0.6.4] — 2026-07-06 — _self-installing setup + fresh-install logo fix_
 
 ### Fixed

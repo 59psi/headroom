@@ -25,6 +25,24 @@ test_session_factory = async_sessionmaker(test_engine, expire_on_commit=False)
 
 
 @pytest.fixture(autouse=True)
+def isolated_upload_dir(tmp_path, monkeypatch):
+    """Point uploads at a per-test temp dir.
+
+    `settings.upload_dir` defaults to the relative `uploads/` path, so without
+    this, every photo-upload test deposits synthetic images into the
+    developer's real uploads folder (which is exactly what happened — tiny
+    solid-color squares accumulated there for months).
+    """
+    from headroom.config import settings
+
+    upload_dir = tmp_path / "uploads"
+    # Mirror what the app lifespan creates (it doesn't run under ASGITransport).
+    for sub in ("cases", "hats", "branding"):
+        (upload_dir / sub).mkdir(parents=True)
+    monkeypatch.setattr(settings, "upload_dir", upload_dir)
+
+
+@pytest.fixture(autouse=True)
 def stub_background_removal(monkeypatch):
     """rembg is heavy and downloads model weights on first use — never run it in tests.
 

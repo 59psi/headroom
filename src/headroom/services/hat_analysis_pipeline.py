@@ -8,12 +8,16 @@ Steps:
   5. Persist analysis results onto the Hat row (caller commits).
 
 The pipeline degrades gracefully: any single step can fail without breaking
-the others. If Claude is not configured the upload still saves; the hat just
-gets `analysis_status='skipped'`.
+the others. If Claude is not configured (or errors), a best-effort fallback
+runs instead: dominant colors from the rembg cutout's alpha mask (hat pixels
+only — never the background) plus a Google Vision logo-based brand guess when
+that key is configured. Fallback data lands as `analysis_status='fallback'`;
+if the fallback produces nothing the hat gets `skipped`/`error` as before.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,7 +34,9 @@ from headroom.services.claude_analysis import (
     HatAnalysis,
     analyze_hat_image,
 )
+from headroom.services.color_extraction import extract_hat_colors
 from headroom.services.ebay_service import EbayError, find_comps
+from headroom.services.google_vision import GoogleVisionError, detect_brand_logo
 from headroom.services.melin_recap import build_resale_pointer
 
 logger = logging.getLogger(__name__)
@@ -68,6 +74,9 @@ async def finalize_hat_photo(
         hat.analysis_status = "skipped"
         hat.analysis_error = "No Anthropic API key configured."
         hat.analyzed_at = datetime.now(timezone.utc)
+        await run_fallback_analysis(
+            db, hat, canonical_path, reason="No Anthropic API key configured"
+        )
         return hat
 
     model_id, _model_source = await settings_service.get_anthropic_model(db)
@@ -82,6 +91,9 @@ async def finalize_hat_photo(
         hat.analysis_status = "error"
         hat.analysis_error = str(exc)
         hat.analyzed_at = datetime.now(timezone.utc)
+        await run_fallback_analysis(
+            db, hat, canonical_path, reason=f"Claude analysis failed: {exc}"
+        )
         return hat
 
     _apply_analysis(hat, analysis)
@@ -96,6 +108,66 @@ async def finalize_hat_photo(
             logger.info("eBay comp refresh skipped for hat %s: %s", hat.id, exc)
 
     return hat
+
+
+async def run_fallback_analysis(
+    db: AsyncSession, hat: Hat, photo_path: Path, *, reason: str
+) -> bool:
+    """Best-effort analysis without Claude: mask colors + Google logo brand.
+
+    Colors come only from the rembg cutout's alpha mask (background rejected
+    by construction); a PNG suffix is the marker that a cutout exists. Brand
+    comes from Google Vision logo detection when that key is configured.
+
+    Mutates `hat` and sets `analysis_status='fallback'` only if at least one
+    piece of data was obtained; otherwise leaves the hat untouched (caller's
+    skipped/error state stands) and returns False. Never raises.
+    """
+    colors = []
+    if photo_path.suffix.lower() == ".png":
+        try:
+            colors = await asyncio.to_thread(extract_hat_colors, photo_path)
+        except Exception as exc:  # noqa: BLE001 — fallback must never break uploads
+            logger.warning("Fallback color extraction failed for hat %s: %s", hat.id, exc)
+
+    brand: str | None = None
+    google_key, _gsrc = await settings_service.get_google_vision_key(db)
+    if google_key:
+        try:
+            logo = await detect_brand_logo(photo_path, google_key)
+            if logo:
+                brand = logo[0]
+        except GoogleVisionError as exc:
+            logger.info("Fallback logo detection skipped for hat %s: %s", hat.id, exc)
+
+    if not colors and not brand:
+        return False
+
+    provided = []
+    if colors:
+        hat.colors.clear()
+        for rank, color in enumerate(colors, start=1):
+            hat.colors.append(
+                HatColor(
+                    color_name=color.name,
+                    general_color=color.name,
+                    hex_value=color.hex,
+                    dominance_rank=rank,
+                    tier=color.tier,
+                )
+            )
+        provided.append("colors from photo cutout")
+    if brand:
+        hat.brand = brand
+        provided.append("brand via Google logo detection")
+
+    hat.analysis_status = "fallback"
+    hat.analysis_error = (
+        f"{reason} — basic fallback applied ({', '.join(provided)}). "
+        "Add a Claude API key and Reanalyze for full identification."
+    )
+    hat.analyzed_at = datetime.now(timezone.utc)
+    return True
 
 
 def _apply_analysis(hat: Hat, analysis: HatAnalysis) -> None:

@@ -39,6 +39,21 @@ export function testApiKey() {
   });
 }
 
+export function getGoogleVisionKeyStatus() {
+  return apiFetch<ApiKeyStatus>('/api/settings/google-vision-key');
+}
+
+export function setGoogleVisionKey(api_key: string) {
+  return apiFetch<ApiKeyStatus>('/api/settings/google-vision-key', {
+    method: 'PUT',
+    body: JSON.stringify({ api_key }),
+  });
+}
+
+export function deleteGoogleVisionKey() {
+  return apiFetch<void>('/api/settings/google-vision-key', { method: 'DELETE' });
+}
+
 export function getModel() {
   return apiFetch<ModelStatus>('/api/settings/model');
 }

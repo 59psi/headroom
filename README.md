@@ -123,10 +123,25 @@ override it from the UI.
 | **Database** (preferred) | Set per-user from the Settings page; persists across restarts | UI: Settings → Claude API Key |
 | **Environment** (fallback) | Useful as a default for fresh installs | `HEADROOM_ANTHROPIC_API_KEY` |
 
-If no key is configured, photo upload still works — the hat just gets
-`analysis_status = "skipped"` and you can fill in the pricing fields manually.
-You can drop a key in later and use the **Reanalyze** button on any hat detail
-page to backfill.
+### No Claude key? The fallback
+
+Uploads never depend on Claude. Without a key (or when a Claude call fails),
+a basic fallback runs instead and the hat gets `analysis_status = "fallback"`:
+
+- **Colors — always available, no key needed.** Dominant colors are extracted
+  locally from the background-removed cutout's alpha mask, so only actual hat
+  pixels count — the background can't contaminate the swatches. (If background
+  removal failed for a photo, no colors are guessed.)
+- **Brand — optional, via Google Cloud Vision logo detection.** Create an API
+  key at [console.cloud.google.com](https://console.cloud.google.com/apis/library/vision.googleapis.com)
+  (enable the *Cloud Vision API*, then *Credentials → Create API key*) and
+  paste it in **Settings → Google Vision Key**. Free tier is 1,000 requests
+  per month — plenty for a hat collection.
+
+Model name, price estimate, and design notes stay empty in fallback mode —
+drop a Claude key in later and hit **Reanalyze** on any hat to upgrade to the
+full identification. If neither fallback source produces anything, the hat
+gets `analysis_status = "skipped"` exactly as before.
 
 ### What Claude actually returns
 
@@ -167,6 +182,7 @@ we link out for live comparables instead. You can always set
 | `HEADROOM_UPLOAD_DIR` | `uploads` | Where photos live on disk |
 | `HEADROOM_CORS_ORIGINS` | `["http://localhost:5173"]` | Allowed CORS origins (JSON list) |
 | `HEADROOM_ANTHROPIC_API_KEY` | _(unset)_ | Default API key (overridden by DB value) |
+| `HEADROOM_GOOGLE_VISION_API_KEY` | _(unset)_ | Google Cloud Vision key for fallback brand (logo) detection when Claude is unavailable. DB value wins. |
 | `HEADROOM_ANTHROPIC_MODEL` | `claude-sonnet-4-6` | Claude model to use for vision |
 | `HEADROOM_REMBG_MODEL` | `u2netp` | rembg model name (`u2netp` is Pi-friendly; `u2net` / `isnet-general-use` are higher quality but ~170MB) |
 | `HEADROOM_HTTP_TIMEOUT` | `30.0` | Outbound HTTP timeout in seconds |

@@ -11,6 +11,10 @@ class Settings(BaseSettings):
     # Claude API key fallback — UI-stored key in DB takes precedence.
     anthropic_api_key: str | None = None
 
+    # Google Cloud Vision API key (fallback brand detection when Claude is
+    # unavailable). Same precedence rule: UI-stored key in DB wins.
+    google_vision_api_key: str | None = None
+
     # Default Claude vision model. `claude-sonnet-4-6` is a current Anthropic
     # Sonnet id (Claude 4.6 family). Override with HEADROOM_ANTHROPIC_MODEL if
     # you want a different model, or use POST /api/settings/api-key/test in

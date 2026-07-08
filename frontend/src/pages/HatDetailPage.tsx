@@ -13,7 +13,11 @@ import { useState } from 'react';
 function AnalysisStatus({ hat }: { hat: HatRead }) {
   if (!hat.analysis_status) return null;
   const status = hat.analysis_status;
-  const label = status === 'ok' ? 'Analyzed' : status === 'skipped' ? 'No API key' : 'Analysis failed';
+  const label =
+    status === 'ok' ? 'Analyzed'
+    : status === 'skipped' ? 'No API key'
+    : status === 'fallback' ? 'Basic ID (fallback)'
+    : 'Analysis failed';
   return (
     <span className={`hr-analysis-status ${status}`} title={hat.analysis_error || undefined}>
       <span className="dot" />
@@ -155,8 +159,8 @@ export function HatDetailPage() {
                     type="button"
                     className="btn btn-outline-secondary"
                     onClick={() => reanalyzeMut.mutate()}
-                    disabled={reanalyzing || data.analysis_status === 'skipped'}
-                    title={data.analysis_status === 'skipped' ? 'Configure API key in Settings first' : 'Re-run Claude analysis'}
+                    disabled={reanalyzing}
+                    title="Re-run analysis (Claude, or the fallback when no key is set)"
                   >
                     {reanalyzing ? '↻ Analyzing…' : '↻ Reanalyze'}
                   </button>
@@ -400,6 +404,14 @@ export function HatDetailPage() {
       {data.analysis_status === 'skipped' && (
         <div className="alert alert-info mb-3">
           Configure your Anthropic API key in <Link to="/settings" style={{ color: 'inherit', textDecoration: 'underline' }}>Settings</Link> to enable AI brand/color/price detection.
+        </div>
+      )}
+
+      {data.analysis_status === 'fallback' && (
+        <div className="alert alert-info mb-3 small">
+          Basic fallback ID only (colors from the photo cutout{data.brand ? ', brand from logo detection' : ''}).
+          Add a Claude API key in <Link to="/settings" style={{ color: 'inherit', textDecoration: 'underline' }}>Settings</Link> and
+          hit Reanalyze for full model + price identification.
         </div>
       )}
 

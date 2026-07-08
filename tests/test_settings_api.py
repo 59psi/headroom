@@ -79,7 +79,9 @@ async def test_uploads_mount_survives_missing_dir_at_import(tmp_path, monkeypatc
     from headroom.app import create_app
     from headroom.config import settings as app_settings
 
-    upload_dir = tmp_path / "uploads"
+    # Distinct from the autouse isolated_upload_dir fixture's pre-created path —
+    # this test specifically needs a directory that does NOT exist yet.
+    upload_dir = tmp_path / "first-boot-uploads"
     assert not upload_dir.exists()
     monkeypatch.setattr(app_settings, "upload_dir", upload_dir)
 
