@@ -47,3 +47,7 @@ uploads/
 # Project-specific
 Headroom.zip
 analysis/
+
+# Agent skills (per-developer tooling)
+.agents/
+skills-lock.json
