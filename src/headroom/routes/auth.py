@@ -134,6 +134,7 @@ class PasswordChange(BaseModel):
 @router.post("/password", status_code=204)
 async def change_password(
     data: PasswordChange,
+    request: Request,
     user: User = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -142,7 +143,12 @@ async def change_password(
     user.password_hash = auth_service.hash_password(data.new_password)
     db.add(user)
     await db.commit()
-    # Other sessions are invalidated; the current one stays.
+    # Changing the password is often a compromise response: revoke every
+    # other session so a stolen cookie dies with the old password. The
+    # session that made this request stays valid.
+    await auth_service.destroy_other_sessions(
+        db, user.id, keep=request.cookies.get(auth_service.SESSION_COOKIE)
+    )
 
 
 # ------------------------------ passkeys ------------------------------ #

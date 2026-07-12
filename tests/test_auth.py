@@ -208,3 +208,27 @@ async def test_share_link_public_view_and_revoke(client, anon_client):
     link_id = (await client.get("/api/share-links")).json()[0]["id"]
     assert (await client.delete(f"/api/share-links/{link_id}")).status_code == 204
     assert (await anon_client.get(f"/api/public/share/{token}")).status_code == 404
+
+
+async def test_change_password_revokes_other_sessions(anon_client, app):
+    """Compromise response: a password change kills every OTHER session."""
+    from httpx import ASGITransport, AsyncClient
+
+    await _setup_owner(anon_client)  # session A on anon_client
+
+    # Second device logs in → session B
+    other = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+    resp = await other.post("/api/auth/login", json=CREDS)
+    assert resp.status_code == 200
+    assert (await other.get("/api/hats")).status_code == 200
+
+    # Device A changes the password
+    resp = await anon_client.post(
+        "/api/auth/password",
+        json={"current_password": CREDS["password"], "new_password": "rotated-pass-99"},
+    )
+    assert resp.status_code == 204
+
+    # A (the changer) survives; B is dead
+    assert (await anon_client.get("/api/hats")).status_code == 200
+    assert (await other.get("/api/hats")).status_code == 401

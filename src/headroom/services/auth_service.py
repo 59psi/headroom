@@ -148,3 +148,12 @@ async def destroy_session(db: AsyncSession, session_id: str) -> None:
 async def destroy_all_sessions(db: AsyncSession, user_id: int) -> None:
     await db.execute(delete(AuthSession).where(AuthSession.user_id == user_id))
     await db.commit()
+
+
+async def destroy_other_sessions(db: AsyncSession, user_id: int, keep: str | None) -> None:
+    """Revoke every session for a user except `keep` (the current one)."""
+    stmt = delete(AuthSession).where(AuthSession.user_id == user_id)
+    if keep:
+        stmt = stmt.where(AuthSession.id != keep)
+    await db.execute(stmt)
+    await db.commit()

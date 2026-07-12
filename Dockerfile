@@ -86,7 +86,11 @@ VOLUME ["/data"]
 EXPOSE 8000
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
-# --proxy-headers: honor X-Forwarded-Proto from the Caddy HTTPS overlay so
-# session cookies get the `secure` flag when served over TLS.
+# --proxy-headers honors X-Forwarded-* so session cookies get the `secure`
+# flag behind the Caddy HTTPS overlay. Which peers are TRUSTED to send those
+# headers is controlled by uvicorn's FORWARDED_ALLOW_IPS env var — default
+# 127.0.0.1, so clients hitting :8000 directly cannot spoof their IP (which
+# would defeat login rate limiting). The HTTPS overlay sets it to "*" only
+# because it stops publishing :8000 — then only in-network Caddy can connect.
 CMD ["uvicorn", "headroom.app:app", "--host", "0.0.0.0", "--port", "8000", \
-     "--proxy-headers", "--forwarded-allow-ips", "*"]
+     "--proxy-headers"]

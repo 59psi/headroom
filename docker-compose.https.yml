@@ -15,6 +15,9 @@ services:
       HEADROOM_RP_ID: "${HEADROOM_DOMAIN:?set HEADROOM_DOMAIN}"
       HEADROOM_ORIGIN: "https://${HEADROOM_DOMAIN}"
       HEADROOM_CORS_ORIGINS: '["https://${HEADROOM_DOMAIN}"]'
+      # Trust X-Forwarded-* from any peer — safe ONLY because :8000 is not
+      # published in this topology; Caddy is the sole reachable client.
+      FORWARDED_ALLOW_IPS: "*"
 
   caddy:
     image: caddy:2-alpine
