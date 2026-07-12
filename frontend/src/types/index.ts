@@ -20,6 +20,7 @@ export interface CaseRead {
   sequence_number: number;
   display_id: string;
   photo_path: string | null;
+  capacity: number | null;
   hat_count: number;
   beanie_count: number;
   regular_count: number;
@@ -131,9 +132,21 @@ export interface SearchResult {
   condition: string;
   size: string;
   is_beanie: boolean;
+  brand: string | null;
+  model_name: string | null;
   colors: ColorTag[];
   room_id: number | null;
   room_name: string | null;
+}
+
+export interface ColorSearchResult extends SearchResult {
+  matched_hex: string;
+  distance: number;
+}
+
+export interface PaletteColor {
+  name: string;
+  hex: string;
 }
 
 export interface MetaOption {

@@ -79,6 +79,69 @@ def nearest_color_name(rgb: tuple[int, int, int]) -> str:
     )[0]
 
 
+def palette() -> list[dict]:
+    """The curated palette as [{name, hex}] — served to the UI as filter chips."""
+    return [
+        {"name": name, "hex": "#{:02x}{:02x}{:02x}".format(*rgb)}
+        for name, rgb in _PALETTE
+    ]
+
+
+def parse_hex(value: str) -> tuple[int, int, int] | None:
+    """'#1c2541' / '1c2541' → (28, 37, 65); None when malformed."""
+    v = value.strip().lstrip("#")
+    if len(v) != 6:
+        return None
+    try:
+        return (int(v[0:2], 16), int(v[2:4], 16), int(v[4:6], 16))
+    except ValueError:
+        return None
+
+
+def normalize_hex_name(hex_value: str | None, fallback: str) -> str:
+    """Palette name for a hex color; `fallback` when the hex is unusable.
+
+    Used to normalize free-text color names (Claude says "sky blue",
+    "powder blue", …) onto the fixed palette vocabulary so color filters
+    behave consistently.
+    """
+    rgb = parse_hex(hex_value) if hex_value else None
+    return nearest_color_name(rgb) if rgb else fallback
+
+
+# --------------------- perceptual color distance ---------------------- #
+# sRGB → CIELAB, pure Python (D65). Euclidean distance in LAB (ΔE*76) is
+# a good-enough perceptual metric for "show me hats close to this color".
+
+
+def _srgb_to_lab(rgb: tuple[int, int, int]) -> tuple[float, float, float]:
+    def _lin(c: float) -> float:
+        c /= 255.0
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+    r, g, b = (_lin(c) for c in rgb)
+    # sRGB D65 → XYZ
+    x = (0.4124564 * r + 0.3575761 * g + 0.1804375 * b) / 0.95047
+    y = 0.2126729 * r + 0.7151522 * g + 0.0721750 * b
+    z = (0.0193339 * r + 0.1191920 * g + 0.9503041 * b) / 1.08883
+
+    def _f(t: float) -> float:
+        return t ** (1 / 3) if t > 0.008856 else (7.787 * t) + (16 / 116)
+
+    fx, fy, fz = _f(x), _f(y), _f(z)
+    return (116 * fy) - 16, 500 * (fx - fy), 200 * (fy - fz)
+
+
+def color_distance(hex_a: str, hex_b: str) -> float | None:
+    """Perceptual distance (ΔE*76) between two hex colors; None if unparsable."""
+    a, b = parse_hex(hex_a), parse_hex(hex_b)
+    if a is None or b is None:
+        return None
+    la, aa, ba = _srgb_to_lab(a)
+    lb, ab, bb = _srgb_to_lab(b)
+    return ((la - lb) ** 2 + (aa - ab) ** 2 + (ba - bb) ** 2) ** 0.5
+
+
 def extract_hat_colors(image_path: Path, max_colors: int = 3) -> list[ExtractedColor]:
     """Return up to `max_colors` dominant hat colors, ranked, background-free.
 

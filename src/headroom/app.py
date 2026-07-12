@@ -71,6 +71,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     branding_dir.mkdir(exist_ok=True)
     _seed_branding(branding_dir)
     await init_db()
+
+    # One-time data fix: normalize general_color onto the curated palette so
+    # color filter chips behave consistently (guarded by a settings flag).
+    from headroom.services import hat_service, settings_service
+
+    async with async_session() as db:
+        if await settings_service._get_setting(db, "color_names_normalized_v1") is None:
+            changed = await hat_service.normalize_existing_colors(db)
+            await settings_service._set_setting(db, "color_names_normalized_v1", "done")
+            if changed:
+                logger.info("Normalized general_color on %d existing hat colors", changed)
     if not settings.admin_token:
         logger.warning(
             "HEADROOM_ADMIN_TOKEN is not set — admin endpoints are "

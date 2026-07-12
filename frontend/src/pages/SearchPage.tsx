@@ -1,17 +1,20 @@
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { searchHats } from '../api/search';
+import { getColorPalette, searchHats, searchHatsByColor } from '../api/search';
 import { getStyles, getSizes, getConditions } from '../api/hats';
 import { getRoomOptions } from '../api/rooms';
 import { ColorSwatches } from '../components/common/ColorSwatch';
 import { ConditionBadge } from '../components/common/ConditionBadge';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
+import type { ColorSearchResult, SearchResult } from '../types';
 
 export function SearchPage() {
   const [query, setQuery] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [exactColors, setExactColors] = useState(false);
+  const [colorHex, setColorHex] = useState<string | null>(null);
+  const [pickerHex, setPickerHex] = useState('#8cb9e1');
 
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [filterStyle, setFilterStyle] = useState('');
@@ -25,14 +28,26 @@ export function SearchPage() {
   const sizesQ = useQuery({ queryKey: ['meta', 'sizes'], queryFn: getSizes });
   const conditionsQ = useQuery({ queryKey: ['meta', 'conditions'], queryFn: getConditions });
   const roomsQ = useQuery({ queryKey: ['meta', 'rooms'], queryFn: getRoomOptions });
+  const paletteQ = useQuery({ queryKey: ['meta', 'colors'], queryFn: getColorPalette });
 
   const roomIdParam = filterRoom ? Number(filterRoom) : undefined;
 
-  const { data, isLoading, error } = useQuery({
+  const textQ = useQuery({
     queryKey: ['search', searchTerm, exactColors, roomIdParam],
     queryFn: () => searchHats(searchTerm, exactColors, roomIdParam),
-    enabled: searchTerm.length > 0,
+    enabled: !colorHex && searchTerm.length > 0,
   });
+
+  const colorQ = useQuery({
+    queryKey: ['search', 'color', colorHex, roomIdParam],
+    queryFn: () => searchHatsByColor(colorHex!, roomIdParam),
+    enabled: !!colorHex,
+  });
+
+  const data: SearchResult[] | ColorSearchResult[] | undefined = colorHex ? colorQ.data : textQ.data;
+  const isLoading = colorHex ? colorQ.isLoading : textQ.isLoading;
+  const error = colorHex ? colorQ.error : textQ.error;
+  const hasQuery = !!colorHex || searchTerm.length > 0;
 
   const activeFilterCount = [filterStyle, filterSize, filterCondition, filterType, filterColor, filterRoom].filter(Boolean).length;
 
@@ -60,7 +75,14 @@ export function SearchPage() {
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setColorHex(null);
     setSearchTerm(query.trim());
+  }
+
+  function pickColor(hex: string) {
+    setSearchTerm('');
+    setQuery('');
+    setColorHex(prev => (prev === hex ? null : hex));
   }
 
   function clearFilters() {
@@ -98,21 +120,66 @@ export function SearchPage() {
         </div>
       </form>
 
-      {!searchTerm && (
+      <div className="mb-3">
+        <div className="text-secondary small mb-2">…or tap a color to find the closest hats:</div>
+        <div className="d-flex flex-wrap gap-2 align-items-center">
+          {paletteQ.data?.map(c => (
+            <button
+              key={c.hex}
+              type="button"
+              title={c.name}
+              aria-label={`Search hats near ${c.name}`}
+              onClick={() => pickColor(c.hex)}
+              style={{
+                width: 34, height: 34, borderRadius: '50%', background: c.hex,
+                border: colorHex === c.hex ? '3px solid var(--neon-cyan)' : '2px solid rgba(255,255,255,0.25)',
+                cursor: 'pointer', padding: 0,
+              }}
+            />
+          ))}
+          <label
+            className="d-inline-flex align-items-center gap-1 small text-secondary"
+            style={{ cursor: 'pointer' }}
+          >
+            <input
+              type="color"
+              value={pickerHex}
+              onChange={e => setPickerHex(e.target.value)}
+              onBlur={() => pickColor(pickerHex)}
+              style={{ width: 34, height: 34, padding: 0, border: 'none', background: 'transparent', cursor: 'pointer' }}
+              aria-label="Pick any color"
+            />
+            any color
+          </label>
+        </div>
+      </div>
+
+      {!hasQuery && (
         <div className="text-center py-5 text-secondary">
-          <p>Search across every hat by color, brand, style, condition, size, or room</p>
-          <p className="small">Multi-term AND: <span className="font-mono">blue a_game</span></p>
+          <p>Search across every hat by name, brand, color, style, condition, size, or room</p>
+          <p className="small">Multi-term AND: <span className="font-mono">blue a_game</span> · or tap a swatch above</p>
         </div>
       )}
 
       {isLoading && <LoadingSpinner label="Searching" />}
       {error && <div className="alert alert-danger">{String(error)}</div>}
 
-      {data && searchTerm && (
+      {data && hasQuery && (
         <>
           <div className="d-flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
-            <div className="text-secondary small font-mono">
-              {filteredData.length} of {data.length} result{data.length !== 1 ? 's' : ''} for "{searchTerm}"
+            <div className="text-secondary small font-mono d-flex align-items-center gap-2">
+              {filteredData.length} of {data.length} result{data.length !== 1 ? 's' : ''}{' '}
+              {colorHex ? (
+                <>
+                  nearest to
+                  <span style={{
+                    display: 'inline-block', width: 16, height: 16, borderRadius: '50%',
+                    background: colorHex, border: '1px solid rgba(255,255,255,0.4)', verticalAlign: 'middle',
+                  }} />
+                </>
+              ) : (
+                <>for "{searchTerm}"</>
+              )}
             </div>
             {data.length > 0 && (
               <button
@@ -203,11 +270,29 @@ export function SearchPage() {
                       <div className="font-mono fw-semibold" style={{ color: 'var(--neon-cyan)' }}>{hat.display_id || `#${hat.id}`}</div>
                       <ConditionBadge condition={hat.condition} />
                     </div>
+                    {(hat.brand || hat.model_name) && (
+                      <div className="small fw-semibold" style={{ marginTop: 2 }}>
+                        {[hat.brand, hat.model_name].filter(Boolean).join(' ')}
+                      </div>
+                    )}
                     <div className="text-muted small mb-1" style={{ marginTop: 4 }}>
                       {hat.style.replace(/_/g, ' ')} · {hat.size.replace(/_/g, ' ')}
-                      {hat.room_name && <> · {hat.room_name}</>}
+                      {(hat.case_display_id || hat.room_name) && (
+                        <> · 📍 {[hat.case_display_id && `Case ${hat.case_display_id}`, hat.room_name].filter(Boolean).join(' · ')}</>
+                      )}
                     </div>
                     <ColorSwatches colors={hat.colors} showLabels={false} />
+                    {'matched_hex' in hat && (
+                      <div className="text-muted small d-flex align-items-center gap-1" style={{ marginTop: 4 }}>
+                        matched
+                        <span style={{
+                          display: 'inline-block', width: 12, height: 12, borderRadius: '50%',
+                          background: (hat as ColorSearchResult).matched_hex,
+                          border: '1px solid rgba(255,255,255,0.4)',
+                        }} />
+                        <span className="font-mono">Δ{(hat as ColorSearchResult).distance.toFixed(0)}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               </Link>

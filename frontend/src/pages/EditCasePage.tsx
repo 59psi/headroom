@@ -21,6 +21,7 @@ export function EditCasePage() {
 
   const [caseType, setCaseType] = useState('');
   const [roomId, setRoomId] = useState(1);
+  const [capacity, setCapacity] = useState('');
   const [photo, setPhoto] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
 
@@ -28,6 +29,7 @@ export function EditCasePage() {
     if (caseQuery.data) {
       setCaseType(caseQuery.data.case_type);
       setRoomId(caseQuery.data.room_id);
+      setCapacity(caseQuery.data.capacity != null ? String(caseQuery.data.capacity) : '');
       if (caseQuery.data.photo_path) {
         setPhotoPreview(`/uploads/${caseQuery.data.photo_path}`);
       }
@@ -36,7 +38,11 @@ export function EditCasePage() {
 
   const mutation = useMutation({
     mutationFn: async () => {
-      await updateCase(displayId!, { case_type: caseType, room_id: roomId });
+      await updateCase(displayId!, {
+        case_type: caseType,
+        room_id: roomId,
+        ...(capacity ? { capacity: Number(capacity) } : {}),
+      });
       if (photo) {
         await uploadCasePhoto(displayId!, photo);
       }
@@ -89,6 +95,18 @@ export function EditCasePage() {
                   <option key={r.id} value={r.id}>{r.name}</option>
                 ))}
               </select>
+            </div>
+            <div className="mb-3">
+              <label className="form-label">Capacity (hats)</label>
+              <input
+                type="number"
+                className="form-control"
+                min={1}
+                max={50}
+                placeholder="Default: 4 regular / 6 beanies"
+                value={capacity}
+                onChange={e => setCapacity(e.target.value)}
+              />
             </div>
           </div>
         </div>

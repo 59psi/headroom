@@ -7,13 +7,14 @@ import { listRooms } from '../api/rooms';
 export function NewCasePage() {
   const [caseType, setCaseType] = useState('archive');
   const [roomId, setRoomId] = useState(1);
+  const [capacity, setCapacity] = useState('');
   const navigate = useNavigate();
   const qc = useQueryClient();
 
   const roomsQ = useQuery({ queryKey: ['rooms'], queryFn: listRooms });
 
   const mutation = useMutation({
-    mutationFn: () => createCase(caseType, roomId),
+    mutationFn: () => createCase(caseType, roomId, capacity ? Number(capacity) : undefined),
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ['cases'] });
       navigate(`/cases/${data.display_id}`);
@@ -41,6 +42,20 @@ export function NewCasePage() {
                 <option key={r.id} value={r.id}>{r.name}</option>
               ))}
             </select>
+          </div>
+
+          <div className="mb-3">
+            <label className="form-label">Capacity (hats)</label>
+            <input
+              type="number"
+              className="form-control"
+              min={1}
+              max={50}
+              placeholder="Default: 4 regular / 6 beanies"
+              value={capacity}
+              onChange={e => setCapacity(e.target.value)}
+            />
+            <div className="form-text small">e.g. 3 for a Melin case that fits 3 hats comfortably</div>
           </div>
 
           {mutation.error && (

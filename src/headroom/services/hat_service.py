@@ -39,6 +39,30 @@ async def _get_next_position(db: AsyncSession, case_id: int) -> int:
     return result.scalar_one() + 1
 
 
+async def normalize_existing_colors(db: AsyncSession) -> int:
+    """One-time data fix: snap general_color onto the curated palette.
+
+    Claude-era rows stored its free-text name in both color_name and
+    general_color, so filters depended on Claude's phrasing ("sky blue" vs
+    "light blue"). Recomputes general_color from the stored hex; color_name
+    keeps the original phrasing. Idempotent — safe to re-run.
+    """
+    from headroom.models.hat_color import HatColor
+    from headroom.services.color_extraction import normalize_hex_name
+
+    result = await db.execute(select(HatColor))
+    changed = 0
+    for row in result.scalars().all():
+        if not row.hex_value:
+            continue
+        norm = normalize_hex_name(row.hex_value, row.general_color or row.color_name)
+        if norm != row.general_color:
+            row.general_color = norm
+            changed += 1
+    await db.commit()
+    return changed
+
+
 async def _validate_capacity(
     db: AsyncSession, case_id: int, is_beanie: bool, exclude_hat_id: int | None = None
 ) -> None:
@@ -66,15 +90,21 @@ async def _validate_capacity(
     beanie_count = sum(1 for h in hats if h.is_beanie)
     regular_count = len(hats) - beanie_count
 
-    if is_beanie and beanie_count >= MAX_BEANIE:
+    # Per-case capacity override wins over the type default.
+    case = await db.get(Case, case_id)
+    case_capacity = case.capacity if case and case.capacity else None
+
+    max_beanie = case_capacity or MAX_BEANIE
+    max_regular = case_capacity or MAX_REGULAR
+    if is_beanie and beanie_count >= max_beanie:
         raise HTTPException(
             status_code=409,
-            detail=f"Case has reached max beanie capacity ({MAX_BEANIE})",
+            detail=f"Case has reached max beanie capacity ({max_beanie})",
         )
-    if not is_beanie and regular_count >= MAX_REGULAR:
+    if not is_beanie and regular_count >= max_regular:
         raise HTTPException(
             status_code=409,
-            detail=f"Case has reached max regular hat capacity ({MAX_REGULAR})",
+            detail=f"Case has reached max regular hat capacity ({max_regular})",
         )
 
 

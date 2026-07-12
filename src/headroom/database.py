@@ -80,6 +80,9 @@ def _run_migrations(conn) -> None:
             conn.execute(
                 text("ALTER TABLE cases ADD COLUMN room_id INTEGER DEFAULT 1 REFERENCES rooms(id)")
             )
+        # v0.9 — per-case capacity override (NULL → type default)
+        if "capacity" not in columns:
+            conn.execute(text("ALTER TABLE cases ADD COLUMN capacity INTEGER"))
 
     if "hat_colors" in existing_tables:
         columns = [c["name"] for c in inspector.get_columns("hat_colors")]

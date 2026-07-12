@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import StrEnum
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class CaseType(StrEnum):
@@ -12,11 +12,14 @@ class CaseType(StrEnum):
 class CaseCreate(BaseModel):
     case_type: CaseType
     room_id: int = 1
+    # Per-case hat capacity; None → type default (4 regular / 6 beanie)
+    capacity: int | None = Field(None, ge=1, le=50)
 
 
 class CaseUpdate(BaseModel):
     case_type: CaseType | None = None
     room_id: int | None = None
+    capacity: int | None = Field(None, ge=1, le=50)
 
 
 class HatSummary(BaseModel):
@@ -35,6 +38,7 @@ class CaseRead(BaseModel):
     sequence_number: int
     display_id: str
     photo_path: str | None
+    capacity: int | None
     hat_count: int
     beanie_count: int
     regular_count: int

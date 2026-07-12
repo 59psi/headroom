@@ -39,6 +39,7 @@ async def create_case(db: AsyncSession, data: CaseCreate) -> Case:
         sequence_number=seq,
         display_id=display_id,
         room_id=data.room_id,
+        capacity=data.capacity,
     )
     db.add(case)
     await db.commit()
@@ -77,6 +78,8 @@ async def update_case(
         case.display_id = _make_display_id(data.case_type, seq)
     if data.room_id is not None:
         case.room_id = data.room_id
+    if data.capacity is not None:
+        case.capacity = data.capacity
     await db.commit()
     return await _reload_case(db, case.id)
 

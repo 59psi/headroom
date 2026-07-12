@@ -4,6 +4,30 @@ All notable changes are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.9.0] — 2026-07-11 — _find-the-hat: color-similarity search + capacity_
+
+### Added
+- **Search by color.** Tap a palette chip (or pick any color) and every
+  active hat is ranked by perceptual closeness — ΔE*76 in LAB space over
+  the *stored hex swatches*, so "light blue" finds sky/powder/baby blue
+  hats regardless of what the analyzer named them, and a hat whose
+  *secondary* color matches still surfaces (matched swatch + Δ shown).
+  `GET /api/search/color?hex=`, palette chips from `GET /api/meta/colors`.
+- **Normalized color vocabulary.** `general_color` now snaps to the
+  curated palette from the hex at analysis time, with a one-time startup
+  backfill for existing rows (guarded by an app-setting flag). Default
+  color search uses the normalized names; `exact_colors` still matches the
+  analyzer's original phrasing.
+- **Find-it result cards.** Search results now include brand + model name
+  and a location breadcrumb (Case display-id · Room); text search also
+  matches brand/model (`hydro` works now — the placeholder always claimed
+  brand search, the backend never did it). Disposed hats are excluded from
+  search — they're not findable on a shelf.
+- **Per-case capacity.** New nullable `capacity` column (inline DDL
+  migration) overrides the 4-regular/6-beanie defaults per case, editable
+  on the New/Edit Case forms — Melin cases realistically hold 3–4.
+- 13 new tests (129 total).
+
 ## [0.8.0] — 2026-07-07 — _live Melin Recap resale prices_
 
 ### Added

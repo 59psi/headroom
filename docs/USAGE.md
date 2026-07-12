@@ -29,9 +29,11 @@ still removed, and fallback color swatches still appear.
 
 - **Rooms** are physical locations. The *Default Room* always exists (and
   can't be deleted — deleting another room moves its cases there).
-- **Cases** hold hats and are type-exclusive: **4 regular hats** or
-  **6 beanies**, never mixed. Cases get display IDs like `A-001`
-  (archive) or `D-001` (daily wear), auto-sequenced.
+- **Cases** hold hats and are type-exclusive (regular hats or beanies,
+  never mixed). Default capacity is **4 regular / 6 beanies**, and each
+  case can override it (e.g. 3 for a Melin case you don't want to cram).
+  Cases get display IDs like `A-001` (archive) or `D-001` (daily wear),
+  auto-sequenced.
 - **Hats** can also live unassigned (no case). Sizes: small / classic /
   x-large.
 
@@ -96,13 +98,23 @@ Each hat can show up to three price signals:
 The **Valuation** page rolls the whole collection up — including realized
 value from hats you've sold.
 
-## 7. Search
+## 7. Search — finding *the* hat
 
-Multi-term search across style, condition, size, colors, brand, and room —
-terms AND together (`navy classic melin` finds navy, classic-size Melins).
-By default color terms match the human-friendly general color; toggle
-*exact colors* to match precise CSS names. A room filter narrows scope
-server-side.
+Two ways in, both returning cards with the photo, the hat's name (brand +
+model when known), and **where it lives** ("📍 Case A-012 · Office"):
+
+- **Text search** — multi-term AND across name, brand, style, condition,
+  size, colors, and room (`navy classic melin` finds navy, classic-size
+  Melins; `hydro` finds every Hydro). Color terms match the normalized
+  palette vocabulary by default; toggle *exact colors* to match the
+  analyzer's original phrasing. Disposed hats never appear — they're not
+  findable on a shelf.
+- **Search by color** — tap a palette swatch (or pick any color with the
+  color-wheel input) and every hat is ranked by *perceptual closeness* to
+  it, using the actual stored hex values rather than names. A hat whose
+  secondary color matches still surfaces, with the matched swatch and a Δ
+  distance shown on the card. This is the "show me light blue options"
+  flow — it works no matter what the color was called.
 
 ## 8. Selling / disposing
 

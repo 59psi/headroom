@@ -34,7 +34,7 @@ from headroom.services.claude_analysis import (
     HatAnalysis,
     analyze_hat_image,
 )
-from headroom.services.color_extraction import extract_hat_colors
+from headroom.services.color_extraction import extract_hat_colors, normalize_hex_name
 from headroom.services.ebay_service import EbayError, find_comps
 from headroom.services.google_vision import GoogleVisionError, detect_brand_logo
 from headroom.services.melin_recap import (
@@ -220,13 +220,15 @@ def _apply_analysis(hat: Hat, analysis: HatAnalysis) -> None:
     hat.analysis_error = None
     hat.analyzed_at = datetime.now(timezone.utc)
 
-    # Replace colors
+    # Replace colors. color_name keeps Claude's phrasing ("heather slate");
+    # general_color snaps to the curated palette via the hex so the color
+    # filter chips match consistently regardless of naming whims.
     hat.colors.clear()
     for rank, color in enumerate(analysis.colors, start=1):
         hat.colors.append(
             HatColor(
                 color_name=color.name,
-                general_color=color.name,
+                general_color=normalize_hex_name(color.hex, color.name),
                 hex_value=color.hex,
                 dominance_rank=rank,
                 tier=color.tier,

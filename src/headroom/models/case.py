@@ -14,6 +14,8 @@ class Case(Base):
     sequence_number: Mapped[int] = mapped_column(Integer)
     display_id: Mapped[str] = mapped_column(String(10), unique=True, index=True)
     photo_path: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Per-case hat capacity override; NULL → type default (4 regular / 6 beanie)
+    capacity: Mapped[int | None] = mapped_column(Integer, nullable=True)
     room_id: Mapped[int] = mapped_column(Integer, ForeignKey("rooms.id"), default=1)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()
