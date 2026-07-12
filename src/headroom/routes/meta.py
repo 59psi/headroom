@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from headroom.database import get_db
 from headroom.schemas.hat import HatCondition, HatSize, HatStyle
 from headroom.services import room_service
+from headroom.services.catalog_service import catalog_options
 from headroom.services.color_extraction import palette
 
 router = APIRouter(prefix="/api/meta", tags=["meta"])
@@ -48,3 +49,14 @@ async def list_rooms(db: AsyncSession = Depends(get_db)):
 async def list_colors():
     """The curated color palette — the UI renders these as filter chips."""
     return palette()
+
+
+@router.get("/colorways")
+async def list_colorways(
+    q: str | None = None,
+    model: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Autocomplete from the harvested catalog: model names, or colorways
+    for a specific model when `model` is given."""
+    return await catalog_options(db, q=q, model=model)

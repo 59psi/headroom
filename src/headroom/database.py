@@ -37,6 +37,10 @@ _HAT_COLUMN_DDL: dict[str, str] = {
     "disposed_price": "ALTER TABLE hats ADD COLUMN disposed_price FLOAT",
     "disposed_to": "ALTER TABLE hats ADD COLUMN disposed_to VARCHAR(120)",
     "disposed_notes": "ALTER TABLE hats ADD COLUMN disposed_notes TEXT",
+    # v1.1 — colorway catalog + purchase-history cost basis
+    "colorway": "ALTER TABLE hats ADD COLUMN colorway VARCHAR(120)",
+    "purchase_price": "ALTER TABLE hats ADD COLUMN purchase_price FLOAT",
+    "purchased_at": "ALTER TABLE hats ADD COLUMN purchased_at DATETIME",
     # v0.4 — eBay live comparable-listings prices
     "ebay_avg_price": "ALTER TABLE hats ADD COLUMN ebay_avg_price FLOAT",
     "ebay_median_price": "ALTER TABLE hats ADD COLUMN ebay_median_price FLOAT",

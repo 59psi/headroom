@@ -6,6 +6,7 @@ import {
   getStyles, getSizes, getConditions,
 } from '../api/hats';
 import { listCases } from '../api/cases';
+import { apiFetch } from '../api/client';
 import { PhotoCapture } from '../components/photos/PhotoCapture';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { NewCaseModal } from '../components/common/NewCaseModal';
@@ -30,6 +31,8 @@ export function EditHatPage() {
   const [caseId, setCaseId] = useState('');
   const [brand, setBrand] = useState('');
   const [modelName, setModelName] = useState('');
+  const [colorway, setColorway] = useState('');
+  const [purchasePrice, setPurchasePrice] = useState('');
   const [estimatedPrice, setEstimatedPrice] = useState('');
   const [resalePrice, setResalePrice] = useState('');
   const [designNotes, setDesignNotes] = useState('');
@@ -37,6 +40,16 @@ export function EditHatPage() {
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [colors, setColors] = useState<ColorTag[]>([]);
   const [showNewCase, setShowNewCase] = useState(false);
+
+  const modelOptions = useQuery({
+    queryKey: ['meta', 'colorways', 'models'],
+    queryFn: () => apiFetch<{ value: string }[]>('/api/meta/colorways'),
+  });
+  const colorwayOptions = useQuery({
+    queryKey: ['meta', 'colorways', modelName],
+    queryFn: () => apiFetch<{ value: string }[]>(`/api/meta/colorways?model=${encodeURIComponent(modelName)}`),
+    enabled: modelName.length > 1,
+  });
 
   useEffect(() => {
     if (hat.data) {
@@ -47,6 +60,8 @@ export function EditHatPage() {
       setCaseId(hat.data.case_id?.toString() || '');
       setBrand(hat.data.brand || '');
       setModelName(hat.data.model_name || '');
+      setColorway(hat.data.colorway || '');
+      setPurchasePrice(hat.data.purchase_price != null ? String(hat.data.purchase_price) : '');
       setEstimatedPrice(hat.data.estimated_new_price != null ? String(hat.data.estimated_new_price) : '');
       setResalePrice(hat.data.resale_price != null ? String(hat.data.resale_price) : '');
       setDesignNotes(hat.data.design_notes || '');
@@ -63,6 +78,8 @@ export function EditHatPage() {
       if (dateLastWorn) data.date_last_worn = dateLastWorn;
       data.brand = brand || null;
       data.model_name = modelName || null;
+      data.colorway = colorway || null;
+      data.purchase_price = purchasePrice ? Number(purchasePrice) : null;
       data.design_notes = designNotes || null;
       data.estimated_new_price = estimatedPrice ? Number(estimatedPrice) : null;
       data.resale_price = resalePrice ? Number(resalePrice) : null;
@@ -184,7 +201,24 @@ export function EditHatPage() {
 
             <div className="mb-3">
               <label className="form-label">Model Name</label>
-              <input type="text" className="form-control" value={modelName} onChange={e => setModelName(e.target.value)} placeholder="e.g. A-Game Hydro" />
+              <input type="text" className="form-control" value={modelName} onChange={e => setModelName(e.target.value)} placeholder="e.g. A-Game Hydro" list="model-options" />
+              <datalist id="model-options">
+                {modelOptions.data?.map(o => <option key={o.value} value={o.value} />)}
+              </datalist>
+            </div>
+
+            <div className="mb-3">
+              <label className="form-label">Colorway</label>
+              <input type="text" className="form-control" value={colorway} onChange={e => setColorway(e.target.value)} placeholder="e.g. Heather Ocean" list="colorway-options" />
+              <datalist id="colorway-options">
+                {colorwayOptions.data?.map(o => <option key={o.value} value={o.value} />)}
+              </datalist>
+              <div className="form-text small">Suggestions come from the Melin Recap catalog (refresh it in Settings)</div>
+            </div>
+
+            <div className="mb-3">
+              <label className="form-label">Purchase price (what you paid)</label>
+              <input type="number" step="0.01" className="form-control" value={purchasePrice} onChange={e => setPurchasePrice(e.target.value)} placeholder="Cost basis" />
             </div>
 
             <div className="row g-2 mb-3">

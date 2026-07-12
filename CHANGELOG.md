@@ -4,6 +4,26 @@ All notable changes are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.1.0] — 2026-07-12 — _colorway catalog + purchase history_
+
+### Added
+- **Colorway catalog.** `POST /api/admin/colorways/refresh` sweeps every
+  style category on the melinrecap marketplace API and parses listing
+  titles ("Model - Colorway") into a catalog table — live-verified: 987
+  listings → 501 unique entries, including years of sold-out drops absent
+  from melin.com. `GET /api/meta/colorways` powers native-datalist
+  autocomplete for model + colorway on the Edit Hat form; Settings gets a
+  refresh card. New `colorway` column on hats.
+- **Purchase history + cost basis.** `purchases` table with
+  `POST /api/admin/purchases/import` (structured line items from order
+  emails; deduped) and `POST /api/admin/purchases/match`, which links
+  purchases to hats by model (+colorway when both sides have one) and sets
+  `purchase_price` / `purchased_at` / `colorway` on the hat. Edit Hat form
+  exposes colorway + purchase price; Settings shows the purchase list.
+  Gmail extraction feeds this via the importer once the connector is
+  authorized.
+- 5 new tests (144 total).
+
 ## [1.0.0] — 2026-07-12 — _auth: accounts, passkeys, share links, HTTPS_
 
 Headroom is now safe to expose to the internet. **Breaking**: accounts are

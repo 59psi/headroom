@@ -54,6 +54,9 @@ export interface HatRead {
   // AI / pricing
   brand: string | null;
   model_name: string | null;
+  colorway: string | null;
+  purchase_price: number | null;
+  purchased_at: string | null;
   model_confidence: string | null;
   style_descriptor: string | null;
   design_notes: string | null;

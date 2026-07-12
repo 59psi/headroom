@@ -27,11 +27,17 @@ class Hat(Base):
     # AI-detected attributes
     brand: Mapped[str | None] = mapped_column(String(80), nullable=True)
     model_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    # Official colorway name ("Heather Ocean") — user-picked from the catalog
+    # or set by the purchase-history importer; Claude doesn't know these.
+    colorway: Mapped[str | None] = mapped_column(String(120), nullable=True)
     model_confidence: Mapped[str | None] = mapped_column(String(10), nullable=True)  # high/medium/low
     style_descriptor: Mapped[str | None] = mapped_column(String(120), nullable=True)
     design_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Pricing
+    # Cost basis — what was actually paid (purchase-history import or manual)
+    purchase_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    purchased_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     estimated_new_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     estimated_new_price_source: Mapped[str | None] = mapped_column(String(80), nullable=True)
     resale_price: Mapped[float | None] = mapped_column(Float, nullable=True)

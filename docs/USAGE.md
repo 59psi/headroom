@@ -83,6 +83,20 @@ The status pill on the hat page tells you which path you got:
 the existing photo — use it after adding/fixing a key, or to refresh prices.
 It upgrades fallback hats to full identification when a Claude key exists.
 
+## 4½. Names & colorways
+
+Melin retires colorways constantly, so **Settings → Colorway Catalog →
+Refresh** harvests every model + colorway name currently circulating on the
+melinrecap resale market (hundreds of entries, including long-sold-out
+drops). After that, the Edit Hat form autocompletes both the model name and
+the colorway ("Heather Ocean", "Sand Camo", …).
+
+**Purchase history** (Settings → Purchase History) stores order line items
+from your Melin emails; matched purchases automatically set a hat's
+colorway and its **cost basis** — the price you actually paid, plus the
+order date. Matching links a purchase to a hat when the model names agree
+(and colorways don't conflict); re-run it any time after editing hats.
+
 ## 5. Colors & style
 
 - Detected colors come as tiered swatches (primary / secondary / tertiary)

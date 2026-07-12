@@ -257,3 +257,57 @@ async def refresh_ebay_for_hat(hat_id: int, db: AsyncSession = Depends(get_db)):
 # Need this here to fix a forward-ref: hat_service uses Case; importing it
 # in module scope keeps the relationship loadable without round-trips.
 _ = Case
+
+# ---------------------- colorway catalog + purchases ------------------- #
+
+from pydantic import BaseModel as _BaseModel  # noqa: E402
+
+from headroom.services import catalog_service  # noqa: E402
+
+
+@router.post("/colorways/refresh")
+async def refresh_colorway_catalog(db: AsyncSession = Depends(get_db)):
+    """Harvest melinrecap listing titles into the colorway catalog."""
+    from headroom.services.melin_recap import MelinRecapError
+
+    try:
+        return await catalog_service.harvest_catalog(db)
+    except MelinRecapError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
+class PurchaseImport(_BaseModel):
+    items: list[dict]
+
+
+@router.post("/purchases/import")
+async def import_purchases(data: PurchaseImport, db: AsyncSession = Depends(get_db)):
+    """Store purchase line items (from order emails). Fields per item:
+    item_title (required), order_ref, order_date (ISO), price, quantity, raw."""
+    result = await catalog_service.import_purchases(db, data.items)
+    match = await catalog_service.match_purchases_to_hats(db)
+    return {**result, **match}
+
+
+@router.get("/purchases")
+async def list_purchases(db: AsyncSession = Depends(get_db)):
+    from sqlalchemy import select as _select
+
+    from headroom.models.catalog import Purchase
+
+    rows = (await db.execute(_select(Purchase).order_by(Purchase.order_date.desc()))).scalars().all()
+    return [
+        {
+            "id": p.id, "order_ref": p.order_ref, "order_date": p.order_date,
+            "item_title": p.item_title, "model_name": p.model_name,
+            "colorway": p.colorway, "price": p.price, "quantity": p.quantity,
+            "hat_id": p.hat_id, "source": p.source,
+        }
+        for p in rows
+    ]
+
+
+@router.post("/purchases/match")
+async def rematch_purchases(db: AsyncSession = Depends(get_db)):
+    """Re-run purchase→hat matching (e.g. after adding hats or colorways)."""
+    return await catalog_service.match_purchases_to_hats(db)
