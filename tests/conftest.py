@@ -115,10 +115,59 @@ def app():
             yield session
 
     app.dependency_overrides[get_db] = override_get_db
+    # The auth gate middleware resolves sessions through this factory.
+    app.state.session_factory = test_session_factory
     return app
 
 
+# One argon2 hash for the whole run — hashing per-test would be slow.
+_TEST_PASSWORD = "test-password-123"
+_TEST_SESSION_ID = "test-session-cookie-value"
+
+
+async def _seed_owner():
+    """Insert the test owner + a valid session row directly (no HTTP)."""
+    from datetime import datetime, timedelta, timezone
+
+    from headroom.models.user import AuthSession, User
+    from headroom.services import auth_service
+
+    global _TEST_HASH
+    if "_TEST_HASH" not in globals():
+        _TEST_HASH = auth_service.hash_password(_TEST_PASSWORD)
+
+    async with test_session_factory() as session:
+        user = User(
+            username="testowner",
+            password_hash=_TEST_HASH,
+            api_token="hr_test-api-token",
+        )
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+        session.add(
+            AuthSession(
+                id=_TEST_SESSION_ID,
+                user_id=user.id,
+                expires_at=datetime.now(timezone.utc) + timedelta(days=1),
+            )
+        )
+        await session.commit()
+        return user
+
+
 @pytest.fixture
-def client(app):
+async def client(app):
+    """Authenticated client — the default for the suite."""
+    await _seed_owner()
+    transport = ASGITransport(app=app)
+    c = AsyncClient(transport=transport, base_url="http://test")
+    c.cookies.set("headroom_session", _TEST_SESSION_ID)
+    return c
+
+
+@pytest.fixture
+def anon_client(app):
+    """Unauthenticated client for auth-flow tests (no seeded user)."""
     transport = ASGITransport(app=app)
     return AsyncClient(transport=transport, base_url="http://test")

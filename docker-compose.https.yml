@@ -1,0 +1,37 @@
+# HTTPS overlay — put Headroom on the internet behind Caddy with automatic
+# Let's Encrypt certificates.
+#
+#   HEADROOM_DOMAIN=hats.example.com \
+#   docker compose -f docker-compose.yml -f docker-compose.https.yml up -d --build
+#
+# Requirements: DNS A/AAAA record for the domain pointing at this host, and
+# ports 80+443 reachable from the internet. Also set the passkey identity to
+# match the domain (HEADROOM_RP_ID / HEADROOM_ORIGIN below).
+
+services:
+  headroom:
+    ports: !override []   # only Caddy is exposed; Headroom stays internal
+    environment:
+      HEADROOM_RP_ID: "${HEADROOM_DOMAIN:?set HEADROOM_DOMAIN}"
+      HEADROOM_ORIGIN: "https://${HEADROOM_DOMAIN}"
+      HEADROOM_CORS_ORIGINS: '["https://${HEADROOM_DOMAIN}"]'
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: headroom-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      HEADROOM_DOMAIN: "${HEADROOM_DOMAIN:?set HEADROOM_DOMAIN}"
+    command: caddy reverse-proxy --from "https://${HEADROOM_DOMAIN}" --to http://headroom:8000
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - headroom
+
+volumes:
+  caddy-data:
+  caddy-config:

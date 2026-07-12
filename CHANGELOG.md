@@ -4,6 +4,48 @@ All notable changes are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.0.0] — 2026-07-12 — _auth: accounts, passkeys, share links, HTTPS_
+
+Headroom is now safe to expose to the internet. **Breaking**: accounts are
+mandatory — on first boot the app walks you through creating the owner
+account; the iOS Shortcut import now needs an `Authorization: Bearer
+<api-token>` header (token in Settings → Account). `HEADROOM_ADMIN_TOKEN`
+is retired and ignored.
+
+### Added
+- **Accounts + sessions.** First-run owner setup, argon2id password
+  hashing, server-side revocable sessions (256-bit, 30-day, httpOnly +
+  SameSite=Lax cookies, `secure` auto-set over HTTPS), login rate limiting
+  (5 fails → 15-min lockout per IP+username), logout, change-password.
+- **Everything data-bearing is gated** — all of `/api/*` AND the
+  `/uploads/*` photo mount (previously world-readable). Open by design:
+  SPA shell/assets, manifest/icons, `/health*`, `/api/auth/*`,
+  `/api/public/*`. The Android share-target POST needs a session; the
+  public share page does not.
+- **Passkeys (WebAuthn).** Add from Settings → Account; sign in with Face
+  ID / Touch ID from the login page. py_webauthn on the backend, hand-rolled
+  base64url plumbing on the frontend (no new JS deps). `HEADROOM_RP_ID` /
+  `HEADROOM_ORIGIN` config; set automatically by the HTTPS overlay.
+- **API token per user** (shown/rotated in Settings → Account) for
+  cookie-less clients — the iOS Shortcut recipe card now includes the
+  header step.
+- **Read-only share links.** Settings → Share Links mints `/share/<token>`
+  URLs (256-bit, revocable, optional expiry): a public gallery view with
+  token-gated photo streaming — photos never leak through the protected
+  uploads mount.
+- **HTTPS overlay** (`docker-compose.https.yml`): Caddy sidecar with
+  automatic Let's Encrypt certs; port 8000 no longer exposed directly;
+  uvicorn honors X-Forwarded-Proto (`--proxy-headers`).
+- Login page (first-run setup + password + passkey), Account card,
+  Share Links card; 401s anywhere in the SPA bounce to /login.
+- 9 new auth tests (138 total); full lifecycle also smoke-tested live
+  (fresh DB → setup → gated uploads → share link → logout).
+- Deps: `argon2-cffi`, `webauthn`.
+
+### Fixed
+- Password reset procedure documented for the no-email reality
+  (OPERATIONS §6): wipe `users` + `auth_sessions`, first-run setup returns.
+
 ## [0.9.0] — 2026-07-11 — _find-the-hat: color-similarity search + capacity_
 
 ### Added

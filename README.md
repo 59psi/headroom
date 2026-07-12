@@ -38,9 +38,10 @@ via Homebrew on macOS, native Docker Engine via apt/dnf on Linux. If
 the script adds you to the `docker` group — log out/in (or `newgrp docker`)
 before step 3.
 
-When uvicorn reports it's listening, open http://localhost:8000 and head to
-**Settings** to paste your Anthropic API key. Once it works, Ctrl-C and
-relaunch it in the background:
+When uvicorn reports it's listening, open http://localhost:8000 — the first
+visit creates your **owner account** (Headroom is fully login-protected as
+of v1.0), then head to **Settings** to paste your Anthropic API key. Once
+it works, Ctrl-C and relaunch it in the background:
 
 ```bash
 docker compose up --build -d    # detached; follow logs with: docker compose logs -f
@@ -59,6 +60,17 @@ docker compose up --build -d    # detached; follow logs with: docker compose log
 To pre-bake your API key as a fallback default, edit
 [`docker-compose.yml`](docker-compose.yml) and uncomment the
 `HEADROOM_ANTHROPIC_API_KEY` line.
+
+**Putting it on the internet?** Use the HTTPS overlay — Caddy sidecar with
+automatic Let's Encrypt certs, passkey identity configured from your domain:
+
+```bash
+HEADROOM_DOMAIN=hats.example.com \
+  docker compose -f docker-compose.yml -f docker-compose.https.yml up -d --build
+```
+
+Auth (accounts, passkeys, rate limiting, protected photos, share links) is
+built in — see the [Operations guide](docs/OPERATIONS.md) §6.
 
 ### Local (no Docker)
 
@@ -201,7 +213,8 @@ client id.
 | `HEADROOM_ANTHROPIC_MODEL` | `claude-sonnet-4-6` | Claude model to use for vision |
 | `HEADROOM_REMBG_MODEL` | `u2netp` | rembg model name (`u2netp` is Pi-friendly; `u2net` / `isnet-general-use` are higher quality but ~170MB) |
 | `HEADROOM_HTTP_TIMEOUT` | `30.0` | Outbound HTTP timeout in seconds |
-| `HEADROOM_ADMIN_TOKEN` | _(unset)_ | If set, `/api/settings/api-key` and `/api/admin/*` require `Authorization: Bearer <token>`. Unset → endpoints are open (single-user-LAN default) with a startup warning. |
+| `HEADROOM_RP_ID` | `localhost` | Passkey relying-party id — must equal the serving domain (HTTPS overlay sets it) |
+| `HEADROOM_ORIGIN` | `http://localhost:8000` | Full origin for passkey verification (HTTPS overlay sets it) |
 | `HEADROOM_LOG_LEVEL` | `INFO` | Default log level when no root handlers are configured (i.e. when running uvicorn directly). |
 | `HEADROOM_BACKUP_ENABLED` | `true` | Set to `false` to disable scheduled backups (one-click download still works). |
 | `HEADROOM_BACKUP_INTERVAL_HOURS` | `24` | How often the background scheduler writes a tarball to `/data/backups/`. |

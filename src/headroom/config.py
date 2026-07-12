@@ -29,11 +29,14 @@ class Settings(BaseSettings):
     # Per-request timeout (seconds) for outbound HTTP (Claude / Melin Recap).
     http_timeout: float = 30.0
 
-    # Optional shared secret for /api/settings/api-key (set/delete/test) routes.
-    # Unset → endpoints are open (current single-user-on-LAN behaviour, with
-    # a startup warning logged). Set → requests must include
-    # `Authorization: Bearer <token>`.
-    admin_token: str | None = None
+    # WebAuthn (passkeys) relying-party identity. rp_id must equal the domain
+    # the app is served on; origin the full scheme://host[:port]. Browsers
+    # require a secure context (HTTPS or localhost) to offer passkeys.
+    rp_id: str = "localhost"
+    origin: str = "http://localhost:8000"
+
+    # Retired: HEADROOM_ADMIN_TOKEN. Real accounts replaced the optional
+    # bearer guard in v1.0; the env var is ignored if still set.
 
     model_config = {"env_prefix": "HEADROOM_"}
 

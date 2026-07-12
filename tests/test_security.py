@@ -67,29 +67,21 @@ async def test_spa_does_not_serve_files_outside_dist(tmp_path):
 # ---- Admin-token guard on /api/settings/api-key ------------------------ #
 
 
-async def test_set_api_key_requires_token_when_configured(client, monkeypatch):
-    """When HEADROOM_ADMIN_TOKEN is set, key endpoints reject anon requests."""
-    from headroom.config import settings as config_settings
-
-    monkeypatch.setattr(config_settings, "admin_token", "s3kret")
-    resp = await client.put("/api/settings/api-key", json={"api_key": "sk-ant-foo-bar-12345"})
+async def test_set_api_key_requires_session(client, anon_client):
+    """v1.0: key endpoints reject anonymous requests; sessions pass."""
+    resp = await anon_client.put(
+        "/api/settings/api-key", json={"api_key": "sk-ant-foo-bar-12345"}
+    )
     assert resp.status_code == 401
 
     resp = await client.put(
-        "/api/settings/api-key",
-        json={"api_key": "sk-ant-foo-bar-12345"},
-        headers={"Authorization": "Bearer s3kret"},
+        "/api/settings/api-key", json={"api_key": "sk-ant-foo-bar-12345"}
     )
     assert resp.status_code == 200
     assert resp.json()["configured"] is True
 
 
-async def test_set_api_key_open_when_token_unset(client, monkeypatch):
-    """Default behaviour: token unset → endpoints accessible (single-user-LAN)."""
-    from headroom.config import settings as config_settings
-
-    monkeypatch.setattr(config_settings, "admin_token", None)
-    resp = await client.put(
-        "/api/settings/api-key", json={"api_key": "sk-ant-test-1234567890"}
-    )
-    assert resp.status_code == 200
+async def test_uploads_require_session(client, anon_client):
+    """The /uploads static mount is gated — photos are collection data."""
+    resp = await anon_client.get("/uploads/branding/logo.png")
+    assert resp.status_code == 401

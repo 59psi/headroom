@@ -78,6 +78,7 @@ async def test_uploads_mount_survives_missing_dir_at_import(tmp_path, monkeypatc
 
     from headroom.app import create_app
     from headroom.config import settings as app_settings
+    from tests.conftest import _TEST_SESSION_ID, _seed_owner, test_session_factory
 
     # Distinct from the autouse isolated_upload_dir fixture's pre-created path —
     # this test specifically needs a directory that does NOT exist yet.
@@ -86,6 +87,8 @@ async def test_uploads_mount_survives_missing_dir_at_import(tmp_path, monkeypatc
     monkeypatch.setattr(app_settings, "upload_dir", upload_dir)
 
     app = create_app()
+    app.state.session_factory = test_session_factory
+    await _seed_owner()
 
     # Simulate what the lifespan does on first boot: create dirs + seed logo
     branding = upload_dir / "branding"
@@ -94,6 +97,7 @@ async def test_uploads_mount_survives_missing_dir_at_import(tmp_path, monkeypatc
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
+        client.cookies.set("headroom_session", _TEST_SESSION_ID)
         resp = await client.get("/uploads/branding/logo.png")
     assert resp.status_code == 200, (
         "seeded logo must be served on first boot, not only after a restart"

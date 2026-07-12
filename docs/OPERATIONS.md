@@ -22,6 +22,16 @@ docker compose up --build -d
 - The Docker engine installed by the setup script is **not Docker Desktop**:
   colima + docker CLI + compose/buildx via Homebrew on macOS, native Docker
   Engine via Docker's official script on apt/dnf Linux.
+- **Internet-facing with HTTPS**: point DNS at the host, open 80/443, then
+
+  ```bash
+  HEADROOM_DOMAIN=hats.example.com \
+    docker compose -f docker-compose.yml -f docker-compose.https.yml up -d --build
+  ```
+
+  The overlay adds a Caddy sidecar with automatic Let's Encrypt
+  certificates, stops exposing port 8000 directly, and sets the passkey
+  identity (`HEADROOM_RP_ID`/`HEADROOM_ORIGIN`) from the domain.
 - On Linux the script adds your user to the `docker` group — log out/in (or
   `newgrp docker`) before the first `docker compose` command.
 - macOS + colima: the VM does not auto-start after a reboot. Either run
@@ -65,7 +75,8 @@ fleet-default, the UI is the per-install override.
 | `HEADROOM_GOOGLE_VISION_API_KEY` | _(unset)_ | Fallback brand (logo) detection. DB value wins |
 | `HEADROOM_MELIN_CLIENT_ID` | _(baked in)_ | Public Sharetribe client id for live Melin resale stats; override only if Treet rotates it |
 | `HEADROOM_EBAY_APP_ID` / `HEADROOM_EBAY_CERT_ID` | _(unset)_ | eBay Browse API comps. Must be a **Production** keyset (sandbox keys 401) |
-| `HEADROOM_ADMIN_TOKEN` | _(unset)_ | See §6 Security |
+| `HEADROOM_RP_ID` | `localhost` | Passkey (WebAuthn) relying-party id — must equal the serving domain. Set automatically by the HTTPS overlay |
+| `HEADROOM_ORIGIN` | `http://localhost:8000` | Full origin for passkey verification. Set automatically by the HTTPS overlay |
 | `HEADROOM_HTTP_TIMEOUT` | `30.0` | Outbound HTTP (Claude, Google, eBay, Melin) |
 | `HEADROOM_REMBG_MODEL` | `u2netp` | See §7 Raspberry Pi |
 | `HEADROOM_LOG_LEVEL` | `INFO` | Applies when no other logging config is active |
@@ -151,20 +162,46 @@ docker compose up --build -d     # Docker
 
 ---
 
-## 6. Security posture
+## 6. Security posture (v1.0+)
 
-Headroom's default posture is **single user on a trusted LAN**:
+Accounts are mandatory. On first boot no users exist; the first visit to
+the web app runs **first-run setup** (create the owner account), after
+which every data-bearing route requires authentication.
 
-- With `HEADROOM_ADMIN_TOKEN` unset, everything is unauthenticated and a
-  warning is logged at startup. Do not expose this to the internet.
-- Setting `HEADROOM_ADMIN_TOKEN` requires `Authorization: Bearer <token>`
-  on sensitive routes — API-key set/delete/test (Anthropic, Google, eBay)
-  and the `/api/admin/*` surface (backups, activity log, reports).
-- Raw API keys are **never returned** by the API — status endpoints reply
-  with a masked prefix/suffix only.
-- If you must reach it remotely, put it behind a VPN (Tailscale works well
-  on a Pi) or a reverse proxy with auth; HTTPS termination is the proxy's
-  job — the app itself speaks plain HTTP.
+**What's protected:** all of `/api/*` and the `/uploads/*` photo mount —
+via session cookie or bearer API token. **What's open by design:** the SPA
+shell + hashed JS/CSS assets + PWA manifest/icons (no data in them),
+`/health*` (probes), `/api/auth/*` (each endpoint self-guards), and
+`/api/public/share/*` (the share-link token *is* the credential).
+
+- **Sessions**: opaque 256-bit tokens, stored server-side (revocable),
+  30-day expiry, httpOnly + SameSite=Lax cookies; the `secure` flag is set
+  automatically when serving over HTTPS (uvicorn runs with
+  `--proxy-headers`, so the Caddy overlay's X-Forwarded-Proto is honored).
+- **Passwords**: argon2id hashes. Login is rate-limited per IP+username
+  (5 failures → 15-minute lockout).
+- **Passkeys (WebAuthn)**: add one from Settings → Account for Face ID /
+  Touch ID sign-in. Requires a secure context (HTTPS or localhost) and
+  `HEADROOM_RP_ID`/`HEADROOM_ORIGIN` matching the serving domain — the
+  HTTPS overlay sets both from `HEADROOM_DOMAIN`.
+- **API token**: each user has a static bearer token (Settings → Account,
+  rotatable) for cookie-less clients — the iOS Shortcut import needs it in
+  an `Authorization: Bearer …` header.
+- **Share links**: 256-bit random tokens granting read-only access to the
+  collection view and token-gated photo streaming; revocable, optional
+  expiry. Revoking is immediate.
+- Raw API keys (Anthropic/Google/eBay) are **never returned** by the API —
+  status endpoints reply with a masked prefix/suffix only.
+- `HEADROOM_ADMIN_TOKEN` is retired and ignored.
+
+**Forgot the password?** There's no email reset (nothing to send from).
+With shell access:
+`sqlite3 /data/headroom.db "DELETE FROM users; DELETE FROM auth_sessions;"`
+then reload the app — first-run setup reappears. Guard your backups
+accordingly: they contain the database.
+
+Tailscale/VPN remains a fine *additional* layer, but is no longer the only
+thing standing between the internet and your hats.
 
 ---
 
@@ -207,6 +244,9 @@ Every external call is best-effort — **no outage ever blocks an upload**:
 | Frontend shows "Frontend not built" | `cd frontend && npx vite build` (or rerun setup.sh), then restart uvicorn |
 | eBay test fails with 401 | Sandbox keyset — the Settings page flags `SBX` keys; create a **Production** keyset |
 | Analysis stuck on `skipped` | No Anthropic key; add one in Settings and hit Reanalyze (fallback colors/brand still apply meanwhile) |
+| Forgot the password | `sqlite3 /data/headroom.db "DELETE FROM users; DELETE FROM auth_sessions;"` → first-run setup reappears (§6) |
+| iOS Shortcut import started failing after v1.0 | Add an `Authorization: Bearer <api-token>` header to the Shortcut — token in Settings → Account |
+| Passkey button missing / erroring | Passkeys need HTTPS (or localhost) AND `HEADROOM_RP_ID` = the serving domain — use the HTTPS overlay |
 | Melin price stopped appearing | Treet may have rotated the public client id — grab the new one from their site bundle and set `HEADROOM_MELIN_CLIENT_ID` |
 | Bulk import queued but idle | Check `HEADROOM_IMPORT_WORKER_ENABLED`; queued items re-enqueue automatically on restart |
 | Tests polluted `uploads/` with tiny images | Fixed in v0.7.0 (isolated test uploads); stray sub-10 KB files are safe to delete |

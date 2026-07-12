@@ -15,6 +15,8 @@ import { SearchPage } from './pages/SearchPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { ValuationPage } from './pages/ValuationPage';
 import { BulkImportPage } from './pages/BulkImportPage';
+import { LoginPage } from './pages/LoginPage';
+import { SharePage } from './pages/SharePage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -30,6 +32,9 @@ export function App() {
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <Routes>
+          {/* Public routes — no auth, no app shell */}
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/share/:token" element={<SharePage />} />
           <Route element={<AppShell />}>
             <Route path="/" element={<HomePage />} />
             <Route path="/cases" element={<CasesPage />} />

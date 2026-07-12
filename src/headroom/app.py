@@ -74,7 +74,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # One-time data fix: normalize general_color onto the curated palette so
     # color filter chips behave consistently (guarded by a settings flag).
-    from headroom.services import hat_service, settings_service
+    from headroom.services import auth_service, hat_service, settings_service
 
     async with async_session() as db:
         if await settings_service._get_setting(db, "color_names_normalized_v1") is None:
@@ -82,11 +82,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             await settings_service._set_setting(db, "color_names_normalized_v1", "done")
             if changed:
                 logger.info("Normalized general_color on %d existing hat colors", changed)
-    if not settings.admin_token:
-        logger.warning(
-            "HEADROOM_ADMIN_TOKEN is not set — admin endpoints are "
-            "unauthenticated. Safe on a trusted LAN, dangerous if exposed."
-        )
+        if await auth_service.user_count(db) == 0:
+            logger.warning(
+                "No user accounts exist yet — open the app to create the "
+                "owner account (first-run setup). All data routes require "
+                "login until then."
+            )
     logger.info("Headroom started · default-model=%s · uploads=%s",
                 settings.anthropic_model, settings.upload_dir)
 
@@ -148,8 +149,15 @@ def _safe_spa_path(full_path: str) -> Path | None:
 
 
 def create_app() -> FastAPI:
+    from headroom.auth import AuthGateMiddleware
+
     app = FastAPI(title="Headroom", lifespan=lifespan)
 
+    # The auth gate resolves users through this factory; tests swap it for
+    # their own in-memory database.
+    app.state.session_factory = async_session
+
+    app.add_middleware(AuthGateMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,

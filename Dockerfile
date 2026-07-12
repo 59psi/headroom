@@ -86,4 +86,7 @@ VOLUME ["/data"]
 EXPOSE 8000
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["uvicorn", "headroom.app:app", "--host", "0.0.0.0", "--port", "8000"]
+# --proxy-headers: honor X-Forwarded-Proto from the Caddy HTTPS overlay so
+# session cookies get the `secure` flag when served over TLS.
+CMD ["uvicorn", "headroom.app:app", "--host", "0.0.0.0", "--port", "8000", \
+     "--proxy-headers", "--forwarded-allow-ips", "*"]

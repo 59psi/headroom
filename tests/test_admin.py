@@ -76,23 +76,25 @@ async def test_list_backups_empty_initially(client):
 # ---- Admin auth gate ------------------------------------------------ #
 
 
-async def test_admin_endpoints_require_token_when_set(client, monkeypatch):
-    from headroom.config import settings as config_settings
-
-    monkeypatch.setattr(config_settings, "admin_token", "topsecret")
-
-    # No header → 401
-    resp = await client.get("/api/admin/recent-errors")
+async def test_admin_endpoints_require_auth(client, anon_client):
+    """v1.0: admin routes need a session cookie or a bearer API token."""
+    # Anonymous → 401 (client fixture seeds the owner; anon has no cookie)
+    resp = await anon_client.get("/api/admin/recent-errors")
     assert resp.status_code == 401
 
-    # Wrong token → 403
-    resp = await client.get(
+    # Wrong bearer token → 401
+    resp = await anon_client.get(
         "/api/admin/recent-errors", headers={"Authorization": "Bearer wrong"}
     )
-    assert resp.status_code == 403
+    assert resp.status_code == 401
 
-    # Right token → 200
-    resp = await client.get(
-        "/api/admin/recent-errors", headers={"Authorization": "Bearer topsecret"}
+    # Valid session cookie → 200
+    resp = await client.get("/api/admin/recent-errors")
+    assert resp.status_code == 200
+
+    # Valid API token (the seeded owner's) → 200
+    resp = await anon_client.get(
+        "/api/admin/recent-errors",
+        headers={"Authorization": "Bearer hr_test-api-token"},
     )
     assert resp.status_code == 200

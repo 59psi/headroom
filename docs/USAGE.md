@@ -7,7 +7,17 @@ server, see [OPERATIONS.md](OPERATIONS.md).
 
 ## 1. First run
 
-Open the app (`http://<host>:8000`) and go to **Settings**:
+Open the app (`http://<host>:8000`). The first visit asks you to **create
+the owner account** (username + password, 8+ characters) — everything in
+the app requires signing in from then on. Once you're in, two things worth
+doing immediately from **Settings → Account**:
+
+- **Add a passkey** so future sign-ins are Face ID / Touch ID (works over
+  HTTPS or on localhost).
+- Note your **API token** — you'll need it if you set up the iOS Shortcut
+  import (step: add an `Authorization: Bearer <token>` header).
+
+Then configure the integrations in **Settings**:
 
 1. **Claude API Key** — paste an Anthropic key
    ([console.anthropic.com](https://console.anthropic.com/)) and hit *Test
@@ -143,7 +153,15 @@ Headroom is a PWA designed mobile-first:
 - **Android**: Chrome → menu → *Install app* — this also unlocks the
   share-sheet import (§3).
 
-## 11. Audit trail
+## 11. Showing off: share links
+
+**Settings → Share Links** creates read-only links (`/share/<token>`) you
+can send to anyone — they see the gallery (photos, names, colors, where
+each hat lives) without logging in, and can't change anything. Revoke a
+link any time; optionally give it an expiry when creating. Great for the
+group chat.
+
+## 12. Audit trail
 
 Every significant change (creates, edits, dispositions, imports, setting
 changes) lands in an append-only activity log — the Settings page shows
