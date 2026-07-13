@@ -4,15 +4,92 @@
 
 ![logo](seed/branding/logo.png)
 
-Headroom is a self-hosted hat collection tracker with **AI-powered identification**.
-Snap a photo and Claude Vision figures out the brand, model, dominant colors, and
-estimated retail price. The background gets stripped automatically so every hat
-floats on a synthwave canvas. Designed mobile/iPad-first, runs in a Docker
-container on a Raspberry Pi, looks like 1986.
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-ff2eb6.svg)](LICENSE)
+[![Python 3.12+](https://img.shields.io/badge/Python-3.12+-00f0ff.svg)](pyproject.toml)
+[![React 19](https://img.shields.io/badge/React-19-00f0ff.svg)](frontend/package.json)
+[![FastAPI](https://img.shields.io/badge/FastAPI-async-ff2eb6.svg)](src/headroom/app.py)
+[![Self‑hosted](https://img.shields.io/badge/self--hosted-Pi--friendly-b14eff.svg)](docs/OPERATIONS.md)
+
+Headroom is a self-hosted inventory for serious hat collections. Snap a photo
+and Claude Vision identifies the brand, model, and colors, estimates retail
+price, and pulls live resale comps. The background is stripped automatically so
+every hat floats on a synthwave canvas. Built mobile-first, runs on a Raspberry
+Pi, secured for the open internet, looks like 1986.
 
 **Docs:** [Usage guide](docs/USAGE.md) — the app end-to-end ·
 [Operations guide](docs/OPERATIONS.md) — deploy, configure, back up,
 upgrade, troubleshoot · [CHANGELOG](CHANGELOG.md)
+
+---
+
+## Why it exists
+
+Hundreds of hats in identical cases means two daily problems: *"where is my
+light-blue one?"* and *"what is all of this actually worth?"* Headroom answers
+both — perceptual color search over every photo, a location breadcrumb on every
+result, and three independent price signals per hat.
+
+## What it does
+
+**🧠 Identify**
+- **Claude Vision analysis** — brand, specific model, tiered colors with hex,
+  design notes, estimated retail price. One tool-use call per photo, prompt
+  caching enabled.
+- **Works without any keys** — background removal and dominant-color detection
+  run locally (colors are read *only* from the hat's cutout mask, so the
+  background can never contaminate them). Add a Google Vision key for
+  logo-based brand detection as a fallback when Claude is unavailable.
+- **Automatic background removal** — `rembg` (ONNX, runs on a Pi) turns every
+  photo into a transparent PNG.
+- **Colorway catalog** — harvests every "Model – Colorway" name circulating on
+  the melinrecap resale market (including years of sold-out drops) to power
+  autocomplete and purchase matching.
+
+**🔎 Find**
+- **Search by color** — tap a swatch (or pick any color) and hats rank by
+  *perceptual* closeness (ΔE in LAB space) over their stored hex values. A hat
+  whose secondary color matches still surfaces. "Light blue" works no matter
+  what the analyzer called it.
+- **Text search** — multi-term AND over name, brand, model, style, condition,
+  size, colors, and room.
+- **Find-it cards** — every result shows the photo, the name, and where it
+  physically lives: `📍 Case A-012 · Office`.
+- **QR case labels** — print a label sheet; scan a case's QR with your phone
+  to open its contents.
+
+**💰 Value**
+- **Three price signals per hat** — Claude's retail estimate, eBay
+  sold-comparable stats (Browse API), and a **live median resale price** from
+  melinrecap's marketplace API (no scraping, no headless browser).
+- **Real cost basis** — import order line items from your purchase emails;
+  they match to hats and record what you *actually paid*, and when.
+- **Valuation dashboard** — totals, retention %, top hats by value, realized
+  value from sales, and a wear-rotation nudge.
+- **Insurance-grade inventory report** — print-friendly HTML → Save as PDF.
+
+**🧢 Live with it**
+- **Rooms → Cases → Hats** with per-case capacity (Melin cases hold 3–4),
+  type-exclusive cases, auto-sequenced display IDs.
+- **Wear tracking** — one tap logs a wear; get wear counts, cost-per-wear, and
+  a list of hats that haven't seen the sun.
+- **Three import paths** — single photo with crop/rotate, bulk import (100
+  photos through a restart-surviving queue), or straight from the system share
+  sheet (Android PWA share target; iOS Shortcut recipe included in-app).
+- **Disposition tracking** — sold / gifted / traded / lost / trashed, soft
+  delete with undo; sale prices feed realized value.
+- **Append-only activity log** — every significant change, auto-pruned.
+
+**🔐 Ship it to the internet**
+- **Accounts** — first-run owner setup, argon2id passwords, revocable
+  sessions, login rate limiting.
+- **Passkeys** — sign in with Face ID / Touch ID (WebAuthn).
+- **Everything gated** — the API *and* the photo files require login; raw API
+  keys never leave the server (masked reads only).
+- **Read-only share links** — show off the collection without handing out a
+  login; revocable, optionally expiring.
+- **One-command HTTPS** — a Caddy overlay with automatic Let's Encrypt certs.
+- **Backups** — scheduled rolling tarballs + one-click download; documented
+  restore.
 
 ---
 
@@ -39,27 +116,21 @@ the script adds you to the `docker` group — log out/in (or `newgrp docker`)
 before step 3.
 
 When uvicorn reports it's listening, open http://localhost:8000 — the first
-visit creates your **owner account** (Headroom is fully login-protected as
-of v1.0), then head to **Settings** to paste your Anthropic API key. Once
-it works, Ctrl-C and relaunch it in the background:
+visit creates your **owner account**, then head to **Settings** to paste your
+Anthropic API key. Once it works, Ctrl-C and relaunch in the background:
 
 ```bash
 docker compose up --build -d    # detached; follow logs with: docker compose logs -f
 ```
 
 > **The first build takes a few minutes** (it pre-downloads the rembg model
-> so your Pi doesn't have to); later builds are cached. Note that with `-d`
-> your terminal returns immediately while the container is still building
-> and booting — give it a minute before declaring it broken.
+> so your Pi doesn't have to); later builds are cached. With `-d` your
+> terminal returns immediately while the container is still building and
+> booting — give it a minute before declaring it broken.
 
 > Errors like **`unknown shorthand flag: 'd' in -d`**, **`docker: 'compose'
 > is not a docker command`**, or **`Cannot connect to the Docker daemon`**
-> all mean your Docker install is incomplete (missing Compose v2 plugin or
-> no running engine). Step 2 fixes all of them.
-
-To pre-bake your API key as a fallback default, edit
-[`docker-compose.yml`](docker-compose.yml) and uncomment the
-`HEADROOM_ANTHROPIC_API_KEY` line.
+> all mean your Docker install is incomplete. Step 2 fixes all of them.
 
 **Putting it on the internet?** Use the HTTPS overlay — Caddy sidecar with
 automatic Let's Encrypt certs, passkey identity configured from your domain:
@@ -69,13 +140,13 @@ HEADROOM_DOMAIN=hats.example.com \
   docker compose -f docker-compose.yml -f docker-compose.https.yml up -d --build
 ```
 
-Auth (accounts, passkeys, rate limiting, protected photos, share links) is
-built in — see the [Operations guide](docs/OPERATIONS.md) §6.
+See the [Operations guide](docs/OPERATIONS.md) for the full security posture.
 
 ### Local (no Docker)
 
 Prereqs: git + curl. The setup script installs everything else it needs —
-uv, Python 3.12, Node 20+, backend and frontend deps.
+uv, Python 3.12, Node 20+, backend and frontend deps — via Homebrew on macOS
+and apt/dnf on Linux.
 
 ```bash
 git clone https://github.com/59psi/headroom.git && cd headroom
@@ -98,45 +169,15 @@ cd frontend && npm run dev
 
 ---
 
-## What's new
-
-**v0.6 — "Share to Headroom"**: share photos straight from the system share
-sheet into a bulk-import job — native share-target on Android Chrome (install
-as PWA), one-time Shortcut recipe for iOS (in Settings). Recent highlights:
-live eBay comparable prices + insurance-grade inventory report (v0.4), bulk
-photo import, disposition tracking + activity log (v0.3), and the synthwave
-rebuild with the Claude Vision analysis pipeline (v0.2).
-
-See [CHANGELOG.md](CHANGELOG.md) for the full history.
-
----
-
-## Adding hats fast
-
-Three paths, in order of friction:
-
-1. **One at a time** — `Hats → + New`. Crop modal pops on photo pick. ~10s per hat.
-2. **Bulk** — `Hats → ⇪` (or `/hats/import`). Pick up to 100 photos at once
-   from the iOS / Android Photos picker. Background worker grinds through them
-   one-at-a-time. Watch progress live; tap any finished item to jump to the hat.
-3. **Share sheet** — share photos from the Photos app directly into Headroom.
-   Auto-creates an import job and lands you on the progress page.
-   - **Android Chrome**: install Headroom as a PWA (browser menu →
-     Install app). "Share to Headroom" appears in the system share sheet
-     automatically. Multi-select supported.
-   - **iOS Safari**: open `Settings → Share Photos to Headroom` in the app
-     for the one-time Shortcut recipe. After building the Shortcut once,
-     iOS Photos → Share → "Add to Headroom" works the same way.
-
 ## Configuring the AI features
 
-The AI features need an Anthropic API key. **The DB-stored key always wins** over
-the environment variable, so you can ship a docker-compose default and let users
-override it from the UI.
+The AI features need an Anthropic API key. **The DB-stored key always wins**
+over the environment variable, so you can ship a docker-compose default and
+let users override it from the UI.
 
 | Source | When | Set via |
 |---|---|---|
-| **Database** (preferred) | Set per-user from the Settings page; persists across restarts | UI: Settings → Claude API Key |
+| **Database** (preferred) | Set from the Settings page; persists across restarts | UI: Settings → Claude API Key |
 | **Environment** (fallback) | Useful as a default for fresh installs | `HEADROOM_ANTHROPIC_API_KEY` |
 
 ### No Claude key? The fallback
@@ -146,57 +187,23 @@ a basic fallback runs instead and the hat gets `analysis_status = "fallback"`:
 
 - **Colors — always available, no key needed.** Dominant colors are extracted
   locally from the background-removed cutout's alpha mask, so only actual hat
-  pixels count — the background can't contaminate the swatches. (If background
-  removal failed for a photo, no colors are guessed.)
+  pixels count.
 - **Brand — optional, via Google Cloud Vision logo detection.** Create an API
   key at [console.cloud.google.com](https://console.cloud.google.com/apis/library/vision.googleapis.com)
   (enable the *Cloud Vision API*, then *Credentials → Create API key*) and
-  paste it in **Settings → Google Vision Key**. Free tier is 1,000 requests
-  per month — plenty for a hat collection.
+  paste it in **Settings → Google Vision Key**. Free tier is 1,000
+  requests/month — plenty.
 
 Model name, price estimate, and design notes stay empty in fallback mode —
-drop a Claude key in later and hit **Reanalyze** on any hat to upgrade to the
-full identification. If neither fallback source produces anything, the hat
-gets `analysis_status = "skipped"` exactly as before.
-
-### What Claude actually returns
-
-Each photo is sent in a single tool-use call against `claude-sonnet-4-6`:
-
-```json
-{
-  "brand": "Melin",
-  "model_name": "A-Game Hydro",
-  "model_confidence": "high",
-  "style_descriptor": "fitted snapback",
-  "design_notes": "Classic 6-panel with embroidered icon at front and...",
-  "estimated_new_price_usd": 60,
-  "colors": [
-    { "name": "navy", "hex": "#1c2541", "tier": "primary" },
-    { "name": "white", "hex": "#f5f5f5", "tier": "secondary" }
-  ]
-}
-```
-
-Prompt caching is enabled on the system prompt, so repeat analyses are cheap.
+drop a Claude key in later and hit **Reanalyze** on any hat to upgrade.
 
 ### Resale prices (Melin)
 
-When a hat is identified as Melin (by Claude or by the fallback's logo
-detection), the record gets both:
-
-- a **deep link** to the matching style filter on melinrecap.com, and
-- a **live median asking price** pulled from the marketplace's public API
-  (melinrecap is a Treet marketplace on Sharetribe Flex — we query the same
-  anonymous, public-read listings API its own frontend uses; no scraping, no
-  headless browser). Comps are narrowed to the specific model when enough
-  title matches exist, otherwise the style category; the source label says
-  which (e.g. "median of 83 live model listings").
-
-If the marketplace API is unreachable, the hat degrades to link-only with a
-null price — and you can always set `resale_price` manually from the Edit
-Hat page. Set `HEADROOM_MELIN_CLIENT_ID` if Treet ever rotates the public
-client id.
+Melin hats get a **live median asking price** from melinrecap.com's public
+marketplace API (it's a Treet marketplace on Sharetribe Flex — we use the
+same anonymous API its own frontend uses), scoped to your exact model when
+enough listings match, plus a deep link to browse the comps. Degrades to
+link-only if the API is unreachable.
 
 ---
 
@@ -208,28 +215,27 @@ client id.
 | `HEADROOM_UPLOAD_DIR` | `uploads` | Where photos live on disk |
 | `HEADROOM_CORS_ORIGINS` | `["http://localhost:5173"]` | Allowed CORS origins (JSON list) |
 | `HEADROOM_ANTHROPIC_API_KEY` | _(unset)_ | Default API key (overridden by DB value) |
-| `HEADROOM_GOOGLE_VISION_API_KEY` | _(unset)_ | Google Cloud Vision key for fallback brand (logo) detection when Claude is unavailable. DB value wins. |
-| `HEADROOM_MELIN_CLIENT_ID` | _(baked in)_ | Public Sharetribe client id for melinrecap.com live resale stats. Override only if Treet rotates it. |
-| `HEADROOM_ANTHROPIC_MODEL` | `claude-sonnet-4-6` | Claude model to use for vision |
-| `HEADROOM_REMBG_MODEL` | `u2netp` | rembg model name (`u2netp` is Pi-friendly; `u2net` / `isnet-general-use` are higher quality but ~170MB) |
-| `HEADROOM_HTTP_TIMEOUT` | `30.0` | Outbound HTTP timeout in seconds |
+| `HEADROOM_ANTHROPIC_MODEL` | `claude-sonnet-4-6` | Claude model for vision analysis |
+| `HEADROOM_GOOGLE_VISION_API_KEY` | _(unset)_ | Fallback brand (logo) detection. DB value wins |
+| `HEADROOM_MELIN_CLIENT_ID` | _(baked in)_ | Public Sharetribe client id for live Melin resale stats |
+| `HEADROOM_EBAY_APP_ID` / `HEADROOM_EBAY_CERT_ID` | _(unset)_ | eBay Browse API comps (Production keyset) |
 | `HEADROOM_RP_ID` | `localhost` | Passkey relying-party id — must equal the serving domain (HTTPS overlay sets it) |
 | `HEADROOM_ORIGIN` | `http://localhost:8000` | Full origin for passkey verification (HTTPS overlay sets it) |
-| `HEADROOM_LOG_LEVEL` | `INFO` | Default log level when no root handlers are configured (i.e. when running uvicorn directly). |
-| `HEADROOM_BACKUP_ENABLED` | `true` | Set to `false` to disable scheduled backups (one-click download still works). |
-| `HEADROOM_BACKUP_INTERVAL_HOURS` | `24` | How often the background scheduler writes a tarball to `/data/backups/`. |
-| `HEADROOM_BACKUP_RETENTION_DAYS` | `7` | How many timestamped backups to keep on disk. Older ones are pruned after each new write. |
-| `HEADROOM_IMPORT_WORKER_ENABLED` | `true` | Set to `false` to disable the bulk-import background worker. |
-| `HEADROOM_ACTIVITY_LOG_RETENTION_DAYS` | `90` | Days of activity_log rows to keep. Pruned daily. |
-| `HEADROOM_EBAY_APP_ID` | _(unset)_ | Default eBay Browse-API App ID. DB-stored value takes precedence. |
-| `HEADROOM_EBAY_CERT_ID` | _(unset)_ | Default eBay Browse-API Cert ID. |
+| `HEADROOM_REMBG_MODEL` | `u2netp` | rembg model (`u2netp` is Pi-friendly; `isnet-general-use` is sharper, ~170MB) |
+| `HEADROOM_HTTP_TIMEOUT` | `30.0` | Outbound HTTP timeout in seconds |
+| `HEADROOM_LOG_LEVEL` | `INFO` | Log level when running uvicorn directly |
+| `HEADROOM_BACKUP_ENABLED` | `true` | Scheduled backups on/off |
+| `HEADROOM_BACKUP_INTERVAL_HOURS` | `24` | Scheduled backup cadence |
+| `HEADROOM_BACKUP_RETENTION_DAYS` | `7` | Rolling backups kept on disk |
+| `HEADROOM_IMPORT_WORKER_ENABLED` | `true` | Bulk-import background worker |
+| `HEADROOM_ACTIVITY_LOG_RETENTION_DAYS` | `90` | Audit rows kept (pruned daily) |
 
 ---
 
 ## Running on a Raspberry Pi
 
-The Docker image is built as multi-arch (amd64 + arm64). On a Pi 4 / 5 running
-64-bit Raspberry Pi OS or Ubuntu Server:
+The Docker image is multi-arch (amd64 + arm64). On a Pi 4/5 running 64-bit
+Raspberry Pi OS or Ubuntu Server:
 
 ```bash
 # Build on the Pi (slow first build, fine after)
@@ -240,12 +246,10 @@ docker buildx build --platform linux/arm64,linux/amd64 \
   -t your-registry/headroom:latest --push .
 ```
 
-The default `u2netp` rembg model is 4.7MB and runs in 5–15 seconds per photo on
-a Pi 4. Bump `HEADROOM_REMBG_MODEL=isnet-general-use` if you want sharper masks
-and don't mind the larger model + slower inference.
-
-Photos and the SQLite DB live in the named `headroom-data` volume — back it up
-periodically.
+The default `u2netp` rembg model is 4.7MB and runs in 5–15 seconds per photo
+on a Pi 4. Photos, database, and backups live in the `headroom-data` volume —
+see [OPERATIONS.md §4](docs/OPERATIONS.md#4-backups--restore) for the backup
+and restore procedure.
 
 ---
 
@@ -261,52 +265,47 @@ uv run pytest                                # All tests
 uv run pytest tests/test_search.py -k color  # Single test
 ```
 
-Tests use in-memory SQLite, mock out `rembg` (it's heavy), and never call the
-Anthropic API. The pipeline degrades to `analysis_status = "skipped"` when no
-API key is configured, so the test contract stays honest.
-
----
+Tests use in-memory SQLite, stub out `rembg`, authenticate through a seeded
+test session, and never call the Anthropic, Google, eBay, or Sharetribe APIs
+— every external boundary has a test seam.
 
 ## Architecture
 
-**Backend** (Python 3.12, FastAPI, async SQLAlchemy + aiosqlite):
+**Backend** — Python 3.12, FastAPI, async SQLAlchemy + aiosqlite:
 
 ```
 src/headroom/
-├── app.py                       # FastAPI factory, lifespan, SPA serving
-├── config.py                    # pydantic-settings, env prefix HEADROOM_
+├── app.py                       # factory, lifespan, SPA serving, auth gate
+├── auth.py                      # session/token guards + gate middleware
+├── config.py                    # pydantic-settings (HEADROOM_*)
 ├── database.py                  # async engine + inline DDL migrations
-├── models/                      # AppSetting, Case, Hat, HatColor, Room
-├── schemas/                     # Pydantic I/O models
-├── routes/                      # cases, hats, rooms, search, meta, settings, health
-├── services/
-│   ├── claude_analysis.py       # Vision tool-use call → structured HatAnalysis
-│   ├── background_removal.py    # rembg (ONNX) → transparent PNG
-│   ├── melin_recap.py           # Brand-aware deep links
-│   ├── hat_analysis_pipeline.py # Orchestrates upload → BG removal → Claude → DB
-│   ├── settings_service.py      # API key get/set/clear (DB > env)
-│   └── case/hat/room/search_service.py
-└── utils/photo.py               # Resize / HEIC conversion / filename gen
+├── models/                      # User, Case, Hat, HatColor, WearLog, Purchase,
+│                                #  ColorwayEntry, ShareLink, ImportJob, …
+├── routes/                      # auth, hats, cases, rooms, search, meta,
+│                                #  settings, admin, import_jobs, share_links
+└── services/
+    ├── claude_analysis.py       # Claude Vision tool-use → structured result
+    ├── background_removal.py    # rembg (ONNX) → transparent PNG
+    ├── color_extraction.py      # mask-only colors + LAB distance + palette
+    ├── google_vision.py         # fallback brand via logo detection
+    ├── melin_recap.py           # live resale median (Sharetribe public API)
+    ├── catalog_service.py       # colorway harvest + purchase matching
+    ├── auth_service.py          # argon2, sessions, rate limiting
+    ├── passkey_service.py       # WebAuthn ceremonies
+    ├── label_service.py         # QR case-label sheet (inline SVG)
+    ├── hat_analysis_pipeline.py # upload → bg-removal → analyze → price
+    ├── import_service.py        # restart-surviving bulk-import worker
+    └── backup_service.py        # scheduled + on-demand tar.gz
 ```
 
-**Frontend** (React 19, Vite, TypeScript, TanStack Query — _no UI framework_):
+**Frontend** — React 19, Vite, TypeScript, TanStack Query, zero UI framework:
+hand-rolled synthwave design system in two CSS files, PWA-installable, native
+`<datalist>` autocomplete, hand-rolled WebAuthn plumbing. No component
+library, no CSS framework, no state-management dependency.
 
-```
-frontend/src/
-├── styles/
-│   ├── tokens.css               # Synthwave palette + typography + base
-│   └── app.css                  # All component styles (replaces Bootstrap)
-├── components/
-│   ├── layout/                  # AppShell + TopNav + BottomNav + Footer
-│   ├── common/                  # Spinner, badge, swatches, lightbox, modal, empty
-│   └── photos/                  # PhotoCapture (uses native camera)
-├── pages/                       # 12 page components
-├── api/                         # Typed fetch clients
-└── types/index.ts               # Shared TS interfaces (mirrors Pydantic)
-```
-
-**Data model**: Rooms → Cases → Hats. A case holds **either** 4 regular hats OR
-6 beanies (mutually exclusive). The Default Room (id=1) cannot be deleted.
+**Data model**: Rooms → Cases → Hats. Cases are type-exclusive (regular or
+beanie) with per-case capacity. The Default Room cannot be deleted. Disposed
+hats keep their history but free their slot.
 
 ---
 
