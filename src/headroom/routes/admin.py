@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import cast
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -311,3 +311,12 @@ async def list_purchases(db: AsyncSession = Depends(get_db)):
 async def rematch_purchases(db: AsyncSession = Depends(get_db)):
     """Re-run purchase→hat matching (e.g. after adding hats or colorways)."""
     return await catalog_service.match_purchases_to_hats(db)
+
+@router.get("/case-labels", response_class=HTMLResponse)
+async def case_labels(request: Request, db: AsyncSession = Depends(get_db)):
+    """Printable QR label sheet — one label per case."""
+    from headroom.services.label_service import render_case_labels
+
+    base = str(request.base_url)
+    return HTMLResponse(await render_case_labels(db, base))
+

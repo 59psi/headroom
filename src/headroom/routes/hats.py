@@ -17,6 +17,7 @@ from headroom.schemas.hat import (
     HatDispose,
     HatRead,
     HatUpdate,
+    WearCreate,
 )
 from headroom.services import hat_service, settings_service
 from headroom.services.claude_analysis import ClaudeAnalysisError, analyze_hat_image
@@ -47,6 +48,7 @@ def _hat_to_read(hat) -> HatRead:
         photo_path=hat.photo_path,
         condition=hat.condition,
         date_last_worn=hat.date_last_worn,
+        wear_count=len(hat.wear_logs or []),
         size=hat.size,
         style=hat.style,
         is_beanie=hat.is_beanie,
@@ -270,3 +272,39 @@ async def reanalyze_hat(hat_id: int, db: AsyncSession = Depends(get_db)):
     await db.commit()
     db.expire_all()
     return _hat_to_read(await hat_service.get_hat(db, hat_id))
+
+@router.post("/{hat_id}/wear", response_model=HatRead)
+async def log_wear(
+    hat_id: int, data: WearCreate, db: AsyncSession = Depends(get_db)
+):
+    """One tap: "wearing this today". Appends to the wear log and bumps
+    date_last_worn. Idempotent per day — a second tap the same day is a no-op."""
+    from headroom.models.wear_log import WearLog
+
+    hat = await hat_service.get_hat(db, hat_id)
+    if hat.disposed_at is not None:
+        raise HTTPException(status_code=409, detail="Hat is disposed")
+    worn_at = data.worn_at or datetime.now(timezone.utc).date()
+    already = any(w.worn_at == worn_at for w in (hat.wear_logs or []))
+    if not already:
+        db.add(WearLog(hat_id=hat.id, worn_at=worn_at))
+        if hat.date_last_worn is None or worn_at > hat.date_last_worn:
+            hat.date_last_worn = worn_at
+        await db.commit()
+        db.expire_all()
+    return _hat_to_read(await hat_service.get_hat(db, hat_id))
+
+
+@router.delete("/{hat_id}/wear/latest", response_model=HatRead)
+async def undo_wear(hat_id: int, db: AsyncSession = Depends(get_db)):
+    """Undo the most recent wear entry (mis-taps happen)."""
+    hat = await hat_service.get_hat(db, hat_id)
+    logs = sorted(hat.wear_logs or [], key=lambda w: w.worn_at)
+    if not logs:
+        raise HTTPException(status_code=404, detail="No wear entries to undo")
+    await db.delete(logs[-1])
+    hat.date_last_worn = logs[-2].worn_at if len(logs) > 1 else None
+    await db.commit()
+    db.expire_all()
+    return _hat_to_read(await hat_service.get_hat(db, hat_id))
+

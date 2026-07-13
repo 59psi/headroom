@@ -167,6 +167,17 @@ Headroom is a PWA designed mobile-first:
 - **Android**: Chrome → menu → *Install app* — this also unlocks the
   share-sheet import (§3).
 
+## 10½. Wear tracking & QR labels
+
+Tap **🧢 Wearing this today** on a hat's page — that's the whole workflow.
+Wear count, last-worn date, and **cost-per-wear** (what you paid ÷ wears)
+show under the photo; the Valuation page's *Wear Rotation* card lists the
+five hats that have gone longest without sun. Mis-taps: hit *undo*.
+
+**🏷 Labels** (Cases page) opens a printable sheet of QR labels — one per
+case with its ID, room, and fill count. Print, cut, stick on the physical
+cases; scanning a QR with your phone camera opens that case in Headroom.
+
 ## 11. Showing off: share links
 
 **Settings → Share Links** creates read-only links (`/share/<token>`) you

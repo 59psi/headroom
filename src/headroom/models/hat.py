@@ -77,6 +77,9 @@ class Hat(Base):
     colors: Mapped[list["HatColor"]] = relationship(  # noqa: F821
         back_populates="hat", lazy="selectin", cascade="all, delete-orphan"
     )
+    wear_logs: Mapped[list["WearLog"]] = relationship(  # noqa: F821
+        lazy="selectin", cascade="all, delete-orphan", order_by="WearLog.worn_at"
+    )
 
     @property
     def display_id(self) -> str | None:

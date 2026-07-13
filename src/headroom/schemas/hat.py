@@ -74,6 +74,7 @@ class HatRead(BaseModel):
     photo_path: str | None
     condition: HatCondition
     date_last_worn: date | None
+    wear_count: int
     size: HatSize
     style: HatStyle
     is_beanie: bool
@@ -132,3 +133,7 @@ class ColorsUpdate(BaseModel):
 
 class HatAssign(BaseModel):
     case_id: int | None
+
+
+class WearCreate(BaseModel):
+    worn_at: date | None = None  # default: today (UTC)

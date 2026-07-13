@@ -111,6 +111,10 @@ export function ValuationPage() {
       topByResale: [...appraised]
         .sort((a, b) => resaleFor(b) - resaleFor(a))
         .slice(0, 10),
+      neglected: [...data]
+        .filter(h => !h.disposed_at)
+        .sort((a, b) => (a.date_last_worn ?? '0000') < (b.date_last_worn ?? '0000') ? -1 : 1)
+        .slice(0, 5),
     };
   }, [hats.data]);
 
@@ -245,6 +249,30 @@ export function ValuationPage() {
               </div>
               <div className="font-mono fw-bold" style={{ color: 'var(--neon-pink)' }}>
                 {fmt$(resaleFor(h))}
+              </div>
+            </Link>
+          ))}
+        </div>
+      </div>
+
+      {/* === Wear rotation: most neglected active hats === */}
+      <div className="card mb-3">
+        <div className="card-body">
+          <div className="card-title">Wear Rotation</div>
+          <p className="text-secondary small mb-2">Longest since last worn — give these some sun:</p>
+          {analysis.neglected.map(h => (
+            <Link key={h.id} to={`/hats/${h.id}`} className="hr-color-row text-decoration-none" style={{ paddingTop: '0.5rem' }}>
+              {h.photo_path ? (
+                <img src={`/uploads/${h.photo_path}`} alt="" className="hr-thumb flex-shrink-0" style={{ width: 40, height: 40 }} />
+              ) : (
+                <div className="rounded flex-shrink-0" style={{ width: 40, height: 40, background: 'rgba(0,0,0,0.3)' }} />
+              )}
+              <div className="flex-grow-1" style={{ minWidth: 0 }}>
+                <div className="font-mono small" style={{ color: 'var(--neon-cyan)' }}>{h.display_id || `Hat #${h.id}`}</div>
+                <div className="text-secondary small">{h.brand || h.style.replace(/_/g, ' ')}{h.model_name && ` · ${h.model_name}`}</div>
+              </div>
+              <div className="text-secondary small font-mono">
+                {h.date_last_worn ?? 'never worn'}
               </div>
             </Link>
           ))}

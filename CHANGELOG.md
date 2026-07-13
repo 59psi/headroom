@@ -4,6 +4,22 @@ All notable changes are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.2.0] — 2026-07-12 — _wear tracking + QR case labels_
+
+### Added
+- **Wear tracking.** "🧢 Wearing this today" button on the hat page appends
+  to a new `wear_log` table (idempotent per day, undo supported) and bumps
+  `date_last_worn`. Hat pages show wear count and **cost-per-wear**
+  (purchase price falling back to retail estimate ÷ wears). The Valuation
+  page gets a "Wear Rotation" card surfacing the five longest-unworn
+  active hats. `POST /api/hats/{id}/wear`, `DELETE /api/hats/{id}/wear/latest`.
+- **QR case labels.** `GET /api/admin/case-labels` renders a printable
+  sheet — one label per case with an inline-SVG QR (deep link to the case
+  page), display id, room, and fill/capacity. "🏷 Labels" button on the
+  Cases page. Print, cut, stick; scanning opens the case in the app.
+  New dep: `qrcode` (pure Python, SVG output — no raster stack).
+- 3 new tests (147 total).
+
 ## [1.1.0] — 2026-07-12 — _colorway catalog + purchase history_
 
 ### Added

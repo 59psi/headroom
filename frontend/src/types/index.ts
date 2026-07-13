@@ -44,6 +44,7 @@ export interface HatRead {
   photo_path: string | null;
   condition: string;
   date_last_worn: string | null;
+  wear_count: number;
   size: string;
   style: string;
   is_beanie: boolean;

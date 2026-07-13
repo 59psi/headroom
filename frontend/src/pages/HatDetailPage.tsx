@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { getHat, deleteHat, uploadHatPhoto, reanalyzeHat, refreshEbayForHat, undisposeHat } from '../api/hats';
+import { apiFetch } from '../api/client';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ConditionBadge } from '../components/common/ConditionBadge';
 import { ImageLightbox } from '../components/common/ImageLightbox';
@@ -78,6 +79,16 @@ export function HatDetailPage() {
     },
   });
 
+  const wearMut = useMutation({
+    mutationFn: () => apiFetch(`/api/hats/${id}/wear`, { method: 'POST', body: JSON.stringify({}) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['hat', id] }),
+  });
+
+  const undoWearMut = useMutation({
+    mutationFn: () => apiFetch(`/api/hats/${id}/wear/latest`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['hat', id] }),
+  });
+
   async function handlePhotoUpload(file: File) {
     setUploading(true);
     try {
@@ -152,7 +163,7 @@ export function HatDetailPage() {
           {data.photo_path ? (
             <>
               <ImageLightbox src={`/uploads/${data.photo_path}`} alt={data.display_id || 'Hat photo'} hat />
-              <div className="mt-3 d-flex gap-2">
+              <div className="mt-3 d-flex gap-2 flex-wrap">
                 <PhotoCapture onCapture={handlePhotoUpload} hidePreview />
                 {data.photo_path && (
                   <button
@@ -164,6 +175,30 @@ export function HatDetailPage() {
                   >
                     {reanalyzing ? '↻ Analyzing…' : '↻ Reanalyze'}
                   </button>
+                )}
+                {!data.disposed_at && (
+                  <button
+                    type="button"
+                    className="btn btn-outline-primary"
+                    onClick={() => wearMut.mutate()}
+                    disabled={wearMut.isPending}
+                    title="Log a wear for today"
+                  >
+                    🧢 Wearing this today
+                  </button>
+                )}
+              </div>
+              <div className="text-secondary small mt-2 d-flex gap-3 flex-wrap">
+                <span>Worn <strong>{data.wear_count}×</strong></span>
+                {data.date_last_worn && <span>last: {data.date_last_worn}</span>}
+                {data.wear_count > 0 && (data.purchase_price ?? data.estimated_new_price) != null && (
+                  <span>
+                    ${(((data.purchase_price ?? data.estimated_new_price) as number) / data.wear_count).toFixed(2)}/wear
+                  </span>
+                )}
+                {data.wear_count > 0 && (
+                  <button type="button" className="btn btn-link btn-sm p-0" style={{ fontSize: 'inherit' }}
+                    onClick={() => undoWearMut.mutate()}>undo</button>
                 )}
               </div>
               {reanalyzeMut.error && (
