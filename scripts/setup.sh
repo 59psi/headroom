@@ -74,6 +74,8 @@ ensure_brew() {
 # ------------------------------------------------------------------ #
 # uv
 # ------------------------------------------------------------------ #
+UV_FRESHLY_INSTALLED=0
+
 ensure_uv() {
   command -v uv &>/dev/null && return 0
   log "Installing uv..."
@@ -83,6 +85,7 @@ ensure_uv() {
   else
     run_remote_installer "https://astral.sh/uv/install.sh" sh
     export PATH="$HOME/.local/bin:$PATH"
+    UV_FRESHLY_INSTALLED=1
   fi
   command -v uv &>/dev/null || die "uv install failed — see https://docs.astral.sh/uv/"
 }
@@ -193,6 +196,10 @@ if [ "$BUILD_SPA" -eq 1 ]; then
 fi
 
 echo ""
+if [ "$UV_FRESHLY_INSTALLED" -eq 1 ]; then
+  warn "uv was installed to ~/.local/bin — your CURRENT shell can't see it yet."
+  warn "Open a new terminal (or run: source \$HOME/.local/bin/env) before the commands below."
+fi
 log "Setup complete! Run Headroom one of three ways:"
 echo "  Single server (serves the built SPA):  uv run uvicorn headroom.app:app --host 0.0.0.0"
 echo "  Dev servers:   uv run uvicorn headroom.app:app --reload"
