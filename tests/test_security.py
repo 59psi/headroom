@@ -85,3 +85,33 @@ async def test_uploads_require_session(client, anon_client):
     """The /uploads static mount is gated — photos are collection data."""
     resp = await anon_client.get("/uploads/branding/logo.png")
     assert resp.status_code == 401
+
+
+# ---- Path traversal in the public share-photo streamer ----------------- #
+
+
+async def test_share_photo_streamer_blocks_path_traversal(client, anon_client, db_session):
+    """The token-gated share-photo streamer must refuse any path that escapes
+    the upload dir — even when the escape rides in on a hat's stored
+    photo_path. Same `is_relative_to` guard as the SPA handler (Sentinel S1),
+    but a different endpoint that had no regression test until now.
+    """
+    from headroom.config import settings
+    from headroom.models.hat import Hat
+
+    secret = settings.upload_dir.parent / "traversal-secret.txt"
+    secret.write_text("DO NOT LEAK")
+
+    hat = (await client.post(
+        "/api/hats", json={"condition": "new", "size": "classic", "style": "a_game"}
+    )).json()
+    # Force a stored path that resolves OUTSIDE the uploads root.
+    row = await db_session.get(Hat, hat["id"])
+    row.photo_path = f"../{secret.name}"
+    await db_session.commit()
+
+    token = (await client.post("/api/share-links", json={"label": "x"})).json()["token"]
+
+    resp = await anon_client.get(f"/api/public/share/{token}/photo/{hat['id']}")
+    assert "DO NOT LEAK" not in resp.text, "traversal leaked a file outside uploads"
+    assert resp.status_code == 404
