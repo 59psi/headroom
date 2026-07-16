@@ -6,14 +6,21 @@ pytestmark = pytest.mark.anyio
 
 
 async def test_creating_a_hat_emits_log(client):
-    await client.post(
+    created = (await client.post(
         "/api/hats", json={"condition": "new", "size": "classic", "style": "a_game"}
-    )
+    )).json()
     resp = await client.get("/api/admin/activity-log")
     assert resp.status_code == 200
     rows = resp.json()
-    kinds = [r["kind"] for r in rows]
-    assert "hat.created" in kinds
+    # Tie the audit row to THIS hat — not merely "a hat.created row exists
+    # somewhere". A logger that fired with the wrong entity_id (or twice) would
+    # sail past a bare membership check but is exactly the audit bug that matters.
+    created_rows = [
+        r for r in rows
+        if r["kind"] == "hat.created" and r["entity_id"] == created["id"]
+    ]
+    assert len(created_rows) == 1, rows
+    assert created_rows[0]["entity_type"] == "hat"
 
 
 async def test_dispose_emits_log_with_via(client):

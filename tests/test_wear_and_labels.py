@@ -15,23 +15,29 @@ async def _hat(client, **fields):
 
 
 async def test_wear_log_and_undo(client):
+    from datetime import datetime, timezone
+
     hat_id = await _hat(client)
 
     resp = await client.post(f"/api/hats/{hat_id}/wear", json={})
     assert resp.status_code == 200
     body = resp.json()
     assert body["wear_count"] == 1
-    assert body["date_last_worn"] is not None
+    # Records *today* (server clock, UTC) — assert the real date, not merely
+    # "not None", which a stuck/epoch value would also satisfy.
+    today = datetime.now(timezone.utc).date().isoformat()
+    assert body["date_last_worn"] == today
 
     # Same-day double tap is idempotent
     resp = await client.post(f"/api/hats/{hat_id}/wear", json={})
     assert resp.json()["wear_count"] == 1
 
-    # Backdated wear counts separately; date_last_worn stays at the max
+    # Backdated wear counts separately; date_last_worn stays at the max — today,
+    # not the older backdated day.
     resp = await client.post(f"/api/hats/{hat_id}/wear", json={"worn_at": "2024-01-05"})
     body = resp.json()
     assert body["wear_count"] == 2
-    assert body["date_last_worn"] != "2024-01-05"
+    assert body["date_last_worn"] == today
 
     # Undo removes the most recent (today), leaving the backdated one
     resp = await client.delete(f"/api/hats/{hat_id}/wear/latest")

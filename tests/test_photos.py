@@ -25,7 +25,21 @@ async def test_process_image_resizes(tmp_path):
     result = process_image(input_path, output_path)
 
     result_img = Image.open(result)
-    assert max(result_img.size) <= 1200
+    # Fits inside the 1200 box AND preserves the exact 3:2 aspect ratio — not
+    # merely "small enough" (a square crop would also satisfy max <= 1200).
+    assert result_img.size == (1200, 800)
+
+
+@pytest.mark.anyio
+async def test_process_image_does_not_upscale(tmp_path):
+    """A photo already under the cap keeps its dimensions — thumbnail() only
+    shrinks. Upscaling would waste bytes and invent detail that isn't there."""
+    img = Image.new("RGB", (640, 480), (10, 20, 30))
+    input_path = tmp_path / "small.jpg"
+    img.save(input_path, "JPEG")
+
+    result = Image.open(process_image(input_path, tmp_path / "out.jpg"))
+    assert result.size == (640, 480)
 
 
 @pytest.mark.anyio
@@ -37,10 +51,17 @@ async def test_process_image_converts_png(tmp_path):
     output_path = tmp_path / "out.png"
     result = process_image(input_path, output_path)
     assert result.suffix == ".jpg"
+    # A path rename is not a conversion: open the bytes and confirm they really
+    # decode as a JPEG with the transparency flattened to RGB.
+    with Image.open(result) as out:
+        assert out.format == "JPEG"
+        assert out.mode == "RGB"
 
 
 @pytest.mark.anyio
 async def test_upload_case_photo(client):
+    from headroom.config import settings
+
     await client.post("/api/cases", json={"case_type": "archive"})
     photo = _make_test_image_file()
     resp = await client.post(
@@ -48,8 +69,13 @@ async def test_upload_case_photo(client):
         files={"photo": ("test.jpg", photo, "image/jpeg")},
     )
     assert resp.status_code == 200
-    assert resp.json()["photo_path"] is not None
-    assert "cases/" in resp.json()["photo_path"]
+    photo_path = resp.json()["photo_path"]
+    assert photo_path is not None
+    assert "cases/" in photo_path
+    # A returned path with no file behind it renders as a broken image — the
+    # bytes must actually be on disk.
+    saved = settings.upload_dir / photo_path
+    assert saved.is_file() and saved.stat().st_size > 0
 
 
 @pytest.mark.anyio
@@ -91,6 +117,8 @@ async def test_upload_invalid_type(client):
 
 @pytest.mark.anyio
 async def test_replace_photo_deletes_old(client):
+    from headroom.config import settings
+
     resp = await client.post(
         "/api/hats",
         json={"condition": "new", "size": "classic", "style": "a_game"},
@@ -103,6 +131,8 @@ async def test_replace_photo_deletes_old(client):
         files={"photo": ("red.jpg", photo1, "image/jpeg")},
     )
     old_path = resp1.json()["photo_path"]
+    old_file = settings.upload_dir / old_path
+    assert old_file.is_file()  # the first upload really landed on disk
 
     photo2 = _make_test_image_file(color=(0, 255, 0))
     resp2 = await client.post(
@@ -110,4 +140,11 @@ async def test_replace_photo_deletes_old(client):
         files={"photo": ("green.jpg", photo2, "image/jpeg")},
     )
     new_path = resp2.json()["photo_path"]
+    new_file = settings.upload_dir / new_path
+
     assert old_path != new_path
+    # The whole point of the endpoint: replacing a photo must delete the old
+    # file, not orphan it. Orphaned cutouts silently fill the Pi's SD card, and
+    # asserting only that the path string changed would never catch that.
+    assert not old_file.exists(), "old photo was orphaned on disk"
+    assert new_file.is_file(), "replacement photo missing on disk"

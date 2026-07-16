@@ -59,12 +59,25 @@ async def test_recent_errors_count_endpoint(client):
 
 
 async def test_backup_download_returns_gzip_attachment(client):
+    import io
+    import tarfile
+
     resp = await client.get("/api/admin/backup")
     assert resp.status_code == 200
     assert resp.headers["content-type"] == "application/gzip"
     assert "attachment" in resp.headers["content-disposition"]
-    # Should be a non-empty gzip — 2 bytes minimum (the gzip magic header alone is 2)
-    assert len(resp.content) > 100
+
+    # "Looks like a gzip" (right magic bytes, non-trivial length) is not "is a
+    # restorable backup". Actually open the payload as a gzip tar and walk it —
+    # a truncated or corrupt stream passes a length check but blows up here.
+    with tarfile.open(fileobj=io.BytesIO(resp.content), mode="r:gz") as tar:
+        names = tar.getnames()
+    # The uploads tree is always captured (the autouse fixture points
+    # upload_dir at a real temp dir); everything is rooted under data/ so a
+    # restore lands in the right place.
+    assert names, "backup archive is empty"
+    assert all(n == "data" or n.startswith("data/") for n in names), names
+    assert any(n == "data/uploads" or n.startswith("data/uploads/") for n in names), names
 
 
 async def test_list_backups_empty_initially(client):
