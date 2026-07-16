@@ -24,7 +24,6 @@ ENV/
 .DS_Store
 
 # Local-only files (per-developer)
-CLAUDE.md
 .claude/
 .python-version
 
