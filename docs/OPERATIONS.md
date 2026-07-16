@@ -85,6 +85,9 @@ fleet-default, the UI is the per-install override.
 | `HEADROOM_BACKUP_RETENTION_DAYS` | `7` | Older scheduled backups are pruned |
 | `HEADROOM_IMPORT_WORKER_ENABLED` | `true` | Bulk-import background worker |
 | `HEADROOM_ACTIVITY_LOG_RETENTION_DAYS` | `90` | Audit rows pruned daily |
+| `HEADROOM_MDNS_ENABLED` | `true` | Advertise the app on the LAN via mDNS. Docker needs the `docker-compose.mdns.yml` overlay (host networking) for it to reach the LAN |
+| `HEADROOM_MDNS_HOSTNAME` | `headroom` | mDNS host label — the app resolves as `<label>.local` |
+| `HEADROOM_MDNS_PORT` | `8000` | Port the mDNS advertisement points at |
 
 ---
 
