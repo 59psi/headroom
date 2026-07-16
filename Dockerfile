@@ -39,14 +39,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=ghcr.io/astral-sh/uv:0.5.4 /uv /usr/local/bin/uv
 WORKDIR /app
 COPY pyproject.toml uv.lock* ./
+# --frozen only, no fallback: a lock/manifest mismatch must FAIL the release
+# build, not silently resolve fresh unpinned versions (S12). Run `uv lock`
+# and commit uv.lock if this errors.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-install-project --no-dev || \
-    uv sync --no-install-project --no-dev
+    uv sync --frozen --no-install-project --no-dev
 
 COPY src ./src
 COPY README.md ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --no-dev
+    uv sync --frozen --no-dev
 
 # Pre-cache the rembg model so the Pi doesn't have to download on first photo
 ARG REMBG_MODEL=u2netp

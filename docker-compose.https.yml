@@ -16,7 +16,12 @@ services:
       HEADROOM_ORIGIN: "https://${HEADROOM_DOMAIN}"
       HEADROOM_CORS_ORIGINS: '["https://${HEADROOM_DOMAIN}"]'
       # Trust X-Forwarded-* from any peer — safe ONLY because :8000 is not
-      # published in this topology; Caddy is the sole reachable client.
+      # published in this topology (Caddy is the sole reachable client).
+      # SECURITY: do NOT add a `ports:` mapping that republishes :8000 to the
+      # host/LAN under this overlay — a client hitting :8000 directly could
+      # then spoof X-Forwarded-For (defeating the login rate limiter) and
+      # X-Forwarded-Proto (defeating the Secure cookie flag). If you must
+      # expose :8000, set FORWARDED_ALLOW_IPS to Caddy's specific IP/CIDR. (S8)
       FORWARDED_ALLOW_IPS: "*"
 
   # Keep this block in sync with the caddy service in docker-compose.https-lan.yml.
