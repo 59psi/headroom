@@ -24,8 +24,11 @@ cap ties the uppermost pegs together and gives a flat top.
 
 ### Print notes
 
-Dialed in on a Bambu Lab H2D; any printer whose bed fits the ~222 × 258 mm
-footprint (~168 mm tall with pegs) works.
+**A larger-format printer like the Bambu Lab H2D is recommended** — the rack's
+~222 × 258 mm footprint (~168 mm tall with pegs) slightly overhangs a standard
+256 × 256 mm bed, so X1/P1-class machines are out. The model was dialed in on
+an H2D, where one module fits per plate in either nozzle mode (350 × 320 mm
+single / 300 × 320 mm dual); any printer with a comparable bed works.
 
 - Print in the modeled orientation (floor on bed). **Zero supports needed** —
   every feature is vertical, chamfered, ramped, or a short bridge.
