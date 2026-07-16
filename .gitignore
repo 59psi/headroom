@@ -51,3 +51,6 @@ analysis/
 # Agent skills (per-developer tooling)
 .agents/
 skills-lock.json
+
+# Local forensic-review bundle (code-archaeology output) — keep out of the repo
+/analysis/
