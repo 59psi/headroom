@@ -55,6 +55,17 @@ async def test_advertised_url_scheme_and_port():
     assert mdns_service._advertised_url("hats", 9000) == "http://hats.local:9000"
 
 
+async def test_advertised_url_prefers_matching_origin(monkeypatch):
+    """When HEADROOM_ORIGIN already points at the mDNS name (https-lan overlay),
+    it is the front door — no scheme guessing from the port."""
+    from headroom.config import settings
+
+    monkeypatch.setattr(settings, "origin", "https://headroom.local:8443")
+    assert mdns_service._advertised_url("headroom", 8443) == "https://headroom.local:8443"
+    # different hostname → origin doesn't apply, port heuristic stands
+    assert mdns_service._advertised_url("hats", 8443) == "http://hats.local:8443"
+
+
 async def test_mdns_status_endpoint_disabled(client):
     """conftest disables mDNS suite-wide → endpoint reports disabled, idle."""
     resp = await client.get("/api/settings/mdns")

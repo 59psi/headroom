@@ -165,22 +165,70 @@ Host networking only claims the ports the app actually binds (8000 here) —
 the rest of the Pi is unaffected, and other services can keep running on
 their own ports.
 
-**Want Face ID / passkeys on the LAN name?** Browsers only offer passkeys in
-a secure context, and Let's Encrypt can't issue certificates for `.local` —
-so there's a LAN HTTPS overlay that fronts the app with Caddy using its
-built-in local CA (use it *instead of* the mDNS overlay — it includes it):
+### HTTPS on the LAN — Face ID / passkeys at `https://headroom.local`
+
+Browsers only offer passkeys in a **secure context**, and Let's Encrypt can't
+issue certificates for `.local` names — so the LAN HTTPS overlay fronts the
+app with Caddy using its **built-in local CA**. You trust that CA once per
+device; after that the LAN name gets a real padlock and Face ID sign-in
+works. Password login never needed any of this.
+
+**Prerequisites:** a Linux/Pi Docker host (the overlay uses host networking
+for mDNS), with ports **80, 443, and 8000** free on that host.
+
+**1. Start it** — use this overlay *instead of* `docker-compose.mdns.yml`
+(mDNS + host networking are built in):
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.https-lan.yml up -d --build
 ```
 
-Then trust Caddy's root certificate once per device (passkeys need a
-*trusted* cert): export it with `docker compose cp
-caddy:/data/caddy/pki/authorities/local/root.crt headroom-ca.crt`, AirDrop it
-to your iPhone, install the profile, and enable it under Settings → General →
-About → Certificate Trust Settings. After that, **https://headroom.local**
-serves with a padlock and Face ID sign-in works. Password login never needed
-any of this.
+On first boot Caddy mints a root CA and a `headroom.local` certificate, the
+app advertises `https://headroom.local` over mDNS, and the passkey identity
+(`HEADROOM_RP_ID` / `HEADROOM_ORIGIN`) is set to the LAN name automatically.
+
+**2. Export Caddy's root certificate** (from the Docker host, in the repo
+directory):
+
+```bash
+docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt headroom-ca.crt
+```
+
+**3. Trust it on each device** (passkeys require a *trusted* certificate,
+not just any TLS):
+
+- **iPhone / iPad**: AirDrop or email `headroom-ca.crt` to the device, tap
+  it, then **Settings → Profile Downloaded → Install**. Finally — easy to
+  miss — enable it under **Settings → General → About → Certificate Trust
+  Settings**.
+- **Mac**: double-click the file to add it to Keychain Access, open it, and
+  set *When using this certificate* to **Always Trust**.
+- **Android**: Settings → Security → More → Encryption & credentials →
+  **Install a certificate → CA certificate**.
+- **Windows**: right-click → Install Certificate → Local Machine → place in
+  **Trusted Root Certification Authorities**.
+
+**4. Verify**: open **https://headroom.local** — you should see a padlock
+and no warning. The Settings page's **LAN Discovery** card shows the exact
+URL being advertised. Then add a passkey under **Settings → Account** and
+sign in with Face ID.
+
+**If something's off:**
+
+- *Name doesn't resolve* — Linux clients need `avahi-daemon` + `libnss-mdns`;
+  everything else resolves `.local` natively. Check the LAN Discovery card
+  (or `docker compose logs | grep -i mdns`) to confirm the app is advertising.
+- *Still a certificate warning* — on iOS the profile install alone isn't
+  enough; the Certificate Trust Settings toggle in step 3 must be on.
+- *No Face ID prompt* — passkeys are bound to the domain they were created
+  on. One registered at `localhost` or a public domain won't be offered at
+  `headroom.local`; add a new passkey while on the LAN name.
+- *Port conflict on 80/443* — something else on the host owns them; stop it
+  or fall back to the plain mDNS overlay (password login, no padlock).
+
+Renaming the host (`HEADROOM_MDNS_HOSTNAME=hats`) carries through everything
+— cert, mDNS name, and passkey identity become `hats.local` on the next
+`up --build`.
 
 ### Local (no Docker)
 

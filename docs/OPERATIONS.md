@@ -38,10 +38,9 @@ docker compose up --build -d
   claims only the ports the app binds; other services on the host are
   unaffected. For passkeys on the LAN name, use `docker-compose.https-lan.yml`
   *instead* (includes mDNS + host networking): it fronts the app with Caddy's
-  internal CA on 443 — export the root cert with `docker compose cp
-  caddy:/data/caddy/pki/authorities/local/root.crt headroom-ca.crt` and trust
-  it on each device (iOS: install profile, then General → About → Certificate
-  Trust Settings). The Settings page shows live mDNS status read-only.
+  internal CA on 443. Each device must trust the exported root cert once —
+  full walkthrough in the README ("HTTPS on the LAN"). The Settings page
+  shows live mDNS status read-only.
 - On Linux the script adds your user to the `docker` group — log out/in (or
   `newgrp docker`) before the first `docker compose` command.
 - macOS + colima: the VM does not auto-start after a reboot. Either run

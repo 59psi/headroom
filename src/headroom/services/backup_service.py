@@ -16,7 +16,7 @@ from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 from pathlib import Path
 
-from headroom.config import settings
+from headroom.config import env_flag, settings
 
 logger = logging.getLogger(__name__)
 
@@ -166,7 +166,7 @@ def streaming_filename(include_uploads: bool = True) -> str:
 
 
 def backup_enabled() -> bool:
-    return os.environ.get("HEADROOM_BACKUP_ENABLED", "true").lower() in ("1", "true", "yes")
+    return env_flag("HEADROOM_BACKUP_ENABLED")
 
 
 def backup_interval_hours() -> float:

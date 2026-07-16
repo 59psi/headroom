@@ -55,7 +55,13 @@ export function SettingsPage() {
   const backups = useQuery({ queryKey: ['admin', 'backups'], queryFn: listBackups });
   const activity = useQuery({ queryKey: ['admin', 'activity'], queryFn: () => getActivityLog(50) });
   const ebay = useQuery({ queryKey: ['admin', 'ebay'], queryFn: getEbayCreds });
-  const mdns = useQuery({ queryKey: ['settings', 'mdns'], queryFn: getMdnsStatus });
+  // Env-configured — only changes at server boot, so never refetch.
+  const mdns = useQuery({
+    queryKey: ['settings', 'mdns'],
+    queryFn: getMdnsStatus,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+  });
 
   const [ebayAppId, setEbayAppId] = useState('');
   const [ebayCertId, setEbayCertId] = useState('');
@@ -534,30 +540,28 @@ export function SettingsPage() {
           <div className="card-title">LAN Discovery (mDNS)</div>
           <p className="text-secondary small mb-3">
             Read-only — configured with the <code>HEADROOM_MDNS_*</code> environment
-            variables. On Docker the name only reaches your network with the
-            <code> docker-compose.mdns.yml</code> overlay (host networking); for
-            Face&nbsp;ID / passkeys on the LAN name, use the
-            <code> docker-compose.https-lan.yml</code> overlay instead.
+            variables. Docker needs an overlay for the name to reach your network;
+            setup and the Face&nbsp;ID / HTTPS walkthrough are in the README
+            ("Find it on your LAN").
           </p>
-          {mdns.data && (mdns.data.advertising ? (
-            <div className="hr-metric">
-              <div className="hr-metric-label">Advertising → {mdns.data.ip}</div>
-              <div className="hr-metric-value font-mono">
-                <a href={mdns.data.url ?? '#'} target="_blank" rel="noopener noreferrer">
-                  {mdns.data.url}
-                </a>
-              </div>
-            </div>
-          ) : (
+          {mdns.data && (
             <div className="hr-metric">
               <div className="hr-metric-label">
-                {mdns.data.enabled ? 'Enabled — not advertising' : 'Disabled'}
+                {mdns.data.advertising
+                  ? `Advertising → ${mdns.data.ip}`
+                  : mdns.data.enabled ? 'Enabled — not advertising' : 'Disabled'}
               </div>
               <div className="hr-metric-value font-mono">
-                {mdns.data.error ?? mdns.data.hostname}
+                {mdns.data.url ? (
+                  <a href={mdns.data.url} target="_blank" rel="noopener noreferrer">
+                    {mdns.data.url}
+                  </a>
+                ) : (
+                  mdns.data.error ?? mdns.data.hostname
+                )}
               </div>
             </div>
-          ))}
+          )}
         </div>
       </div>
 

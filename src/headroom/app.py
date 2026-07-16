@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from headroom.config import settings
+from headroom.config import env_flag, settings
 from headroom.database import async_session, init_db
 from headroom.routes import api_router
 from headroom.services import activity_service, backup_service, import_service, mdns_service
@@ -102,11 +102,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         )
 
     # Bulk-import worker — single async task, drains the import queue.
-    if os.environ.get("HEADROOM_IMPORT_WORKER_ENABLED", "true").lower() in ("1", "true", "yes"):
+    if env_flag("HEADROOM_IMPORT_WORKER_ENABLED"):
         await import_service.start_worker()
 
     # mDNS LAN discovery (headroom.local) — best-effort, disabled in tests.
-    await mdns_service.start_mdns()
+    # zeroconf probes for ~1s before registering; keep it off the boot path.
+    mdns_task = asyncio.create_task(mdns_service.start_mdns())
 
     # Activity-log retention pruner — runs once per day in the background
     async def _prune_loop():
@@ -125,7 +126,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     try:
         yield
     finally:
-        for task in (backup_task, prune_task):
+        for task in (backup_task, prune_task, mdns_task):
             if task is not None:
                 task.cancel()
                 try:
