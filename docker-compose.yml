@@ -3,6 +3,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        # Stamp the footer with a build id:
+        #   BUILD_SHA=$(git rev-parse --short HEAD) docker compose up --build -d
+        BUILD_SHA: ${BUILD_SHA:-}
     image: headroom:latest
     container_name: headroom
     restart: unless-stopped

@@ -15,6 +15,10 @@ WORKDIR /build
 COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm ci
 COPY frontend/ ./
+# .git never enters the build context, so the footer's build SHA must be
+# injected: docker compose forwards BUILD_SHA (empty → footer hides it).
+ARG BUILD_SHA=""
+ENV HEADROOM_BUILD_SHA=$BUILD_SHA
 RUN npx tsc -b --noEmit && npx vite build
 
 # ============================================================ #

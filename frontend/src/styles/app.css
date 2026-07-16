@@ -1042,6 +1042,17 @@ button.card:hover::before,
   margin-top: 3rem;
 }
 
+.hr-footer a {
+  color: var(--text-muted);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  transition: color 0.15s ease;
+}
+
+.hr-footer a:hover {
+  color: var(--neon-cyan);
+}
+
 @media (max-width: 991.98px) {
   .hr-footer {
     padding-bottom: calc(var(--nav-height) + var(--safe-bottom) + 1rem);
