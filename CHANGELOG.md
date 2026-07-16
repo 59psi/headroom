@@ -4,6 +4,77 @@ All notable changes are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [2.0.0] — 2026-07-16 — _production hardening_
+
+A forensic multi-agent review (code-archaeology) gated the v1.x line for
+production; this release fixes every finding and folds in the preceding
+cleanup pass. Databases upgrade in place — no schema-breaking changes — but
+two operational interfaces changed, hence the major bump.
+
+### Breaking
+- **`BUILD_SHA` build arg renamed to `HEADROOM_BUILD_SHA`.** Stamp the footer
+  with `HEADROOM_BUILD_SHA=$(git rev-parse --short HEAD) docker compose up
+  --build`. The old `BUILD_SHA` name is no longer read.
+- **The Docker image install is now `uv sync --frozen` only** (no unpinned
+  fallback). A `uv.lock` / `pyproject.toml` mismatch fails the build instead
+  of silently resolving fresh versions — run `uv lock` and commit if it errors.
+- **Changing your password now rotates the API bearer token** as well as
+  revoking other sessions. Cookie-less clients (the iOS Shortcut) must copy
+  the new token from Settings → Account after a password change.
+
+### Changed (cleanup pass)
+- mDNS advertising registers off the boot path (≈1.2 s faster startup) and
+  withdraws with a single goodbye broadcast; the Settings LAN card derives its
+  state instead of caching it. Shared `env_flag()` replaces three copies of the
+  truthy-env idiom.
+- README gains a full step-by-step **HTTPS-on-the-LAN / Face ID** walkthrough.
+
+### Fixed — reliability
+- **Bulk-import worker can no longer silently die.** The worker loop now
+  survives any per-item exception (including a transient `database is locked`),
+  and a bug in its own error handler (`item.job_id` on a `None` item) is fixed.
+- **Crash recovery for imports.** On boot, items stranded in `processing` are
+  re-queued and jobs whose items are all terminal (e.g. every file oversize)
+  are closed — no more jobs that poll "running" forever.
+- **Backups no longer self-destruct under restart loops.** Retention is now
+  age-based (honoring `_RETENTION_DAYS`), the newest snapshot is never pruned,
+  and the startup backup is skipped when a recent one already exists.
+- **SQLite tuned** with WAL + `busy_timeout` + `synchronous=NORMAL`, shrinking
+  the transient-lock error class.
+
+### Fixed — correctness
+- **Undispose no longer collides slots.** Restoring a disposed hat reassigns
+  its `position_in_case`, so it can't share a slot / display ID / QR label with
+  a hat added while it was disposed.
+- **Manual color edits stay searchable.** `PUT /hats/{id}/colors` now normalizes
+  `general_color` onto the curated palette (as the analysis pipeline does).
+- **One wear per hat per day** is enforced by a unique constraint, closing the
+  double-tap race.
+- Case-photo upload no longer blocks the event loop (async image processing).
+
+### Fixed — security / operability
+- **Auth telemetry.** Failed logins, lockouts, and successes are logged and
+  audited (IP + username); backup downloads, key/cred changes, and share-link
+  create/revoke now write `activity_log` rows.
+- **`/health/ready` redacts** filesystem paths, key source, and raw errors for
+  anonymous callers; authenticated callers also get an import-worker liveness
+  signal.
+- **Password change is a complete compromise response** — it now rotates the
+  API token alongside revoking other sessions.
+- **First-run setup is serialized** against a concurrent second POST (no
+  duplicate owners).
+- argon2 verify runs off the event loop under a concurrency bound; login
+  rate-limiter entries are cleaned up; bulk-upload memory is bounded; the
+  Dockerfile install is `--frozen`-only (no silent unpinned fallback).
+- Single-process assumption is now warned about at startup when `WEB_CONCURRENCY`
+  > 1. Retired `HEADROOM_ADMIN_TOKEN` references removed from docs.
+
+### Added
+- **Public branding logo** (`GET /api/public/branding/logo`) — the login page
+  now shows the configured logo, not just the wordmark.
+- Model↔migration consistency test so a new `Hat` column can never be forgotten
+  in the DDL. 14 new hardening regression tests (170 total).
+
 ## [1.3.0] — 2026-07-15 — _headroom.local + LAN passkeys + printable case rack_
 
 ### Added

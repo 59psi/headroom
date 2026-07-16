@@ -17,13 +17,15 @@ def mask_key(key: str) -> str:
     return f"{key[:5]}…{key[-4:]}"
 
 
-async def _get_setting(db: AsyncSession, key: str) -> str | None:
+async def get_setting(db: AsyncSession, key: str) -> str | None:
+    """Read a raw app_settings value (public key-value accessor)."""
     result = await db.execute(select(AppSetting).where(AppSetting.key == key))
     row = result.scalar_one_or_none()
     return row.value if row else None
 
 
-async def _set_setting(db: AsyncSession, key: str, value: str | None) -> None:
+async def set_setting(db: AsyncSession, key: str, value: str | None) -> None:
+    """Upsert (or delete when value is None) an app_settings value. Commits."""
     result = await db.execute(select(AppSetting).where(AppSetting.key == key))
     row = result.scalar_one_or_none()
     if row is None:
@@ -37,12 +39,17 @@ async def _set_setting(db: AsyncSession, key: str, value: str | None) -> None:
     await db.commit()
 
 
+# Backwards-compatible private aliases (pre-1.3 callers referenced these).
+_get_setting = get_setting
+_set_setting = set_setting
+
+
 async def get_anthropic_key(db: AsyncSession) -> tuple[str | None, str | None]:
     """Resolve the active Anthropic key. Returns (key, source).
 
     Order: database setting > environment variable.
     """
-    db_value = await _get_setting(db, ANTHROPIC_KEY_NAME)
+    db_value = await get_setting(db, ANTHROPIC_KEY_NAME)
     if db_value:
         return db_value, "database"
     if config_settings.anthropic_api_key:
@@ -51,11 +58,11 @@ async def get_anthropic_key(db: AsyncSession) -> tuple[str | None, str | None]:
 
 
 async def set_anthropic_key(db: AsyncSession, value: str) -> None:
-    await _set_setting(db, ANTHROPIC_KEY_NAME, value.strip())
+    await set_setting(db, ANTHROPIC_KEY_NAME, value.strip())
 
 
 async def clear_anthropic_key(db: AsyncSession) -> None:
-    await _set_setting(db, ANTHROPIC_KEY_NAME, None)
+    await set_setting(db, ANTHROPIC_KEY_NAME, None)
 
 
 async def get_google_vision_key(db: AsyncSession) -> tuple[str | None, str | None]:
@@ -63,7 +70,7 @@ async def get_google_vision_key(db: AsyncSession) -> tuple[str | None, str | Non
 
     Order: database setting > environment variable.
     """
-    db_value = await _get_setting(db, GOOGLE_VISION_KEY_NAME)
+    db_value = await get_setting(db, GOOGLE_VISION_KEY_NAME)
     if db_value:
         return db_value, "database"
     if config_settings.google_vision_api_key:
@@ -72,11 +79,11 @@ async def get_google_vision_key(db: AsyncSession) -> tuple[str | None, str | Non
 
 
 async def set_google_vision_key(db: AsyncSession, value: str) -> None:
-    await _set_setting(db, GOOGLE_VISION_KEY_NAME, value.strip())
+    await set_setting(db, GOOGLE_VISION_KEY_NAME, value.strip())
 
 
 async def clear_google_vision_key(db: AsyncSession) -> None:
-    await _set_setting(db, GOOGLE_VISION_KEY_NAME, None)
+    await set_setting(db, GOOGLE_VISION_KEY_NAME, None)
 
 
 async def get_anthropic_model(db: AsyncSession) -> tuple[str, str]:
@@ -85,7 +92,7 @@ async def get_anthropic_model(db: AsyncSession) -> tuple[str, str]:
     Order: database setting > environment variable > built-in default.
     Always returns a non-empty string.
     """
-    db_value = await _get_setting(db, ANTHROPIC_MODEL_NAME)
+    db_value = await get_setting(db, ANTHROPIC_MODEL_NAME)
     if db_value:
         return db_value, "database"
     # config_settings.anthropic_model has a built-in default, so we can't tell
@@ -96,8 +103,8 @@ async def get_anthropic_model(db: AsyncSession) -> tuple[str, str]:
 
 
 async def set_anthropic_model(db: AsyncSession, value: str) -> None:
-    await _set_setting(db, ANTHROPIC_MODEL_NAME, value.strip())
+    await set_setting(db, ANTHROPIC_MODEL_NAME, value.strip())
 
 
 async def clear_anthropic_model(db: AsyncSession) -> None:
-    await _set_setting(db, ANTHROPIC_MODEL_NAME, None)
+    await set_setting(db, ANTHROPIC_MODEL_NAME, None)

@@ -17,7 +17,7 @@ from headroom.schemas.settings import (
     ModelStatus,
     ModelUpdate,
 )
-from headroom.services import mdns_service, settings_service
+from headroom.services import activity_service, mdns_service, settings_service
 from headroom.services.claude_analysis import verify_api_key
 from headroom.utils.photo import validate_image_content_type
 
@@ -112,6 +112,11 @@ async def get_api_key_status(db: AsyncSession = Depends(get_db)):
 @router.put("/api-key", response_model=ApiKeyStatus, dependencies=[Depends(require_admin)])
 async def set_api_key(data: ApiKeyUpdate, db: AsyncSession = Depends(get_db)):
     await settings_service.set_anthropic_key(db, data.api_key)
+    await activity_service.log_activity(
+        db, kind="settings.key_set", entity_type="system", entity_id=None,
+        summary="Anthropic API key set/updated",
+    )
+    await db.commit()
     key, source = await settings_service.get_anthropic_key(db)
     return ApiKeyStatus(
         configured=bool(key),
@@ -123,6 +128,11 @@ async def set_api_key(data: ApiKeyUpdate, db: AsyncSession = Depends(get_db)):
 @router.delete("/api-key", status_code=204, dependencies=[Depends(require_admin)])
 async def delete_api_key(db: AsyncSession = Depends(get_db)):
     await settings_service.clear_anthropic_key(db)
+    await activity_service.log_activity(
+        db, kind="settings.key_cleared", entity_type="system", entity_id=None,
+        summary="Anthropic API key cleared",
+    )
+    await db.commit()
 
 
 @router.post("/api-key/test", response_model=ApiKeyTestResult, dependencies=[Depends(require_admin)])
@@ -159,6 +169,11 @@ async def get_google_vision_key_status(db: AsyncSession = Depends(get_db)):
 )
 async def set_google_vision_key(data: ApiKeyUpdate, db: AsyncSession = Depends(get_db)):
     await settings_service.set_google_vision_key(db, data.api_key)
+    await activity_service.log_activity(
+        db, kind="settings.key_set", entity_type="system", entity_id=None,
+        summary="Google Vision API key set/updated",
+    )
+    await db.commit()
     key, source = await settings_service.get_google_vision_key(db)
     return ApiKeyStatus(
         configured=bool(key),
@@ -172,6 +187,11 @@ async def set_google_vision_key(data: ApiKeyUpdate, db: AsyncSession = Depends(g
 )
 async def delete_google_vision_key(db: AsyncSession = Depends(get_db)):
     await settings_service.clear_google_vision_key(db)
+    await activity_service.log_activity(
+        db, kind="settings.key_cleared", entity_type="system", entity_id=None,
+        summary="Google Vision API key cleared",
+    )
+    await db.commit()
 
 
 # ---------------------------- mDNS status ---------------------------- #

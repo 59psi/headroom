@@ -63,6 +63,14 @@ export function LoginPage() {
     <div className="d-flex align-items-center justify-content-center" style={{ minHeight: '100vh', padding: '1rem' }}>
       <div className="card" style={{ width: '100%', maxWidth: 420 }}>
         <div className="card-body">
+          {/* Public branding logo (auth-gated everywhere else); hides itself
+              if no logo is configured so the wordmark stands alone. */}
+          <img
+            src="/api/public/branding/logo"
+            alt=""
+            style={{ maxHeight: 56, marginBottom: '0.75rem', display: 'block' }}
+            onError={e => { e.currentTarget.style.display = 'none'; }}
+          />
           <h1 className="mb-1" style={{ fontSize: '1.6rem' }}>HEADROOM</h1>
           <p className="text-secondary small mb-4">
             {needsSetup
