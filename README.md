@@ -72,8 +72,8 @@ result, and three independent price signals per hat.
   type-exclusive cases, auto-sequenced display IDs.
 - **3D-printable case rack** — a modular, stackable, supports-free rack that
   gives each Melin travel case its own slide-in bay. OpenSCAD source + STLs in
-  [`hardware/melin-stand-slim.zip`](hardware/melin-stand-slim.zip); print
-  notes in [`hardware/`](hardware/README.md).
+  [`hardware/melin-rack-v2.zip`](hardware/melin-rack-v2.zip) (OpenSCAD + STLs
+  + a ready-to-slice `.3mf`); print notes in [`hardware/`](hardware/README.md).
 - **Wear tracking** — one tap logs a wear; get wear counts, cost-per-wear, and
   a list of hats that haven't seen the sun.
 - **Three import paths** — single photo with crop/rotate, bulk import (100
@@ -98,6 +98,24 @@ result, and three independent price signals per hat.
 ---
 
 ## Run it
+
+Pick how you want to reach it — every Docker mode is the base compose file plus
+**one** front-door overlay (don't stack two). Below, `C` is shorthand for
+`docker compose -f docker-compose.yml`:
+
+| How you want to run it | Command | Reach it at | Face ID / passkeys |
+|---|---|---|---|
+| **Default** (one host) | `docker compose up -d --build` | `http://localhost:8000` · `http://<ip>:8000` | ✅ on `localhost` only |
+| **LAN name** | `C -f docker-compose.mdns.yml up -d --build` | `http://headroom.local:8000` | ❌ (plain HTTP) |
+| **LAN, port 80** | `C -f docker-compose.http80.yml up -d --build` | `http://headroom.local` | ❌ (plain HTTP) |
+| **LAN, HTTPS** | `C -f docker-compose.https-lan.yml up -d --build` | `https://headroom.local` | ✅ (trust Caddy's cert once) |
+| **Internet** | `HEADROOM_DOMAIN=… C -f docker-compose.https.yml up -d --build` | `https://your-domain` | ✅ (Let's Encrypt) |
+| **Bare metal** (no Docker) | `./scripts/setup.sh --no-docker` → uvicorn | `http://localhost:8000` | ✅ on `localhost` |
+| **Dev** (hot reload) | uvicorn `--reload` + `npm run dev` | `http://localhost:5173` | — |
+
+Passkeys/Face ID need a **secure context** — HTTPS or `localhost` — so the
+plain-HTTP LAN modes are password-login only. The LAN overlays use host
+networking (Linux/Pi only); details for each mode follow.
 
 ### Docker (recommended — works on Mac, Linux, Pi)
 
