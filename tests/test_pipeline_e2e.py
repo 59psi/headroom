@@ -29,9 +29,9 @@ def _jpeg(color=(0, 0, 200)) -> io.BytesIO:
 def stub_claude(monkeypatch):
     """Patch Claude analysis + force a configured key so the pipeline runs.
 
-    `analyze_hat_image` and `settings_service` are bound by name in two
-    modules (the pipeline + the reanalyze route handler). We patch both
-    so either entry point exercises the stub.
+    `analyze_hat_image` is bound in one place — the pipeline module — for both
+    the upload and reanalyze paths (the route delegates to
+    `reanalyze_existing_photo`), so a single patch covers both entry points.
     """
     async def _fake_get_key(_db):
         return "sk-ant-test-fixture", "database"
@@ -56,12 +56,9 @@ def stub_claude(monkeypatch):
     monkeypatch.setattr(
         "headroom.services.settings_service.get_anthropic_key", _fake_get_key
     )
-    # Patch both name-bindings of analyze_hat_image (pipeline + reanalyze route).
+    # Single seam: both upload and reanalyze route through the pipeline module.
     monkeypatch.setattr(
         "headroom.services.hat_analysis_pipeline.analyze_hat_image", _fake_analyze
-    )
-    monkeypatch.setattr(
-        "headroom.routes.hats.analyze_hat_image", _fake_analyze
     )
 
 
@@ -150,9 +147,6 @@ async def test_claude_error_marks_hat_status_error(client, monkeypatch):
     )
     monkeypatch.setattr(
         "headroom.services.hat_analysis_pipeline.analyze_hat_image", _boom
-    )
-    monkeypatch.setattr(
-        "headroom.routes.hats.analyze_hat_image", _boom
     )
 
     create = await client.post(

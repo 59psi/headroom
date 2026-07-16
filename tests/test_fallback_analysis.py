@@ -229,7 +229,6 @@ async def test_claude_error_falls_back(client, real_cutout, google_key, monkeypa
     monkeypatch.setattr(
         "headroom.services.hat_analysis_pipeline.analyze_hat_image", _boom
     )
-    monkeypatch.setattr("headroom.routes.hats.analyze_hat_image", _boom)
 
     _hat_id, data = await _create_hat_with_photo(client)
     assert data["analysis_status"] == "fallback"
