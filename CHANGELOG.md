@@ -4,6 +4,33 @@ All notable changes are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.3.0] — 2026-07-15 — _headroom.local + LAN passkeys + printable case rack_
+
+### Added
+- **mDNS LAN discovery.** The app advertises itself as **`headroom.local`**
+  (python-zeroconf, best-effort, `HEADROOM_MDNS_ENABLED` / `_HOSTNAME` /
+  `_PORT`). Multicast can't cross Docker's bridge network, so the new
+  `docker-compose.mdns.yml` overlay switches to host networking (Linux/Pi).
+  A read-only **LAN Discovery** card on Settings (`GET /api/settings/mdns`)
+  shows the advertised URL, LAN IP, or registration error.
+- **LAN HTTPS overlay** (`docker-compose.https-lan.yml`) — Caddy with its
+  internal CA on 443 makes `https://headroom.local` a secure context, so
+  **Face ID / passkeys work on the LAN name** (Let's Encrypt can't issue
+  for `.local`). Trust the exported root cert once per device; passkey
+  identity and mDNS port are set automatically. Proxy-header trust scoped
+  to loopback since :8000 stays LAN-reachable.
+- **3D-printable case rack** (`hardware/melin-stand-slim.zip`) — modular,
+  stackable, supports-free slide-in rack for Melin 3-hat travel cases
+  (parametric OpenSCAD + STLs, filament-optimized skeleton floor). Print
+  notes recommend an H2D-class bed (~222 × 258 mm footprint). Linked from
+  the README and the app footer.
+- **Build stamp.** The footer shows the git short SHA next to the version:
+  baked at build time from `HEADROOM_BUILD_SHA` / local git, injectable in
+  Docker via the `BUILD_SHA` build arg.
+- README: **Updating** section (upgrade commands + automatic SQLite
+  migrations + backup-first advice) and a LAN discovery guide.
+- 7 new tests (154 total).
+
 ## [1.2.0] — 2026-07-12 — _wear tracking + QR case labels_
 
 ### Added
