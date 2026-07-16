@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -61,8 +62,10 @@ async def finalize_hat_photo(
     photo_dir = processed_jpeg_path.parent
 
     # 1. Background removal → transparent PNG, swap as canonical
+    t_rembg0 = time.monotonic()
     cutout_target = photo_dir / processed_jpeg_path.stem
     transparent_path = await remove_background(processed_jpeg_path, cutout_target)
+    t_rembg = time.monotonic() - t_rembg0
     if transparent_path is not None and transparent_path.exists():
         # Drop the JPEG, keep the PNG
         if transparent_path.resolve() != processed_jpeg_path.resolve():
@@ -86,13 +89,17 @@ async def finalize_hat_photo(
 
     model_id, _model_source = await settings_service.get_anthropic_model(db)
 
+    t_claude0 = time.monotonic()
     try:
         analysis: HatAnalysis = await analyze_hat_image(
             canonical_path, api_key,
             model=model_id, selected_style=hat.style,
         )
     except ClaudeAnalysisError as exc:
-        logger.warning("Hat analysis failed for hat %s: %s", hat.id, exc)
+        logger.warning(
+            "Hat analysis failed for hat %s (rembg=%.2fs claude=%.2fs): %s",
+            hat.id, t_rembg, time.monotonic() - t_claude0, exc,
+        )
         hat.analysis_status = "error"
         hat.analysis_error = str(exc)
         hat.analyzed_at = datetime.now(timezone.utc)
@@ -100,10 +107,21 @@ async def finalize_hat_photo(
             db, hat, canonical_path, reason=f"Claude analysis failed: {exc}"
         )
         return hat
+    t_claude = time.monotonic() - t_claude0
 
     _apply_analysis(hat, analysis)
+    t_ebay0 = time.monotonic()
+    await _refresh_ebay_comps(db, hat)
+    await refresh_melin_resale(hat)
+    logger.info(
+        "hat=%s analyzed · rembg=%.2fs claude=%.2fs ebay+resale=%.2fs status=%s",
+        hat.id, t_rembg, t_claude, time.monotonic() - t_ebay0, hat.analysis_status,
+    )
+    return hat
 
-    # eBay comp refresh — best-effort, never fail the upload over it.
+
+async def _refresh_ebay_comps(db: AsyncSession, hat: Hat) -> None:
+    """Best-effort eBay comparable-listings refresh — never fails the caller."""
     if hat.brand and hat.model_name:
         try:
             comps = await find_comps(db, brand=hat.brand, model=hat.model_name, style=hat.style)
@@ -112,9 +130,42 @@ async def finalize_hat_photo(
         except EbayError as exc:
             logger.info("eBay comp refresh skipped for hat %s: %s", hat.id, exc)
 
-    await refresh_melin_resale(hat)
 
-    return hat
+async def reanalyze_existing_photo(
+    db: AsyncSession, hat: Hat, photo_path: Path
+) -> bool:
+    """Re-run analysis against an already-processed cutout — no bg removal.
+
+    Shares the key-check → Claude → apply → eBay → resale choreography (with
+    graceful fallback) with finalize_hat_photo, instead of the route hand-rolling
+    its own drifting copy. Mutates `hat`; caller commits. Returns False only when
+    there is no Claude key AND the fallback produced nothing (caller → HTTP 400).
+    """
+    api_key, _source = await settings_service.get_anthropic_key(db)
+    if not api_key:
+        return await run_fallback_analysis(
+            db, hat, photo_path, reason="No Anthropic API key configured"
+        )
+
+    model_id, _msrc = await settings_service.get_anthropic_model(db)
+    try:
+        analysis = await analyze_hat_image(
+            photo_path, api_key, model=model_id, selected_style=hat.style
+        )
+    except ClaudeAnalysisError as exc:
+        logger.warning("Reanalysis failed for hat %s: %s", hat.id, exc)
+        hat.analysis_status = "error"
+        hat.analysis_error = str(exc)
+        hat.analyzed_at = datetime.now(timezone.utc)
+        await run_fallback_analysis(
+            db, hat, photo_path, reason=f"Claude analysis failed: {exc}"
+        )
+        return True
+
+    _apply_analysis(hat, analysis)
+    await _refresh_ebay_comps(db, hat)
+    await refresh_melin_resale(hat)
+    return True
 
 
 async def refresh_melin_resale(hat: Hat) -> None:

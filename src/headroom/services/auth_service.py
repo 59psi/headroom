@@ -11,6 +11,7 @@ process, so no shared store is needed.
 
 from __future__ import annotations
 
+import asyncio
 import secrets
 import time
 from datetime import datetime, timedelta, timezone
@@ -37,13 +38,22 @@ _failures: dict[str, list[float]] = {}
 
 def _prune(key: str, now: float) -> list[float]:
     kept = [t for t in _failures.get(key, []) if now - t < _LOCKOUT_SECONDS]
-    _failures[key] = kept
+    # Drop keys whose window has fully expired so the dict can't grow one
+    # permanent entry per (ip, username) ever probed (unbounded-memory guard).
+    if kept:
+        _failures[key] = kept
+    else:
+        _failures.pop(key, None)
     return kept
 
 
-def check_rate_limit(client_ip: str, username: str) -> None:
+def is_rate_limited(client_ip: str, username: str) -> bool:
     key = f"{client_ip}:{username.lower()}"
-    if len(_prune(key, time.monotonic())) >= _MAX_FAILURES:
+    return len(_prune(key, time.monotonic())) >= _MAX_FAILURES
+
+
+def check_rate_limit(client_ip: str, username: str) -> None:
+    if is_rate_limited(client_ip, username):
         raise HTTPException(
             status_code=429,
             detail="Too many failed logins — try again in a few minutes.",
@@ -74,6 +84,24 @@ def verify_password(password_hash: str, password: str) -> bool:
         return False
     except Exception:  # malformed hash — treat as auth failure, not a 500
         return False
+
+
+# argon2id is 64 MiB + ~0.3-1 s on a Pi. Running it inline on the single event
+# loop freezes every in-flight request per attempt and lets a login flood pin
+# memory. Offload to a thread, bounded so concurrent attempts can't stack N×64
+# MiB. Bound of 2 keeps interactive logins snappy without a memory spike.
+_ARGON2_MAX_CONCURRENCY = 2
+_argon2_semaphore = asyncio.Semaphore(_ARGON2_MAX_CONCURRENCY)
+
+
+async def verify_password_async(password_hash: str, password: str) -> bool:
+    async with _argon2_semaphore:
+        return await asyncio.to_thread(verify_password, password_hash, password)
+
+
+async def hash_password_async(password: str) -> str:
+    async with _argon2_semaphore:
+        return await asyncio.to_thread(hash_password, password)
 
 
 # ------------------------------- users -------------------------------- #

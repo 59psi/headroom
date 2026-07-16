@@ -12,10 +12,12 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.auth import require_user
 from headroom.database import get_db
+from headroom.models.app_setting import AppSetting
 from headroom.models.user import PasskeyCredential, User
 from headroom.services import auth_service, passkey_service
 from headroom.services.activity_service import log_activity
@@ -73,11 +75,20 @@ async def first_run_setup(
     """Create the owner account. Only available while no users exist."""
     if await auth_service.user_count(db) > 0:
         raise HTTPException(status_code=403, detail="Setup already completed")
-    user = await auth_service.create_user(db, data.username, data.password)
+    # Serialize first-run setup against a racing second POST: app_settings.key
+    # is a PRIMARY KEY, so only one concurrent transaction can claim this
+    # sentinel — the loser's INSERT collides and rolls back its owner account
+    # too, instead of both check-then-inserting two co-equal owners (S5/R10).
+    db.add(AppSetting(key="owner_setup_done", value="1"))
+    try:
+        user = await auth_service.create_user(db, data.username, data.password)
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=403, detail="Setup already completed")
     session = await auth_service.create_session(db, user)
     _set_session_cookie(response, request, session.id)
     await log_activity(
-        db, kind="auth", entity_type="user", entity_id=user.id,
+        db, kind="auth.setup", entity_type="user", entity_id=user.id,
         summary=f"Owner account '{user.username}' created",
     )
     await db.commit()
@@ -91,14 +102,41 @@ async def login(
     db: AsyncSession = Depends(get_db),
 ):
     ip = _client_ip(request)
-    auth_service.check_rate_limit(ip, data.username)
+    if auth_service.is_rate_limited(ip, data.username):
+        logger.warning("Login rate-limited: '%s' from %s", data.username, ip)
+        await log_activity(
+            db, kind="auth.login_blocked", entity_type="auth", entity_id=None,
+            summary=f"Login blocked (rate limit): '{data.username}' from {ip}",
+            details={"ip": ip, "username": data.username},
+        )
+        await db.commit()
+        raise HTTPException(
+            status_code=429,
+            detail="Too many failed logins — try again in a few minutes.",
+        )
     user = await auth_service.get_user_by_username(db, data.username)
-    if user is None or not auth_service.verify_password(user.password_hash, data.password):
+    if user is None or not await auth_service.verify_password_async(
+        user.password_hash, data.password
+    ):
         auth_service.record_failure(ip, data.username)
+        logger.warning("Login failed: '%s' from %s", data.username, ip)
+        await log_activity(
+            db, kind="auth.login_failed", entity_type="auth",
+            entity_id=user.id if user else None,
+            summary=f"Failed login: '{data.username}' from {ip}",
+            details={"ip": ip, "username": data.username},
+        )
+        await db.commit()
         raise HTTPException(status_code=401, detail="Invalid username or password")
     auth_service.clear_failures(ip, data.username)
     session = await auth_service.create_session(db, user)
     _set_session_cookie(response, request, session.id)
+    logger.info("Login success: '%s' from %s", user.username, ip)
+    await log_activity(
+        db, kind="auth.login", entity_type="user", entity_id=user.id,
+        summary=f"Login: '{user.username}' from {ip}", details={"ip": ip},
+    )
+    await db.commit()
     return AuthStatus(needs_setup=False, authenticated=True, username=user.username)
 
 
@@ -122,6 +160,10 @@ async def rotate_api_token(
 ):
     user.api_token = auth_service.new_api_token()
     db.add(user)
+    await log_activity(
+        db, kind="auth.token_rotated", entity_type="user", entity_id=user.id,
+        summary=f"API token rotated for '{user.username}'",
+    )
     await db.commit()
     return {"api_token": user.api_token}
 
@@ -138,17 +180,27 @@ async def change_password(
     user: User = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ):
-    if not auth_service.verify_password(user.password_hash, data.current_password):
+    if not await auth_service.verify_password_async(
+        user.password_hash, data.current_password
+    ):
         raise HTTPException(status_code=403, detail="Current password is incorrect")
-    user.password_hash = auth_service.hash_password(data.new_password)
+    user.password_hash = await auth_service.hash_password_async(data.new_password)
+    # Password change is a compromise response, so make it a COMPLETE one:
+    # rotate the long-lived bearer token too, otherwise a stolen api_token
+    # survives the reset (session revocation alone doesn't cover it — S3).
+    user.api_token = auth_service.new_api_token()
     db.add(user)
     await db.commit()
-    # Changing the password is often a compromise response: revoke every
-    # other session so a stolen cookie dies with the old password. The
-    # session that made this request stays valid.
+    # Revoke every other session so a stolen cookie dies with the old password.
+    # The session that made this request stays valid.
     await auth_service.destroy_other_sessions(
         db, user.id, keep=request.cookies.get(auth_service.SESSION_COOKIE)
     )
+    await log_activity(
+        db, kind="auth.password_change", entity_type="user", entity_id=user.id,
+        summary=f"Password changed for '{user.username}' (token rotated, other sessions revoked)",
+    )
+    await db.commit()
 
 
 # ------------------------------ passkeys ------------------------------ #
@@ -208,6 +260,10 @@ async def passkey_register_verify(
             name=data.name[:80] or "Passkey",
         )
     )
+    await log_activity(
+        db, kind="auth.passkey_added", entity_type="user", entity_id=user.id,
+        summary=f"Passkey '{data.name[:80] or 'Passkey'}' registered for '{user.username}'",
+    )
     await db.commit()
     return {"ok": True}
 
@@ -222,6 +278,10 @@ async def delete_passkey(
     if row is None or row.user_id != user.id:
         raise HTTPException(status_code=404, detail="Passkey not found")
     await db.delete(row)
+    await log_activity(
+        db, kind="auth.passkey_removed", entity_type="user", entity_id=user.id,
+        summary=f"Passkey '{row.name}' removed for '{user.username}'",
+    )
     await db.commit()
 
 
@@ -265,4 +325,11 @@ async def passkey_login_verify(
     user = stored.user
     session = await auth_service.create_session(db, user)
     _set_session_cookie(response, request, session.id)
+    logger.info("Passkey login success: '%s' from %s", user.username, _client_ip(request))
+    await log_activity(
+        db, kind="auth.login", entity_type="user", entity_id=user.id,
+        summary=f"Passkey login: '{user.username}' from {_client_ip(request)}",
+        details={"ip": _client_ip(request), "method": "passkey"},
+    )
+    await db.commit()
     return AuthStatus(needs_setup=False, authenticated=True, username=user.username)

@@ -85,6 +85,11 @@ async def create_job(
             job_id=job.id, filename=filename, status="queued",
             bytes=len(blob), staged_path=str(staged),
         ))
+    # A job whose every file was rejected (all oversize) has no queued items to
+    # drive it to completion — close it now so the SPA doesn't poll it forever.
+    if job.errors >= job.total:
+        job.status = "done"
+        job.finished_at = datetime.now(timezone.utc)
     await db.commit()
     await log_activity(
         db, kind="import.created", entity_type="system", entity_id=job.id,
@@ -151,6 +156,8 @@ async def cancel_job(db: AsyncSession, job_id: int) -> ImportJob | None:
 
 
 async def _process_item(item_id: int) -> None:
+    # Claim the item in its own short transaction, capturing job_id up front
+    # so the error handler always has it even if a later load returns None.
     async with async_session() as db:
         result = await db.execute(
             select(ImportJobItem).where(ImportJobItem.id == item_id)
@@ -158,36 +165,41 @@ async def _process_item(item_id: int) -> None:
         item = result.scalar_one_or_none()
         if item is None or item.status != "queued":
             return  # already cancelled or processed
-        result = await db.execute(
-            select(ImportJob).where(ImportJob.id == item.job_id)
-        )
-        job = result.scalar_one()
-        if job.status == "cancelled":
+        job = await db.get(ImportJob, item.job_id)
+        if job is not None and job.status == "cancelled":
             return
+        job_id = item.job_id
 
-        # Mark running
-        item.status = "processing"
-        if job.status == "queued":
-            job.status = "running"
-        await db.commit()
-
-    # The actual heavy work needs its own session lifecycle so the upload
-    # pipeline's commit/expire semantics work cleanly.
+    # Everything below runs under one try so that ANY failure — including a
+    # transient "database is locked" on the mark-running commit — marks the
+    # item errored and bumps the counter rather than escaping to the worker
+    # loop. The loop has its own catch-all too (belt and suspenders).
     try:
+        # Mark running
         async with async_session() as db:
-            result = await db.execute(
+            item = (await db.execute(
                 select(ImportJobItem).where(ImportJobItem.id == item_id)
-            )
-            item = result.scalar_one()
+            )).scalar_one()
+            item.status = "processing"
+            job = await db.get(ImportJob, item.job_id)
+            if job is not None and job.status == "queued":
+                job.status = "running"
+            await db.commit()
+
+        # The heavy work needs its own session lifecycle so the upload
+        # pipeline's commit/expire semantics work cleanly.
+        async with async_session() as db:
+            item = (await db.execute(
+                select(ImportJobItem).where(ImportJobItem.id == item_id)
+            )).scalar_one()
             staged = Path(item.staged_path) if item.staged_path else None
             if staged is None or not staged.exists():
                 raise FileNotFoundError("staged file missing")
 
             # Resolve defaults from the job
-            result = await db.execute(
+            job = (await db.execute(
                 select(ImportJob).where(ImportJob.id == item.job_id)
-            )
-            job = result.scalar_one()
+            )).scalar_one()
             defaults = json.loads(job.defaults_json or "{}")
             create_data = HatCreate(
                 case_id=defaults.get("case_id"),
@@ -210,32 +222,33 @@ async def _process_item(item_id: int) -> None:
             await db.commit()
 
             # Update the job item
-            result = await db.execute(
+            item = (await db.execute(
                 select(ImportJobItem).where(ImportJobItem.id == item_id)
-            )
-            item = result.scalar_one()
+            )).scalar_one()
             item.status = "done"
             item.hat_id = hat.id
             await db.commit()
 
             # Update job progress + cleanup staged file
             staged.unlink(missing_ok=True)
-            await _bump_job_counter(item.job_id, "done")
+        await _bump_job_counter(job_id, "done")
 
     except Exception as exc:  # noqa: BLE001 — never crash the worker
         logger.warning("Import item %s failed: %s", item_id, exc)
-        async with async_session() as db:
-            result = await db.execute(
-                select(ImportJobItem).where(ImportJobItem.id == item_id)
-            )
-            item = result.scalar_one_or_none()
-            if item:
-                item.status = "error"
-                item.error = str(exc)[:1000]
-                await db.commit()
-                if item.staged_path:
-                    Path(item.staged_path).unlink(missing_ok=True)
-        await _bump_job_counter(item_id and item.job_id or 0, "errors")
+        try:
+            async with async_session() as db:
+                item = (await db.execute(
+                    select(ImportJobItem).where(ImportJobItem.id == item_id)
+                )).scalar_one_or_none()
+                if item:
+                    item.status = "error"
+                    item.error = str(exc)[:1000]
+                    await db.commit()
+                    if item.staged_path:
+                        Path(item.staged_path).unlink(missing_ok=True)
+        except Exception as inner:  # noqa: BLE001 — bookkeeping must not raise
+            logger.warning("Import item %s error-bookkeeping failed: %s", item_id, inner)
+        await _bump_job_counter(job_id, "errors")
 
 
 async def _bump_job_counter(job_id: int, field: str) -> None:
@@ -255,8 +268,12 @@ async def _bump_job_counter(job_id: int, field: str) -> None:
             job.errors += 1
         elif field == "skipped":
             job.skipped += 1
-        # Job done if every item is in a terminal state
-        if job.done + job.errors + job.skipped >= job.total:
+        # Job done if every item is in a terminal state — but never resurrect a
+        # cancelled job whose in-flight items are still finishing.
+        if (
+            job.status != "cancelled"
+            and job.done + job.errors + job.skipped >= job.total
+        ):
             job.status = "done"
             job.finished_at = datetime.now(timezone.utc)
         await db.commit()
@@ -279,6 +296,10 @@ async def _worker_loop() -> None:
             item_id = await _queue.get()
             try:
                 await _process_item(item_id)
+            except Exception as exc:  # noqa: BLE001 — one bad item must NOT
+                # kill the worker; _process_item handles its own bookkeeping,
+                # this is the last line of defence against an unforeseen escape.
+                logger.exception("Import worker: unhandled error on item %s: %s", item_id, exc)
             finally:
                 _queue.task_done()
     except asyncio.CancelledError:
@@ -286,12 +307,60 @@ async def _worker_loop() -> None:
         raise
 
 
+def worker_alive() -> bool:
+    """True if the background import worker task exists and is still running.
+
+    Surfaced by /health/ready so a silently-dead worker is visible to operators.
+    """
+    return _worker_task is not None and not _worker_task.done()
+
+
+async def _recover_on_boot() -> None:
+    """Heal jobs left mid-flight by a crash/OOM/restart before draining.
+
+    A power loss on a Pi is a normal event, not an edge case: items caught in
+    'processing' would otherwise never retry, and a job whose items are all
+    terminal (e.g. every file oversize) would poll 'queued' forever in the SPA.
+    """
+    async with async_session() as db:
+        # 1. Items stuck 'processing' when the process died.
+        stuck = (await db.execute(
+            select(ImportJobItem).where(ImportJobItem.status == "processing")
+        )).scalars().all()
+        for item in stuck:
+            job = await db.get(ImportJob, item.job_id)
+            # A cancelled job's in-flight item becomes cancelled; otherwise retry.
+            item.status = "cancelled" if (job and job.status == "cancelled") else "queued"
+        if stuck:
+            await db.commit()
+
+        # 2. Recompute counters and close any non-terminal job whose items are
+        #    all terminal (covers all-oversize jobs and crash-during-finish).
+        jobs = (await db.execute(
+            select(ImportJob).where(ImportJob.status.in_(["queued", "running"]))
+        )).scalars().all()
+        for job in jobs:
+            items = (await db.execute(
+                select(ImportJobItem).where(ImportJobItem.job_id == job.id)
+            )).scalars().all()
+            job.done = sum(1 for i in items if i.status == "done")
+            job.errors = sum(1 for i in items if i.status == "error")
+            job.skipped = sum(1 for i in items if i.status == "skipped")
+            if not any(i.status in ("queued", "processing") for i in items):
+                job.status = "done"
+                job.finished_at = datetime.now(timezone.utc)
+        if jobs:
+            await db.commit()
+
+
 async def start_worker() -> None:
     """Wire up the queue + worker. Called from app.lifespan."""
     global _queue, _worker_task
     _queue = asyncio.Queue()
     _worker_task = asyncio.create_task(_worker_loop())
-    # Re-enqueue any items that were left in 'queued' state from a prior boot
+    # Heal crash-stranded state, then enqueue everything left 'queued'
+    # (including items just reset from 'processing' by the boot sweep).
+    await _recover_on_boot()
     async with async_session() as db:
         result = await db.execute(
             select(ImportJobItem).where(ImportJobItem.status == "queued")

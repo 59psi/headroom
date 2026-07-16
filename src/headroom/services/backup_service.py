@@ -12,6 +12,7 @@ import io
 import logging
 import os
 import tarfile
+import time
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 from pathlib import Path
@@ -107,17 +108,35 @@ async def list_backups() -> list[Path]:
     return await asyncio.to_thread(_list_backups_sync)
 
 
-def _enforce_retention(retention: int) -> None:
-    if retention <= 0:
+def _enforce_retention(retention_days: int) -> None:
+    """Delete backups older than `retention_days`, honoring the env-var name.
+
+    This is deliberately AGE-based, not count-based: the previous count-based
+    prune, combined with a backup written at every process start, let a
+    crash/restart loop mint N same-hour backups and evict the real daily
+    history. Age-based pruning only removes genuinely old snapshots, and the
+    newest file is never deleted (never leave zero backups on disk).
+    """
+    if retention_days <= 0:
         return
-    keep = _list_backups_sync()[:retention]
-    keep_set = {p.name for p in keep}
-    for p in _list_backups_sync():
-        if p.name not in keep_set:
-            try:
+    backups = _list_backups_sync()  # newest first
+    if len(backups) <= 1:
+        return
+    cutoff = time.time() - retention_days * 86400
+    for p in backups[1:]:  # always keep the most recent snapshot
+        try:
+            if p.stat().st_mtime < cutoff:
                 p.unlink()
-            except OSError as exc:
-                logger.warning("Failed to prune old backup %s: %s", p, exc)
+        except OSError as exc:
+            logger.warning("Failed to prune old backup %s: %s", p, exc)
+
+
+def _seconds_since_newest_backup_sync() -> float | None:
+    """Age of the newest backup in seconds, or None if there are none."""
+    backups = _list_backups_sync()
+    if not backups:
+        return None
+    return time.time() - backups[0].stat().st_mtime
 
 
 async def write_scheduled_backup(retention: int) -> Path | None:
@@ -143,11 +162,16 @@ async def scheduled_backup_loop(interval_hours: float, retention: int) -> None:
     """
     interval_s = max(60.0, interval_hours * 3600.0)
     logger.info(
-        "Backup scheduler started: every %.1f hours, keep %d, dir=%s",
+        "Backup scheduler started: every %.1f hours, keep %d days, dir=%s",
         interval_hours, retention, _backup_dir(),
     )
-    # Initial backup at startup so a fresh deploy has at least one snapshot.
-    await write_scheduled_backup(retention)
+    # Startup backup only if the newest existing snapshot is older than one
+    # interval. A fresh deploy (no backups) gets one; a crash/restart loop does
+    # NOT spam same-hour backups — the previous unconditional startup backup was
+    # half of the history-destruction bug (with count-based pruning as the other).
+    age = await asyncio.to_thread(_seconds_since_newest_backup_sync)
+    if age is None or age >= interval_s:
+        await write_scheduled_backup(retention)
     try:
         while True:
             await asyncio.sleep(interval_s)

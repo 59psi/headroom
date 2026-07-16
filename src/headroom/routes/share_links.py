@@ -24,6 +24,7 @@ from headroom.database import get_db
 from headroom.models.case import Case
 from headroom.models.hat import Hat
 from headroom.models.user import ShareLink
+from headroom.services.activity_service import log_activity
 
 router = APIRouter(tags=["share-links"])
 
@@ -67,6 +68,11 @@ async def create_share_link(data: ShareLinkCreate, db: AsyncSession = Depends(ge
     db.add(link)
     await db.commit()
     await db.refresh(link)
+    await log_activity(
+        db, kind="share.created", entity_type="share_link", entity_id=link.id,
+        summary=f"Share link '{link.label}' created (exposes the full active collection)",
+    )
+    await db.commit()
     return {"id": link.id, "token": link.token, "url_path": f"/share/{link.token}"}
 
 
@@ -76,6 +82,10 @@ async def revoke_share_link(link_id: int, db: AsyncSession = Depends(get_db)):
     if link is None:
         raise HTTPException(status_code=404, detail="Share link not found")
     link.revoked_at = datetime.now(timezone.utc)
+    await log_activity(
+        db, kind="share.revoked", entity_type="share_link", entity_id=link.id,
+        summary=f"Share link '{link.label}' revoked",
+    )
     await db.commit()
 
 

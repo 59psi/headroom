@@ -1,8 +1,8 @@
 """Admin endpoints — recent analysis errors + backup download/list.
 
-All gated by `require_admin`. With `HEADROOM_ADMIN_TOKEN` unset the dep is
-a no-op (single-user-LAN default); set it and clients must present a Bearer
-token.
+All gated by `require_admin`, which is an alias for `require_user`: every
+authenticated principal is fully privileged (single-owner model). There is no
+separate admin bearer token — the retired `HEADROOM_ADMIN_TOKEN` is ignored.
 """
 
 from __future__ import annotations
@@ -120,6 +120,7 @@ async def recent_errors_count(db: AsyncSession = Depends(get_db)):
 @router.get("/backup")
 async def download_backup(
     include_uploads: bool = Query(True, description="Include uploads/ tree (photos)"),
+    db: AsyncSession = Depends(get_db),
 ):
     """Stream a one-shot tar.gz of /data.
 
@@ -127,6 +128,14 @@ async def download_backup(
     much faster when the photo tree is large.
     """
     filename = backup_service.streaming_filename(include_uploads=include_uploads)
+    # The backup tarball contains the whole DB (plaintext keys, tokens, session
+    # ids, password hashes) — the single highest-value exfil artifact. Audit the
+    # download so a full-dataset export is never invisible (S4/S10).
+    await activity_service.log_activity(
+        db, kind="backup.download", entity_type="system", entity_id=None,
+        summary=f"Backup downloaded ({'full' if include_uploads else 'db-only'}): {filename}",
+    )
+    await db.commit()
     return StreamingResponse(
         backup_service.stream_backup(include_uploads=include_uploads),
         media_type="application/gzip",
@@ -214,9 +223,14 @@ async def set_ebay_creds(data: EbayCredsUpdate, db: AsyncSession = Depends(get_d
     # pasting from a code snippet or env-var docs).
     def _clean(v: str) -> str:
         return v.strip().strip("'\"`")
-    await settings_service._set_setting(db, ebay_service.EBAY_APP_ID_KEY, _clean(data.app_id))  # noqa: SLF001
-    await settings_service._set_setting(db, ebay_service.EBAY_CERT_ID_KEY, _clean(data.cert_id))  # noqa: SLF001
-    await settings_service._set_setting(db, ebay_service.EBAY_MARKETPLACE_KEY, data.marketplace.strip() or "EBAY_US")  # noqa: SLF001
+    await settings_service.set_setting(db, ebay_service.EBAY_APP_ID_KEY, _clean(data.app_id))
+    await settings_service.set_setting(db, ebay_service.EBAY_CERT_ID_KEY, _clean(data.cert_id))
+    await settings_service.set_setting(db, ebay_service.EBAY_MARKETPLACE_KEY, data.marketplace.strip() or "EBAY_US")
+    await activity_service.log_activity(
+        db, kind="settings.ebay_set", entity_type="system", entity_id=None,
+        summary="eBay API credentials set/updated",
+    )
+    await db.commit()
     app_id, _cert, marketplace = await ebay_service._get_creds(db)  # noqa: SLF001
     return EbayCredsStatus(
         configured=True,
@@ -228,8 +242,13 @@ async def set_ebay_creds(data: EbayCredsUpdate, db: AsyncSession = Depends(get_d
 
 @router.delete("/ebay/creds", status_code=204)
 async def delete_ebay_creds(db: AsyncSession = Depends(get_db)):
-    await settings_service._set_setting(db, ebay_service.EBAY_APP_ID_KEY, None)  # noqa: SLF001
-    await settings_service._set_setting(db, ebay_service.EBAY_CERT_ID_KEY, None)  # noqa: SLF001
+    await settings_service.set_setting(db, ebay_service.EBAY_APP_ID_KEY, None)
+    await settings_service.set_setting(db, ebay_service.EBAY_CERT_ID_KEY, None)
+    await activity_service.log_activity(
+        db, kind="settings.ebay_cleared", entity_type="system", entity_id=None,
+        summary="eBay API credentials cleared",
+    )
+    await db.commit()
 
 
 @router.post("/ebay/test")

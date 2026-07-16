@@ -1,6 +1,6 @@
 from collections.abc import AsyncGenerator
 
-from sqlalchemy import inspect, text
+from sqlalchemy import event, inspect, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -10,6 +10,26 @@ engine = create_async_engine(settings.database_url, echo=False)
 async_session = async_sessionmaker(engine, expire_on_commit=False)
 
 
+if engine.dialect.name == "sqlite":
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _sqlite_pragmas(dbapi_conn, _record):  # pragma: no cover - connect hook
+        """Tune SQLite for a multi-writer single-process app on a Pi.
+
+        WAL lets readers proceed during a write; busy_timeout makes writers
+        wait out a lock instead of raising 'database is locked' immediately —
+        directly shrinking the transient-lock error class that could otherwise
+        surface on the import worker and background loops.
+        """
+        cur = dbapi_conn.cursor()
+        try:
+            cur.execute("PRAGMA journal_mode=WAL")
+            cur.execute("PRAGMA busy_timeout=5000")
+            cur.execute("PRAGMA synchronous=NORMAL")
+        finally:
+            cur.close()
+
+
 class Base(DeclarativeBase):
     pass
 
@@ -17,6 +37,7 @@ class Base(DeclarativeBase):
 # Static, fully-formed DDL — column names and types are hard-coded literals,
 # so no interpolation is needed and SQL injection is structurally impossible.
 _HAT_COLUMN_DDL: dict[str, str] = {
+    "custom_style_detail": "ALTER TABLE hats ADD COLUMN custom_style_detail VARCHAR(255)",
     "brand": "ALTER TABLE hats ADD COLUMN brand VARCHAR(80)",
     "model_name": "ALTER TABLE hats ADD COLUMN model_name VARCHAR(120)",
     "model_confidence": "ALTER TABLE hats ADD COLUMN model_confidence VARCHAR(10)",
@@ -98,6 +119,22 @@ def _run_migrations(conn) -> None:
             conn.execute(
                 text("ALTER TABLE hat_colors ADD COLUMN tier VARCHAR(12) DEFAULT 'primary'")
             )
+
+    if "wear_log" in existing_tables:
+        # Enforce one wear per hat per day on already-created tables: dedupe any
+        # pre-constraint rows (keep the earliest), then add the unique index.
+        conn.execute(
+            text(
+                "DELETE FROM wear_log WHERE id NOT IN "
+                "(SELECT MIN(id) FROM wear_log GROUP BY hat_id, worn_at)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_wear_hat_day "
+                "ON wear_log(hat_id, worn_at)"
+            )
+        )
 
     if "hats" in existing_tables:
         conn.execute(
