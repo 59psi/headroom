@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from headroom.config import settings
 from headroom.database import async_session, init_db
 from headroom.routes import api_router
-from headroom.services import activity_service, backup_service, import_service
+from headroom.services import activity_service, backup_service, import_service, mdns_service
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +105,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if os.environ.get("HEADROOM_IMPORT_WORKER_ENABLED", "true").lower() in ("1", "true", "yes"):
         await import_service.start_worker()
 
+    # mDNS LAN discovery (headroom.local) — best-effort, disabled in tests.
+    await mdns_service.start_mdns()
+
     # Activity-log retention pruner — runs once per day in the background
     async def _prune_loop():
         while True:
@@ -130,6 +133,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 except asyncio.CancelledError:
                     pass
         await import_service.stop_worker()
+        await mdns_service.stop_mdns()
 
 
 def _safe_spa_path(full_path: str) -> Path | None:

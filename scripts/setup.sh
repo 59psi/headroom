@@ -205,3 +205,6 @@ echo "  Single server (serves the built SPA):  uv run uvicorn headroom.app:app -
 echo "  Dev servers:   uv run uvicorn headroom.app:app --reload"
 echo "                 cd frontend && npm run dev   # http://localhost:5173"
 echo "  Docker:        docker compose up -d --build # http://localhost:8000"
+echo ""
+echo "  On your LAN it also answers at http://headroom.local:8000 (mDNS;"
+echo "  Docker needs the docker-compose.mdns.yml overlay — see README)."

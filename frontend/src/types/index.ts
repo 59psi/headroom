@@ -177,6 +177,16 @@ export interface ApiKeyTestResult {
   detail: string;
 }
 
+export interface MdnsStatus {
+  enabled: boolean;
+  advertising: boolean;
+  hostname: string;
+  port: number;
+  ip: string | null;
+  url: string | null;
+  error: string | null;
+}
+
 export interface ModelStatus {
   model_id: string;
   source: 'database' | 'environment' | 'default';

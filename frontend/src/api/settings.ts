@@ -1,5 +1,5 @@
 import { apiFetch } from './client';
-import type { ApiKeyStatus, ApiKeyTestResult, ModelStatus, RecentError, BackupInfo, ActivityRow, EbayCredsStatus, ImportJob } from '../types';
+import type { ApiKeyStatus, ApiKeyTestResult, MdnsStatus, ModelStatus, RecentError, BackupInfo, ActivityRow, EbayCredsStatus, ImportJob } from '../types';
 
 export function getLogo() {
   return apiFetch<{ logo_path: string | null }>('/api/settings/logo');
@@ -56,6 +56,10 @@ export function deleteGoogleVisionKey() {
 
 export function getModel() {
   return apiFetch<ModelStatus>('/api/settings/model');
+}
+
+export function getMdnsStatus() {
+  return apiFetch<MdnsStatus>('/api/settings/mdns');
 }
 
 export function setModel(model_id: string) {

@@ -1,0 +1,21 @@
+# mDNS overlay — makes http://headroom.local:8000 resolve on your LAN.
+#
+# Multicast (which mDNS rides on) never crosses Docker's default bridge
+# network, so the container must share the host's network stack. Host
+# networking is Linux/Pi only — on macOS, Docker runs in a VM and this
+# overlay won't reach the LAN (run the app bare-metal there instead; the
+# app advertises mDNS natively).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.mdns.yml up -d --build
+#
+# With host networking the `ports:` mapping is meaningless (hence the
+# !override) — the app binds 0.0.0.0:8000 directly on the host. Host
+# networking claims only port 8000; everything else on the host is free to
+# serve on its own ports.
+#
+# Want Face ID / passkeys on the LAN name? Use docker-compose.https-lan.yml
+# INSTEAD of this overlay — it includes mDNS + host networking + local HTTPS.
+services:
+  headroom:
+    network_mode: host
+    ports: !override []

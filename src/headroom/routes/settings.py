@@ -13,10 +13,11 @@ from headroom.schemas.settings import (
     ApiKeyStatus,
     ApiKeyTestResult,
     ApiKeyUpdate,
+    MdnsStatus,
     ModelStatus,
     ModelUpdate,
 )
-from headroom.services import settings_service
+from headroom.services import mdns_service, settings_service
 from headroom.services.claude_analysis import verify_api_key
 from headroom.utils.photo import validate_image_content_type
 
@@ -171,6 +172,15 @@ async def set_google_vision_key(data: ApiKeyUpdate, db: AsyncSession = Depends(g
 )
 async def delete_google_vision_key(db: AsyncSession = Depends(get_db)):
     await settings_service.clear_google_vision_key(db)
+
+
+# ---------------------------- mDNS status ---------------------------- #
+
+
+@router.get("/mdns", response_model=MdnsStatus)
+async def get_mdns_status():
+    """Read-only — LAN discovery is configured via HEADROOM_MDNS_* env vars."""
+    return MdnsStatus(**mdns_service.mdns_status())
 
 
 # ---------------------------- Claude model -------------------------- #
