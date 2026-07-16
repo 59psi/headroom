@@ -15,6 +15,9 @@ All notable changes are documented here. This project follows
 - README "Run it" now opens with an overview table of every deploy mode
   (default / LAN name / LAN port 80 / LAN HTTPS / internet / bare metal / dev)
   with its command, URL, and passkey support.
+- **Browser-tab favicon is now the Headroom logo** (`favicon.ico` at 16/32/48 +
+  a 32px PNG, generated from the app icon), so tabs no longer fall back to the
+  browser default.
 
 ### Changed
 - **Case-rack model → v2** (`hardware/melin-rack-v2.zip`, replaces

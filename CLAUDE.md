@@ -57,7 +57,7 @@ It is tracked in git (was previously local-only and drifted stale) — keep it c
   - `photos/` — `PhotoCapture` (camera + file picker) + `PhotoCropper` (react-easy-crop modal)
 - `frontend/src/api/` — Typed fetch clients
 - `frontend/src/types/index.ts` — TS interfaces mirroring backend Pydantic schemas
-- `frontend/public/icons/` — PWA icons generated at build time from `seed/branding/logo.png`
+- `frontend/public/icons/` — static PWA app icons (192 / 512 / maskable / apple-touch), derived from `seed/branding/logo.png`. `frontend/public/favicon.ico` + `favicon-32.png` are the browser-tab favicon (same logo); `index.html` links them. Served from `dist/` by the SPA catch-all, so they load pre-auth
 - `frontend/public/manifest.json` — Standalone PWA manifest with `share_target` (Add to Home Screen on iOS produces a fullscreen app; Android Chrome PWA gets a "Share to Headroom" share-sheet entry)
 - `frontend/vite.config.ts` — Bakes `__APP_VERSION__` (from `package.json`) and `__BUILD_SHA__` (from `HEADROOM_BUILD_SHA` env / build-arg, else local git short SHA) into the bundle via Vite's `define`. Footer renders both; `vite-env.d.ts` declares the globals.
 
