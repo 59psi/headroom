@@ -10,10 +10,9 @@ const pkg = JSON.parse(
   readFileSync(resolve(__dirname, 'package.json'), 'utf-8'),
 ) as { version: string }
 
-// Build identifier for `__BUILD_SHA__`: HEADROOM_BUILD_SHA env wins (Docker
-// builds have no .git — the Dockerfile forwards its BUILD_SHA arg through
-// this), then the local git short SHA. Empty when neither is available; the
-// Footer hides it.
+// Build identifier for `__BUILD_SHA__`: the HEADROOM_BUILD_SHA env/build-arg
+// wins (Docker builds have no .git), then the local git short SHA. Empty when
+// neither is available; the Footer hides it.
 function buildSha(): string {
   if (process.env.HEADROOM_BUILD_SHA) return process.env.HEADROOM_BUILD_SHA
   try {

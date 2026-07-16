@@ -1,6 +1,17 @@
+import os
 from pathlib import Path
 
 from pydantic_settings import BaseSettings
+
+
+def env_flag(name: str, default: bool = True) -> bool:
+    """Truthy env toggle ("1"/"true"/"yes", case-insensitive).
+
+    Read live at call time — unlike Settings, which is frozen at import — so
+    tests can flip feature flags per-test via monkeypatch.
+    """
+    raw = os.environ.get(name, "true" if default else "false")
+    return raw.lower() in ("1", "true", "yes")
 
 
 class Settings(BaseSettings):
