@@ -12,6 +12,15 @@ All notable changes are documented here. This project follows
   with no HTTPS and no certificate to trust. The app stays non-root on :8000;
   Caddy owns the low port. Password login only (http isn't a secure context —
   use `docker-compose.https-lan.yml` for passkeys/Face ID).
+- README "Run it" now opens with an overview table of every deploy mode
+  (default / LAN name / LAN port 80 / LAN HTTPS / internet / bare metal / dev)
+  with its command, URL, and passkey support.
+
+### Changed
+- **Case-rack model → v2** (`hardware/melin-rack-v2.zip`, replaces
+  `melin-stand-slim.zip`). Bay is sized for the case measured **zipped shut**
+  (`case_w` 200 → 220 mm, footprint ~246 × 258 mm), print profile bumped to
+  4 walls / 20% infill, and a ready-to-slice Bambu Studio `.3mf` is included.
 
 ## [2.0.0] — 2026-07-16 — _production hardening_
 
