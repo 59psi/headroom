@@ -165,6 +165,18 @@ Host networking only claims the ports the app actually binds (8000 here) —
 the rest of the Pi is unaffected, and other services can keep running on
 their own ports.
 
+**Prefer a clean port 80, no HTTPS?** Stack the plain-HTTP overlay instead — a
+Caddy sidecar serves **http://headroom.local** (and `http://<host-ip>`) on
+port 80 with no certificate to trust:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.http80.yml up -d --build
+```
+
+Trade-off: `http://` isn't a secure context, so passkeys / Face ID aren't
+offered — password login only. Use one front-door overlay at a time
+(`mdns` → `:8000`, `http80` → `:80`, or `https-lan` → `:443`).
+
 ### HTTPS on the LAN — Face ID / passkeys at `https://headroom.local`
 
 Browsers only offer passkeys in a **secure context**, and Let's Encrypt can't
