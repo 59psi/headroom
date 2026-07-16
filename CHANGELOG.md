@@ -6,6 +6,8 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.0.1] — 2026-07-16 — _test hardening_
+
 ### Added
 - **Plain-HTTP-on-80 deploy overlay** (`docker-compose.http80.yml`) — a Caddy
   sidecar serves `http://headroom.local` (and `http://<host-ip>`) on port 80
@@ -24,6 +26,24 @@ All notable changes are documented here. This project follows
   `melin-stand-slim.zip`). Bay is sized for the case measured **zipped shut**
   (`case_w` 200 → 220 mm, footprint ~246 × 258 mm), print profile bumped to
   4 walls / 20% infill, and a ready-to-slice Bambu Studio `.3mf` is included.
+
+### Tests
+- **Assertion-strength pass over the whole suite.** Refined tests whose name
+  promised a behavior their assertions never verified — they stayed green even
+  when that behavior broke. Replacing a photo now checks the old file actually
+  left disk (not just that the path string changed); image conversion decodes
+  the output bytes as JPEG/RGB rather than trusting the `.jpg` suffix; the
+  backup download is opened as a gzip tar and walked instead of measured by
+  length; the `hat.created` audit row is tied to the specific hat; and wear's
+  `date_last_worn` is asserted against today's date.
+- **New coverage for previously-untested paths.** The token-gated share-photo
+  streamer's path-traversal guard, and the eBay comparable-listings service
+  (query hierarchy, degrade-to-link-only, and price aggregation with the
+  network seam stubbed — no live API, per house rule). A duplicate `/health`
+  test was removed.
+- Three of these guards are **mutation-verified**: breaking the code (removing
+  the photo `unlink`, swapping the JPEG encoder, dropping the traversal check)
+  makes the corresponding test fail, proving it catches the real regression.
 
 ## [2.0.0] — 2026-07-16 — _production hardening_
 
