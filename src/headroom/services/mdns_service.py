@@ -20,6 +20,9 @@ logger = logging.getLogger(__name__)
 
 _aiozc = None  # zeroconf.asyncio.AsyncZeroconf | None — module-level singleton
 
+# Live outcome of the last start/stop, surfaced read-only on the Settings page.
+_status: dict = {"advertising": False, "ip": None, "url": None, "error": None}
+
 
 def mdns_enabled() -> bool:
     return os.environ.get("HEADROOM_MDNS_ENABLED", "true").lower() in ("1", "true", "yes")
@@ -36,6 +39,22 @@ def mdns_port() -> int:
         return int(os.environ.get("HEADROOM_MDNS_PORT", "8000"))
     except ValueError:
         return 8000
+
+
+def _advertised_url(host: str, port: int) -> str:
+    scheme = "https" if port == 443 else "http"
+    suffix = "" if port in (80, 443) else f":{port}"
+    return f"{scheme}://{host}.local{suffix}"
+
+
+def mdns_status() -> dict:
+    """Read-only snapshot for the Settings page — config is env-only."""
+    return {
+        "enabled": mdns_enabled(),
+        "hostname": f"{mdns_hostname()}.local",
+        "port": mdns_port(),
+        **_status,
+    }
 
 
 def _lan_ip() -> str | None:
@@ -58,6 +77,7 @@ async def start_mdns() -> None:
     ip = _lan_ip()
     if ip is None:
         logger.warning("mDNS: no LAN address found — not advertising")
+        _status["error"] = "no LAN address found"
         return
     host, port = mdns_hostname(), mdns_port()
     aiozc = None
@@ -79,9 +99,13 @@ async def start_mdns() -> None:
         # lands in the except below.
         await aiozc.async_register_service(info, allow_name_change=True)
         _aiozc = aiozc
-        logger.info("mDNS: advertising http://%s.local:%d → %s", host, port, ip)
+        _status.update(
+            advertising=True, ip=ip, url=_advertised_url(host, port), error=None
+        )
+        logger.info("mDNS: advertising %s → %s", _advertised_url(host, port), ip)
     except Exception as exc:  # noqa: BLE001 — LAN convenience, never fatal
         logger.warning("mDNS registration failed (%s.local): %s", host, exc)
+        _status["error"] = str(exc)
         if aiozc is not None:
             try:
                 await aiozc.async_close()
@@ -100,3 +124,4 @@ async def stop_mdns() -> None:
     except Exception as exc:  # noqa: BLE001
         logger.debug("mDNS shutdown error: %s", exc)
     _aiozc = None
+    _status.update(advertising=False, ip=None, url=None)

@@ -36,6 +36,18 @@ class ModelUpdate(BaseModel):
     model_id: str = Field(min_length=3, max_length=120)
 
 
+class MdnsStatus(BaseModel):
+    """Read-only LAN discovery state — configured via HEADROOM_MDNS_* env only."""
+
+    enabled: bool
+    advertising: bool
+    hostname: str  # e.g. "headroom.local"
+    port: int
+    ip: str | None = None
+    url: str | None = None
+    error: str | None = None
+
+
 class RecentError(BaseModel):
     hat_id: int
     display_id: str | None

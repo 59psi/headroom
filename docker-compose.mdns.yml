@@ -9,8 +9,13 @@
 #   docker compose -f docker-compose.yml -f docker-compose.mdns.yml up -d --build
 #
 # With host networking the `ports:` mapping is meaningless (hence the
-# !reset) — the app binds 0.0.0.0:8000 directly on the host.
+# !override) — the app binds 0.0.0.0:8000 directly on the host. Host
+# networking claims only port 8000; everything else on the host is free to
+# serve on its own ports.
+#
+# Want Face ID / passkeys on the LAN name? Use docker-compose.https-lan.yml
+# INSTEAD of this overlay — it includes mDNS + host networking + local HTTPS.
 services:
   headroom:
     network_mode: host
-    ports: !reset []
+    ports: !override []

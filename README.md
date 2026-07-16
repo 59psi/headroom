@@ -161,9 +161,26 @@ network, so stack the mDNS overlay (host networking — Linux/Pi only):
 docker compose -f docker-compose.yml -f docker-compose.mdns.yml up -d --build
 ```
 
-> Passkeys won't be offered on `http://headroom.local` — browsers require a
-> secure context (HTTPS or `localhost`). Password login works fine; use the
-> HTTPS overlay if you want Face ID on the LAN name.
+Host networking only claims the ports the app actually binds (8000 here) —
+the rest of the Pi is unaffected, and other services can keep running on
+their own ports.
+
+**Want Face ID / passkeys on the LAN name?** Browsers only offer passkeys in
+a secure context, and Let's Encrypt can't issue certificates for `.local` —
+so there's a LAN HTTPS overlay that fronts the app with Caddy using its
+built-in local CA (use it *instead of* the mDNS overlay — it includes it):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.https-lan.yml up -d --build
+```
+
+Then trust Caddy's root certificate once per device (passkeys need a
+*trusted* cert): export it with `docker compose cp
+caddy:/data/caddy/pki/authorities/local/root.crt headroom-ca.crt`, AirDrop it
+to your iPhone, install the profile, and enable it under Settings → General →
+About → Certificate Trust Settings. After that, **https://headroom.local**
+serves with a padlock and Face ID sign-in works. Password login never needed
+any of this.
 
 ### Local (no Docker)
 
@@ -276,7 +293,7 @@ link-only if the API is unreachable.
 | `HEADROOM_BACKUP_RETENTION_DAYS` | `7` | Rolling backups kept on disk |
 | `HEADROOM_IMPORT_WORKER_ENABLED` | `true` | Bulk-import background worker |
 | `HEADROOM_ACTIVITY_LOG_RETENTION_DAYS` | `90` | Audit rows kept (pruned daily) |
-| `HEADROOM_MDNS_ENABLED` | `true` | Advertise `headroom.local` on the LAN (Docker: stack `docker-compose.mdns.yml`) |
+| `HEADROOM_MDNS_ENABLED` | `true` | Advertise `headroom.local` on the LAN (Docker: stack `docker-compose.mdns.yml`, or `docker-compose.https-lan.yml` for passkey-grade HTTPS) |
 | `HEADROOM_MDNS_HOSTNAME` | `headroom` | mDNS host label — resolves as `<label>.local` |
 | `HEADROOM_MDNS_PORT` | `8000` | Port the mDNS advertisement points at |
 

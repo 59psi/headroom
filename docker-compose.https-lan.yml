@@ -1,0 +1,49 @@
+# LAN HTTPS overlay — Face ID / passkeys on https://headroom.local, no public
+# domain needed. Caddy terminates TLS with its own local CA (Let's Encrypt
+# can't issue for .local) and the app advertises the name over mDNS, so this
+# overlay includes host networking — do NOT stack docker-compose.mdns.yml on
+# top, it's built in. Linux/Pi only (host networking).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.https-lan.yml up -d --build
+#
+# Devices must trust Caddy's root certificate once (passkeys require a
+# *trusted* cert, not just TLS). Export it with:
+#
+#   docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt headroom-ca.crt
+#
+# iOS: AirDrop the file → Settings → Profile Downloaded → Install, then
+# Settings → General → About → Certificate Trust Settings → enable full trust.
+# macOS: double-click into Keychain Access → set to Always Trust.
+#
+# Host networking claims only the ports these two processes bind (80, 443,
+# 8000) — anything else on the host can keep serving on other ports.
+services:
+  headroom:
+    network_mode: host
+    ports: !override []
+    environment:
+      # Advertise the HTTPS front door, not the bare uvicorn port.
+      HEADROOM_MDNS_PORT: "443"
+      HEADROOM_RP_ID: "${HEADROOM_MDNS_HOSTNAME:-headroom}.local"
+      HEADROOM_ORIGIN: "https://${HEADROOM_MDNS_HOSTNAME:-headroom}.local"
+      HEADROOM_CORS_ORIGINS: '["https://${HEADROOM_MDNS_HOSTNAME:-headroom}.local"]'
+      # Caddy reaches uvicorn over loopback on the shared host stack; :8000
+      # stays LAN-reachable here, so trust forwarded headers from loopback
+      # ONLY (a LAN client hitting :8000 directly must not spoof its IP).
+      FORWARDED_ALLOW_IPS: "127.0.0.1"
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: headroom-caddy
+    restart: unless-stopped
+    network_mode: host
+    command: caddy reverse-proxy --from "https://${HEADROOM_MDNS_HOSTNAME:-headroom}.local" --to http://localhost:8000 --internal-certs
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - headroom
+
+volumes:
+  caddy-data:
+  caddy-config:

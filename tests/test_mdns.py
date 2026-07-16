@@ -48,6 +48,29 @@ async def test_mdns_hostname_normalization(monkeypatch):
     assert mdns_service.mdns_hostname() == "headroom"
 
 
+async def test_advertised_url_scheme_and_port():
+    assert mdns_service._advertised_url("headroom", 8000) == "http://headroom.local:8000"
+    assert mdns_service._advertised_url("headroom", 443) == "https://headroom.local"
+    assert mdns_service._advertised_url("headroom", 80) == "http://headroom.local"
+    assert mdns_service._advertised_url("hats", 9000) == "http://hats.local:9000"
+
+
+async def test_mdns_status_endpoint_disabled(client):
+    """conftest disables mDNS suite-wide → endpoint reports disabled, idle."""
+    resp = await client.get("/api/settings/mdns")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["enabled"] is False
+    assert body["advertising"] is False
+    assert body["hostname"] == "headroom.local"
+    assert body["url"] is None
+
+
+async def test_mdns_status_endpoint_requires_auth(anon_client):
+    resp = await anon_client.get("/api/settings/mdns")
+    assert resp.status_code == 401
+
+
 async def test_mdns_port_parsing(monkeypatch):
     monkeypatch.setenv("HEADROOM_MDNS_PORT", "9000")
     assert mdns_service.mdns_port() == 9000
