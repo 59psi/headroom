@@ -4,10 +4,30 @@ All notable changes are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [1.3.1] — 2026-07-16 — _production-hardening pass_
+## [2.0.0] — 2026-07-16 — _production hardening_
 
-A forensic multi-agent review (code-archaeology) gated the v1.3 line for
-production; this release fixes every finding. No schema-breaking changes.
+A forensic multi-agent review (code-archaeology) gated the v1.x line for
+production; this release fixes every finding and folds in the preceding
+cleanup pass. Databases upgrade in place — no schema-breaking changes — but
+two operational interfaces changed, hence the major bump.
+
+### Breaking
+- **`BUILD_SHA` build arg renamed to `HEADROOM_BUILD_SHA`.** Stamp the footer
+  with `HEADROOM_BUILD_SHA=$(git rev-parse --short HEAD) docker compose up
+  --build`. The old `BUILD_SHA` name is no longer read.
+- **The Docker image install is now `uv sync --frozen` only** (no unpinned
+  fallback). A `uv.lock` / `pyproject.toml` mismatch fails the build instead
+  of silently resolving fresh versions — run `uv lock` and commit if it errors.
+- **Changing your password now rotates the API bearer token** as well as
+  revoking other sessions. Cookie-less clients (the iOS Shortcut) must copy
+  the new token from Settings → Account after a password change.
+
+### Changed (cleanup pass)
+- mDNS advertising registers off the boot path (≈1.2 s faster startup) and
+  withdraws with a single goodbye broadcast; the Settings LAN card derives its
+  state instead of caching it. Shared `env_flag()` replaces three copies of the
+  truthy-env idiom.
+- README gains a full step-by-step **HTTPS-on-the-LAN / Face ID** walkthrough.
 
 ### Fixed — reliability
 - **Bulk-import worker can no longer silently die.** The worker loop now
