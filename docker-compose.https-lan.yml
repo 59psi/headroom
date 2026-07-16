@@ -6,14 +6,8 @@
 #
 #   docker compose -f docker-compose.yml -f docker-compose.https-lan.yml up -d --build
 #
-# Devices must trust Caddy's root certificate once (passkeys require a
-# *trusted* cert, not just TLS). Export it with:
-#
-#   docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt headroom-ca.crt
-#
-# iOS: AirDrop the file → Settings → Profile Downloaded → Install, then
-# Settings → General → About → Certificate Trust Settings → enable full trust.
-# macOS: double-click into Keychain Access → set to Always Trust.
+# Each device must then trust Caddy's root certificate once — the full
+# per-device walkthrough lives in the README ("HTTPS on the LAN").
 #
 # Host networking claims only the ports these two processes bind (80, 443,
 # 8000) — anything else on the host can keep serving on other ports.
@@ -32,6 +26,9 @@ services:
       # ONLY (a LAN client hitting :8000 directly must not spoof its IP).
       FORWARDED_ALLOW_IPS: "127.0.0.1"
 
+  # Deliberately self-contained rather than layered on docker-compose.https.yml
+  # (keeps the run command to two -f flags) — keep this block in sync with the
+  # caddy service there.
   caddy:
     image: caddy:2-alpine
     container_name: headroom-caddy

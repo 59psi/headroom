@@ -19,6 +19,7 @@ services:
       # published in this topology; Caddy is the sole reachable client.
       FORWARDED_ALLOW_IPS: "*"
 
+  # Keep this block in sync with the caddy service in docker-compose.https-lan.yml.
   caddy:
     image: caddy:2-alpine
     container_name: headroom-caddy
