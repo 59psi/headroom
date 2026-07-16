@@ -295,6 +295,10 @@ async def undispose_hat(db: AsyncSession, hat_id: int) -> Hat:
     if target_case_id is not None:
         try:
             await _validate_capacity(db, target_case_id, hat.is_beanie, exclude_hat_id=hat.id)
+            # Reassign to a fresh slot: the hat's old position may have been
+            # taken by another hat added while it was disposed. Keeping the
+            # stale position_in_case would duplicate display IDs / QR labels.
+            hat.position_in_case = await _get_next_position(db, target_case_id)
         except HTTPException:
             hat.case_id = None
             hat.position_in_case = None

@@ -9,7 +9,11 @@ from headroom.config import settings
 from headroom.database import get_db
 from headroom.schemas.case import CaseCreate, CaseDetail, CaseRead, CaseUpdate, HatSummary
 from headroom.services import case_service
-from headroom.utils.photo import generate_filename, process_image, validate_image_content_type
+from headroom.utils.photo import (
+    generate_filename,
+    process_image_async,
+    validate_image_content_type,
+)
 
 router = APIRouter(prefix="/api/cases", tags=["cases"])
 
@@ -116,8 +120,10 @@ async def upload_case_photo(
         tmp_path = Path(tmp.name)
 
     output_path = upload_dir / filename
-    final_path = process_image(tmp_path, output_path)
-    tmp_path.unlink(missing_ok=True)
+    try:
+        final_path = await process_image_async(tmp_path, output_path)
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
     # Delete old photo if exists
     if case.photo_path:

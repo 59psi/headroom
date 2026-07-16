@@ -41,9 +41,9 @@ EBAY_MARKETPLACE_KEY = "ebay_marketplace"  # default EBAY_US
 
 async def _get_creds(db: AsyncSession) -> tuple[str | None, str | None, str]:
     """Returns (app_id, cert_id, marketplace) — None when not configured."""
-    app_id = await settings_service._get_setting(db, EBAY_APP_ID_KEY)  # noqa: SLF001
-    cert_id = await settings_service._get_setting(db, EBAY_CERT_ID_KEY)  # noqa: SLF001
-    marketplace = await settings_service._get_setting(db, EBAY_MARKETPLACE_KEY) or "EBAY_US"  # noqa: SLF001
+    app_id = await settings_service.get_setting(db, EBAY_APP_ID_KEY)
+    cert_id = await settings_service.get_setting(db, EBAY_CERT_ID_KEY)
+    marketplace = await settings_service.get_setting(db, EBAY_MARKETPLACE_KEY) or "EBAY_US"
     # Env fallbacks for ops users who'd rather inject via docker-compose
     app_id = app_id or os.environ.get("HEADROOM_EBAY_APP_ID")
     cert_id = cert_id or os.environ.get("HEADROOM_EBAY_CERT_ID")

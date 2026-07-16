@@ -61,9 +61,33 @@ def _seed_branding(target: Path) -> None:
         shutil.copy2(src, dest)
 
 
+def _warn_if_multiprocess() -> None:
+    """Headroom is single-process by design — warn loudly if run with >1 worker.
+
+    The login rate limiter, passkey challenge store, import queue, token caches,
+    and mDNS singleton are all in-memory and process-local. A second worker
+    silently breaks passkey login (~50%), halves rate limiting, and can
+    double-process imports into duplicate hats. Nothing shared backs them, so
+    this is a hard constraint, not a tuning knob (R8).
+    """
+    for var in ("WEB_CONCURRENCY", "UVICORN_WORKERS", "GUNICORN_WORKERS"):
+        raw = os.environ.get(var)
+        try:
+            if raw is not None and int(raw) > 1:
+                logger.warning(
+                    "%s=%s but Headroom must run as a SINGLE process — its rate "
+                    "limiter, passkey challenges, import queue and mDNS are all "
+                    "in-memory. Run one worker or expect broken auth/imports.",
+                    var, raw,
+                )
+        except ValueError:
+            pass
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     _configure_logging()
+    _warn_if_multiprocess()
     settings.upload_dir.mkdir(parents=True, exist_ok=True)
     (settings.upload_dir / "cases").mkdir(exist_ok=True)
     (settings.upload_dir / "hats").mkdir(exist_ok=True)
@@ -77,9 +101,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from headroom.services import auth_service, hat_service, settings_service
 
     async with async_session() as db:
-        if await settings_service._get_setting(db, "color_names_normalized_v1") is None:
+        if await settings_service.get_setting(db, "color_names_normalized_v1") is None:
             changed = await hat_service.normalize_existing_colors(db)
-            await settings_service._set_setting(db, "color_names_normalized_v1", "done")
+            await settings_service.set_setting(db, "color_names_normalized_v1", "done")
             if changed:
                 logger.info("Normalized general_color on %d existing hat colors", changed)
         if await auth_service.user_count(db) == 0:

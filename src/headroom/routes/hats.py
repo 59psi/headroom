@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.config import settings
@@ -19,13 +20,11 @@ from headroom.schemas.hat import (
     HatUpdate,
     WearCreate,
 )
-from headroom.services import hat_service, settings_service
-from headroom.services.claude_analysis import ClaudeAnalysisError, analyze_hat_image
+from headroom.services import hat_service
+from headroom.services.color_extraction import normalize_hex_name
 from headroom.services.hat_analysis_pipeline import (
-    _apply_analysis,
     finalize_hat_photo,
-    refresh_melin_resale,
-    run_fallback_analysis,
+    reanalyze_existing_photo,
 )
 from headroom.utils.photo import (
     generate_filename,
@@ -173,10 +172,19 @@ async def update_hat_colors(
         await db.delete(color)
 
     for c in data.colors:
+        # Normalize general_color onto the curated palette from the hex, exactly
+        # as the analysis pipeline does — otherwise a manually edited hat stores
+        # the client's free-text value verbatim and silently drops out of the
+        # general_color chip search (which matches on the normalized palette).
+        general = (
+            normalize_hex_name(c.hex_value, c.general_color or c.color_name)
+            if c.hex_value
+            else (c.general_color or "")
+        )
         db.add(HatColor(
             hat_id=hat.id,
             color_name=c.color_name,
-            general_color=c.general_color or "",
+            general_color=general,
             hex_value=c.hex_value,
             dominance_rank=c.dominance_rank,
             tier=c.tier or "primary",
@@ -226,7 +234,12 @@ async def upload_hat_photo(
 
 @router.post("/{hat_id}/reanalyze", response_model=HatRead)
 async def reanalyze_hat(hat_id: int, db: AsyncSession = Depends(get_db)):
-    """Re-run Claude analysis against the current photo without re-uploading."""
+    """Re-run Claude analysis against the current photo without re-uploading.
+
+    Shares the analysis choreography with the upload pipeline
+    (`reanalyze_existing_photo`) — bg removal is skipped since the stored photo
+    is already the canonical cutout.
+    """
     hat = await hat_service.get_hat(db, hat_id)
     if not hat.photo_path:
         raise HTTPException(status_code=400, detail="Hat has no photo to analyze")
@@ -234,41 +247,12 @@ async def reanalyze_hat(hat_id: int, db: AsyncSession = Depends(get_db)):
     if not photo_path.exists():
         raise HTTPException(status_code=404, detail="Photo file missing on disk")
 
-    # Re-running analysis re-uses the existing photo; bg removal already done.
-    api_key, _source = await settings_service.get_anthropic_key(db)
-    if not api_key:
-        # No Claude — try the fallback (mask colors + Google logo brand).
-        applied = await run_fallback_analysis(
-            db, hat, photo_path, reason="No Anthropic API key configured"
+    applied = await reanalyze_existing_photo(db, hat, photo_path)
+    if not applied:
+        raise HTTPException(
+            status_code=400,
+            detail="No Anthropic API key configured (and no fallback data available)",
         )
-        if not applied:
-            raise HTTPException(
-                status_code=400,
-                detail="No Anthropic API key configured (and no fallback data available)",
-            )
-        await db.commit()
-        db.expire_all()
-        return _hat_to_read(await hat_service.get_hat(db, hat_id))
-    model_id, _msrc = await settings_service.get_anthropic_model(db)
-
-    try:
-        analysis = await analyze_hat_image(
-            photo_path, api_key,
-            model=model_id, selected_style=hat.style,
-        )
-    except ClaudeAnalysisError as exc:
-        hat.analysis_status = "error"
-        hat.analysis_error = str(exc)
-        hat.analyzed_at = datetime.now(timezone.utc)
-        await run_fallback_analysis(
-            db, hat, photo_path, reason=f"Claude analysis failed: {exc}"
-        )
-        await db.commit()
-        db.expire_all()
-        return _hat_to_read(await hat_service.get_hat(db, hat_id))
-
-    _apply_analysis(hat, analysis)
-    await refresh_melin_resale(hat)
     await db.commit()
     db.expire_all()
     return _hat_to_read(await hat_service.get_hat(db, hat_id))
@@ -290,7 +274,12 @@ async def log_wear(
         db.add(WearLog(hat_id=hat.id, worn_at=worn_at))
         if hat.date_last_worn is None or worn_at > hat.date_last_worn:
             hat.date_last_worn = worn_at
-        await db.commit()
+        try:
+            await db.commit()
+        except IntegrityError:
+            # A concurrent tap won the same-day slot (uq_wear_hat_day) — the
+            # day is already logged, so this tap is simply a no-op.
+            await db.rollback()
         db.expire_all()
     return _hat_to_read(await hat_service.get_hat(db, hat_id))
 
