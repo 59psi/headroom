@@ -146,6 +146,25 @@ HEADROOM_DOMAIN=hats.example.com \
 
 See the [Operations guide](docs/OPERATIONS.md) for the full security posture.
 
+### Find it on your LAN — `headroom.local`
+
+The app advertises itself over mDNS, so devices on your network can reach it
+at **http://headroom.local:8000** — no IP address to remember. macOS, iOS,
+and Windows 10+ resolve `.local` names natively; on Linux install
+`avahi-daemon` + `libnss-mdns`. Rename it with `HEADROOM_MDNS_HOSTNAME`
+(disable with `HEADROOM_MDNS_ENABLED=false`).
+
+**Docker needs one extra flag**: multicast can't cross Docker's bridge
+network, so stack the mDNS overlay (host networking — Linux/Pi only):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.mdns.yml up -d --build
+```
+
+> Passkeys won't be offered on `http://headroom.local` — browsers require a
+> secure context (HTTPS or `localhost`). Password login works fine; use the
+> HTTPS overlay if you want Face ID on the LAN name.
+
 ### Local (no Docker)
 
 Prereqs: git + curl. The setup script installs everything else it needs —
@@ -170,6 +189,30 @@ uv run uvicorn headroom.app:app --reload
 # terminal 2 — frontend dev server (port 5173, proxies /api + /uploads to :8000)
 cd frontend && npm run dev
 ```
+
+---
+
+## Updating
+
+```bash
+git pull
+docker compose up --build -d     # Docker
+# — or —
+./scripts/setup.sh --no-docker   # bare metal: re-sync deps + rebuild SPA, then restart uvicorn
+```
+
+**Schema changes are handled automatically** — on every boot, `init_db()`
+applies inline SQLite migrations (`ALTER TABLE` for new columns, `CREATE
+TABLE` for new tables), so an old database upgrades itself the first time
+the new version starts. There's no separate migrate step — but there's no
+downgrade path either, so **take a backup before major upgrades**
+(Settings → Download backup, or grab the latest scheduled tarball from
+`/data/backups/`). Your data always survives a rebuild: the database and
+photos live in the `headroom-data` volume, not the image.
+
+The footer shows the running version — compare against the
+[CHANGELOG](CHANGELOG.md). Details in
+[OPERATIONS.md §5](docs/OPERATIONS.md#5-upgrades).
 
 ---
 
@@ -233,6 +276,9 @@ link-only if the API is unreachable.
 | `HEADROOM_BACKUP_RETENTION_DAYS` | `7` | Rolling backups kept on disk |
 | `HEADROOM_IMPORT_WORKER_ENABLED` | `true` | Bulk-import background worker |
 | `HEADROOM_ACTIVITY_LOG_RETENTION_DAYS` | `90` | Audit rows kept (pruned daily) |
+| `HEADROOM_MDNS_ENABLED` | `true` | Advertise `headroom.local` on the LAN (Docker: stack `docker-compose.mdns.yml`) |
+| `HEADROOM_MDNS_HOSTNAME` | `headroom` | mDNS host label — resolves as `<label>.local` |
+| `HEADROOM_MDNS_PORT` | `8000` | Port the mDNS advertisement points at |
 
 ---
 
