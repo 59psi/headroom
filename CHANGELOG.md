@@ -4,6 +4,15 @@ All notable changes are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Plain-HTTP-on-80 deploy overlay** (`docker-compose.http80.yml`) — a Caddy
+  sidecar serves `http://headroom.local` (and `http://<host-ip>`) on port 80
+  with no HTTPS and no certificate to trust. The app stays non-root on :8000;
+  Caddy owns the low port. Password login only (http isn't a secure context —
+  use `docker-compose.https-lan.yml` for passkeys/Face ID).
+
 ## [2.0.0] — 2026-07-16 — _production hardening_
 
 A forensic multi-agent review (code-archaeology) gated the v1.x line for

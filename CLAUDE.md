@@ -14,7 +14,8 @@ It is tracked in git (was previously local-only and drifted stale) — keep it c
 - `uv run pytest` — Run all tests (must run from project root)
 - `uv run pytest tests/test_disposition.py::test_dispose_sets_fields` — Run single test
 - `docker compose up -d --build` — Run as a Docker container (Pi-friendly)
-- `docker compose -f docker-compose.yml -f docker-compose.mdns.yml up -d --build` — add LAN discovery (`headroom.local`; host networking, Linux/Pi)
+- `docker compose -f docker-compose.yml -f docker-compose.mdns.yml up -d --build` — add LAN discovery (`headroom.local:8000`; host networking, Linux/Pi)
+- `docker compose -f docker-compose.yml -f docker-compose.http80.yml up -d --build` — plain HTTP on port 80 via a Caddy sidecar (`http://headroom.local`, no TLS; password login only)
 - `docker compose -f docker-compose.yml -f docker-compose.https-lan.yml up -d --build` — LAN HTTPS via Caddy's internal CA, so passkeys/Face ID work on `https://headroom.local`
 - `HEADROOM_DOMAIN=hats.example.com docker compose -f docker-compose.yml -f docker-compose.https.yml up -d --build` — internet-facing HTTPS (Let's Encrypt)
 

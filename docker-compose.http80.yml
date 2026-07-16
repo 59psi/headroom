@@ -1,0 +1,38 @@
+# Plain-HTTP-on-80 overlay — reach Headroom at http://headroom.local (and
+# http://<host-ip>) on port 80, with NO HTTPS and nothing to configure.
+#
+# A Caddy sidecar terminates plain HTTP on :80 and reverse-proxies to the app;
+# host networking is used so mDNS reaches the LAN and Caddy can bind :80 (the
+# app itself stays non-root on :8000 — Caddy, not uvicorn, owns the low port).
+# Linux/Pi only. Use this INSTEAD of docker-compose.mdns.yml or
+# docker-compose.https-lan.yml — pick one front door, don't stack them.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.http80.yml up -d --build
+#
+# Trade-off: http:// is NOT a secure context, so passkeys / Face ID are NOT
+# offered — password login only. Want Face ID on the LAN name? use
+# docker-compose.https-lan.yml (Caddy's internal CA on :443).
+#
+# Host networking claims only :80 (Caddy) and :8000 (app); other services on
+# the host keep their own ports. `headroom.local` still needs a client that
+# resolves mDNS (.local) — macOS/iOS/Windows do natively, Linux via avahi.
+services:
+  headroom:
+    network_mode: host
+    ports: !override []
+    environment:
+      # Advertise the port-80 front door over mDNS → clean http://headroom.local
+      # (no :8000). FORWARDED_ALLOW_IPS stays at its 127.0.0.1 default so a LAN
+      # client hitting :8000 directly can't spoof X-Forwarded-For.
+      HEADROOM_MDNS_PORT: "80"
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: headroom-caddy
+    restart: unless-stopped
+    network_mode: host
+    # `--from :80` serves plain HTTP on port 80 for ANY host (headroom.local
+    # AND the raw IP) — no TLS, no certificate to trust anywhere.
+    command: caddy reverse-proxy --from :80 --to http://localhost:8000
+    depends_on:
+      - headroom
