@@ -6,6 +6,14 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+### Changed
+- **Case-rack model → v3** (`hardware/melin-rack-v3.zip`, replaces
+  `melin-rack-v2.zip`). Legs are now **staggered** so adjacent stands interleave
+  side by side at 235 mm center-to-center (C2 symmetric — orientation-free); the
+  side channel is 5 mm tighter for a snugger hold (0.5 mm/side, ~221 mm channel),
+  trimming the footprint to ~241 × 258 mm. Every printable part now ships a
+  ready-to-slice Bambu Studio `.3mf` (bay + top cap + fit test), not just the bay.
+
 ## [2.0.1] — 2026-07-16 — _test hardening_
 
 ### Added

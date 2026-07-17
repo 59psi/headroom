@@ -72,8 +72,9 @@ result, and three independent price signals per hat.
   type-exclusive cases, auto-sequenced display IDs.
 - **3D-printable case rack** — a modular, stackable, supports-free rack that
   gives each Melin travel case its own slide-in bay. OpenSCAD source + STLs in
-  [`hardware/melin-rack-v2.zip`](hardware/melin-rack-v2.zip) (OpenSCAD + STLs
-  + a ready-to-slice `.3mf`); print notes in [`hardware/`](hardware/README.md).
+  [`hardware/melin-rack-v3.zip`](hardware/melin-rack-v3.zip) (OpenSCAD + STLs
+  + ready-to-slice `.3mf` projects); print notes in
+  [`hardware/`](hardware/README.md).
 - **Wear tracking** — one tap logs a wear; get wear counts, cost-per-wear, and
   a list of hats that haven't seen the sun.
 - **Three import paths** — single photo with crop/rotate, bulk import (100
