@@ -6,6 +6,8 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.0.2] — 2026-07-17 — _case-rack v3_
+
 ### Changed
 - **Case-rack model → v3** (`hardware/melin-rack-v3.zip`, replaces
   `melin-rack-v2.zip`). Legs are now **staggered** so adjacent stands interleave
