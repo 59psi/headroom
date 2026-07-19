@@ -11,6 +11,7 @@ import asyncio
 import io
 import logging
 import os
+import shlex
 import tarfile
 import time
 from collections.abc import AsyncGenerator
@@ -139,20 +140,77 @@ def _seconds_since_newest_backup_sync() -> float | None:
     return time.time() - backups[0].stat().st_mtime
 
 
-async def write_scheduled_backup(retention: int) -> Path | None:
-    """Write a timestamped tarball to /data/backups, enforce retention.
+async def _run_upload_hook(path: Path) -> None:
+    """Best-effort off-box copy of a freshly written backup.
 
-    Returns the new file path, or None on failure.
+    Runs ``HEADROOM_BACKUP_UPLOAD_CMD`` (e.g. ``rclone copy {path} box:Backups``)
+    with ``{path}`` / ``{dir}`` / ``{name}`` substituted. Parsed as an argv with
+    ``shlex`` — no shell — so a placeholder expands to a single argument even if
+    a path contains spaces.
+
+    NEVER raises: an upload failure, timeout, or missing uploader binary must
+    not break the local backup or the scheduler loop — the tarball is already
+    safely on disk. The upload target is the operator's problem to keep tidy;
+    Headroom only prunes the local copies.
+    """
+    cmd = backup_upload_cmd()
+    if not cmd:
+        return
+    try:
+        argv = [
+            tok.replace("{path}", str(path))
+            .replace("{dir}", str(path.parent))
+            .replace("{name}", path.name)
+            for tok in shlex.split(cmd)
+        ]
+        if not argv:
+            return
+        proc = await asyncio.create_subprocess_exec(
+            *argv,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            _out, err = await asyncio.wait_for(
+                proc.communicate(), timeout=backup_upload_timeout()
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            logger.warning(
+                "Backup upload timed out after %.0fs: %s",
+                backup_upload_timeout(), argv[0],
+            )
+            return
+        if proc.returncode == 0:
+            logger.info("Backup uploaded off-box: %s", path.name)
+        else:
+            tail = (err or b"").decode("utf-8", "replace").strip()[-500:]
+            logger.warning(
+                "Backup upload failed (rc=%s) for %s: %s",
+                proc.returncode, path.name, tail,
+            )
+    except Exception as exc:  # noqa: BLE001 — off-site copy is best-effort
+        logger.warning("Backup upload hook error for %s: %s", path.name, exc)
+
+
+async def write_scheduled_backup(retention: int) -> Path | None:
+    """Write a timestamped tarball to /data/backups, enforce retention, and
+    (if configured) ship it off-box.
+
+    Returns the new file path, or None on failure. A failed off-box upload does
+    NOT fail the local backup — the file is on disk and the path is returned.
     """
     try:
         target = _backup_dir() / _timestamped_name()
         await asyncio.to_thread(_build_tarball_sync, target)
         await asyncio.to_thread(_enforce_retention, retention)
         logger.info("Scheduled backup written: %s", target.name)
-        return target
     except Exception as exc:  # noqa: BLE001 — never crash the scheduler
         logger.warning("Scheduled backup failed: %s", exc)
         return None
+    await _run_upload_hook(target)  # best-effort, never raises
+    return target
 
 
 async def scheduled_backup_loop(interval_hours: float, retention: int) -> None:
@@ -205,3 +263,22 @@ def backup_retention() -> int:
         return int(os.environ.get("HEADROOM_BACKUP_RETENTION_DAYS", "7"))
     except ValueError:
         return 7
+
+
+def backup_upload_cmd() -> str:
+    """Command run after each scheduled backup to ship it off-box (empty = off).
+
+    Placeholders: ``{path}`` (full path to the new tarball), ``{dir}`` (its
+    directory), ``{name}`` (filename). Sourced from the env here, not pydantic
+    Settings, so a misset value degrades the upload to a no-op instead of
+    crashing the app.
+    """
+    return os.environ.get("HEADROOM_BACKUP_UPLOAD_CMD", "").strip()
+
+
+def backup_upload_timeout() -> float:
+    """Seconds to allow the upload command before killing it (default 600)."""
+    try:
+        return float(os.environ.get("HEADROOM_BACKUP_UPLOAD_TIMEOUT", "600"))
+    except ValueError:
+        return 600.0

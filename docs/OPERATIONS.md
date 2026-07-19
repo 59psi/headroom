@@ -91,7 +91,9 @@ fleet-default, the UI is the per-install override.
 | `HEADROOM_LOG_LEVEL` | `INFO` | Applies when no other logging config is active |
 | `HEADROOM_BACKUP_ENABLED` | `true` | Scheduled backups on/off (on-demand download always works) |
 | `HEADROOM_BACKUP_INTERVAL_HOURS` | `24` | Scheduled backup cadence |
-| `HEADROOM_BACKUP_RETENTION_DAYS` | `7` | Older scheduled backups are pruned |
+| `HEADROOM_BACKUP_RETENTION_DAYS` | `7` | Older *local* scheduled backups are pruned |
+| `HEADROOM_BACKUP_UPLOAD_CMD` | _(unset)_ | Command run after each scheduled backup to ship it off-box; `{path}`/`{dir}`/`{name}` substituted (argv, no shell). Best-effort — see §4 |
+| `HEADROOM_BACKUP_UPLOAD_TIMEOUT` | `600` | Seconds before the upload command is killed |
 | `HEADROOM_IMPORT_WORKER_ENABLED` | `true` | Bulk-import background worker |
 | `HEADROOM_ACTIVITY_LOG_RETENTION_DAYS` | `90` | Audit rows pruned daily |
 | `HEADROOM_MDNS_ENABLED` | `true` | Advertise the app on the LAN via mDNS. Docker needs the `docker-compose.mdns.yml` overlay (host networking) for it to reach the LAN |
@@ -154,6 +156,52 @@ Bare metal: stop the server, then from the project root
 Off-machine safety: periodically copy the newest file out of the backups
 directory (or download via the Settings page) to somewhere that isn't the
 same disk.
+
+### Off-site / remote backups
+
+Local backups still share one disk (the SD card) with the database. Two ways to
+push each backup off the box:
+
+**A. Native upload hook (no separate cron).** Set `HEADROOM_BACKUP_UPLOAD_CMD`
+and Headroom runs it after every scheduled backup, passing the new tarball.
+Placeholders: `{path}` (full path), `{dir}`, `{name}`. It's parsed as an argv
+(no shell), runs off the event loop, is bounded by `HEADROOM_BACKUP_UPLOAD_TIMEOUT`
+(default 600 s), and is **best-effort** — a failed or missing uploader logs a
+warning and never breaks the local backup. Grep `docker compose logs headroom`
+for `Backup uploaded off-box:` to confirm.
+
+The included **`docker-compose.backup-rclone.yml`** overlay wires this to
+[rclone](https://rclone.org) (works with Box, S3, Backblaze B2, Google Drive,
+Dropbox, …). Box has **no native Linux desktop client**, so rclone's `box`
+backend is the supported route on a Pi. One-time: `rclone config` a remote
+(headless → `rclone authorize "box"` on a laptop, paste the token back),
+`chmod 644` the config so the container user can read it, then:
+
+```bash
+export RCLONE_BIN="$(command -v rclone)"
+export RCLONE_CONF="$HOME/.config/rclone/rclone.conf"
+export HEADROOM_BACKUP_REMOTE="box:Headroom-Backups"
+docker compose -f docker-compose.yml -f docker-compose.backup-rclone.yml \
+  -f docker-compose.http80.yml up -d --build   # + your front-door overlay
+```
+
+**B. Host cron (zero app config).** rclone + its OAuth token already live on the
+host, so a cron job avoids the in-container mount/permission fiddliness. Pull a
+fresh, consistent archive from the API and ship it:
+
+```bash
+# /etc/cron.d/headroom-offsite — 02:30 nightly
+30 2 * * * pi  curl -fsS -H "Authorization: Bearer hr_YOUR_API_TOKEN" \
+  http://localhost:8000/api/admin/backup -o /tmp/headroom-$(date +\%F).tar.gz \
+  && rclone move /tmp/headroom-*.tar.gz box:Headroom-Backups
+```
+
+(The API token is the owner's, from Settings → Account / `GET /api/auth/me`.
+`rclone move` deletes the local temp copy after a successful upload.) Same
+recipe targets S3/B2/Drive by changing the remote.
+
+Either way, keep an eye on retention **on the remote** — Headroom only prunes
+its local copies.
 
 ---
 
