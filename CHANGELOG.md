@@ -6,6 +6,20 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.0.3] — 2026-07-17 — _mDNS behind the sidecar_
+
+### Fixed
+- **`headroom.local` not resolving in the Docker host-net / sidecar deploys**
+  (the raw IP worked, the name didn't). The mDNS responder ran in zeroconf's
+  default "all interfaces" mode, so in a host-net container it also bound
+  sockets on `docker0`/`veth` (always present once a second container like the
+  Caddy sidecar is up): a flaky bridge socket could make registration throw and
+  be swallowed (→ never advertises), and even on success the responder leaked
+  onto the bridge and multicast could egress the wrong NIC. It now binds the
+  **detected LAN interface only**. Escape hatch: `HEADROOM_MDNS_INTERFACE` — an
+  IP to pin, or the literal `all` to restore the previous all-interfaces mode.
+  `GET /api/settings/mdns` reports the advertised IP and any error.
+
 ## [2.0.2] — 2026-07-17 — _case-rack v3_
 
 ### Changed

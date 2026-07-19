@@ -184,6 +184,14 @@ Host networking only claims the ports the app actually binds (8000 here) —
 the rest of the Pi is unaffected, and other services can keep running on
 their own ports.
 
+> **If `headroom.local` won't resolve but the raw IP works:** inside a Docker
+> host-net container the responder binds the **detected LAN interface only**, so
+> it can't leak onto `docker0`/`veth` and lose multicast (that leak is the usual
+> cause). On a multi-homed host where auto-detection picks the wrong NIC, pin it
+> with `HEADROOM_MDNS_INTERFACE=<lan-ip>`; set `HEADROOM_MDNS_INTERFACE=all` to
+> fall back to advertising on every interface. `GET /api/settings/mdns` reports
+> the advertised IP and any registration error.
+
 **Prefer a clean port 80, no HTTPS?** Stack the plain-HTTP overlay instead — a
 Caddy sidecar serves **http://headroom.local** (and `http://<host-ip>`) on
 port 80 with no certificate to trust:

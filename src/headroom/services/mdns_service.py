@@ -7,9 +7,12 @@ mDNS-capable client — macOS/iOS natively, Windows 10+, Linux with
 avahi-daemon + nss-mdns.
 
 Best-effort by design: any failure logs a warning and never blocks startup.
-Docker note: multicast never crosses the default bridge network — use the
-docker-compose.mdns.yml overlay (host networking, Linux/Pi only) for the
-name to actually reach the LAN.
+Docker note: multicast never crosses the default bridge network — use one of
+the host-networking overlays (docker-compose.mdns.yml, or the http80 /
+https-lan sidecar overlays) for the name to actually reach the LAN. In a
+host-net container the responder is pinned to the detected LAN interface so it
+doesn't leak onto docker0/veth (see ``_mdns_interfaces``); override with
+``HEADROOM_MDNS_INTERFACE``.
 """
 
 import logging
@@ -43,6 +46,27 @@ def mdns_port() -> int:
         return int(os.environ.get("HEADROOM_MDNS_PORT", "8000"))
     except ValueError:
         return 8000
+
+
+def _mdns_interfaces(lan_ip: str) -> list[str] | None:
+    """Which interface(s) zeroconf should bind to.
+
+    Default: the single detected LAN IP. This matters inside a Docker host-net
+    container (the recommended LAN/sidecar deployment): the host stack there
+    also carries ``docker0`` and transient ``veth``/``br-`` interfaces, and
+    zeroconf's default "all interfaces" mode binds a socket per interface —
+    one flaky bridge socket can make the whole registration throw (caught
+    silently → never advertises), and even when it registers the responder
+    leaks onto the bridge and multicast can egress the wrong NIC, so the name
+    never resolves on the LAN while the raw IP still works.
+
+    Override with ``HEADROOM_MDNS_INTERFACE`` — an explicit IP to bind, or the
+    literal ``all`` to restore zeroconf's pre-2.0.3 all-interfaces behavior.
+    """
+    override = os.environ.get("HEADROOM_MDNS_INTERFACE", "").strip()
+    if override.lower() == "all":
+        return None  # let zeroconf enumerate every interface itself
+    return [override] if override else [lan_ip]
 
 
 def _advertised_url(host: str, port: int) -> str:
@@ -110,14 +134,23 @@ async def start_mdns() -> None:
             server=f"{host}.local.",
             properties={"path": "/"},
         )
-        aiozc = AsyncZeroconf(ip_version=IPVersion.V4Only)
+        # Bind to the LAN interface only (not docker0/veth in a host-net
+        # container) unless HEADROOM_MDNS_INTERFACE overrides it.
+        interfaces = _mdns_interfaces(ip)
+        zc_kwargs = {"ip_version": IPVersion.V4Only}
+        if interfaces is not None:
+            zc_kwargs["interfaces"] = interfaces
+        aiozc = AsyncZeroconf(**zc_kwargs)
         # allow_name_change resolves instance-name conflicts; a conflicting
         # *hostname* (another device already owns <host>.local) raises and
         # lands in the except below.
         await aiozc.async_register_service(info, allow_name_change=True)
         _aiozc = aiozc
         _ip, _error = ip, None
-        logger.info("mDNS: advertising %s → %s", _advertised_url(host, port), ip)
+        logger.info(
+            "mDNS: advertising %s → %s (interfaces=%s)",
+            _advertised_url(host, port), ip, interfaces or "all",
+        )
     except Exception as exc:  # noqa: BLE001 — LAN convenience, never fatal
         logger.warning("mDNS registration failed (%s.local): %s", host, exc)
         _error = str(exc)
