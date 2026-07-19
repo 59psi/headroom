@@ -89,3 +89,56 @@ async def test_mdns_port_parsing(monkeypatch):
     assert mdns_service.mdns_port() == 8000
     monkeypatch.delenv("HEADROOM_MDNS_PORT")
     assert mdns_service.mdns_port() == 8000
+
+
+# ------------------ interface pinning (Docker host-net fix) ------------ #
+
+
+async def test_mdns_interfaces_defaults_to_lan_ip(monkeypatch):
+    monkeypatch.delenv("HEADROOM_MDNS_INTERFACE", raising=False)
+    assert mdns_service._mdns_interfaces("192.168.1.5") == ["192.168.1.5"]
+
+
+async def test_mdns_interfaces_override_and_all(monkeypatch):
+    monkeypatch.setenv("HEADROOM_MDNS_INTERFACE", "10.0.0.9")
+    assert mdns_service._mdns_interfaces("192.168.1.5") == ["10.0.0.9"]
+    # The literal "all" (any case) restores zeroconf's all-interfaces default.
+    monkeypatch.setenv("HEADROOM_MDNS_INTERFACE", "all")
+    assert mdns_service._mdns_interfaces("192.168.1.5") is None
+    monkeypatch.setenv("HEADROOM_MDNS_INTERFACE", "ALL")
+    assert mdns_service._mdns_interfaces("192.168.1.5") is None
+
+
+async def test_start_mdns_pins_lan_interface(monkeypatch):
+    """Regression (the Docker/sidecar bug): the responder must bind the detected
+    LAN interface only — not all interfaces, where docker0/veth break it — and
+    the A-record must carry that LAN IP."""
+    import socket
+
+    import zeroconf.asyncio as zasync
+
+    monkeypatch.setenv("HEADROOM_MDNS_ENABLED", "true")
+    monkeypatch.delenv("HEADROOM_MDNS_INTERFACE", raising=False)
+    monkeypatch.setattr(mdns_service, "_lan_ip", lambda: "192.168.7.42")
+    monkeypatch.setattr(mdns_service, "_aiozc", None)
+
+    captured: dict = {}
+
+    class _FakeAIOZC:
+        def __init__(self, *args, **kwargs):
+            captured["kwargs"] = kwargs
+
+        async def async_register_service(self, info, allow_name_change=False):
+            captured["info"] = info
+
+        async def async_close(self):
+            pass
+
+    monkeypatch.setattr(zasync, "AsyncZeroconf", _FakeAIOZC)
+
+    await mdns_service.start_mdns()
+    try:
+        assert captured["kwargs"].get("interfaces") == ["192.168.7.42"]
+        assert captured["info"].addresses == [socket.inet_aton("192.168.7.42")]
+    finally:
+        await mdns_service.stop_mdns()  # resets the module singleton
