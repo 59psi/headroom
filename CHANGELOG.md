@@ -6,6 +6,12 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+### Docs
+- **"Start fresh / reset the database" instructions** — how to wipe the
+  `headroom-data` volume for a clean install (with the backup-first warning and
+  the `https-lan` Caddy-CA caveat), plus keep-the-cert and keep-the-photos
+  variants. Added to the README `Updating` section and OPERATIONS.md §4.
+
 ## [2.0.3] — 2026-07-17 — _mDNS behind the sidecar_
 
 ### Fixed

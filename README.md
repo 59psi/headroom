@@ -318,6 +318,24 @@ The footer shows the running version — compare against the
 [CHANGELOG](CHANGELOG.md). Details in
 [OPERATIONS.md §5](docs/OPERATIONS.md#5-upgrades).
 
+### Start fresh — reset the database
+
+To wipe everything and set up as a brand-new install (fresh database, no
+hats/cases/photos, first-run "create owner" screen returns), remove the
+`headroom-data` volume — it holds the database, photos, **and** the rolling
+backups, so **download a backup first if you want to keep anything**. Use the
+same `-f` flags you deploy with:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.http80.yml down -v
+docker compose -f docker-compose.yml -f docker-compose.http80.yml up -d --build
+```
+
+On the `https-lan` overlay, `-v` also clears Caddy's local CA (re-trust the
+cert once per device). To keep the cert, or to reset only the database while
+keeping photos, see the variants in
+[OPERATIONS.md §4](docs/OPERATIONS.md#4-backups--restore).
+
 ---
 
 ## Configuring the AI features
