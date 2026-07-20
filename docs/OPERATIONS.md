@@ -155,6 +155,48 @@ Off-machine safety: periodically copy the newest file out of the backups
 directory (or download via the Settings page) to somewhere that isn't the
 same disk.
 
+**Start over (wipe & set up as new)** — reset to a clean install: fresh
+database, no hats/cases/photos, and the first-run "create owner" screen
+returns. The database, photos, *and* rolling backups all live in the
+`headroom-data` volume, so this means removing that volume. **This is
+irreversible — take a backup first** (Settings → Download backup) if you want
+to keep anything.
+
+Full reset (Docker) — use the same `-f` flags you deploy with:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.http80.yml down -v
+docker compose -f docker-compose.yml -f docker-compose.http80.yml up -d --build
+```
+
+`down -v` removes the `headroom-data` volume; the next boot re-creates a fresh
+database and re-seeds the Default Room. **Note:** on the `https-lan` overlay
+`-v` *also* removes Caddy's `caddy-data`/`caddy-config` (its local CA), so each
+device has to re-trust the cert once.
+
+Keep Caddy's cert (reset only the app data) — remove just the one volume:
+
+```bash
+docker compose -f ... down
+docker volume rm "$(docker volume ls -q | grep headroom-data)"
+docker compose -f ... up -d --build
+```
+
+Zero the database but keep photo files on disk — delete the DB files in place
+via a throwaway container while the stack is down (the kept photos become
+orphaned, since the hat rows that referenced them are gone):
+
+```bash
+docker compose down
+docker run --rm -v headroom_headroom-data:/data alpine \
+  sh -c 'rm -f /data/headroom.db /data/headroom.db-wal /data/headroom.db-shm'
+docker compose up -d
+```
+
+Bare metal: stop the server and delete `./headroom.db` (plus the `-wal`/`-shm`
+sidecar files); add `rm -rf ./uploads/*` to drop photos too. Start again and
+you'll land on the first-run setup screen.
+
 ---
 
 ## 5. Upgrades
