@@ -6,6 +6,8 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.0.4] — 2026-07-19 — _off-site backups_
+
 ### Added
 - **Off-site scheduled backups.** New `HEADROOM_BACKUP_UPLOAD_CMD` runs after
   each scheduled backup and ships the new tarball off-box (`{path}`/`{dir}`/
@@ -15,6 +17,12 @@ All notable changes are documented here. This project follows
   wires it to rclone (Box, S3, Backblaze B2, Google Drive, …); OPERATIONS.md §4
   also documents a host-cron alternative. Box has no native Linux client, so
   rclone's `box` backend is the supported path on a Pi.
+
+### Docs
+- **"Start fresh / reset the database" instructions** — how to wipe the
+  `headroom-data` volume for a clean install (with the backup-first warning and
+  the `https-lan` Caddy-CA caveat), plus keep-the-cert and keep-the-photos
+  variants. Added to the README `Updating` section and OPERATIONS.md §4.
 
 ## [2.0.3] — 2026-07-17 — _mDNS behind the sidecar_
 
