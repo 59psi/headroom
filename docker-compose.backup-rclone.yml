@@ -1,0 +1,41 @@
+# Off-site scheduled backups via rclone (Box, S3, Backblaze B2, Drive, …).
+#
+# Every scheduled backup Headroom writes to /data/backups is ALSO copied to a
+# remote you configure. This overlay just wires HEADROOM_BACKUP_UPLOAD_CMD to
+# rclone and mounts rclone + its config into the app container — it stacks onto
+# your normal run command as an extra -f (alongside whichever front-door overlay
+# you use):
+#
+#   docker compose -f docker-compose.yml -f docker-compose.backup-rclone.yml up -d --build
+#   # (add your front-door overlay too, e.g. -f docker-compose.http80.yml)
+#
+# ── One-time host setup ─────────────────────────────────────────────────────
+#   1. Install rclone on the host and configure a remote:
+#          rclone config                 # create e.g. a "box" remote
+#      Headless Pi? Run `rclone authorize "box"` on a laptop with a browser and
+#      paste the token back into `rclone config` on the Pi. (Box has no native
+#      Linux desktop app — rclone's `box` backend is the supported path.)
+#   2. Make the config readable by the container's non-root user. The file holds
+#      an OAuth token, so on a single-user box:
+#          chmod 644 ~/.config/rclone/rclone.conf
+#   3. Export the three vars below (rclone is a single static binary, so bind-
+#      mounting the host copy in works regardless of the app's base image):
+#          export RCLONE_BIN="$(command -v rclone)"
+#          export RCLONE_CONF="$HOME/.config/rclone/rclone.conf"
+#          export HEADROOM_BACKUP_REMOTE="box:Headroom-Backups"   # rclone remote:path
+#
+# Verify the first run landed with: docker compose logs headroom | grep -i 'upload'
+# (look for "Backup uploaded off-box: …"). Retention on the remote is rclone's
+# or the provider's job — Headroom only prunes the LOCAL copies.
+services:
+  headroom:
+    environment:
+      # After each scheduled backup, copy the new tarball to the remote. {path}
+      # expands to the just-written file. `copy` keeps the filename and only
+      # transfers files not already there.
+      HEADROOM_BACKUP_UPLOAD_CMD: "rclone --config /rclone.conf copy {path} ${HEADROOM_BACKUP_REMOTE:-box:Headroom-Backups}"
+      # Give a big first upload room to finish (seconds).
+      HEADROOM_BACKUP_UPLOAD_TIMEOUT: "1800"
+    volumes:
+      - "${RCLONE_BIN:-/usr/bin/rclone}:/usr/local/bin/rclone:ro"
+      - "${RCLONE_CONF:-/root/.config/rclone/rclone.conf}:/rclone.conf:ro"

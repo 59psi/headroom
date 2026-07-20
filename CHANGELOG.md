@@ -6,6 +6,18 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.0.4] — 2026-07-19 — _off-site backups_
+
+### Added
+- **Off-site scheduled backups.** New `HEADROOM_BACKUP_UPLOAD_CMD` runs after
+  each scheduled backup and ships the new tarball off-box (`{path}`/`{dir}`/
+  `{name}` substituted, argv/no-shell, bounded by
+  `HEADROOM_BACKUP_UPLOAD_TIMEOUT`, best-effort — a failed or missing uploader
+  never breaks the local backup). New `docker-compose.backup-rclone.yml` overlay
+  wires it to rclone (Box, S3, Backblaze B2, Google Drive, …); OPERATIONS.md §4
+  also documents a host-cron alternative. Box has no native Linux client, so
+  rclone's `box` backend is the supported path on a Pi.
+
 ### Docs
 - **"Start fresh / reset the database" instructions** — how to wipe the
   `headroom-data` volume for a clean install (with the backup-first warning and
