@@ -6,6 +6,25 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.0.5] — 2026-07-25 — _case-rack top-cap fix (v3.1)_
+
+### Fixed
+- **Case-rack top cap didn't seat on the pegs** (`hardware/melin-rack-v3.zip`).
+  The v3 staggered legs are C2-*rotation* symmetric but **not mirror** symmetric,
+  and the cap installs **flipped** — which mirrors its plan pattern — so the
+  cap's bosses/pockets landed at the wrong positions. The cap is now modeled at
+  the x-mirrored leg positions (`cap_pos` in the `.scad`) so it seats exactly
+  after the flip. **Only the top cap changed**: `melin-rack-rack.stl` and
+  `melin-rack-fit_test.stl` are byte-identical to v3, so already-printed bays
+  and coupons stay good — reprint just the cap.
+
+### Removed
+- `melin-rack-top_cap.3mf` from the model archive. It was sliced from the
+  pre-fix geometry, and shipping a ready-to-print project of a part that doesn't
+  fit is worse than shipping none — slice the corrected
+  `melin-rack-top_cap.stl` instead. The bay and fit-test `.3mf` projects are
+  unaffected and still included.
+
 ## [2.0.4] — 2026-07-19 — _off-site backups_
 
 ### Added
