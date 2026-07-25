@@ -11,14 +11,21 @@ modules stack via tapered pegs at the four corner columns. Print one bay per
 case and grow the tower over time; an optional top cap ties the uppermost pegs
 together and gives a flat top.
 
-**[⬇ Download melin-rack-v3.zip](melin-rack-v3.zip)** (532 KB)
+**[⬇ Download melin-rack-v3.zip](melin-rack-v3.zip)** (467 KB)
 
-> **v3:** the legs are now **staggered** — left and right legs sit at different
+> **v3.1 — top-cap fix (reprint the cap).** The staggered legs are C2-*rotation*
+> symmetric but **not mirror** symmetric, and the cap installs **flipped** —
+> which mirrors its plan pattern. So the original v3 cap's bosses and pockets
+> didn't land on the pegs. The cap is now modeled at the x-mirrored leg
+> positions, so after the flip it seats exactly. **Only the top cap changed** —
+> the bay and fit-test parts are byte-identical to v3, so if you already printed
+> those, keep them and reprint only the cap.
+>
+> **v3:** the legs are **staggered** — left and right legs sit at different
 > depths, so adjacent stands interleave side by side at 235 mm center-to-center
 > (C2 symmetric, so orientation never matters). The side channel is **5 mm
 > tighter** for a snugger hold (0.5 mm/side clearance, ~221 mm channel), which
-> trims the footprint to ~241 × 258 mm. Every printable part now ships as a
-> ready-to-slice Bambu Studio `.3mf`, not just the bay.
+> trims the footprint to ~241 × 258 mm.
 >
 > The case width is still measured **zipped shut** (`case_w = 220 mm`, not the
 > published 200 — the zipper bulge is real). **Measure your own case zipped**
@@ -33,8 +40,7 @@ Everything extracts to a `melin-rack-v3/` folder:
 | `melin-hat-case-rack.scad` | Parametric OpenSCAD source — part selection, case dimensions (measure yours!), and clearances all exposed in the customizer |
 | `melin-rack-v3.3mf` | Ready-to-slice Bambu Studio project for one bay (plate + settings baked in) |
 | `melin-rack-rack.stl` | One stackable bay — print one per case |
-| `melin-rack-top_cap.3mf` | Ready-to-slice Bambu Studio project for the top cap |
-| `melin-rack-top_cap.stl` | Optional lid frame for the top of the stack |
+| `melin-rack-top_cap.stl` | Optional lid frame for the top of the stack (**v3.1 geometry** — slice this yourself; the old cap `.3mf` was built from the pre-fix shape and was removed rather than left to mislead) |
 | `melin-rack-fit_test.3mf` | Ready-to-slice Bambu Studio project for the fit-test coupon |
 | `melin-rack-fit_test.stl` | Small peg + socket coupon (~10 min) — print this **first** to dial in `fit_clear` for your filament |
 
@@ -58,5 +64,8 @@ single / 300 × 320 mm dual); any printer with a comparable bed works.
   loss and it cuts the tall-section time by roughly a third.
 - Print the `fit_test` coupon (~10 min) first to dial in `fit_clear` before
   committing to a full module.
+- The **top cap prints in its modeled orientation and installs flipped** (bosses
+  down onto the tower's pegs). That flip is exactly what the v3.1 geometry
+  accounts for — a pre-v3.1 cap won't seat.
 - To slide cases in wide-side-first instead (shallower, wider rack), swap
   `case_l` and `case_w` in the source.
