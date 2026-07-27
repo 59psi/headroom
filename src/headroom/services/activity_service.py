@@ -9,22 +9,19 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from headroom.config import env_int
 from headroom.models.activity_log import ActivityLog
 
 logger = logging.getLogger(__name__)
 
 
 def _retention_days() -> int:
-    try:
-        return max(1, int(os.environ.get("HEADROOM_ACTIVITY_LOG_RETENTION_DAYS", "90")))
-    except ValueError:
-        return 90
+    return max(1, env_int("HEADROOM_ACTIVITY_LOG_RETENTION_DAYS", 90))
 
 
 async def log_activity(

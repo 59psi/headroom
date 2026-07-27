@@ -20,7 +20,7 @@ import os
 import socket
 from urllib.parse import urlsplit
 
-from headroom.config import env_flag, settings
+from headroom.config import env_flag, env_int, settings
 
 logger = logging.getLogger(__name__)
 
@@ -42,13 +42,10 @@ def mdns_hostname() -> str:
 
 
 def mdns_port() -> int:
-    try:
-        return int(os.environ.get("HEADROOM_MDNS_PORT", "8000"))
-    except ValueError:
-        return 8000
+    return env_int("HEADROOM_MDNS_PORT", 8000)
 
 
-def _mdns_interfaces(lan_ip: str) -> list[str] | None:
+def _mdns_interfaces(lan_ip: str):
     """Which interface(s) zeroconf should bind to.
 
     Default: the single detected LAN IP. This matters inside a Docker host-net
@@ -62,11 +59,16 @@ def _mdns_interfaces(lan_ip: str) -> list[str] | None:
 
     Override with ``HEADROOM_MDNS_INTERFACE`` — an explicit IP to bind, or the
     literal ``all`` to restore zeroconf's pre-2.0.3 all-interfaces behavior.
+
+    Returns whatever zeroconf's ``interfaces=`` accepts: a one-item IP list, or
+    ``InterfaceChoice.All`` (its own default) for the ``all`` escape hatch.
     """
     override = os.environ.get("HEADROOM_MDNS_INTERFACE", "").strip()
     if override.lower() == "all":
-        return None  # let zeroconf enumerate every interface itself
-    return [override] if override else [lan_ip]
+        from zeroconf import InterfaceChoice  # noqa: PLC0415 — lazy, as elsewhere
+
+        return InterfaceChoice.All
+    return [override or lan_ip]
 
 
 def _advertised_url(host: str, port: int) -> str:
@@ -134,13 +136,8 @@ async def start_mdns() -> None:
             server=f"{host}.local.",
             properties={"path": "/"},
         )
-        # Bind to the LAN interface only (not docker0/veth in a host-net
-        # container) unless HEADROOM_MDNS_INTERFACE overrides it.
         interfaces = _mdns_interfaces(ip)
-        zc_kwargs = {"ip_version": IPVersion.V4Only}
-        if interfaces is not None:
-            zc_kwargs["interfaces"] = interfaces
-        aiozc = AsyncZeroconf(**zc_kwargs)
+        aiozc = AsyncZeroconf(ip_version=IPVersion.V4Only, interfaces=interfaces)
         # allow_name_change resolves instance-name conflicts; a conflicting
         # *hostname* (another device already owns <host>.local) raises and
         # lands in the except below.
@@ -149,7 +146,7 @@ async def start_mdns() -> None:
         _ip, _error = ip, None
         logger.info(
             "mDNS: advertising %s → %s (interfaces=%s)",
-            _advertised_url(host, port), ip, interfaces or "all",
+            _advertised_url(host, port), ip, interfaces,
         )
     except Exception as exc:  # noqa: BLE001 — LAN convenience, never fatal
         logger.warning("mDNS registration failed (%s.local): %s", host, exc)
