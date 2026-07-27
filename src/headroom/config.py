@@ -14,6 +14,27 @@ def env_flag(name: str, default: bool = True) -> bool:
     return raw.lower() in ("1", "true", "yes")
 
 
+def env_float(name: str, default: float) -> float:
+    """Numeric env tunable, falling back to `default` when unset or unparseable.
+
+    Same live-read/monkeypatchable contract as `env_flag`, and the same
+    degrade-don't-crash trade the services rely on: a typo'd value turns that
+    one knob back to its default instead of failing app startup.
+    """
+    try:
+        return float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def env_int(name: str, default: int) -> int:
+    """Integer counterpart to `env_float`."""
+    try:
+        return int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
 class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./headroom.db"
     upload_dir: Path = Path("uploads")

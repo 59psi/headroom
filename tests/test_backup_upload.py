@@ -17,11 +17,11 @@ pytestmark = pytest.mark.anyio
 
 
 def _fake_backup(tmp_path: Path) -> Path:
-    # Own subdir so assertions aren't polluted by the autouse uploads fixture,
-    # which also lives under tmp_path.
+    # Own subdir so "nothing else was created" assertions stay airtight, and
+    # the real name builder so this keeps matching an actual backup filename.
     d = tmp_path / "bk"
     d.mkdir(exist_ok=True)
-    p = d / "headroom-backup-2026-01-01T00-00-00Z.tar.gz"
+    p = d / backup_service._timestamped_name()
     p.write_bytes(b"tarball-bytes")
     return p
 
@@ -44,25 +44,25 @@ async def test_upload_hook_runs_command_with_substituted_placeholders(tmp_path, 
     assert shipped.read_bytes() == b"tarball-bytes"  # the real bytes, not a rename
 
 
-async def test_upload_hook_failure_is_swallowed(tmp_path, monkeypatch):
-    """A non-zero exit (e.g. rclone auth failure) must not raise."""
-    monkeypatch.setenv("HEADROOM_BACKUP_UPLOAD_CMD", "false")
-    await backup_service._run_upload_hook(_fake_backup(tmp_path))  # no exception
+@pytest.mark.parametrize(
+    ("cmd", "timeout"),
+    [
+        ("false", None),                                # non-zero exit (auth failure)
+        ("headroom-no-such-binary-xyz {path}", None),   # uploader not installed
+        ("sleep 5", "0.2"),                             # hangs → killed at timeout
+    ],
+    ids=["nonzero-exit", "missing-binary", "timeout"],
+)
+async def test_upload_hook_never_raises(tmp_path, monkeypatch, cmd, timeout):
+    """However the uploader fails, the hook returns quietly.
 
-
-async def test_upload_hook_missing_binary_is_swallowed(tmp_path, monkeypatch):
-    """A missing uploader binary (rclone not installed) must not raise."""
-    monkeypatch.setenv(
-        "HEADROOM_BACKUP_UPLOAD_CMD", "headroom-no-such-binary-xyz {path}"
-    )
-    await backup_service._run_upload_hook(_fake_backup(tmp_path))  # no exception
-
-
-async def test_upload_hook_timeout_is_swallowed(tmp_path, monkeypatch):
-    """A hanging uploader is killed at the timeout, not left to block forever."""
-    monkeypatch.setenv("HEADROOM_BACKUP_UPLOAD_CMD", "sleep 5")
-    monkeypatch.setenv("HEADROOM_BACKUP_UPLOAD_TIMEOUT", "0.2")
-    await backup_service._run_upload_hook(_fake_backup(tmp_path))  # returns promptly
+    The local backup is already safely on disk — an off-box copy that blows up
+    (or hangs) must never propagate into the scheduler loop.
+    """
+    monkeypatch.setenv("HEADROOM_BACKUP_UPLOAD_CMD", cmd)
+    if timeout:
+        monkeypatch.setenv("HEADROOM_BACKUP_UPLOAD_TIMEOUT", timeout)
+    await backup_service._run_upload_hook(_fake_backup(tmp_path))
 
 
 async def test_scheduled_backup_ships_off_box_and_local_survives(tmp_path, monkeypatch):

@@ -100,13 +100,15 @@ async def test_mdns_interfaces_defaults_to_lan_ip(monkeypatch):
 
 
 async def test_mdns_interfaces_override_and_all(monkeypatch):
+    from zeroconf import InterfaceChoice
+
     monkeypatch.setenv("HEADROOM_MDNS_INTERFACE", "10.0.0.9")
     assert mdns_service._mdns_interfaces("192.168.1.5") == ["10.0.0.9"]
     # The literal "all" (any case) restores zeroconf's all-interfaces default.
     monkeypatch.setenv("HEADROOM_MDNS_INTERFACE", "all")
-    assert mdns_service._mdns_interfaces("192.168.1.5") is None
+    assert mdns_service._mdns_interfaces("192.168.1.5") is InterfaceChoice.All
     monkeypatch.setenv("HEADROOM_MDNS_INTERFACE", "ALL")
-    assert mdns_service._mdns_interfaces("192.168.1.5") is None
+    assert mdns_service._mdns_interfaces("192.168.1.5") is InterfaceChoice.All
 
 
 async def test_start_mdns_pins_lan_interface(monkeypatch):

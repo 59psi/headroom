@@ -18,7 +18,7 @@ from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 from pathlib import Path
 
-from headroom.config import env_flag, settings
+from headroom.config import env_flag, env_float, env_int, settings
 
 logger = logging.getLogger(__name__)
 
@@ -156,6 +156,7 @@ async def _run_upload_hook(path: Path) -> None:
     cmd = backup_upload_cmd()
     if not cmd:
         return
+    timeout = backup_upload_timeout()
     try:
         argv = [
             tok.replace("{path}", str(path))
@@ -163,29 +164,29 @@ async def _run_upload_hook(path: Path) -> None:
             .replace("{name}", path.name)
             for tok in shlex.split(cmd)
         ]
-        if not argv:
-            return
+        # stdout is discarded, so never buffer it: a verbose uploader
+        # (`rclone --progress`) would otherwise stream megabytes into memory
+        # for the whole transfer — on a 1 GB Pi that matters.
         proc = await asyncio.create_subprocess_exec(
             *argv,
-            stdout=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )
         try:
-            _out, err = await asyncio.wait_for(
-                proc.communicate(), timeout=backup_upload_timeout()
-            )
+            _out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except asyncio.TimeoutError:
             proc.kill()
             await proc.wait()
             logger.warning(
-                "Backup upload timed out after %.0fs: %s",
-                backup_upload_timeout(), argv[0],
+                "Backup upload timed out after %.0fs: %s", timeout, argv[0]
             )
             return
         if proc.returncode == 0:
             logger.info("Backup uploaded off-box: %s", path.name)
         else:
-            tail = (err or b"").decode("utf-8", "replace").strip()[-500:]
+            # Slice the bytes before decoding — only the tail is logged, and a
+            # chatty failure shouldn't cost a full-size str to throw away.
+            tail = (err or b"")[-4000:].decode("utf-8", "replace").strip()[-500:]
             logger.warning(
                 "Backup upload failed (rc=%s) for %s: %s",
                 proc.returncode, path.name, tail,
@@ -252,17 +253,11 @@ def backup_enabled() -> bool:
 
 
 def backup_interval_hours() -> float:
-    try:
-        return float(os.environ.get("HEADROOM_BACKUP_INTERVAL_HOURS", "24"))
-    except ValueError:
-        return 24.0
+    return env_float("HEADROOM_BACKUP_INTERVAL_HOURS", 24.0)
 
 
 def backup_retention() -> int:
-    try:
-        return int(os.environ.get("HEADROOM_BACKUP_RETENTION_DAYS", "7"))
-    except ValueError:
-        return 7
+    return env_int("HEADROOM_BACKUP_RETENTION_DAYS", 7)
 
 
 def backup_upload_cmd() -> str:
@@ -278,7 +273,4 @@ def backup_upload_cmd() -> str:
 
 def backup_upload_timeout() -> float:
     """Seconds to allow the upload command before killing it (default 600)."""
-    try:
-        return float(os.environ.get("HEADROOM_BACKUP_UPLOAD_TIMEOUT", "600"))
-    except ValueError:
-        return 600.0
+    return env_float("HEADROOM_BACKUP_UPLOAD_TIMEOUT", 600.0)
