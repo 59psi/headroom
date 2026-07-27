@@ -39,6 +39,9 @@ npm-debug.log*
 
 # Database / uploads
 *.db
+# WAL-mode sidecars — `*.db` doesn't match these, and they hold real data
+*.db-wal
+*.db-shm
 *.sqlite
 *.sqlite3
 uploads/

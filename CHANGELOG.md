@@ -6,6 +6,38 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.0.6] — 2026-07-27 — _dependency security updates_
+
+### Security
+- **Cleared 74 Python advisories across 11 packages**, including three sitting
+  directly in the photo-upload path: **pillow-heif** 1.2.1 → 1.4.0 (CVSS 9.1),
+  **Pillow** 12.1.1 → 12.3.0 (8.7, 36 advisories), and **python-multipart**
+  0.0.22 → 0.0.32 (7.5, 12 advisories). Also **urllib3** → 2.7.0 (8.9),
+  **starlette** 0.52.1 → 1.3.1, **idna** → 3.18, **click** → 8.4.2,
+  **pydantic-settings** → 2.14.2, **python-dotenv** → 1.2.2, **pygments** →
+  2.20.0, **pytest** → 9.1.1.
+- **Frontend: 11 Snyk issues → 1.** `react-router-dom` 7.13.0 → 7.18.1 clears
+  a Critical (untrusted deserialization), 6 High (XSS, two open redirects,
+  algorithmic-complexity and resource-exhaustion DoS) and the Medium/Low CSRF
+  and unsafe-reflection findings. `vite` 6.4.1 → 6.4.3 clears three High
+  dev-server issues (path traversal, arbitrary file read over the dev
+  WebSocket, `server.fs.deny` bypass); `npm audit fix` cleared the
+  postcss/picomatch/babel build-toolchain advisories.
+- **Known-accepted, not applicable:** one React Router advisory remains
+  (GHSA-qwww-vcr4-c8h2 / SNYK-JS-REACTROUTER-18313151, "RSC Mode CSRF Bypass",
+  fixed only in react-router 8.3.0). This app is a pure client-side
+  `BrowserRouter` SPA — no RSC mode, no loaders/actions, no `@react-router/*`
+  server packages, and zero RSC handlers in the built bundle — so the affected
+  code path cannot be reached. Deferred rather than take a major-version
+  migration for an unreachable path.
+
+### Changed
+- `[tool.uv]` gains a **7-day dependency cooldown** (`exclude-newer`) so a
+  compromised or broken package published minutes ago can't be pulled straight
+  into a build, plus a `pymatting>=1.1.15` constraint — the resolver otherwise
+  picked 1.1.14, which pins `numba` 0.53.1 → `llvmlite` 0.36.0 and only builds
+  on Python <3.10, breaking `uv sync` and the Docker image on our 3.12 baseline.
+
 ## [2.0.5] — 2026-07-25 — _case-rack top-cap fix (v3.1)_
 
 ### Fixed

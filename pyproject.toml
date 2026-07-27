@@ -1,6 +1,6 @@
 [project]
 name = "headroom"
-version = "2.0.5"
+version = "2.0.6"
 description = "Headroom — AI-powered hat collection tracker"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -30,6 +30,19 @@ dev = [
     # trio extra and no separate `pytest-anyio` stub package are needed.
     "anyio",
 ]
+
+[tool.uv]
+# Floor a TRANSITIVE dep without making it a direct one. rembg → pymatting:
+# pymatting 1.1.14 pins numba 0.53.1 → llvmlite 0.36.0, which only builds on
+# Python <3.10, so letting the resolver pick it breaks `uv sync` on our 3.12
+# baseline (and the Docker build). 1.1.15+ uses a numba that supports 3.12.
+constraint-dependencies = ["pymatting>=1.1.15"]
+
+# Supply-chain cooldown: ignore releases younger than this when resolving, so a
+# compromised or broken package published minutes ago can't be pulled straight
+# into a build. Verified not to hold back any of the security fixes in this
+# lock — if a future CVE fix is newer than the window, drop it for that run.
+exclude-newer = "7 days"
 
 [build-system]
 requires = ["hatchling"]
