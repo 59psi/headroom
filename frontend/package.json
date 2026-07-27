@@ -1,7 +1,7 @@
 {
   "name": "headroom-frontend",
   "private": true,
-  "version": "2.0.5",
+  "version": "2.0.6",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -14,13 +14,13 @@
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-easy-crop": "^5.0.8",
-    "react-router-dom": "^7.6.1"
+    "react-router-dom": "^7.18.1"
   },
   "devDependencies": {
     "@types/react": "^19.1.6",
     "@types/react-dom": "^19.1.5",
     "@vitejs/plugin-react": "^4.5.2",
     "typescript": "~5.8.3",
-    "vite": "^6.3.5"
+    "vite": "^6.4.3"
   }
 }
