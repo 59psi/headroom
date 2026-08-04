@@ -6,6 +6,27 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.1.0] — 2026-08-03 — _latest toolchain across the whole build_
+
+Every pinned tool in the image was audited, not just the one that broke in
+2.0.7. The `uv` pin had sat at 0.5.4 since v0.2.0 — through a "production
+hardening" pass that edited the same file — which is what let the 2.0.6
+cooldown regression happen in the first place.
+
+### Changed
+- **Node 22 → 26** (SPA build stage), **Python 3.12 → 3.14**, **Debian bookworm
+  → trixie**, **uv 0.11.28 → 0.12.1**. Caddy sidecars were already floating on
+  latest `2-alpine`.
+- Verified by **building and running the image**, not by checking versions
+  locally — the exact gap that caused 2.0.7. Confirmed inside the container:
+  Python 3.14.6 on Debian 13, `rembg`/`onnxruntime` load and produce a real
+  `U2netpSession`, and a full end-to-end run (owner setup → create hat → photo
+  upload → auth-gated photo fetch) returns a **transparent PNG**, which only
+  happens when background removal genuinely ran. Zero tracebacks in the log.
+- Note `fastapi` resolves to 0.139.2 rather than 0.140.x — the 7-day
+  `exclude-newer` cooldown from 2.0.6 holding back a just-published release,
+  working as designed.
+
 ## [2.0.7] — 2026-08-03 — _fix the Docker build's uv pin_
 
 ### Fixed
