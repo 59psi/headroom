@@ -10,11 +10,15 @@
 #
 # Installs (only what's missing — safe to re-run):
 #   * uv        — brew on macOS, otherwise the official Astral installer
-#   * Node 20+  — brew on macOS, NodeSource on apt/dnf Linux
+#   * Node      — brew on macOS, NodeSource on apt/dnf Linux. Accepts an
+#                 existing Node 20+ (what our vite/react-router actually need);
+#                 a FRESH install gets 26, matching the Docker image.
 #   * Docker    — WITHOUT Docker Desktop:
 #                   macOS: docker CLI + compose + buildx + colima (brew)
 #                   Linux: Docker Engine via get.docker.com (apt & dnf distros)
-#   * Python    — handled by uv itself (downloads 3.12 if the system lacks it)
+#   * Python    — handled by uv itself. `.python-version` pins 3.14 (same as the
+#                 Docker image); pyproject still supports >=3.12 if you bring
+#                 your own.
 #
 set -euo pipefail
 
@@ -91,7 +95,7 @@ ensure_uv() {
 }
 
 # ------------------------------------------------------------------ #
-# Node.js 20+
+# Node.js — accept 20+, install 26 (matches the Docker image)
 # ------------------------------------------------------------------ #
 node_major() { node -v 2>/dev/null | sed 's/^v//' | cut -d. -f1; }
 
@@ -106,10 +110,10 @@ ensure_node() {
     ensure_brew
     brew install node
   elif command -v apt-get &>/dev/null; then
-    run_remote_installer "https://deb.nodesource.com/setup_22.x" $SUDO bash
+    run_remote_installer "https://deb.nodesource.com/setup_26.x" $SUDO bash
     $SUDO apt-get install -y nodejs
   elif command -v dnf &>/dev/null; then
-    run_remote_installer "https://rpm.nodesource.com/setup_22.x" $SUDO bash
+    run_remote_installer "https://rpm.nodesource.com/setup_26.x" $SUDO bash
     $SUDO dnf install -y nodejs
   else
     die "No supported package manager found — install Node.js 20+ from https://nodejs.org/ and re-run."
@@ -178,7 +182,7 @@ ensure_uv
 ensure_node
 [ "$INSTALL_DOCKER" -eq 1 ] && ensure_docker
 
-log "Installing Python dependencies (uv will fetch Python 3.12 if needed)..."
+log "Installing Python dependencies (uv fetches the .python-version Python if needed)..."
 uv sync
 
 log "Installing frontend dependencies..."

@@ -25,7 +25,9 @@ ENV/
 
 # Local-only files (per-developer)
 .claude/
-.python-version
+# NOTE: .python-version is deliberately NOT ignored — it pins the interpreter to
+# the same version the Docker image runs, so bare-metal and container don't
+# drift. It's a project decision, not a per-developer preference.
 
 # Env
 .env
