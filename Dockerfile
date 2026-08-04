@@ -36,7 +36,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libgl1 libglib2.0-0 libheif1 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=ghcr.io/astral-sh/uv:0.5.4 /uv /usr/local/bin/uv
+# Keep this pin >= the uv that writes uv.lock (revision 3) and >= 0.9.17, which
+# is where `exclude-newer` learned relative durations ("7 days"). An older uv
+# warns "failed to parse year in date" and then silently IGNORES the cooldown,
+# so the image would build without the supply-chain protection we advertise.
+COPY --from=ghcr.io/astral-sh/uv:0.11.28 /uv /usr/local/bin/uv
 WORKDIR /app
 COPY pyproject.toml uv.lock* ./
 # --frozen only, no fallback: a lock/manifest mismatch must FAIL the release
