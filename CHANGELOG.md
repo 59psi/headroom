@@ -6,6 +6,30 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.1.1] — 2026-08-04 — _bare metal catches up to the image_
+
+2.1.0 moved the **Docker** toolchain forward but left the bare-metal path
+behind, so `./scripts/setup.sh` still provisioned the old versions.
+
+### Changed
+- **`scripts/setup.sh` now installs what the image runs**: NodeSource
+  `setup_22.x` → `setup_26.x`, and Python comes from a new committed
+  `.python-version` pin (**3.14**) instead of whatever uv defaulted to. An
+  existing **Node 20+** is still accepted — that's the real floor our vite and
+  react-router require, so working setups aren't broken; only *fresh* installs
+  get 26.
+- **`.python-version` is now tracked in git.** It was in `.gitignore` under
+  "local-only files", which would have made the pin invisible to everyone else
+  — the interpreter version is a project decision, not a per-developer one.
+- Doc claims corrected where they'd gone stale: README bare-metal prereqs and
+  architecture line, CLAUDE.md setup/backend lines.
+
+### Note
+`pyproject.toml` keeps `requires-python = ">=3.12"` — verified the suite passes
+on **both** 3.12.12 and 3.14, so there's no reason to drop 3.12 for anyone
+bringing their own interpreter. There is no `requirements.txt` in this project;
+`uv.lock` is the dependency manifest and is updated with every dependency change.
+
 ## [2.1.0] — 2026-08-03 — _latest toolchain across the whole build_
 
 Every pinned tool in the image was audited, not just the one that broke in

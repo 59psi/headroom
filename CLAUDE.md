@@ -6,7 +6,7 @@ It is tracked in git (was previously local-only and drifted stale) — keep it c
 
 ## Commands
 
-- `./scripts/setup.sh` — Full setup: installs missing deps (uv, Node 20+, Docker engine sans Desktop — colima/brew on macOS, get.docker.com on Linux), syncs backend+frontend, inits DB, builds SPA. Flags: `--docker-only` (just the engine, for the compose path), `--no-docker`, `--skip-build`
+- `./scripts/setup.sh` — Full setup: installs missing deps (uv, Node — accepts 20+, installs 26 fresh to match the image, Docker engine sans Desktop — colima/brew on macOS, get.docker.com on Linux), syncs backend+frontend, inits DB, builds SPA. Flags: `--docker-only` (just the engine, for the compose path), `--no-docker`, `--skip-build`
 - `uv run uvicorn headroom.app:app --reload` — Run backend dev server (port 8000)
 - `cd frontend && npm run dev` — Run frontend dev server (port 5173, proxies to backend)
 - `cd frontend && npx vite build` — Production SPA build (output: `frontend/dist`, served by backend in prod)
@@ -21,7 +21,7 @@ It is tracked in git (was previously local-only and drifted stale) — keep it c
 
 ## Architecture
 
-**Backend** (Python 3.12+, FastAPI, SQLAlchemy async + aiosqlite):
+**Backend** (Python 3.12+ — `.python-version` pins 3.14 locally to match the Docker image; FastAPI, SQLAlchemy async + aiosqlite):
 - `src/headroom/app.py` — App factory: lifespan (single-process guard + init_db + branding seed + scheduled-backup task + activity-log prune task + bulk-import worker + mDNS advertise), CORS, SPA serving with path-traversal protection
 - `src/headroom/auth.py` — `AuthGateMiddleware` (protects all `/api/*` + `/uploads/*`; open: `/api/auth/*`, `/api/public/*`, `/health*`, SPA shell/assets; `POST /share` share-target needs auth, `GET /share/<token>` is the public share SPA page) + `require_user` dependency (`require_admin` is an alias — single role, every authenticated principal is fully privileged). Middleware resolves users via `app.state.session_factory` — tests swap it for the test DB
 - `src/headroom/routes/` — `health`, `public` (unauthenticated branding logo for the login page), `auth` (setup/login/logout/me/token/passkeys), `cases`, `hats`, `import_jobs`, `rooms`, `search`, `meta`, `settings`, `admin`, `share`, `share_links` (mgmt + `/api/public/share/{token}` read-only view with token-gated photo streaming)

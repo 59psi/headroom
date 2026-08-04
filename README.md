@@ -272,8 +272,12 @@ Renaming the host (`HEADROOM_MDNS_HOSTNAME=hats`) carries through everything
 ### Local (no Docker)
 
 Prereqs: git + curl. The setup script installs everything else it needs —
-uv, Python 3.12, Node 20+, backend and frontend deps — via Homebrew on macOS
-and apt/dnf on Linux.
+uv, Python, Node, backend and frontend deps — via Homebrew on macOS and
+apt/dnf on Linux. It pulls the same versions the Docker image runs
+(**Python 3.14** via the `.python-version` pin, **Node 26** on a fresh
+install), so bare metal doesn't drift from production. An existing Node 20+
+is accepted as-is, and the package itself still supports Python 3.12+ if you
+bring your own interpreter.
 
 ```bash
 git clone https://github.com/59psi/headroom.git && cd headroom
@@ -444,7 +448,7 @@ test session, and never call the Anthropic, Google, eBay, or Sharetribe APIs
 
 ## Architecture
 
-**Backend** — Python 3.12, FastAPI, async SQLAlchemy + aiosqlite:
+**Backend** — Python 3.12+ (3.14 in the image), FastAPI, async SQLAlchemy + aiosqlite:
 
 ```
 src/headroom/
