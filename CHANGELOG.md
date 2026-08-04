@@ -6,6 +6,20 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.0.7] — 2026-08-03 — _fix the Docker build's uv pin_
+
+### Fixed
+- **`failed to parse year in date "7 days"` during `docker compose build`**, a
+  regression from 2.0.6. The image pinned **uv 0.5.4** (Nov 2024), but the
+  `exclude-newer = "7 days"` cooldown added in 2.0.6 needs **uv ≥ 0.9.17** —
+  relative durations didn't exist before that. The old uv warned and then
+  **silently ignored the setting**, so the build still produced an image, but
+  **without the supply-chain cooldown 2.0.6 advertised**. The pin is now
+  `uv 0.11.28`, which is also the version that writes `uv.lock` (revision 3) —
+  the old pin predated that lock format too. Verified by building the image and
+  running it: no parse error, `uv lock --check` clean *inside* the container,
+  and `/health`, `/health/ready`, the auth gate, and the SPA all respond.
+
 ## [2.0.6] — 2026-07-27 — _dependency security updates_
 
 ### Security
