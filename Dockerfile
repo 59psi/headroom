@@ -10,7 +10,7 @@
 # ============================================================ #
 # Stage 1 — Frontend bundle
 # ============================================================ #
-FROM node:22-bookworm-slim AS frontend
+FROM node:26-trixie-slim AS frontend
 WORKDIR /build
 COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm ci
@@ -24,7 +24,7 @@ RUN npx tsc -b --noEmit && npx vite build
 # ============================================================ #
 # Stage 2 — Python deps via uv (also pre-caches the rembg model)
 # ============================================================ #
-FROM python:3.12-slim-bookworm AS python-base
+FROM python:3.14-slim-trixie AS python-base
 ENV UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=1 \
     UV_PROJECT_ENVIRONMENT=/opt/venv \
@@ -40,7 +40,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # is where `exclude-newer` learned relative durations ("7 days"). An older uv
 # warns "failed to parse year in date" and then silently IGNORES the cooldown,
 # so the image would build without the supply-chain protection we advertise.
-COPY --from=ghcr.io/astral-sh/uv:0.11.28 /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.12.1 /uv /usr/local/bin/uv
 WORKDIR /app
 COPY pyproject.toml uv.lock* ./
 # --frozen only, no fallback: a lock/manifest mismatch must FAIL the release
@@ -62,7 +62,7 @@ RUN /opt/venv/bin/python -c "from rembg import new_session; new_session('${REMBG
 # ============================================================ #
 # Stage 3 — Runtime (non-root)
 # ============================================================ #
-FROM python:3.12-slim-bookworm AS runtime
+FROM python:3.14-slim-trixie AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH" \
