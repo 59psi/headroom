@@ -147,11 +147,7 @@ async def dispose_hat(
     hat_id: int, data: HatDispose, db: AsyncSession = Depends(get_db)
 ):
     """Mark a hat as sold/gifted/lost/trashed/trade. Soft delete — undoable."""
-    hat = await hat_service.dispose_hat(
-        db, hat_id,
-        via=data.via, price=data.price, to=data.to, notes=data.notes,
-        disposed_at=data.disposed_at,
-    )
+    hat = await hat_service.dispose_hat(db, hat_id, data)
     return _hat_to_read(hat)
 
 

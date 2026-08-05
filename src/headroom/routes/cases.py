@@ -39,22 +39,10 @@ def _case_to_read(case) -> CaseRead:
 
 
 def _case_to_detail(case) -> CaseDetail:
-    hats = case.hats or []
-    beanie_count = sum(1 for h in hats if h.is_beanie)
+    # CaseDetail is CaseRead plus the hat list — derive the shared fields rather
+    # than restating all 13 of them (they drifted apart too easily).
     return CaseDetail(
-        id=case.id,
-        case_type=case.case_type,
-        sequence_number=case.sequence_number,
-        display_id=case.display_id,
-        photo_path=case.photo_path,
-        capacity=case.capacity,
-        hat_count=len(hats),
-        beanie_count=beanie_count,
-        regular_count=len(hats) - beanie_count,
-        room_id=case.room_id,
-        room_name=case.room.name if case.room else "Unknown",
-        created_at=case.created_at,
-        updated_at=case.updated_at,
+        **_case_to_read(case).model_dump(),
         hats=[
             HatSummary(
                 id=h.id,
@@ -63,7 +51,7 @@ def _case_to_detail(case) -> CaseDetail:
                 is_beanie=h.is_beanie,
                 photo_path=h.photo_path,
             )
-            for h in hats
+            for h in (case.hats or [])
         ],
     )
 

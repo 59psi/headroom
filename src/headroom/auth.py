@@ -33,7 +33,7 @@ _OPEN_PREFIXES = (
 _PROTECTED_PREFIXES = ("/api/", "/uploads/")
 
 
-async def _resolve_user(request: Request) -> User | None:
+async def resolve_user(request: Request) -> User | None:
     """Session cookie first, then bearer API token. None when anonymous."""
     session_factory = request.app.state.session_factory
     session_id = request.cookies.get(auth_service.SESSION_COOKIE)
@@ -53,7 +53,7 @@ async def _resolve_user(request: Request) -> User | None:
 
 async def require_user(request: Request) -> User:
     """Route dependency for handlers that need the acting user."""
-    user = getattr(request.state, "user", None) or await _resolve_user(request)
+    user = getattr(request.state, "user", None) or await resolve_user(request)
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required"
@@ -79,7 +79,7 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
         if path == "/share" and request.method == "POST":
             needs_auth = True
         if needs_auth:
-            user = await _resolve_user(request)
+            user = await resolve_user(request)
             if user is None:
                 return JSONResponse(
                     status_code=401, content={"detail": "Authentication required"}

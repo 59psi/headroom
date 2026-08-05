@@ -69,12 +69,16 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Stage 3 — Runtime (non-root)
 # ============================================================ #
 FROM base AS runtime
+# Re-declare so the chosen model reaches THIS stage: `ARG` is scoped per stage,
+# and hardcoding u2netp here silently discarded the build arg — the image then
+# carried a pre-downloaded model it would never load.
+ARG REMBG_MODEL=u2netp
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH" \
     HEADROOM_UPLOAD_DIR=/data/uploads \
     HEADROOM_DATABASE_URL=sqlite+aiosqlite:////data/headroom.db \
-    HEADROOM_REMBG_MODEL=u2netp
+    HEADROOM_REMBG_MODEL=${REMBG_MODEL}
 
 # Create unprivileged user so the container does not run as root
 RUN groupadd --system --gid 1000 headroom \

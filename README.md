@@ -402,6 +402,8 @@ link-only if the API is unreachable.
 | `HEADROOM_BACKUP_INTERVAL_HOURS` | `24` | Scheduled backup cadence |
 | `HEADROOM_BACKUP_RETENTION_DAYS` | `7` | Rolling local backups kept on disk |
 | `HEADROOM_BACKUP_UPLOAD_CMD` | _(unset)_ | Ship each scheduled backup off-box; `{path}`/`{dir}`/`{name}` substituted. See [off-site backups](docs/OPERATIONS.md#off-site--remote-backups) + `docker-compose.backup-rclone.yml` |
+| `HEADROOM_BACKUP_UPLOAD_TIMEOUT` | `600` | Seconds before the upload command is killed |
+| `HEADROOM_MDNS_INTERFACE` | _(detected LAN IP)_ | Interface the mDNS responder binds; an IP pins one NIC, `all` restores all-interfaces |
 | `HEADROOM_IMPORT_WORKER_ENABLED` | `true` | Bulk-import background worker |
 | `HEADROOM_ACTIVITY_LOG_RETENTION_DAYS` | `90` | Audit rows kept (pruned daily) |
 | `HEADROOM_MDNS_ENABLED` | `true` | Advertise `headroom.local` on the LAN (Docker: stack `docker-compose.mdns.yml`, or `docker-compose.https-lan.yml` for passkey-grade HTTPS) |

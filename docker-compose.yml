@@ -7,6 +7,10 @@ services:
         # Stamp the footer with a build id:
         #   HEADROOM_BUILD_SHA=$(git rev-parse --short HEAD) docker compose up --build -d
         HEADROOM_BUILD_SHA: ${HEADROOM_BUILD_SHA:-}
+        # Which rembg model gets pre-downloaded INTO the image and used at
+        # runtime. Change it at build time so the weights are baked in:
+        #   REMBG_MODEL=isnet-general-use docker compose up -d --build
+        REMBG_MODEL: ${REMBG_MODEL:-u2netp}
     image: headroom:latest
     container_name: headroom
     restart: unless-stopped
@@ -20,7 +24,10 @@ services:
       # Optional: Google Cloud Vision key for fallback brand detection when
       # Claude is unavailable (colors always fall back locally, no key needed).
       # HEADROOM_GOOGLE_VISION_API_KEY: "AIzaSy..."
-      HEADROOM_REMBG_MODEL: "u2netp"
+      # NOT pinned here on purpose: a value in `environment:` beats the image's
+      # ENV, which would override the model baked in by the REMBG_MODEL build
+      # arg above. Set it here only to force a model that is NOT in the image
+      # (the Pi will then download it on first use).
       HEADROOM_CORS_ORIGINS: '["http://localhost:8000"]'
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health/ready', timeout=5).status==200 else 1)"]

@@ -64,9 +64,9 @@ async def ready(request: Request, db: AsyncSession = Depends(get_db)):
 
     # Detailed view only for an authenticated caller; anonymous callers (incl.
     # the container healthcheck) get booleans, enough to gate readiness.
-    from headroom.auth import _resolve_user
+    from headroom.auth import resolve_user
 
-    authed = (await _resolve_user(request)) is not None
+    authed = (await resolve_user(request)) is not None
     if authed:
         checks: dict[str, dict] = {
             "database": {"ok": db_ok, **({"error": db_err} if db_err else {})},

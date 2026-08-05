@@ -39,7 +39,7 @@ EBAY_CERT_ID_KEY = "ebay_cert_id"
 EBAY_MARKETPLACE_KEY = "ebay_marketplace"  # default EBAY_US
 
 
-async def _get_creds(db: AsyncSession) -> tuple[str | None, str | None, str]:
+async def get_creds(db: AsyncSession) -> tuple[str | None, str | None, str]:
     """Returns (app_id, cert_id, marketplace) — None when not configured."""
     app_id = await settings_service.get_setting(db, EBAY_APP_ID_KEY)
     cert_id = await settings_service.get_setting(db, EBAY_CERT_ID_KEY)
@@ -113,7 +113,7 @@ async def verify_creds(db: AsyncSession) -> dict:
     Tries: load creds → OAuth → cheap Browse search. Reports which stage
     failed so the UI can show something more useful than "502 Bad Gateway".
     """
-    app_id, cert_id, marketplace = await _get_creds(db)
+    app_id, cert_id, marketplace = await get_creds(db)
     if not app_id or not cert_id:
         return {"ok": False, "stage": "creds", "detail": "No App ID + Cert ID configured."}
 
@@ -197,7 +197,7 @@ async def find_comps(
             "ebay_checked_at": datetime.now(timezone.utc),
         }
 
-    app_id, cert_id, marketplace = await _get_creds(db)
+    app_id, cert_id, marketplace = await get_creds(db)
     search_url = _browse_html_url(query)
 
     if not app_id or not cert_id:

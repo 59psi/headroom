@@ -24,6 +24,7 @@ from headroom.schemas.settings import BackupInfo, RecentError
 from headroom.services import (
     activity_service,
     backup_service,
+    catalog_service,
     ebay_service,
     hat_service,
     report_service,
@@ -207,7 +208,7 @@ async def inventory_report(
 
 @router.get("/ebay/creds", response_model=EbayCredsStatus)
 async def get_ebay_creds(db: AsyncSession = Depends(get_db)):
-    app_id, cert_id, marketplace = await ebay_service._get_creds(db)  # noqa: SLF001
+    app_id, cert_id, marketplace = await ebay_service.get_creds(db)
     return EbayCredsStatus(
         configured=bool(app_id and cert_id),
         app_id_masked=settings_service.mask_key(app_id) if app_id else None,
@@ -231,7 +232,7 @@ async def set_ebay_creds(data: EbayCredsUpdate, db: AsyncSession = Depends(get_d
         summary="eBay API credentials set/updated",
     )
     await db.commit()
-    app_id, _cert, marketplace = await ebay_service._get_creds(db)  # noqa: SLF001
+    app_id, _cert, marketplace = await ebay_service.get_creds(db)
     return EbayCredsStatus(
         configured=True,
         app_id_masked=settings_service.mask_key(app_id) if app_id else None,
@@ -273,15 +274,7 @@ async def refresh_ebay_for_hat(hat_id: int, db: AsyncSession = Depends(get_db)):
     return result
 
 
-# Need this here to fix a forward-ref: hat_service uses Case; importing it
-# in module scope keeps the relationship loadable without round-trips.
-_ = Case
-
 # ---------------------- colorway catalog + purchases ------------------- #
-
-from pydantic import BaseModel as _BaseModel  # noqa: E402
-
-from headroom.services import catalog_service  # noqa: E402
 
 
 @router.post("/colorways/refresh")
@@ -295,7 +288,7 @@ async def refresh_colorway_catalog(db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=502, detail=str(exc))
 
 
-class PurchaseImport(_BaseModel):
+class PurchaseImport(BaseModel):
     items: list[dict]
 
 
@@ -310,11 +303,11 @@ async def import_purchases(data: PurchaseImport, db: AsyncSession = Depends(get_
 
 @router.get("/purchases")
 async def list_purchases(db: AsyncSession = Depends(get_db)):
-    from sqlalchemy import select as _select
+    
 
     from headroom.models.catalog import Purchase
 
-    rows = (await db.execute(_select(Purchase).order_by(Purchase.order_date.desc()))).scalars().all()
+    rows = (await db.execute(select(Purchase).order_by(Purchase.order_date.desc()))).scalars().all()
     return [
         {
             "id": p.id, "order_ref": p.order_ref, "order_date": p.order_date,

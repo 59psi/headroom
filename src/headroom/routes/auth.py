@@ -56,10 +56,10 @@ def _client_ip(request: Request) -> str:
 
 @router.get("/status", response_model=AuthStatus)
 async def auth_status(request: Request, db: AsyncSession = Depends(get_db)):
-    from headroom.auth import _resolve_user
+    from headroom.auth import resolve_user
 
     needs_setup = (await auth_service.user_count(db)) == 0
-    user = None if needs_setup else await _resolve_user(request)
+    user = None if needs_setup else await resolve_user(request)
     return AuthStatus(
         needs_setup=needs_setup,
         authenticated=user is not None,
