@@ -104,28 +104,28 @@ export function HatFilterBar({ state, colors, activeCount, onClearExtras, childr
         <div className="row g-2">
           <div className="col-6 col-md-3">
             <label className="form-label">Style</label>
-            <select className="form-select form-select-sm" value={filters.style} onChange={e => set('style', e.target.value)}>
+            <select aria-label="Style" className="form-select form-select-sm" value={filters.style} onChange={e => set('style', e.target.value)}>
               <option value="">All</option>
               {options.styles.data?.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
             </select>
           </div>
           <div className="col-6 col-md-3">
             <label className="form-label">Size</label>
-            <select className="form-select form-select-sm" value={filters.size} onChange={e => set('size', e.target.value)}>
+            <select aria-label="Size" className="form-select form-select-sm" value={filters.size} onChange={e => set('size', e.target.value)}>
               <option value="">All</option>
               {options.sizes.data?.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
             </select>
           </div>
           <div className="col-6 col-md-3">
             <label className="form-label">Condition</label>
-            <select className="form-select form-select-sm" value={filters.condition} onChange={e => set('condition', e.target.value)}>
+            <select aria-label="Condition" className="form-select form-select-sm" value={filters.condition} onChange={e => set('condition', e.target.value)}>
               <option value="">All</option>
               {options.conditions.data?.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
             </select>
           </div>
           <div className="col-6 col-md-3">
             <label className="form-label">Type</label>
-            <select className="form-select form-select-sm" value={filters.type} onChange={e => set('type', e.target.value)}>
+            <select aria-label="Type" className="form-select form-select-sm" value={filters.type} onChange={e => set('type', e.target.value)}>
               <option value="">All</option>
               <option value="regular">Regular</option>
               <option value="beanie">Beanies</option>
@@ -133,14 +133,14 @@ export function HatFilterBar({ state, colors, activeCount, onClearExtras, childr
           </div>
           <div className="col-6 col-md-3">
             <label className="form-label">Color</label>
-            <select className="form-select form-select-sm" value={filters.color} onChange={e => set('color', e.target.value)}>
+            <select aria-label="Color" className="form-select form-select-sm" value={filters.color} onChange={e => set('color', e.target.value)}>
               <option value="">All</option>
               {colors.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
           <div className="col-6 col-md-3">
             <label className="form-label">Room</label>
-            <select className="form-select form-select-sm" value={filters.room} onChange={e => set('room', e.target.value)}>
+            <select aria-label="Room" className="form-select form-select-sm" value={filters.room} onChange={e => set('room', e.target.value)}>
               <option value="">All</option>
               {options.rooms.data?.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
             </select>

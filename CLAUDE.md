@@ -10,7 +10,8 @@ It is tracked in git (was previously local-only and drifted stale) — keep it c
 - `uv run uvicorn headroom.app:app --reload` — Run backend dev server (port 8000)
 - `cd frontend && npm run dev` — Run frontend dev server (port 5173, proxies to backend)
 - `cd frontend && npx vite build` — Production SPA build (output: `frontend/dist`, served by backend in prod)
-- `cd frontend && npx tsc -b --noEmit` — TypeScript type-check
+- `cd frontend && npx tsc -b --noEmit` — TypeScript type-check (covers `*.test.tsx` too — they live under `src/`)
+- `cd frontend && npm test` — Frontend unit tests (Vitest + Testing Library, jsdom). `npm run test:watch` to iterate
 - `uv run pytest` — Run all tests (must run from project root)
 - `uv run pytest tests/test_disposition.py::test_dispose_sets_fields` — Run single test
 - `docker compose up -d --build` — Run as a Docker container (Pi-friendly)
@@ -68,6 +69,13 @@ It is tracked in git (was previously local-only and drifted stale) — keep it c
 - **Auth in tests**: the `client` fixture seeds an owner (`testowner`, api_token `hr_test-api-token`) + a session row directly and presets the cookie — one argon2 hash per run, not per test. `anon_client` is unauthenticated for auth-flow tests. `app` fixture must set `app.state.session_factory = test_session_factory` or the gate middleware hits the real DB
 - Tests never call the Anthropic, Google, eBay, or Sharetribe APIs; the pipeline degrades to `analysis_status='skipped'`/`'fallback'` when no key is set
 - 190 passing
+
+**Frontend tests** (Vitest 4 + Testing Library 16, jsdom):
+- Co-located `*.test.tsx` beside the component. `src/test/setup.ts` registers the jest-dom matchers + `cleanup`; `src/test/utils.tsx` exports `renderWithProviders` (fresh QueryClient per test, `retry: false`, plus MemoryRouter)
+- Vitest config lives in the `test` block of `vite.config.ts` (imported from `vitest/config`) so tests inherit the plugins and the `__APP_VERSION__`/`__BUILD_SHA__` defines instead of a second config that can drift
+- API modules are `vi.mock`ed at the module boundary — **mock the real payload shape**: pydantic serialises fields with defaults, so `ApiKeyStatus(configured=False)` is `{configured, source: null, masked: null}`, not `{configured}` alone. `tsc` catches the mismatch because test files are inside `src/`
+- Query controls **must** carry `aria-label` (the visible `<label>` elements have no `htmlFor`, so nothing else associates them). This is an accessibility requirement first and makes `getByLabelText` work as a side effect
+- 27 passing
 
 ## Key Patterns
 

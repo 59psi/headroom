@@ -86,7 +86,7 @@ export function HatBasicsCard({
 
         <div className="mb-3">
           <label className="form-label">Style</label>
-          <select className="form-select" value={values.style} onChange={e => onChange('style', e.target.value)}>
+          <select aria-label="Style" className="form-select" value={values.style} onChange={e => onChange('style', e.target.value)}>
             {options.styles.data?.map(s => (
               <option key={s.value} value={s.value}>{s.label}</option>
             ))}
@@ -95,7 +95,7 @@ export function HatBasicsCard({
 
         <div className="mb-3">
           <label className="form-label">Size</label>
-          <select className="form-select" value={values.size} onChange={e => onChange('size', e.target.value)}>
+          <select aria-label="Size" className="form-select" value={values.size} onChange={e => onChange('size', e.target.value)}>
             {options.sizes.data?.map(s => (
               <option key={s.value} value={s.value}>{s.label}</option>
             ))}
@@ -104,7 +104,7 @@ export function HatBasicsCard({
 
         <div className="mb-3">
           <label className="form-label">Condition</label>
-          <select className="form-select" value={values.condition} onChange={e => onChange('condition', e.target.value)}>
+          <select aria-label="Condition" className="form-select" value={values.condition} onChange={e => onChange('condition', e.target.value)}>
             {options.conditions.data?.map(c => (
               <option key={c.value} value={c.value}>{c.label}</option>
             ))}
@@ -113,7 +113,7 @@ export function HatBasicsCard({
 
         <div className="mb-3">
           <label className="form-label">{caseLabel}</label>
-          <select className="form-select" value={values.caseId} onChange={e => handleCaseChange(e.target.value)}>
+          <select aria-label={caseLabel} className="form-select" value={values.caseId} onChange={e => handleCaseChange(e.target.value)}>
             <option value="">Unassigned</option>
             <option value={NEW_CASE_VALUE}>+ Create New Case…</option>
             {options.cases.data?.map(c => (
@@ -128,6 +128,7 @@ export function HatBasicsCard({
           <label className="form-label">{dateLabel}</label>
           <input
             type="date"
+            aria-label={dateLabel}
             className="form-control"
             value={values.dateLastWorn}
             onChange={e => onChange('dateLastWorn', e.target.value)}

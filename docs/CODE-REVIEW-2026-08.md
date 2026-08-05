@@ -75,3 +75,45 @@ One deliberate behaviour change: `SettingsPage` used to hold a single spinner
 over the whole page until the logo/key/model queries resolved. With per-card
 state that would have flashed "No key configured" at someone who has one, so
 those three cards now show their own inline "Loading…" instead.
+
+---
+
+## Follow-up: frontend test coverage
+
+The gap called out above — "verified structurally, not behaviourally" — is now
+closed. Vitest 4 + Testing Library 16 (jsdom), **27 tests**, wired into the
+existing CI frontend job (no new job, no new workflow trigger).
+
+What they cover, chosen to be the things the refactor could plausibly have
+broken and that nothing else catches:
+
+- `matchesHatFilters` / `collectGeneralColors` — every predicate, the AND-ing,
+  multi-swatch color matching, and an explicit assertion that **`room` is not
+  applied** (if it ever were, Search would filter an already-server-filtered
+  list against a field it doesn't carry).
+- `HatFilterBar` — the six selects populate from the meta queries, state and
+  active-count update, Clear resets shared filters *and* invokes
+  `onClearExtras` (without which the Hats page's brand filter would silently
+  stay applied).
+- `HatBasicsCard` — each field reports under the right key, and the `__new__`
+  sentinel opens the modal **without** being written as a case id (it would
+  otherwise submit `case_id=NaN`).
+- `SettingsPage` — the full 15-card list renders in the documented order.
+  Dropping a card from a composition root is otherwise an invisible failure.
+- `AnthropicKeyCard` — the loading guard never shows "No key configured" while
+  loading, does once the query resolves empty, and drops a stale test result
+  when the active model changes.
+
+**Mutation-checked**, not just green: removing `<MdnsCard />` fails 2 tests;
+disabling the loading guard fails the guard test.
+
+Two real defects surfaced while writing them:
+
+1. **No form control was associated with its label** — the `<label>` elements
+   carry no `htmlFor` and don't wrap their inputs, so assistive tech announced
+   the filter and hat-form selects as unlabelled. Fixed with `aria-label` on
+   all eleven controls (six filters, four form selects, the date input).
+2. **A test mock disagreed with the real payload** — `ApiKeyStatus` was mocked
+   as `{configured: false}`, but pydantic emits fields with defaults, so the
+   wire format is `{configured, source: null, masked: null}`. `tsc` caught it
+   because test files sit inside `src/`.
