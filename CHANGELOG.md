@@ -6,6 +6,8 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.2.2] — 2026-08-05 — _faster rebuilds, infra cleanup_
+
 ### Changed
 - **Docker rebuilds are ~40s faster after a code change.** The rembg model
   pre-download sat *after* `COPY src ./src`, so every source edit re-downloaded
