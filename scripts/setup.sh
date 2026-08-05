@@ -33,7 +33,9 @@ for arg in "$@"; do
     --docker-only) DOCKER_ONLY=1 ;;
     --no-docker)  INSTALL_DOCKER=0 ;;
     --skip-build) BUILD_SPA=0 ;;
-    -h|--help)    sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    # Print the leading comment block itself. A hardcoded line range silently
+    # truncates the moment the header grows — which is exactly what happened.
+    -h|--help)    awk 'NR>1 && !/^#/{exit} NR>1{sub(/^# ?/,""); print}' "$0"; exit 0 ;;
     *) echo "Unknown option: $arg (try --help)"; exit 1 ;;
   esac
 done
@@ -103,18 +105,10 @@ ensure_uv() {
 # So we take the >=22.12 branch — a bare major check would wave through 22.0
 # and then fail at build time.
 # ------------------------------------------------------------------ #
-node_major() { node -v 2>/dev/null | sed 's/^v//' | cut -d. -f1; }
-node_minor() { node -v 2>/dev/null | sed 's/^v//' | cut -d. -f2; }
-
-# 0 = usable, 1 = too old/absent
+# 0 = usable (>= 22.12), 1 = too old or absent. One `node -v`, no subshells.
 node_ok() {
-  command -v node &>/dev/null || return 1
-  local maj min
-  maj=$(node_major); min=$(node_minor)
-  [ -n "$maj" ] || return 1
-  [ "$maj" -gt 22 ] && return 0
-  [ "$maj" -eq 22 ] && [ "$min" -ge 12 ] && return 0
-  return 1
+  [[ $(node -v 2>/dev/null) =~ ^v([0-9]+)\.([0-9]+) ]] || return 1
+  (( BASH_REMATCH[1] > 22 || (BASH_REMATCH[1] == 22 && BASH_REMATCH[2] >= 12) ))
 }
 
 ensure_node() {

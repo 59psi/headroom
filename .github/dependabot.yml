@@ -6,6 +6,12 @@
 #
 # Security fixes are separate: Dependabot *alerts* must also be enabled in the
 # repo's Settings → Code security. This file drives scheduled VERSION updates.
+#
+# Every ecosystem repeats `cooldown: default-days: 7` (mirroring
+# `exclude-newer = "7 days"` in pyproject's [tool.uv]) and its own `groups`.
+# That repetition is deliberate, not sloppy: Dependabot has no top-level
+# defaults and its parser rejects YAML anchors/aliases
+# (dependabot-core#1582), so there is nothing to factor out.
 version: 2
 updates:
   # --- Frontend (npm) ------------------------------------------------------ #
@@ -13,11 +19,8 @@ updates:
     directory: /frontend
     schedule:
       interval: weekly
-    # Mirrors the `exclude-newer = "7 days"` cooldown in pyproject's [tool.uv]:
-    # don't propose a version that was published minutes ago.
     cooldown:
       default-days: 7
-    open-pull-requests-limit: 5
     groups:
       # One PR for the safe stuff, so routine churn isn't 8 separate reviews.
       minor-and-patch:
@@ -30,11 +33,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
-    # Mirrors the `exclude-newer = "7 days"` cooldown in pyproject's [tool.uv]:
-    # don't propose a version that was published minutes ago.
     cooldown:
       default-days: 7
-    open-pull-requests-limit: 5
     groups:
       minor-and-patch:
         update-types: [minor, patch]
@@ -46,18 +46,22 @@ updates:
     directory: /
     schedule:
       interval: weekly
-    # Mirrors the `exclude-newer = "7 days"` cooldown in pyproject's [tool.uv]:
-    # don't propose a version that was published minutes ago.
     cooldown:
       default-days: 7
     open-pull-requests-limit: 3
+    groups:
+      # Ungrouped, every base-image bump is its own PR and its own full CI run
+      # (which includes building the image). One PR is plenty.
+      images:
+        patterns: ["*"]
 
   # --- The workflows themselves -------------------------------------------- #
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
-    # Mirrors the `exclude-newer = "7 days"` cooldown in pyproject's [tool.uv]:
-    # don't propose a version that was published minutes ago.
     cooldown:
       default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]

@@ -24,17 +24,21 @@ RUN npx tsc -b --noEmit && npx vite build
 # ============================================================ #
 # Stage 2 — Python deps via uv (also pre-caches the rembg model)
 # ============================================================ #
-FROM python:3.14-slim-trixie AS python-base
+# One base for both Python stages: the image tag and the native-lib list each
+# lived in two places, so adding a lib for a new dep to only the builder used to
+# build clean and then fail on import at container start.
+FROM python:3.14-slim-trixie AS base
+# rembg + Pillow + onnxruntime need these; tini is the runtime init.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgl1 libglib2.0-0 libheif1 tini \
+    && rm -rf /var/lib/apt/lists/*
+
+FROM base AS python-base
 ENV UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=1 \
     UV_PROJECT_ENVIRONMENT=/opt/venv \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
-
-# rembg + Pillow + onnxruntime need a few system libs
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        libgl1 libglib2.0-0 libheif1 \
-    && rm -rf /var/lib/apt/lists/*
 
 # Keep this pin >= the uv that writes uv.lock (revision 3) and >= 0.9.17, which
 # is where `exclude-newer` learned relative durations ("7 days"). An older uv
@@ -49,30 +53,28 @@ COPY pyproject.toml uv.lock* ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project --no-dev
 
+# Before COPY src on purpose: this only needs rembg (installed above), so
+# keeping it here means a source edit doesn't re-download ~40s of ONNX weights.
+ARG REMBG_MODEL=u2netp
+ENV HEADROOM_REMBG_MODEL=${REMBG_MODEL}
+RUN /opt/venv/bin/python -c "from rembg import new_session; new_session('${REMBG_MODEL}')"
+
 COPY src ./src
 COPY README.md ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 
-# Pre-cache the rembg model so the Pi doesn't have to download on first photo
-ARG REMBG_MODEL=u2netp
-ENV HEADROOM_REMBG_MODEL=${REMBG_MODEL}
-RUN /opt/venv/bin/python -c "from rembg import new_session; new_session('${REMBG_MODEL}')"
 
 # ============================================================ #
 # Stage 3 — Runtime (non-root)
 # ============================================================ #
-FROM python:3.14-slim-trixie AS runtime
+FROM base AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH" \
     HEADROOM_UPLOAD_DIR=/data/uploads \
     HEADROOM_DATABASE_URL=sqlite+aiosqlite:////data/headroom.db \
     HEADROOM_REMBG_MODEL=u2netp
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        libgl1 libglib2.0-0 libheif1 tini \
-    && rm -rf /var/lib/apt/lists/*
 
 # Create unprivileged user so the container does not run as root
 RUN groupadd --system --gid 1000 headroom \

@@ -34,11 +34,18 @@ jobs:
           enable-cache: true
       # No python-version here on purpose: .python-version pins it, so CI runs
       # the same interpreter as the Docker image and bare metal.
-      - name: Sync (frozen — a lock/manifest mismatch must fail, as in the image)
+      - name: Sync from the lockfile (same --frozen as the image)
         run: uv sync --frozen
+      - name: Dockerfile Python matches .python-version
+        # Dependabot's docker ecosystem bumps the image tag but not
+        # .python-version, so without this the automation can drift them apart.
+        run: |
+          pinned=$(tr -d '[:space:]' < .python-version)
+          grep -q "python:${pinned}-slim" Dockerfile \
+            || { echo "Dockerfile python tag != .python-version ($pinned)"; grep -n '^FROM python:' Dockerfile; exit 1; }
       - name: Tests
         run: uv run pytest -q
-      - name: Lock is in sync
+      - name: Lock matches pyproject (--frozen alone does NOT check this)
         run: uv lock --check
 
   frontend:
@@ -72,10 +79,5 @@ jobs:
       - name: Container serves /health
         run: |
           docker run -d --name ci -p 8000:8000 headroom:ci
-          for _ in $(seq 1 60); do
-            if [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/health)" = "200" ]; then
-              echo "healthy"; docker rm -f ci; exit 0
-            fi
-            sleep 2
-          done
-          echo "never became healthy"; docker logs ci; docker rm -f ci; exit 1
+          timeout 120 bash -c 'until curl -fsS localhost:8000/health; do sleep 2; done' \
+            || { echo "never became healthy"; docker logs ci; exit 1; }
