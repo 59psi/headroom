@@ -1,6 +1,6 @@
 [project]
 name = "headroom"
-version = "2.2.0"
+version = "2.2.1"
 description = "Headroom — AI-powered hat collection tracker"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -43,6 +43,14 @@ constraint-dependencies = ["pymatting>=1.1.15"]
 # into a build. Verified not to hold back any of the security fixes in this
 # lock — if a future CVE fix is newer than the window, drop it for that run.
 exclude-newer = "7 days"
+
+# ...but NOT for the crypto stack. The cooldown exists to dodge freshly
+# published malicious packages; for cryptography a fresh release is usually the
+# *security fix* itself, and waiting a week is the wrong trade. Concretely:
+# cryptography 50.0.0 (the Bleichenbacher-oracle fix) landed inside the window,
+# and a plain `uv lock` kept silently reverting to the vulnerable 49.0.0.
+# pyopenssl rides along because <26.4 caps cryptography at <50.
+exclude-newer-package = { cryptography = false, pyopenssl = false }
 
 [build-system]
 requires = ["hatchling"]
