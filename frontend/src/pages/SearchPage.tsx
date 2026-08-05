@@ -2,11 +2,13 @@ import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { getColorPalette, searchHats, searchHatsByColor } from '../api/search';
-import { getStyles, getSizes, getConditions } from '../api/hats';
-import { getRoomOptions } from '../api/rooms';
 import { ColorSwatches } from '../components/common/ColorSwatch';
 import { ConditionBadge } from '../components/common/ConditionBadge';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
+import {
+  useHatFilters, HatFilterBar, FilterToggleButton,
+  collectGeneralColors, matchesHatFilters,
+} from '../components/hats/HatFilters';
 import type { ColorSearchResult, SearchResult } from '../types';
 
 export function SearchPage() {
@@ -16,21 +18,14 @@ export function SearchPage() {
   const [colorHex, setColorHex] = useState<string | null>(null);
   const [pickerHex, setPickerHex] = useState('#8cb9e1');
 
-  const [filtersOpen, setFiltersOpen] = useState(false);
-  const [filterStyle, setFilterStyle] = useState('');
-  const [filterSize, setFilterSize] = useState('');
-  const [filterCondition, setFilterCondition] = useState('');
-  const [filterType, setFilterType] = useState('');
-  const [filterColor, setFilterColor] = useState('');
-  const [filterRoom, setFilterRoom] = useState('');
+  const hatFilters = useHatFilters();
+  const { filters, activeCount: activeFilterCount, isOpen: filtersOpen, setIsOpen: setFiltersOpen } = hatFilters;
 
-  const stylesQ = useQuery({ queryKey: ['meta', 'styles'], queryFn: getStyles });
-  const sizesQ = useQuery({ queryKey: ['meta', 'sizes'], queryFn: getSizes });
-  const conditionsQ = useQuery({ queryKey: ['meta', 'conditions'], queryFn: getConditions });
-  const roomsQ = useQuery({ queryKey: ['meta', 'rooms'], queryFn: getRoomOptions });
   const paletteQ = useQuery({ queryKey: ['meta', 'colors'], queryFn: getColorPalette });
 
-  const roomIdParam = filterRoom ? Number(filterRoom) : undefined;
+  // Room is applied server-side here — the API returns an already-filtered set,
+  // which is why it isn't part of `matchesHatFilters`.
+  const roomIdParam = filters.room ? Number(filters.room) : undefined;
 
   const textQ = useQuery({
     queryKey: ['search', searchTerm, exactColors, roomIdParam],
@@ -49,29 +44,12 @@ export function SearchPage() {
   const error = colorHex ? colorQ.error : textQ.error;
   const hasQuery = !!colorHex || searchTerm.length > 0;
 
-  const activeFilterCount = [filterStyle, filterSize, filterCondition, filterType, filterColor, filterRoom].filter(Boolean).length;
+  const availableColors = useMemo(() => collectGeneralColors(data), [data]);
 
-  const availableColors = useMemo(() => {
-    if (!data) return [];
-    const colors = new Set<string>();
-    data.forEach(h => h.colors.forEach(c => {
-      if (c.general_color) colors.add(c.general_color);
-    }));
-    return [...colors].sort();
-  }, [data]);
-
-  const filteredData = useMemo(() => {
-    if (!data) return [];
-    return data.filter(h => {
-      if (filterStyle && h.style !== filterStyle) return false;
-      if (filterSize && h.size !== filterSize) return false;
-      if (filterCondition && h.condition !== filterCondition) return false;
-      if (filterType === 'beanie' && !h.is_beanie) return false;
-      if (filterType === 'regular' && h.is_beanie) return false;
-      if (filterColor && !h.colors.some(c => c.general_color === filterColor)) return false;
-      return true;
-    });
-  }, [data, filterStyle, filterSize, filterCondition, filterType, filterColor]);
+  const filteredData = useMemo(
+    () => (data ?? []).filter(h => matchesHatFilters(h, filters)),
+    [data, filters]
+  );
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -83,11 +61,6 @@ export function SearchPage() {
     setSearchTerm('');
     setQuery('');
     setColorHex(prev => (prev === hex ? null : hex));
-  }
-
-  function clearFilters() {
-    setFilterStyle(''); setFilterSize(''); setFilterCondition('');
-    setFilterType(''); setFilterColor(''); setFilterRoom('');
   }
 
   return (
@@ -182,74 +155,16 @@ export function SearchPage() {
               )}
             </div>
             {data.length > 0 && (
-              <button
-                type="button"
-                className={`btn btn-sm ${activeFilterCount ? 'btn-primary' : 'btn-outline-secondary'}`}
-                onClick={() => setFiltersOpen(!filtersOpen)}
-              >
-                Filters{activeFilterCount > 0 && <span className="badge bg-white ms-1">{activeFilterCount}</span>}
-              </button>
+              <FilterToggleButton
+                activeCount={activeFilterCount}
+                isOpen={filtersOpen}
+                onToggle={setFiltersOpen}
+              />
             )}
           </div>
 
           {filtersOpen && data.length > 0 && (
-            <div className="card mb-3">
-              <div className="card-body">
-                <div className="row g-2">
-                  <div className="col-6 col-md-3">
-                    <label className="form-label">Style</label>
-                    <select className="form-select form-select-sm" value={filterStyle} onChange={e => setFilterStyle(e.target.value)}>
-                      <option value="">All</option>
-                      {stylesQ.data?.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
-                    </select>
-                  </div>
-                  <div className="col-6 col-md-3">
-                    <label className="form-label">Size</label>
-                    <select className="form-select form-select-sm" value={filterSize} onChange={e => setFilterSize(e.target.value)}>
-                      <option value="">All</option>
-                      {sizesQ.data?.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
-                    </select>
-                  </div>
-                  <div className="col-6 col-md-3">
-                    <label className="form-label">Condition</label>
-                    <select className="form-select form-select-sm" value={filterCondition} onChange={e => setFilterCondition(e.target.value)}>
-                      <option value="">All</option>
-                      {conditionsQ.data?.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
-                    </select>
-                  </div>
-                  <div className="col-6 col-md-3">
-                    <label className="form-label">Type</label>
-                    <select className="form-select form-select-sm" value={filterType} onChange={e => setFilterType(e.target.value)}>
-                      <option value="">All</option>
-                      <option value="regular">Regular</option>
-                      <option value="beanie">Beanies</option>
-                    </select>
-                  </div>
-                  <div className="col-6 col-md-3">
-                    <label className="form-label">Color</label>
-                    <select className="form-select form-select-sm" value={filterColor} onChange={e => setFilterColor(e.target.value)}>
-                      <option value="">All</option>
-                      {availableColors.map(c => <option key={c} value={c}>{c}</option>)}
-                    </select>
-                  </div>
-                  <div className="col-6 col-md-3">
-                    <label className="form-label">Room</label>
-                    <select className="form-select form-select-sm" value={filterRoom} onChange={e => setFilterRoom(e.target.value)}>
-                      <option value="">All</option>
-                      {roomsQ.data?.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
-                    </select>
-                  </div>
-                </div>
-                {activeFilterCount > 0 && (
-                  <button
-                    type="button"
-                    className="btn btn-link btn-sm mt-2 p-0"
-                    style={{ color: 'var(--neon-red)' }}
-                    onClick={clearFilters}
-                  >Clear filters</button>
-                )}
-              </div>
-            </div>
+            <HatFilterBar state={hatFilters} colors={availableColors} />
           )}
 
           {filteredData.length === 0 ? (
