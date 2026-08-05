@@ -6,7 +6,7 @@ It is tracked in git (was previously local-only and drifted stale) — keep it c
 
 ## Commands
 
-- `./scripts/setup.sh` — Full setup: installs missing deps (uv, Node — accepts 22.12+ (vite's floor; Node 20 is EOL), installs 26 fresh to match the image, Docker engine sans Desktop — colima/brew on macOS, get.docker.com on Linux), syncs backend+frontend, inits DB, builds SPA. Flags: `--docker-only` (just the engine, for the compose path), `--no-docker`, `--skip-build`
+- `./scripts/setup.sh` — Full setup: installs missing deps (uv, Node — accepts 22.22+ (react-router 8's engines floor, the highest of any dep; Node 20 is EOL), installs 26 fresh to match the image, Docker engine sans Desktop — colima/brew on macOS, get.docker.com on Linux), syncs backend+frontend, inits DB, builds SPA. Flags: `--docker-only` (just the engine, for the compose path), `--no-docker`, `--skip-build`
 - `uv run uvicorn headroom.app:app --reload` — Run backend dev server (port 8000)
 - `cd frontend && npm run dev` — Run frontend dev server (port 5173, proxies to backend)
 - `cd frontend && npx vite build` — Production SPA build (output: `frontend/dist`, served by backend in prod)

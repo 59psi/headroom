@@ -1,4 +1,4 @@
-import { NavLink } from 'react-router-dom';
+import { NavLink } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { getLogo, getRecentErrorsCount } from '../../api/settings';
 

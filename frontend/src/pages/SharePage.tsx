@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useParams } from 'react-router-dom';
+import { useParams } from 'react-router';
 import { apiFetch } from '../api/client';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 

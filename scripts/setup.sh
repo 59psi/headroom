@@ -11,7 +11,7 @@
 # Installs (only what's missing — safe to re-run):
 #   * uv        — brew on macOS, otherwise the official Astral installer
 #   * Node      — brew on macOS, NodeSource on apt/dnf Linux. Accepts an
-#                 existing Node 22.12+ (what vite/plugin-react require; the
+#                 existing Node 22.22+ (react-router 8's engines floor; the
 #                 Node 20 line is EOL as of 2026-04-30);
 #                 a FRESH install gets 26, matching the Docker image.
 #   * Docker    — WITHOUT Docker Desktop:
@@ -98,23 +98,25 @@ ensure_uv() {
 }
 
 # ------------------------------------------------------------------ #
-# Node.js — accept 22.12+, install 26 (matches the Docker image)
+# Node.js — accept 22.22+, install 26 (matches the Docker image)
 #
-# 22.12 is not arbitrary: vite and @vitejs/plugin-react declare
-# `^20.19.0 || >=22.12.0`, and the Node 20 line went end-of-life 2026-04-30.
-# So we take the >=22.12 branch — a bare major check would wave through 22.0
-# and then fail at build time.
+# 22.22 is not arbitrary: react-router 8 declares `engines: node >=22.22.0`,
+# which now supersedes vite/@vitejs/plugin-react's `^20.19.0 || >=22.12.0`
+# (and the Node 20 line went end-of-life 2026-04-30). Checking only the major
+# would wave through 22.0, and checking vite's old 22.12 would wave through a
+# Node that `npm ci` then rejects on the engines check. Track the HIGHEST floor
+# any dependency declares.
 # ------------------------------------------------------------------ #
-# 0 = usable (>= 22.12), 1 = too old or absent. One `node -v`, no subshells.
+# 0 = usable (>= 22.22), 1 = too old or absent. One `node -v`, no subshells.
 node_ok() {
   [[ $(node -v 2>/dev/null) =~ ^v([0-9]+)\.([0-9]+) ]] || return 1
-  (( BASH_REMATCH[1] > 22 || (BASH_REMATCH[1] == 22 && BASH_REMATCH[2] >= 12) ))
+  (( BASH_REMATCH[1] > 22 || (BASH_REMATCH[1] == 22 && BASH_REMATCH[2] >= 22) ))
 }
 
 ensure_node() {
   if node_ok; then return 0; fi
   if command -v node &>/dev/null; then
-    log "Node $(node -v) is too old (need 22.12+) — upgrading..."
+    log "Node $(node -v) is too old (need 22.22+) — upgrading..."
   else
     log "Installing Node.js..."
   fi
@@ -128,9 +130,9 @@ ensure_node() {
     run_remote_installer "https://rpm.nodesource.com/setup_26.x" $SUDO bash
     $SUDO dnf install -y nodejs
   else
-    die "No supported package manager found — install Node.js 22.12+ from https://nodejs.org/ and re-run."
+    die "No supported package manager found — install Node.js 22.22+ from https://nodejs.org/ and re-run."
   fi
-  node_ok || die "Node install failed or is still < 22.12."
+  node_ok || die "Node install failed or is still < 22.22."
 }
 
 # ------------------------------------------------------------------ #

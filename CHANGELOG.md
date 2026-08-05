@@ -6,6 +6,39 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+### Breaking
+- **`./scripts/setup.sh` now requires Node 22.22+** (was 22.12+). react-router 8
+  declares `engines: node >=22.22.0`, which supersedes vite's `>=22.12.0` as the
+  highest floor any dependency sets. Node 22.12–22.21 previously passed the
+  setup check and then failed at `npm ci`. Fresh installs and the Docker image
+  are unaffected — both already use Node 26.
+
+### Security
+- **react-router 7.18.2 → 8.3.0**, clearing a HIGH advisory (*RSC Mode CSRF
+  Bypass Allows Action Execution Before 400 Response*, vulnerable
+  `>=7.12.0 <8.3.0`; 8.3.0 is the only patched release). Headroom is a
+  declarative-mode SPA with no RSC, loaders, actions or server rendering, so the
+  advisory was not exploitable here — but the version was flagged and the
+  upgrade is clean.
+
+### Changed
+- `react-router-dom` is **removed in v8**; every import moves to `react-router`
+  (the app uses none of the `react-router/dom` APIs). Dropping the re-export
+  shim also trimmed ~2 kB off the bundle.
+
+### Added
+- Frontend test suite: **Vitest 4 + Testing Library 16 (jsdom)**, 35 tests,
+  run in the existing CI frontend job. Covers the shared hat filter/form
+  components, the 15-card Settings composition, and the routing primitives the
+  route table depends on.
+- `npm test` / `npm run test:watch` scripts.
+
+### Fixed
+- **Form controls were not associated with their labels.** The `<label>`
+  elements carry no `htmlFor` and do not wrap their inputs, so assistive tech
+  announced every filter and hat-form select as unlabelled. All eleven controls
+  now carry an `aria-label`.
+
 ## [2.2.2] — 2026-08-05 — _faster rebuilds, infra cleanup_
 
 ### Changed

@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router';
 import { getCase, deleteCase, uploadCasePhoto } from '../api/cases';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ImageLightbox } from '../components/common/ImageLightbox';

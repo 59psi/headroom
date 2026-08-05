@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router';
 import { getCase, updateCase, uploadCasePhoto } from '../api/cases';
 import { listRooms } from '../api/rooms';
 import { PhotoCapture } from '../components/photos/PhotoCapture';
