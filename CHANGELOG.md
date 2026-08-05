@@ -6,6 +6,24 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+### Changed
+- **Docker rebuilds are ~40s faster after a code change.** The rembg model
+  pre-download sat *after* `COPY src ./src`, so every source edit re-downloaded
+  the ONNX weights — measured at 51% of total image build time. It only needs
+  `rembg`, so it now runs before the source copy. The two Python stages also
+  share one `base` stage instead of repeating the image tag and native-lib list.
+
+### Fixed
+- **`./scripts/setup.sh --help` was truncating mid-list.** It printed a
+  hardcoded line range that the header outgrew; it now prints the comment block
+  itself.
+
+### Docs
+- Corrected the `pymatting` constraint rationale in `pyproject.toml`: 1.1.14
+  declares `numba!=0.49.0` (*unbounded*, which is why an ancient numba can be
+  selected), not "pins numba 0.53.1" as previously written — a maintainer
+  checking the old claim would have found it false and dropped the constraint.
+
 ## [2.2.1] — 2026-08-05 — _cryptography Bleichenbacher fix_
 
 The automation added in 2.2.0 immediately earned its keep: enabling Dependabot
