@@ -514,7 +514,7 @@ wheels = [
 
 [[package]]
 name = "headroom"
-version = "2.2.1"
+version = "2.2.2"
 source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },
