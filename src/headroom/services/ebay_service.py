@@ -107,6 +107,23 @@ async def _ensure_token(app_id: str, cert_id: str) -> str:
     raise EbayError(" ".join(parts))
 
 
+async def _browse(
+    token: str, query: str, marketplace: str, limit: int, timeout: float = 12.0
+) -> httpx.Response:
+    """One Browse API search. Shared by the comps lookup, its 401 retry, and the
+    credential probe — all three send the identical request."""
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        return await client.get(
+            EBAY_BROWSE,
+            params={"q": query, "limit": limit},
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-EBAY-C-MARKETPLACE-ID": marketplace,
+                "Accept": "application/json",
+            },
+        )
+
+
 async def verify_creds(db: AsyncSession) -> dict:
     """Probe the eBay credentials end-to-end. Returns a structured diagnostic.
 
@@ -130,16 +147,7 @@ async def verify_creds(db: AsyncSession) -> dict:
         return {"ok": False, "stage": "oauth", "detail": f"Network/transport error: {exc}"}
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
-                EBAY_BROWSE,
-                params={"q": "melin hat", "limit": 1},
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "X-EBAY-C-MARKETPLACE-ID": marketplace,
-                    "Accept": "application/json",
-                },
-            )
+        resp = await _browse(token, "melin hat", marketplace, limit=1, timeout=10.0)
         if resp.status_code != 200:
             return {
                 "ok": False, "stage": "browse",
@@ -212,31 +220,13 @@ async def find_comps(
 
     try:
         token = await _ensure_token(app_id, cert_id)
-        async with httpx.AsyncClient(timeout=12.0) as client:
-            resp = await client.get(
-                EBAY_BROWSE,
-                params={"q": query, "limit": max_results},
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "X-EBAY-C-MARKETPLACE-ID": marketplace,
-                    "Accept": "application/json",
-                },
-            )
+        resp = await _browse(token, query, marketplace, max_results)
         if resp.status_code == 401:
             # token might have just expired — invalidate + retry once
             global _token
             _token = None
             token = await _ensure_token(app_id, cert_id)
-            async with httpx.AsyncClient(timeout=12.0) as client:
-                resp = await client.get(
-                    EBAY_BROWSE,
-                    params={"q": query, "limit": max_results},
-                    headers={
-                        "Authorization": f"Bearer {token}",
-                        "X-EBAY-C-MARKETPLACE-ID": marketplace,
-                        "Accept": "application/json",
-                    },
-                )
+            resp = await _browse(token, query, marketplace, max_results)
         if resp.status_code != 200:
             raise EbayError(f"Browse API {resp.status_code}: {resp.text[:200]}")
 

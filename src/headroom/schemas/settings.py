@@ -1,5 +1,3 @@
-from datetime import datetime
-
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -46,17 +44,3 @@ class MdnsStatus(BaseModel):
     ip: str | None = None
     url: str | None = None
     error: str | None = None
-
-
-class RecentError(BaseModel):
-    hat_id: int
-    display_id: str | None
-    analysis_error: str | None
-    analyzed_at: datetime | None
-    photo_path: str | None
-
-
-class BackupInfo(BaseModel):
-    filename: str
-    size_bytes: int
-    created_at: datetime

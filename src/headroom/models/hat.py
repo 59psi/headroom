@@ -81,8 +81,39 @@ class Hat(Base):
         lazy="selectin", cascade="all, delete-orphan", order_by="WearLog.worn_at"
     )
 
+    # Derived read-model values. They live here rather than in the route layer
+    # so `HatRead.model_validate(hat)` can populate itself straight off the ORM
+    # object, and so nothing outside has to walk `hat.case.room` by hand.
+
     @property
     def display_id(self) -> str | None:
         if self.case and self.position_in_case is not None:
             return f"{self.case.display_id}-{self.position_in_case:02d}"
         return None
+
+    @property
+    def case_display_id(self) -> str | None:
+        return self.case.display_id if self.case else None
+
+    @property
+    def case_type(self) -> str | None:
+        return self.case.case_type if self.case else None
+
+    @property
+    def room(self) -> "Room | None":  # noqa: F821
+        """The room this hat sits in, via its case. None when unassigned."""
+        return self.case.room if self.case else None
+
+    @property
+    def room_id(self) -> int | None:
+        room = self.room
+        return room.id if room else None
+
+    @property
+    def room_name(self) -> str | None:
+        room = self.room
+        return room.name if room else None
+
+    @property
+    def wear_count(self) -> int:
+        return len(self.wear_logs or [])
