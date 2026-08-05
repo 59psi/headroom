@@ -6,6 +6,26 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.2.1] — 2026-08-05 — _cryptography Bleichenbacher fix_
+
+The automation added in 2.2.0 immediately earned its keep: enabling Dependabot
+alerts surfaced a **high**-severity advisory nothing had caught before.
+
+### Security
+- **`cryptography` 49.0.0 → 50.0.0** — PKCS#7 `EnvelopedData` decryption exposed
+  a Bleichenbacher oracle (vulnerable `>=44.0.0,<50.0.0`). It reaches us through
+  `webauthn`, i.e. the passkey path. **`pyopenssl` 26.3.0 → 26.4.0** rides along
+  because 26.3 caps `cryptography<50` — upgrading cryptography alone was
+  impossible, the resolver just silently backtracked to the vulnerable version.
+
+### Changed
+- **`[tool.uv] exclude-newer-package = { cryptography = false, pyopenssl = false }`.**
+  The 7-day cooldown exists to dodge freshly published *malicious* packages, but
+  for the crypto stack a fresh release is usually the *security fix itself* —
+  50.0.0 landed 4 days after the advisory and a plain `uv lock` kept silently
+  reverting to the vulnerable 49.0.0. These two are now exempt; everything else
+  still waits out the cooldown.
+
 ## [2.2.0] — 2026-08-04 — _stop the drift: automated dependency updates + CI_
 
 Answering "why is so much always out of date?": **nothing was automated.** No CI,
