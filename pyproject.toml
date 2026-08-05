@@ -32,16 +32,19 @@ dev = [
 ]
 
 [tool.uv]
-# Floor a TRANSITIVE dep without making it a direct one. rembg → pymatting:
-# pymatting 1.1.14 pins numba 0.53.1 → llvmlite 0.36.0, which only builds on
-# Python <3.10, so letting the resolver pick it breaks `uv sync` on our 3.12
-# baseline (and the Docker build). 1.1.15+ uses a numba that supports 3.12.
+# Floor a TRANSITIVE dep without making it a direct one. rembg depends on
+# `pymatting>=1.1.14`, and 1.1.14 declares only `numba!=0.49.0` — no lower
+# bound — so the resolver is free to pick an ancient numba (0.53.1 →
+# llvmlite 0.36.0), which builds only on Python <3.10 and breaks `uv sync`
+# and the Docker image. pymatting 1.1.15 declares `numba>=0.60.0`, which
+# rules that out. Flooring rembg instead wouldn't help: its own floor is
+# 1.1.14.
 constraint-dependencies = ["pymatting>=1.1.15"]
 
 # Supply-chain cooldown: ignore releases younger than this when resolving, so a
-# compromised or broken package published minutes ago can't be pulled straight
-# into a build. Verified not to hold back any of the security fixes in this
-# lock — if a future CVE fix is newer than the window, drop it for that run.
+# compromised package published minutes ago can't land straight in a build. If a
+# CVE fix is newer than the window, exempt that package below rather than
+# lowering this globally.
 exclude-newer = "7 days"
 
 # ...but NOT for the crypto stack. The cooldown exists to dodge freshly
