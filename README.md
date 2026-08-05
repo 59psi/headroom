@@ -275,9 +275,10 @@ Prereqs: git + curl. The setup script installs everything else it needs —
 uv, Python, Node, backend and frontend deps — via Homebrew on macOS and
 apt/dnf on Linux. It pulls the same versions the Docker image runs
 (**Python 3.14** via the `.python-version` pin, **Node 26** on a fresh
-install), so bare metal doesn't drift from production. An existing Node 20+
-is accepted as-is, and the package itself still supports Python 3.12+ if you
-bring your own interpreter.
+install), so bare metal doesn't drift from production. An existing **Node
+22.12+** is accepted as-is — that's what vite requires, and the Node 20 line
+went EOL 2026-04-30 — and the package itself still supports Python 3.12+ if
+you bring your own interpreter.
 
 ```bash
 git clone https://github.com/59psi/headroom.git && cd headroom

@@ -6,6 +6,39 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.2.0] — 2026-08-04 — _stop the drift: automated dependency updates + CI_
+
+Answering "why is so much always out of date?": **nothing was automated.** No CI,
+no Dependabot, no Renovate — no `.github/` directory at all. Every bump was
+manual and reactive, and `package-lock.json` pinned versions that nothing ever
+refreshed, so even in-range updates never landed.
+
+### Added
+- **`.github/dependabot.yml`** — weekly PRs for **npm**, **uv**, **Docker base
+  images** (including the `COPY --from=` toolchain pin that sat at uv 0.5.4 from
+  v0.2.0 to v2.0.6) and **GitHub Actions**. Minor/patch are grouped into one PR;
+  majors arrive individually so they get a real review. Each ecosystem carries a
+  7-day `cooldown`, mirroring `[tool.uv] exclude-newer`. Validated against the
+  official schema.
+- **`.github/workflows/ci.yml`** — pytest + typecheck + production build on
+  every PR, plus a **real Docker build and container health check**. That last
+  job is deliberate: the 2.0.6 breakage was config the *image's* toolchain
+  couldn't parse, which the test suite could never have caught.
+- **Dependabot alerts and automated security fixes are now enabled** on the
+  repository (they were off, which is why the Snyk findings had to be found by
+  hand).
+
+### Changed
+- **Frontend dependencies brought current.** In-range refresh (react, react-dom,
+  @tanstack/react-query, @types/*, react-router-dom) plus four majors:
+  **vite 6 → 8**, **TypeScript 5.8 → 7**, **@vitejs/plugin-react 4 → 6**,
+  **react-easy-crop 5 → 6**. Typecheck and production build verified clean; the
+  bundle got *smaller* (446 → 439 kB) and the build faster.
+- **Node floor raised to 22.12** in `scripts/setup.sh`, with a real minor-version
+  check. vite 8 and @vitejs/plugin-react require `^20.19 || >=22.12`, so a bare
+  major comparison would have waved through Node 22.0 and then failed at build
+  time — and the Node 20 line reached end-of-life 2026-04-30.
+
 ## [2.1.1] — 2026-08-04 — _bare metal catches up to the image_
 
 2.1.0 moved the **Docker** toolchain forward but left the bare-metal path
