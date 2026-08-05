@@ -13,7 +13,7 @@ dependencies = [
     "python-multipart",
     "Pillow",
     "pillow-heif",
-    "anthropic>=0.40.0",
+    "anthropic>=0.120.2",
     "rembg[cpu]>=2.0.50",
     "onnxruntime",
     "argon2-cffi>=25.1.0",
