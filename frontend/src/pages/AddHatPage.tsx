@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router';
 import { createHat, uploadHatPhoto } from '../api/hats';
 import { getApiKeyStatus } from '../api/settings';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';

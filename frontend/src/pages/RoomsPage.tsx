@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { listRooms, createRoom, updateRoom, deleteRoom } from '../api/rooms';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import type { RoomRead } from '../types';

@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router';
 import { listCases } from '../api/cases';
 import { listHats } from '../api/hats';
 import { listRooms } from '../api/rooms';
