@@ -14,7 +14,7 @@ dependencies = [
     "Pillow",
     "pillow-heif",
     "anthropic>=0.120.2",
-    "rembg[cpu]>=2.0.50",
+    "rembg[cpu]>=2.0.77",
     "onnxruntime",
     "argon2-cffi>=25.1.0",
     "webauthn>=3.0.0",

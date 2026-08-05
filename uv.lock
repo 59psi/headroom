@@ -552,7 +552,7 @@ requires-dist = [
     { name = "pydantic-settings" },
     { name = "python-multipart" },
     { name = "qrcode", specifier = ">=8.2" },
-    { name = "rembg", extras = ["cpu"], specifier = ">=2.0.50" },
+    { name = "rembg", extras = ["cpu"], specifier = ">=2.0.77" },
     { name = "sqlalchemy", extras = ["asyncio"] },
     { name = "uvicorn", extras = ["standard"] },
     { name = "webauthn", specifier = ">=3.0.0" },
