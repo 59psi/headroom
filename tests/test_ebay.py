@@ -119,7 +119,7 @@ async def test_find_comps_aggregates_only_valid_positive_prices(db_session, monk
             {"price": {"value": "not-a-num"}},  # unparseable → excluded from stats
         ]
     }
-    monkeypatch.setattr(ebay_service, "_get_creds", _fake_creds)
+    monkeypatch.setattr(ebay_service, "get_creds", _fake_creds)
     monkeypatch.setattr(ebay_service, "_ensure_token", _fake_token)
     monkeypatch.setattr(
         ebay_service.httpx, "AsyncClient", lambda *a, **k: _FakeClient(payload)
@@ -144,7 +144,7 @@ async def test_find_comps_no_valid_prices_yields_none_stats(db_session, monkeypa
         return "tok"
 
     payload = {"itemSummaries": [{"price": {"value": "0"}}, {"noprice": True}]}
-    monkeypatch.setattr(ebay_service, "_get_creds", _fake_creds)
+    monkeypatch.setattr(ebay_service, "get_creds", _fake_creds)
     monkeypatch.setattr(ebay_service, "_ensure_token", _fake_token)
     monkeypatch.setattr(
         ebay_service.httpx, "AsyncClient", lambda *a, **k: _FakeClient(payload)

@@ -7,7 +7,7 @@ from sqlalchemy.orm import selectinload
 
 from headroom.models.case import Case
 from headroom.models.hat import Hat
-from headroom.schemas.hat import HatCreate, HatStyle, HatUpdate
+from headroom.schemas.hat import HatCreate, HatDispose, HatStyle, HatUpdate
 from headroom.services.activity_service import log_activity
 
 MAX_REGULAR = 4
@@ -17,14 +17,22 @@ MAX_BEANIE = 6
 DISPOSITION_VIAS = {"sold", "gifted", "lost", "trashed", "trade"}
 
 
+def _hat_loads():
+    """The eager-load set every Hat query needs (CLAUDE.md: always selectinload).
+    One definition — it was copy-pasted at three call sites, so adding a
+    relationship meant remembering all three. `wear_logs` is deliberately absent:
+    the model already declares it `lazy="selectin"`.
+    """
+    return (
+        selectinload(Hat.case).selectinload(Case.room),
+        selectinload(Hat.colors),
+    )
+
 async def _reload_hat(db: AsyncSession, hat_id: int) -> Hat:
     db.expire_all()
     result = await db.execute(
         select(Hat)
-        .options(
-            selectinload(Hat.case).selectinload(Case.room),
-            selectinload(Hat.colors),
-        )
+        .options(*_hat_loads())
         .where(Hat.id == hat_id)
     )
     return result.scalar_one()
@@ -149,10 +157,7 @@ async def list_hats(
 ) -> list[Hat]:
     query = (
         select(Hat)
-        .options(
-            selectinload(Hat.case).selectinload(Case.room),
-            selectinload(Hat.colors),
-        )
+        .options(*_hat_loads())
     )
     if case_id is not None:
         query = query.where(Hat.case_id == case_id)
@@ -173,10 +178,7 @@ async def list_hats(
 async def get_hat(db: AsyncSession, hat_id: int) -> Hat:
     result = await db.execute(
         select(Hat)
-        .options(
-            selectinload(Hat.case).selectinload(Case.room),
-            selectinload(Hat.colors),
-        )
+        .options(*_hat_loads())
         .where(Hat.id == hat_id)
     )
     hat = result.scalar_one_or_none()
@@ -244,27 +246,22 @@ async def assign_hat(db: AsyncSession, hat_id: int, case_id: int | None) -> Hat:
     return await _reload_hat(db, hat_id)
 
 
-async def dispose_hat(
-    db: AsyncSession,
-    hat_id: int,
-    *,
-    via: str,
-    price: float | None = None,
-    to: str | None = None,
-    notes: str | None = None,
-    disposed_at: datetime | None = None,
-) -> Hat:
+async def dispose_hat(db: AsyncSession, hat_id: int, data: HatDispose) -> Hat:
+    """Soft-delete a hat. Takes the whole `HatDispose` — the five fields always
+    travel together, so unpacking them into kwargs only created a clump to
+    re-assemble at the call site."""
+    via = data.via
     if via not in DISPOSITION_VIAS:
         raise HTTPException(
             status_code=400,
             detail=f"Invalid disposal kind. Must be one of: {', '.join(sorted(DISPOSITION_VIAS))}",
         )
     hat = await get_hat(db, hat_id)
-    hat.disposed_at = disposed_at or datetime.now(timezone.utc)
+    hat.disposed_at = data.disposed_at or datetime.now(timezone.utc)
     hat.disposed_via = via
-    hat.disposed_price = price
-    hat.disposed_to = to
-    hat.disposed_notes = notes
+    hat.disposed_price = data.price
+    hat.disposed_to = data.to
+    hat.disposed_notes = data.notes
     # Free the case slot — disposed hats stay tied to their last case for
     # history but no longer count against capacity (see _validate_capacity).
     # We deliberately don't unassign so the case detail page can show
@@ -273,8 +270,9 @@ async def dispose_hat(
     await db.commit()
     await log_activity(
         db, kind="hat.disposed", entity_type="hat", entity_id=hat_id,
-        summary=f"Hat #{hat_id} disposed via {via}" + (f" for ${price:.2f}" if price else ""),
-        details={"via": via, "price": price, "to": to},
+        summary=f"Hat #{hat_id} disposed via {via}"
+                + (f" for ${data.price:.2f}" if data.price else ""),
+        details={"via": via, "price": data.price, "to": data.to},
     )
     await db.commit()
     return await _reload_hat(db, hat_id)

@@ -40,8 +40,6 @@ async def set_setting(db: AsyncSession, key: str, value: str | None) -> None:
 
 
 # Backwards-compatible private aliases (pre-1.3 callers referenced these).
-_get_setting = get_setting
-_set_setting = set_setting
 
 
 async def get_anthropic_key(db: AsyncSession) -> tuple[str | None, str | None]:

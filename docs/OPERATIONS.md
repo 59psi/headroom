@@ -99,6 +99,7 @@ fleet-default, the UI is the per-install override.
 | `HEADROOM_MDNS_ENABLED` | `true` | Advertise the app on the LAN via mDNS. Docker needs the `docker-compose.mdns.yml` overlay (host networking) for it to reach the LAN |
 | `HEADROOM_MDNS_HOSTNAME` | `headroom` | mDNS host label — the app resolves as `<label>.local` |
 | `HEADROOM_MDNS_PORT` | `8000` | Port the mDNS advertisement points at |
+| `HEADROOM_MDNS_INTERFACE` | _(detected LAN IP)_ | Which interface the responder binds. Defaults to the detected LAN address so a host-net container doesn't leak onto `docker0`/`veth`; an IP pins a specific NIC, `all` restores zeroconf's all-interfaces mode |
 
 ---
 
@@ -115,6 +116,11 @@ fleet-default, the UI is the per-install override.
 
   Returns **503** when database or uploads checks fail. (`anthropic_key`
   is informational — an unconfigured key does not fail readiness.)
+- **That payload is the *authenticated* view.** The endpoint is unauthenticated
+  so Docker's healthcheck can reach it, so for anonymous callers it returns
+  booleans only — no `path`, no key `source`, no raw error text — and omits the
+  `import_worker` liveness check entirely. Authenticate (session cookie or
+  bearer token) to see the full detail above.
 - The compose file wires `/health/ready` as the container healthcheck
   (30s interval, 30s start period).
 - **Logs**: `docker compose logs -f` (JSON-file driver, capped 10 MB × 5

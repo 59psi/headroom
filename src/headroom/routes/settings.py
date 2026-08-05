@@ -66,13 +66,12 @@ async def upload_logo(photo: UploadFile):
 
     try:
         img = Image.open(tmp_path)
-        if img.mode in ("RGBA", "P", "LA"):
-            out_ext = ".png"
-            save_fmt = "PNG"
-        else:
+        # Always written as PNG so transparency survives; only opaque modes
+        # need the RGB conversion first.
+        if img.mode not in ("RGBA", "P", "LA"):
             img = img.convert("RGB")
-            out_ext = ".png"
-            save_fmt = "PNG"
+        out_ext = ".png"
+        save_fmt = "PNG"
 
         if img.height > LOGO_MAX_HEIGHT:
             ratio = LOGO_MAX_HEIGHT / img.height
