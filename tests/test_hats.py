@@ -39,6 +39,40 @@ async def test_create_hat_in_case(client):
 
 
 @pytest.mark.anyio
+async def test_hat_read_exposes_every_derived_field(client):
+    """HatRead is built straight off the ORM object, so the values that come
+    from a *relationship* rather than a column are the ones that can silently
+    go null. Pin all of them on one fully-populated hat.
+
+    room_id in particular is what the Hats page filters on client-side — if it
+    stopped being populated the filter would just quietly match nothing.
+    """
+    room = (await client.post("/api/rooms", json={"name": "Closet"})).json()
+    case = (await client.post(
+        "/api/cases", json={"case_type": "daily_wear", "room_id": room["id"]}
+    )).json()
+    hat_id = (await _create_hat(client, case_id=case["id"])).json()["id"]
+    await client.post(f"/api/hats/{hat_id}/wear", json={})
+
+    data = (await client.get(f"/api/hats/{hat_id}")).json()
+    assert data["case_display_id"] == case["display_id"]
+    assert data["case_type"] == "daily_wear"
+    assert data["room_id"] == room["id"]
+    assert data["room_name"] == "Closet"
+    assert data["wear_count"] == 1
+    assert data["display_id"] == f"{case['display_id']}-01"
+
+    # An unassigned hat must degrade to nulls, not raise walking hat.case.room.
+    loose_id = (await _create_hat(client)).json()["id"]
+    loose = (await client.get(f"/api/hats/{loose_id}")).json()
+    assert loose["case_display_id"] is None
+    assert loose["case_type"] is None
+    assert loose["room_id"] is None
+    assert loose["room_name"] is None
+    assert loose["wear_count"] == 0
+
+
+@pytest.mark.anyio
 async def test_hat_positions_sequential(client):
     case = await _create_case(client)
     await _create_hat(client, case_id=case["id"])

@@ -242,12 +242,7 @@ async def run_fallback_analysis(
     if brand:
         hat.brand = brand
         provided.append("brand via Google logo detection")
-        pointer = build_resale_pointer(hat.brand, hat.style)
-        if pointer:
-            hat.resale_price = pointer["resale_price"]
-            hat.resale_price_source = pointer["resale_price_source"]
-            hat.resale_price_url = pointer["resale_price_url"]
-            hat.resale_checked_at = datetime.now(timezone.utc)
+        _apply_resale_pointer(hat)
         await refresh_melin_resale(hat)
 
     hat.analysis_status = "fallback"
@@ -257,6 +252,21 @@ async def run_fallback_analysis(
     )
     hat.analyzed_at = datetime.now(timezone.utc)
     return True
+
+
+def _apply_resale_pointer(hat: Hat) -> None:
+    """Attach the resale deep link + pointer price when the brand qualifies.
+
+    Shared by the Claude path and the logo-detection fallback — both learn the
+    brand and then need exactly this.
+    """
+    pointer = build_resale_pointer(hat.brand, hat.style)
+    if not pointer:
+        return
+    hat.resale_price = pointer["resale_price"]
+    hat.resale_price_source = pointer["resale_price_source"]
+    hat.resale_price_url = pointer["resale_price_url"]
+    hat.resale_checked_at = datetime.now(timezone.utc)
 
 
 def _apply_analysis(hat: Hat, analysis: HatAnalysis) -> None:
@@ -287,9 +297,4 @@ def _apply_analysis(hat: Hat, analysis: HatAnalysis) -> None:
         )
 
     # Resale pointer (Melin only, by current rules)
-    pointer = build_resale_pointer(hat.brand, hat.style)
-    if pointer:
-        hat.resale_price = pointer["resale_price"]
-        hat.resale_price_source = pointer["resale_price_source"]
-        hat.resale_price_url = pointer["resale_price_url"]
-        hat.resale_checked_at = datetime.now(timezone.utc)
+    _apply_resale_pointer(hat)

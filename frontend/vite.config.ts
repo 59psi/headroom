@@ -1,7 +1,10 @@
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { defineConfig } from 'vite'
+// `vitest/config` re-exports vite's defineConfig with the `test` block typed,
+// so the test run inherits the plugins and the __APP_VERSION__/__BUILD_SHA__
+// defines rather than needing a second, drifting config.
+import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 
 // Bake the package.json version into the bundle as `__APP_VERSION__`. The
@@ -37,5 +40,13 @@ export default defineConfig({
       '/api': 'http://localhost:8000',
       '/uploads': 'http://localhost:8000',
     },
+  },
+  test: {
+    environment: 'jsdom',
+    setupFiles: ['./src/test/setup.ts'],
+    // Component styling lives in plain .css imported by main.tsx, which the
+    // tests never mount — parsing it would cost time and assert nothing.
+    css: false,
+    restoreMocks: true,
   },
 })

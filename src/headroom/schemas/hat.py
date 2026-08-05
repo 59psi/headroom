@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from enum import StrEnum
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, field_validator
 
 
 class HatCondition(StrEnum):
@@ -37,7 +37,21 @@ class ColorTag(BaseModel):
     dominance_rank: int
     tier: str = "primary"
 
-    model_config = {"from_attributes": True}
+    model_config = ConfigDict(from_attributes=True)
+
+    # `general_color` and `tier` were added to hat_colors by migration. The DDL
+    # carries a DEFAULT so rows should be backfilled, but a NULL read back from
+    # a hand-edited or partially-migrated DB must degrade to the default rather
+    # than 500 the whole hat list.
+    @field_validator("general_color", mode="before")
+    @classmethod
+    def _blank_when_null(cls, v: str | None) -> str:
+        return v or ""
+
+    @field_validator("tier", mode="before")
+    @classmethod
+    def _primary_when_null(cls, v: str | None) -> str:
+        return v or "primary"
 
 
 class HatCreate(BaseModel):
@@ -64,7 +78,14 @@ class HatUpdate(BaseModel):
     resale_price: float | None = None
 
 
+# Populated straight off the ORM object via `HatRead.model_validate(hat)` —
+# every field below is either a Hat column or one of the derived properties on
+# the model, so adding a column means editing the model and this class, and
+# nothing else. (Kept as a comment, not a docstring: docstrings surface in the
+# public OpenAPI schema, and this is an internal note.)
 class HatRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     case_id: int | None
     position_in_case: int | None

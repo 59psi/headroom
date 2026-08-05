@@ -46,45 +46,74 @@ correct, no hooks-after-early-return.
 | N7 | **Duplicated code**: `_case_to_read` / `_case_to_detail` restated 13 identical fields. | `_case_to_detail` derives from `_case_to_read`. |
 | N8 | `CLAUDE.md` stale test count (same as S4). | Fixed. |
 
-### Outstanding ⏳
+### Previously outstanding — all 8 now fixed ✅
 
-Ordered by value. All are in working, tested code — none is a correctness bug.
+Ordered as originally triaged. None was a correctness bug; all were in working,
+tested code.
 
-1. **Duplicated API-key management** *(highest value)* — `routes/settings.py:96-146`
-   vs `148-193`, plus `settings_service.py:47-84`. The Anthropic and
-   Google-Vision key triples (GET status / PUT set / DELETE clear) are
-   line-for-line twins; the source even says "Same shape as the Anthropic key
-   routes". A third provider means a third copy. → factor into one
-   parameterised router factory or a shared `_key_routes(name, getter, setter)`.
-2. **`_hat_to_read` shotgun surgery** — `routes/hats.py:38-92` hand-copies ~45
-   `hat.*` attributes. A new Hat column already requires edits to the model,
-   `_HAT_COLUMN_DDL`, `HatRead`, this function, and `types/index.ts`
-   (`tests/test_schema_consistency.py` exists because forgetting one is a known
-   failure). → build `HatRead` from the ORM object with
-   `model_config = ConfigDict(from_attributes=True)` + computed fields for the
-   handful of derived ones (`wear_count`, `case_display_id`, `room_name`).
-3. **`import_service` string dispatch** — `_bump_job_counter(job_id, field)`
-   switches on `"done"/"errors"/"skipped"`, re-derived again in
-   `_recover_on_boot`. Note the counter is `"errors"` while the item status is
-   `"error"` — exactly the mismatch string dispatch invites. → an enum or a
-   single shared mapping.
-4. **`ebay_service.py:214-220` vs `229-236`** — the Browse API request block is
-   duplicated for the initial call and the 401-retry. → one `_browse(...)` helper.
-5. **`hat_analysis_pipeline.py:245-249` vs `290-294`** — duplicated apply block
-   between the upload and reanalyze paths.
-6. **Frontend duplication** (no test coverage — typecheck only):
-   `AddHatPage.tsx:93-160` vs `EditHatPage.tsx:143-180+` (the whole hat form incl.
-   `NewCaseModal`); `HatsPage.tsx:96-130` vs `SearchPage.tsx:54-80`
-   (`availableColors`/`filteredData` memos + filter bar).
-7. **Divergent change / large modules** — `routes/admin.py` (341 lines) changes
-   for errors, backups, activity, reports, eBay creds, colorways, purchases and
-   labels; `SettingsPage.tsx` (1084 lines) likewise, though it already extracts
-   `AccountCard`/`ShareLinksCard`/`PurchasesCard` — the pattern just isn't
-   finished. → split along those seams.
-8. **Inconsistent schema placement** — `CLAUDE.md:46` puts Pydantic models in
-   `schemas/`, but `routes/admin.py` defines `EbayCredsStatus`,
-   `EbayCredsUpdate`, `ActivityRow`, `PurchaseImport` inline while
-   `BackupInfo`/`RecentError` come from `schemas/`.
+| # | Finding | Fix |
+|---|---|---|
+| 1 | **Duplicated API-key management** *(highest value)* — the Anthropic and Google-Vision route triples (GET status / PUT set / DELETE clear) were line-for-line twins, plus a get/set/clear trio per provider in the service. The source even said "Same shape as the Anthropic key routes". | One frozen `KeyProvider` dataclass per provider drives both layers: `get_key`/`set_key`/`clear_key` in the service, and `_mount_key_routes()` generating the three routes. A third provider is one dataclass entry + one line in the mount loop. The two named getters (`get_anthropic_key`, `get_google_vision_key`) stay as the seams the pipeline reads and the tests patch per-provider. |
+| 2 | **`_hat_to_read` shotgun surgery** — hand-copied ~45 `hat.*` attributes and walked `hat.case.room` in the route layer. | The five derived values are now `@property` on the `Hat` model beside the existing `display_id`; `HatRead` is `from_attributes=True` and `_hat_to_read` is one `model_validate` call. `ColorTag` gained validators preserving the old `or ""` / `or "primary"` null tolerance. New test pins every derived field **and** the unassigned-hat null case — `room_id`/`room_name`/`case_type` had zero coverage before, and `room_id` is what the Hats page filters on. |
+| 3 | **`import_service` string dispatch** — `_bump_job_counter` switched on counter names, and the counter is `"errors"` while the item status is `"error"`. | Takes the item status and maps through one `_JOB_COUNTER` dict that `_recover_on_boot` also recounts from. |
+| 4 | **eBay Browse request duplicated** for the initial call and the 401 retry. | One `_browse()` helper — which found a *third* copy in `verify_creds` (differing only in timeout). |
+| 5 | **`hat_analysis_pipeline`** duplicated resale-pointer apply block. | Extracted to `_apply_resale_pointer`. |
+| 6 | **Frontend duplication** — the whole hat form across Add/Edit; the `availableColors`/`filteredData` memos + filter bar across Hats/Search. | `components/hats/HatFormFields.tsx` (`useHatFormOptions`, `useHatPhoto`, `PhotoCard`, `HatBasicsCard`) and `components/hats/HatFilters.tsx` (`useHatFilters`, `HatFilterBar`, `matchesHatFilters`, `collectGeneralColors`). Room stays out of the shared predicate on purpose: Hats matches `room_id` client-side, Search sends it to the API. The four pages went 1093 → 819 lines. |
+| 7 | **Divergent change / large modules** — `routes/admin.py` (334 lines, 7 reasons to change); `SettingsPage.tsx` (1084 lines). | `routes/admin/` package of six single-concern modules, with prefix/tag/`require_admin` applied once in `__init__`. `SettingsPage.tsx` → 44-line composition root over 15 card modules in `components/settings/`. |
+| 8 | **Inconsistent schema placement** — four Pydantic models declared inline in `routes/admin.py` while `BackupInfo`/`RecentError` came from `schemas/`. | All six now in `schemas/admin.py`, mirroring `routes/admin/`. |
 
-Items 6 and 7 are multi-hour refactors of working code with meaningful
-regression risk; 1–5 are contained and test-covered.
+**How the no-behaviour-change claim was verified** (not just "tests pass"): the
+full OpenAPI document was generated from `origin/main` and from HEAD and
+diffed. **90 routes before, 90 after, identical**; every response schema
+byte-identical. The only path-level differences are three `operationId`/`summary`
+strings on the Anthropic key routes (now provider-qualified — `Delete Anthropic
+Key` rather than `Delete Api Key`, which is more accurate given there are two
+providers) and one added endpoint description. Backend tests 190/190;
+frontend typecheck and production build clean.
+
+One deliberate behaviour change: `SettingsPage` used to hold a single spinner
+over the whole page until the logo/key/model queries resolved. With per-card
+state that would have flashed "No key configured" at someone who has one, so
+those three cards now show their own inline "Loading…" instead.
+
+---
+
+## Follow-up: frontend test coverage
+
+The gap called out above — "verified structurally, not behaviourally" — is now
+closed. Vitest 4 + Testing Library 16 (jsdom), **27 tests**, wired into the
+existing CI frontend job (no new job, no new workflow trigger).
+
+What they cover, chosen to be the things the refactor could plausibly have
+broken and that nothing else catches:
+
+- `matchesHatFilters` / `collectGeneralColors` — every predicate, the AND-ing,
+  multi-swatch color matching, and an explicit assertion that **`room` is not
+  applied** (if it ever were, Search would filter an already-server-filtered
+  list against a field it doesn't carry).
+- `HatFilterBar` — the six selects populate from the meta queries, state and
+  active-count update, Clear resets shared filters *and* invokes
+  `onClearExtras` (without which the Hats page's brand filter would silently
+  stay applied).
+- `HatBasicsCard` — each field reports under the right key, and the `__new__`
+  sentinel opens the modal **without** being written as a case id (it would
+  otherwise submit `case_id=NaN`).
+- `SettingsPage` — the full 15-card list renders in the documented order.
+  Dropping a card from a composition root is otherwise an invisible failure.
+- `AnthropicKeyCard` — the loading guard never shows "No key configured" while
+  loading, does once the query resolves empty, and drops a stale test result
+  when the active model changes.
+
+**Mutation-checked**, not just green: removing `<MdnsCard />` fails 2 tests;
+disabling the loading guard fails the guard test.
+
+Two real defects surfaced while writing them:
+
+1. **No form control was associated with its label** — the `<label>` elements
+   carry no `htmlFor` and don't wrap their inputs, so assistive tech announced
+   the filter and hat-form selects as unlabelled. Fixed with `aria-label` on
+   all eleven controls (six filters, four form selects, the date input).
+2. **A test mock disagreed with the real payload** — `ApiKeyStatus` was mocked
+   as `{configured: false}`, but pydantic emits fields with defaults, so the
+   wire format is `{configured, source: null, masked: null}`. `tsc` caught it
+   because test files sit inside `src/`.

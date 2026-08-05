@@ -93,104 +93,73 @@ async def delete_logo():
         existing.unlink(missing_ok=True)
 
 
-# ---------------------------- API key -------------------------------- #
+# ---------------------------- API keys -------------------------------- #
+# Anthropic (analysis) and Google Vision (fallback brand logos) expose the
+# identical GET status / PUT set / DELETE clear triple, so the routes are
+# generated once per provider instead of copied. The raw key is never returned
+# — only ApiKeyStatus (configured / source / masked prefix+suffix).
 
 
-@router.get("/api-key", response_model=ApiKeyStatus)
-async def get_api_key_status(db: AsyncSession = Depends(get_db)):
-    key, source = await settings_service.get_anthropic_key(db)
-    if not key:
-        return ApiKeyStatus(configured=False)
-    return ApiKeyStatus(
-        configured=True,
-        source=source,
-        masked=settings_service.mask_key(key),
+def _mount_key_routes(provider: settings_service.KeyProvider) -> None:
+    path = f"/{provider.slug}"
+
+    async def status(db: AsyncSession) -> ApiKeyStatus:
+        key, source = await settings_service.get_key(db, provider)
+        if not key:
+            return ApiKeyStatus(configured=False)
+        return ApiKeyStatus(
+            configured=True,
+            source=source,
+            masked=settings_service.mask_key(key),
+        )
+
+    @router.get(path, response_model=ApiKeyStatus, name=f"get_{provider.name}_status")
+    async def get_key_status(db: AsyncSession = Depends(get_db)):
+        return await status(db)
+
+    @router.put(
+        path,
+        response_model=ApiKeyStatus,
+        dependencies=[Depends(require_admin)],
+        name=f"set_{provider.name}",
     )
+    async def set_key(data: ApiKeyUpdate, db: AsyncSession = Depends(get_db)):
+        await settings_service.set_key(db, provider, data.api_key)
+        await activity_service.log_activity(
+            db, kind="settings.key_set", entity_type="system", entity_id=None,
+            summary=f"{provider.label} set/updated",
+        )
+        await db.commit()
+        return await status(db)
 
-
-@router.put("/api-key", response_model=ApiKeyStatus, dependencies=[Depends(require_admin)])
-async def set_api_key(data: ApiKeyUpdate, db: AsyncSession = Depends(get_db)):
-    await settings_service.set_anthropic_key(db, data.api_key)
-    await activity_service.log_activity(
-        db, kind="settings.key_set", entity_type="system", entity_id=None,
-        summary="Anthropic API key set/updated",
+    @router.delete(
+        path,
+        status_code=204,
+        dependencies=[Depends(require_admin)],
+        name=f"delete_{provider.name}",
     )
-    await db.commit()
-    key, source = await settings_service.get_anthropic_key(db)
-    return ApiKeyStatus(
-        configured=bool(key),
-        source=source,
-        masked=settings_service.mask_key(key) if key else None,
-    )
+    async def delete_key(db: AsyncSession = Depends(get_db)):
+        await settings_service.clear_key(db, provider)
+        await activity_service.log_activity(
+            db, kind="settings.key_cleared", entity_type="system", entity_id=None,
+            summary=f"{provider.label} cleared",
+        )
+        await db.commit()
 
 
-@router.delete("/api-key", status_code=204, dependencies=[Depends(require_admin)])
-async def delete_api_key(db: AsyncSession = Depends(get_db)):
-    await settings_service.clear_anthropic_key(db)
-    await activity_service.log_activity(
-        db, kind="settings.key_cleared", entity_type="system", entity_id=None,
-        summary="Anthropic API key cleared",
-    )
-    await db.commit()
+for _provider in (settings_service.ANTHROPIC_KEY, settings_service.GOOGLE_VISION_KEY):
+    _mount_key_routes(_provider)
 
 
 @router.post("/api-key/test", response_model=ApiKeyTestResult, dependencies=[Depends(require_admin)])
 async def test_api_key(db: AsyncSession = Depends(get_db)):
+    """Anthropic-only: the Vision key has no equivalent cheap probe."""
     key, _source = await settings_service.get_anthropic_key(db)
     if not key:
         return ApiKeyTestResult(ok=False, detail="No API key configured.")
     model, _msrc = await settings_service.get_anthropic_model(db)
     ok, detail = await verify_api_key(key, model=model)
     return ApiKeyTestResult(ok=ok, detail=detail)
-
-
-# ------------------------ Google Vision key -------------------------- #
-# Fallback brand detection (logo) when Claude is unavailable. Same shape as
-# the Anthropic key routes: masked status out, raw key never returned.
-
-
-@router.get("/google-vision-key", response_model=ApiKeyStatus)
-async def get_google_vision_key_status(db: AsyncSession = Depends(get_db)):
-    key, source = await settings_service.get_google_vision_key(db)
-    if not key:
-        return ApiKeyStatus(configured=False)
-    return ApiKeyStatus(
-        configured=True,
-        source=source,
-        masked=settings_service.mask_key(key),
-    )
-
-
-@router.put(
-    "/google-vision-key",
-    response_model=ApiKeyStatus,
-    dependencies=[Depends(require_admin)],
-)
-async def set_google_vision_key(data: ApiKeyUpdate, db: AsyncSession = Depends(get_db)):
-    await settings_service.set_google_vision_key(db, data.api_key)
-    await activity_service.log_activity(
-        db, kind="settings.key_set", entity_type="system", entity_id=None,
-        summary="Google Vision API key set/updated",
-    )
-    await db.commit()
-    key, source = await settings_service.get_google_vision_key(db)
-    return ApiKeyStatus(
-        configured=bool(key),
-        source=source,
-        masked=settings_service.mask_key(key) if key else None,
-    )
-
-
-@router.delete(
-    "/google-vision-key", status_code=204, dependencies=[Depends(require_admin)]
-)
-async def delete_google_vision_key(db: AsyncSession = Depends(get_db)):
-    await settings_service.clear_google_vision_key(db)
-    await activity_service.log_activity(
-        db, kind="settings.key_cleared", entity_type="system", entity_id=None,
-        summary="Google Vision API key cleared",
-    )
-    await db.commit()
 
 
 # ---------------------------- mDNS status ---------------------------- #

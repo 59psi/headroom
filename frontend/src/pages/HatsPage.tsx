@@ -1,11 +1,14 @@
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { listHats, getStyles, getSizes, getConditions } from '../api/hats';
-import { getRoomOptions } from '../api/rooms';
+import { listHats } from '../api/hats';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ColorSwatches } from '../components/common/ColorSwatch';
 import { ConditionBadge } from '../components/common/ConditionBadge';
+import {
+  useHatFilters, HatFilterBar, FilterToggleButton,
+  collectGeneralColors, matchesHatFilters,
+} from '../components/hats/HatFilters';
 import type { HatRead } from '../types';
 
 function HatRow({ hat }: { hat: HatRead }) {
@@ -69,38 +72,23 @@ function GalleryItem({ hat }: { hat: HatRead }) {
 
 export function HatsPage() {
   const { data, isLoading, error } = useQuery({ queryKey: ['hats'], queryFn: () => listHats() });
-  const stylesQ = useQuery({ queryKey: ['meta', 'styles'], queryFn: getStyles });
-  const sizesQ = useQuery({ queryKey: ['meta', 'sizes'], queryFn: getSizes });
-  const conditionsQ = useQuery({ queryKey: ['meta', 'conditions'], queryFn: getConditions });
-  const roomsQ = useQuery({ queryKey: ['meta', 'rooms'], queryFn: getRoomOptions });
+  const hatFilters = useHatFilters();
+  const { filters, isOpen: filtersOpen, setIsOpen: setFiltersOpen } = hatFilters;
 
   const [view, setView] = useState<'list' | 'gallery'>('gallery');
-  const [filtersOpen, setFiltersOpen] = useState(false);
-  const [filterStyle, setFilterStyle] = useState('');
-  const [filterSize, setFilterSize] = useState('');
-  const [filterCondition, setFilterCondition] = useState('');
-  const [filterType, setFilterType] = useState('');
-  const [filterColor, setFilterColor] = useState('');
-  const [filterRoom, setFilterRoom] = useState('');
   const [filterBrand, setFilterBrand] = useState('');
   // 'all' (default) | 'unassigned' (case_id IS NULL) | 'assigned'
   const [filterAssignment, setFilterAssignment] = useState<'all' | 'unassigned' | 'assigned'>('all');
 
-  const activeFilterCount = [filterStyle, filterSize, filterCondition, filterType, filterColor, filterRoom, filterBrand, filterAssignment === 'all' ? '' : filterAssignment].filter(Boolean).length;
+  const activeFilterCount =
+    hatFilters.activeCount + (filterBrand ? 1 : 0) + (filterAssignment === 'all' ? 0 : 1);
 
   const unassignedCount = useMemo(
     () => (data ?? []).filter(h => h.case_id == null).length,
     [data]
   );
 
-  const availableColors = useMemo(() => {
-    if (!data) return [];
-    const colors = new Set<string>();
-    data.forEach(h => h.colors.forEach(c => {
-      if (c.general_color) colors.add(c.general_color);
-    }));
-    return [...colors].sort();
-  }, [data]);
+  const availableColors = useMemo(() => collectGeneralColors(data), [data]);
 
   const availableBrands = useMemo(() => {
     if (!data) return [];
@@ -110,19 +98,16 @@ export function HatsPage() {
   const filteredData = useMemo(() => {
     if (!data) return [];
     return data.filter(h => {
-      if (filterStyle && h.style !== filterStyle) return false;
-      if (filterSize && h.size !== filterSize) return false;
-      if (filterCondition && h.condition !== filterCondition) return false;
-      if (filterType === 'beanie' && !h.is_beanie) return false;
-      if (filterType === 'regular' && h.is_beanie) return false;
-      if (filterColor && !h.colors.some(c => c.general_color === filterColor)) return false;
-      if (filterRoom && h.room_id !== Number(filterRoom)) return false;
+      if (!matchesHatFilters(h, filters)) return false;
+      // Room is matched client-side here (the Search page sends it to the API
+      // instead), so it isn't part of the shared predicate.
+      if (filters.room && h.room_id !== Number(filters.room)) return false;
       if (filterBrand && h.brand !== filterBrand) return false;
       if (filterAssignment === 'unassigned' && h.case_id != null) return false;
       if (filterAssignment === 'assigned' && h.case_id == null) return false;
       return true;
     });
-  }, [data, filterStyle, filterSize, filterCondition, filterType, filterColor, filterRoom, filterBrand, filterAssignment]);
+  }, [data, filters, filterBrand, filterAssignment]);
 
   if (isLoading) return <LoadingSpinner />;
   if (error) return (
@@ -138,13 +123,11 @@ export function HatsPage() {
       <div className="d-flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
         <h1>Hats</h1>
         <div className="d-flex gap-2 align-items-center">
-          <button
-            type="button"
-            className={`btn btn-sm ${activeFilterCount ? 'btn-primary' : 'btn-outline-secondary'}`}
-            onClick={() => setFiltersOpen(!filtersOpen)}
-          >
-            Filters{activeFilterCount > 0 && <span className="badge bg-white ms-1">{activeFilterCount}</span>}
-          </button>
+          <FilterToggleButton
+            activeCount={activeFilterCount}
+            isOpen={filtersOpen}
+            onToggle={setFiltersOpen}
+          />
           <div className="btn-group" role="group">
             <button
               type="button"
@@ -197,84 +180,24 @@ export function HatsPage() {
       )}
 
       {filtersOpen && (
-        <div className="card mb-3">
-          <div className="card-body">
-            <div className="row g-2">
-              <div className="col-6 col-md-3">
-                <label className="form-label">Style</label>
-                <select className="form-select form-select-sm" value={filterStyle} onChange={e => setFilterStyle(e.target.value)}>
-                  <option value="">All</option>
-                  {stylesQ.data?.map(s => (
-                    <option key={s.value} value={s.value}>{s.label}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="col-6 col-md-3">
-                <label className="form-label">Size</label>
-                <select className="form-select form-select-sm" value={filterSize} onChange={e => setFilterSize(e.target.value)}>
-                  <option value="">All</option>
-                  {sizesQ.data?.map(s => (
-                    <option key={s.value} value={s.value}>{s.label}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="col-6 col-md-3">
-                <label className="form-label">Condition</label>
-                <select className="form-select form-select-sm" value={filterCondition} onChange={e => setFilterCondition(e.target.value)}>
-                  <option value="">All</option>
-                  {conditionsQ.data?.map(c => (
-                    <option key={c.value} value={c.value}>{c.label}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="col-6 col-md-3">
-                <label className="form-label">Type</label>
-                <select className="form-select form-select-sm" value={filterType} onChange={e => setFilterType(e.target.value)}>
-                  <option value="">All</option>
-                  <option value="regular">Regular</option>
-                  <option value="beanie">Beanies</option>
-                </select>
-              </div>
-              <div className="col-6 col-md-3">
-                <label className="form-label">Color</label>
-                <select className="form-select form-select-sm" value={filterColor} onChange={e => setFilterColor(e.target.value)}>
-                  <option value="">All</option>
-                  {availableColors.map(c => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="col-6 col-md-3">
-                <label className="form-label">Room</label>
-                <select className="form-select form-select-sm" value={filterRoom} onChange={e => setFilterRoom(e.target.value)}>
-                  <option value="">All</option>
-                  {roomsQ.data?.map(r => (
-                    <option key={r.value} value={r.value}>{r.label}</option>
-                  ))}
-                </select>
-              </div>
-              {availableBrands.length > 0 && (
-                <div className="col-6 col-md-3">
-                  <label className="form-label">Brand</label>
-                  <select className="form-select form-select-sm" value={filterBrand} onChange={e => setFilterBrand(e.target.value)}>
-                    <option value="">All</option>
-                    {availableBrands.map(b => (
-                      <option key={b} value={b}>{b}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
+        <HatFilterBar
+          state={hatFilters}
+          colors={availableColors}
+          activeCount={activeFilterCount}
+          onClearExtras={() => { setFilterBrand(''); setFilterAssignment('all'); }}
+        >
+          {availableBrands.length > 0 && (
+            <div className="col-6 col-md-3">
+              <label className="form-label">Brand</label>
+              <select className="form-select form-select-sm" value={filterBrand} onChange={e => setFilterBrand(e.target.value)}>
+                <option value="">All</option>
+                {availableBrands.map(b => (
+                  <option key={b} value={b}>{b}</option>
+                ))}
+              </select>
             </div>
-            {activeFilterCount > 0 && (
-              <button
-                type="button"
-                className="btn btn-link btn-sm mt-2 p-0"
-                style={{ color: 'var(--neon-red)' }}
-                onClick={() => { setFilterStyle(''); setFilterSize(''); setFilterCondition(''); setFilterType(''); setFilterColor(''); setFilterRoom(''); setFilterBrand(''); setFilterAssignment('all'); }}
-              >Clear filters</button>
-            )}
-          </div>
-        </div>
+          )}
+        </HatFilterBar>
       )}
 
       {!filteredData.length ? (

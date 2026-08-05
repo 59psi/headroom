@@ -33,6 +33,16 @@ logger = logging.getLogger(__name__)
 MAX_FILES_PER_JOB = 100
 MAX_BYTES_PER_FILE = 20 * 1024 * 1024  # 20 MB
 
+# Terminal item status -> the ImportJob counter column it feeds. The two names
+# genuinely differ ("error" item, "errors" counter), which is exactly the slip a
+# bare string parameter invites — so the increment path AND the boot-time
+# recount both derive from this one mapping instead of restating it.
+_JOB_COUNTER: dict[str, str] = {
+    "done": "done",
+    "error": "errors",
+    "skipped": "skipped",
+}
+
 _queue: asyncio.Queue[int] | None = None  # holds item IDs
 _worker_task: asyncio.Task | None = None
 
@@ -248,12 +258,17 @@ async def _process_item(item_id: int) -> None:
                         Path(item.staged_path).unlink(missing_ok=True)
         except Exception as inner:  # noqa: BLE001 — bookkeeping must not raise
             logger.warning("Import item %s error-bookkeeping failed: %s", item_id, inner)
-        await _bump_job_counter(job_id, "errors")
+        await _bump_job_counter(job_id, "error")
 
 
-async def _bump_job_counter(job_id: int, field: str) -> None:
-    """Increment the matching counter on the job and check completion."""
-    if not job_id:
+async def _bump_job_counter(job_id: int, item_status: str) -> None:
+    """Increment the counter matching a terminal item status, then check completion.
+
+    Takes the status that was just written to the item, not the counter name, so
+    the caller never has to know about the `error`/`errors` skew.
+    """
+    counter = _JOB_COUNTER.get(item_status)
+    if not job_id or counter is None:
         return
     async with async_session() as db:
         result = await db.execute(
@@ -262,17 +277,12 @@ async def _bump_job_counter(job_id: int, field: str) -> None:
         job = result.scalar_one_or_none()
         if not job:
             return
-        if field == "done":
-            job.done += 1
-        elif field == "errors":
-            job.errors += 1
-        elif field == "skipped":
-            job.skipped += 1
+        setattr(job, counter, getattr(job, counter) + 1)
         # Job done if every item is in a terminal state — but never resurrect a
         # cancelled job whose in-flight items are still finishing.
         if (
             job.status != "cancelled"
-            and job.done + job.errors + job.skipped >= job.total
+            and sum(getattr(job, c) for c in _JOB_COUNTER.values()) >= job.total
         ):
             job.status = "done"
             job.finished_at = datetime.now(timezone.utc)
@@ -343,9 +353,8 @@ async def _recover_on_boot() -> None:
             items = (await db.execute(
                 select(ImportJobItem).where(ImportJobItem.job_id == job.id)
             )).scalars().all()
-            job.done = sum(1 for i in items if i.status == "done")
-            job.errors = sum(1 for i in items if i.status == "error")
-            job.skipped = sum(1 for i in items if i.status == "skipped")
+            for status, counter in _JOB_COUNTER.items():
+                setattr(job, counter, sum(1 for i in items if i.status == status))
             if not any(i.status in ("queued", "processing") for i in items):
                 job.status = "done"
                 job.finished_at = datetime.now(timezone.utc)

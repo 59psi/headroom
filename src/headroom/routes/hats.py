@@ -11,7 +11,6 @@ from headroom.config import settings
 from headroom.database import get_db
 from headroom.models.hat_color import HatColor
 from headroom.schemas.hat import (
-    ColorTag,
     ColorsUpdate,
     HatAssign,
     HatCreate,
@@ -36,63 +35,9 @@ router = APIRouter(prefix="/api/hats", tags=["hats"])
 
 
 def _hat_to_read(hat) -> HatRead:
-    room = hat.case.room if hat.case and hat.case.room else None
-    return HatRead(
-        id=hat.id,
-        case_id=hat.case_id,
-        position_in_case=hat.position_in_case,
-        display_id=hat.display_id,
-        case_display_id=hat.case.display_id if hat.case else None,
-        case_type=hat.case.case_type if hat.case else None,
-        photo_path=hat.photo_path,
-        condition=hat.condition,
-        date_last_worn=hat.date_last_worn,
-        wear_count=len(hat.wear_logs or []),
-        size=hat.size,
-        style=hat.style,
-        is_beanie=hat.is_beanie,
-        colors=[
-            ColorTag(
-                color_name=c.color_name,
-                general_color=c.general_color or "",
-                hex_value=c.hex_value,
-                dominance_rank=c.dominance_rank,
-                tier=getattr(c, "tier", "primary") or "primary",
-            )
-            for c in (hat.colors or [])
-        ],
-        room_id=room.id if room else None,
-        room_name=room.name if room else None,
-        brand=hat.brand,
-        model_name=hat.model_name,
-        colorway=hat.colorway,
-        purchase_price=hat.purchase_price,
-        purchased_at=hat.purchased_at,
-        model_confidence=hat.model_confidence,
-        style_descriptor=hat.style_descriptor,
-        design_notes=hat.design_notes,
-        estimated_new_price=hat.estimated_new_price,
-        estimated_new_price_source=hat.estimated_new_price_source,
-        resale_price=hat.resale_price,
-        resale_price_source=hat.resale_price_source,
-        resale_price_url=hat.resale_price_url,
-        resale_checked_at=hat.resale_checked_at,
-        analysis_status=hat.analysis_status,
-        analysis_error=hat.analysis_error,
-        analyzed_at=hat.analyzed_at,
-        disposed_at=hat.disposed_at,
-        disposed_via=hat.disposed_via,
-        disposed_price=hat.disposed_price,
-        disposed_to=hat.disposed_to,
-        disposed_notes=hat.disposed_notes,
-        ebay_avg_price=hat.ebay_avg_price,
-        ebay_median_price=hat.ebay_median_price,
-        ebay_listing_count=hat.ebay_listing_count,
-        ebay_search_url=hat.ebay_search_url,
-        ebay_checked_at=hat.ebay_checked_at,
-        created_at=hat.created_at,
-        updated_at=hat.updated_at,
-    )
+    """Hat ORM object -> HatRead. Every field maps by name off a column or one
+    of the model's derived properties, so there is nothing to hand-copy."""
+    return HatRead.model_validate(hat)
 
 
 @router.post("", response_model=HatRead, status_code=201)
