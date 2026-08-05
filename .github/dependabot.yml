@@ -1,0 +1,63 @@
+# Automated dependency updates.
+#
+# Why this exists: until now every bump in this repo was manual and reactive —
+# something broke, or a scan was run by hand — so drift accumulated silently
+# between those moments. This makes the updates arrive on their own.
+#
+# Security fixes are separate: Dependabot *alerts* must also be enabled in the
+# repo's Settings → Code security. This file drives scheduled VERSION updates.
+version: 2
+updates:
+  # --- Frontend (npm) ------------------------------------------------------ #
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    # Mirrors the `exclude-newer = "7 days"` cooldown in pyproject's [tool.uv]:
+    # don't propose a version that was published minutes ago.
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    groups:
+      # One PR for the safe stuff, so routine churn isn't 8 separate reviews.
+      minor-and-patch:
+        update-types: [minor, patch]
+    # Majors still come as individual PRs — vite/typescript/react majors deserve
+    # their own review and a real build, not a rubber stamp.
+
+  # --- Backend (uv / pyproject + uv.lock) ---------------------------------- #
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    # Mirrors the `exclude-newer = "7 days"` cooldown in pyproject's [tool.uv]:
+    # don't propose a version that was published minutes ago.
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  # --- Container base images + the uv toolchain pin ------------------------- #
+  # This is the one that would have caught uv 0.5.4 sitting stale from v0.2.0
+  # through v2.0.6.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    # Mirrors the `exclude-newer = "7 days"` cooldown in pyproject's [tool.uv]:
+    # don't propose a version that was published minutes ago.
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 3
+
+  # --- The workflows themselves -------------------------------------------- #
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # Mirrors the `exclude-newer = "7 days"` cooldown in pyproject's [tool.uv]:
+    # don't propose a version that was published minutes ago.
+    cooldown:
+      default-days: 7

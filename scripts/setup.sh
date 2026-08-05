@@ -11,7 +11,8 @@
 # Installs (only what's missing — safe to re-run):
 #   * uv        — brew on macOS, otherwise the official Astral installer
 #   * Node      — brew on macOS, NodeSource on apt/dnf Linux. Accepts an
-#                 existing Node 20+ (what our vite/react-router actually need);
+#                 existing Node 22.12+ (what vite/plugin-react require; the
+#                 Node 20 line is EOL as of 2026-04-30);
 #                 a FRESH install gets 26, matching the Docker image.
 #   * Docker    — WITHOUT Docker Desktop:
 #                   macOS: docker CLI + compose + buildx + colima (brew)
@@ -95,14 +96,31 @@ ensure_uv() {
 }
 
 # ------------------------------------------------------------------ #
-# Node.js — accept 20+, install 26 (matches the Docker image)
+# Node.js — accept 22.12+, install 26 (matches the Docker image)
+#
+# 22.12 is not arbitrary: vite and @vitejs/plugin-react declare
+# `^20.19.0 || >=22.12.0`, and the Node 20 line went end-of-life 2026-04-30.
+# So we take the >=22.12 branch — a bare major check would wave through 22.0
+# and then fail at build time.
 # ------------------------------------------------------------------ #
 node_major() { node -v 2>/dev/null | sed 's/^v//' | cut -d. -f1; }
+node_minor() { node -v 2>/dev/null | sed 's/^v//' | cut -d. -f2; }
+
+# 0 = usable, 1 = too old/absent
+node_ok() {
+  command -v node &>/dev/null || return 1
+  local maj min
+  maj=$(node_major); min=$(node_minor)
+  [ -n "$maj" ] || return 1
+  [ "$maj" -gt 22 ] && return 0
+  [ "$maj" -eq 22 ] && [ "$min" -ge 12 ] && return 0
+  return 1
+}
 
 ensure_node() {
-  if command -v node &>/dev/null && [ "$(node_major)" -ge 20 ]; then return 0; fi
+  if node_ok; then return 0; fi
   if command -v node &>/dev/null; then
-    log "Node $(node -v) is too old (need 20+) — upgrading..."
+    log "Node $(node -v) is too old (need 22.12+) — upgrading..."
   else
     log "Installing Node.js..."
   fi
@@ -116,9 +134,9 @@ ensure_node() {
     run_remote_installer "https://rpm.nodesource.com/setup_26.x" $SUDO bash
     $SUDO dnf install -y nodejs
   else
-    die "No supported package manager found — install Node.js 20+ from https://nodejs.org/ and re-run."
+    die "No supported package manager found — install Node.js 22.12+ from https://nodejs.org/ and re-run."
   fi
-  [ "$(node_major)" -ge 20 ] || die "Node install failed or is still < 20."
+  node_ok || die "Node install failed or is still < 22.12."
 }
 
 # ------------------------------------------------------------------ #

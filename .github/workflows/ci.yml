@@ -1,0 +1,78 @@
+# CI — runs the same checks a release does, on every PR and push to main.
+#
+# This exists to make the Dependabot PRs *trustworthy*: an update that breaks
+# the suite, the typecheck, or the production build should say so by itself.
+# Without it, every automated bump would still need a manual local run, which
+# is the exact chore this repo kept skipping.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch makes the older run pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: backend (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v9
+        with:
+          enable-cache: true
+      # No python-version here on purpose: .python-version pins it, so CI runs
+      # the same interpreter as the Docker image and bare metal.
+      - name: Sync (frozen — a lock/manifest mismatch must fail, as in the image)
+        run: uv sync --frozen
+      - name: Tests
+        run: uv run pytest -q
+      - name: Lock is in sync
+        run: uv lock --check
+
+  frontend:
+    name: frontend (typecheck + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: Typecheck
+        run: npx tsc -b --noEmit
+      - name: Production build
+        run: npx vite build
+
+  docker:
+    name: docker image builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Catches the class of bug that shipped in 2.0.6: config the pinned
+      # toolchain in the image can't actually parse. Tests alone missed it.
+      - name: Build image
+        run: docker build -t headroom:ci .
+      - name: Container serves /health
+        run: |
+          docker run -d --name ci -p 8000:8000 headroom:ci
+          for _ in $(seq 1 60); do
+            if [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/health)" = "200" ]; then
+              echo "healthy"; docker rm -f ci; exit 0
+            fi
+            sleep 2
+          done
+          echo "never became healthy"; docker logs ci; docker rm -f ci; exit 1
