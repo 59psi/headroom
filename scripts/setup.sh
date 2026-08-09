@@ -113,6 +113,26 @@ node_ok() {
   (( BASH_REMATCH[1] > 22 || (BASH_REMATCH[1] == 22 && BASH_REMATCH[2] >= 22) ))
 }
 
+# npm — the Docker image pins npm 12 in its frontend stage (Dockerfile
+# `ARG NPM_VERSION`). Node ships an older npm with every release, so without
+# this a bare-metal setup would build the SPA on a different npm than the image
+# does — the exact drift this script exists to prevent. Keep NPM_MIN_MAJOR and
+# NPM_INSTALL in step with the Dockerfile when either moves.
+NPM_MIN_MAJOR=12
+NPM_INSTALL="12.0.2"
+
+npm_ok() {
+  [[ $(npm --version 2>/dev/null) =~ ^([0-9]+) ]] || return 1
+  (( BASH_REMATCH[1] >= NPM_MIN_MAJOR ))
+}
+
+ensure_npm() {
+  if npm_ok; then return 0; fi
+  log "npm $(npm --version 2>/dev/null || echo 'missing') is older than ${NPM_MIN_MAJOR} (the image builds on ${NPM_INSTALL}) — upgrading..."
+  npm install -g "npm@${NPM_INSTALL}" \
+    || warn "Could not upgrade npm automatically — run 'npm install -g npm@${NPM_INSTALL}' yourself if the SPA build misbehaves."
+}
+
 ensure_node() {
   if node_ok; then return 0; fi
   if command -v node &>/dev/null; then
@@ -194,6 +214,7 @@ fi
 
 ensure_uv
 ensure_node
+ensure_npm   # after ensure_node — a fresh Node install brings its own npm
 [ "$INSTALL_DOCKER" -eq 1 ] && ensure_docker
 
 log "Installing Python dependencies (uv fetches the .python-version Python if needed)..."

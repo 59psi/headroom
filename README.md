@@ -279,7 +279,8 @@ install), so bare metal doesn't drift from production. An existing **Node
 22.22+** is accepted as-is — that's react-router 8's `engines` floor, the
 highest any dependency declares, and the Node 20 line went EOL 2026-04-30 —
 and the package itself still supports Python 3.12+ if you bring your own
-interpreter.
+interpreter. npm is upgraded to 12 to match the version the image builds the
+SPA with.
 
 ```bash
 git clone https://github.com/59psi/headroom.git && cd headroom
