@@ -6,12 +6,17 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
-### Breaking
-- **`./scripts/setup.sh` now requires Node 22.22+** (was 22.12+). react-router 8
+## [2.3.0] — 2026-08-09 — _frontend tests, react-router 8, code-review cleanup_
+
+### ⚠️ Requirements
+- **`./scripts/setup.sh` now wants Node 22.22+** (was 22.12+). react-router 8
   declares `engines: node >=22.22.0`, which supersedes vite's `>=22.12.0` as the
-  highest floor any dependency sets. Node 22.12–22.21 previously passed the
-  setup check and then failed at `npm ci`. Fresh installs and the Docker image
-  are unaffected — both already use Node 26.
+  highest floor any dependency sets. Node 22.12–22.21 previously *passed* the
+  setup check and then failed at `npm ci`; setup.sh now upgrades Node instead of
+  waving it through, so nothing breaks — it just does more on that path.
+  Docker (`node:26`) and CI (`node 26`) were already above the floor.
+- `package.json` now declares `react`/`react-dom` `^19.2.7` (was `^19.1.0`) to
+  match react-router 8's peer range. The installed version already satisfied it.
 
 ### Security
 - **react-router 7.18.2 → 8.3.0**, clearing a HIGH advisory (*RSC Mode CSRF
@@ -19,25 +24,52 @@ All notable changes are documented here. This project follows
   `>=7.12.0 <8.3.0`; 8.3.0 is the only patched release). Headroom is a
   declarative-mode SPA with no RSC, loaders, actions or server rendering, so the
   advisory was not exploitable here — but the version was flagged and the
-  upgrade is clean.
-
-### Changed
-- `react-router-dom` is **removed in v8**; every import moves to `react-router`
-  (the app uses none of the `react-router/dom` APIs). Dropping the re-export
-  shim also trimmed ~2 kB off the bundle.
+  upgrade is clean. No Dependabot alerts remain open.
 
 ### Added
-- Frontend test suite: **Vitest 4 + Testing Library 16 (jsdom)**, 35 tests,
-  run in the existing CI frontend job. Covers the shared hat filter/form
-  components, the 15-card Settings composition, and the routing primitives the
-  route table depends on.
-- `npm test` / `npm run test:watch` scripts.
+- **Frontend test suite** — Vitest 4 + Testing Library 16 (jsdom), **35 tests**,
+  run in the existing CI frontend job (no new job, no new trigger). The repo had
+  no frontend test harness at all. Covers the shared hat filter/form components,
+  the 15-card Settings composition, and the routing primitives the route table
+  depends on. `npm test` / `npm run test:watch`.
+- `tests/test_hats.py::test_hat_read_exposes_every_derived_field` pins the Hat
+  read-model fields that come from relationships rather than columns
+  (`room_id`, `room_name`, `case_type`, `case_display_id`, `wear_count`) plus
+  the unassigned-hat null case. `room_id` had no coverage and is what the Hats
+  page filters on — a silent null there would have quietly matched nothing.
+
+### Changed
+- **Code-review cleanup — no behaviour change.** Verified by generating the full
+  OpenAPI document before and after and diffing it: **90 routes, identical**,
+  every response schema byte-identical.
+  - The Anthropic and Google-Vision API-key routes were line-for-line twins.
+    Both now derive from one `KeyProvider` descriptor — a third provider is one
+    dataclass entry plus one line.
+  - `_hat_to_read` hand-copied ~45 attributes and walked `hat.case.room` from the
+    route layer. The derived values are now properties on the `Hat` model and
+    `HatRead` builds itself with `model_validate`.
+  - `routes/admin.py` (334 lines, seven reasons to change) is now a package of
+    six single-concern modules; the `/api/admin` prefix, tag and `require_admin`
+    are applied once, so a submodule cannot ship an unguarded route.
+  - `SettingsPage.tsx` 1084 → 44 lines over 15 card modules; the shared hat
+    filter and form components take the four hat pages from 1093 → 819 lines.
+  - Import-job counters no longer dispatch on a string (the counter was
+    `errors` while the item status was `error`); eBay's Browse request block was
+    duplicated three times and is now one helper.
+- `react-router-dom` is **removed in v8**; every import moves to `react-router`
+  (the app uses none of the `react-router/dom` APIs). Dropping the re-export
+  shim trimmed ~2 kB off the bundle.
+- `rembg[cpu]` floor `>=2.0.50` → `>=2.0.77`.
 
 ### Fixed
 - **Form controls were not associated with their labels.** The `<label>`
   elements carry no `htmlFor` and do not wrap their inputs, so assistive tech
   announced every filter and hat-form select as unlabelled. All eleven controls
-  now carry an `aria-label`.
+  now carry an `aria-label`. Found by the new tests.
+- **`HEADROOM_REMBG_MODEL` was documented as configurable but impossible to
+  change.** `ARG` is stage-scoped, so the runtime stage discarded the build arg
+  and compose pinned the env var on top; following the docs baked a ~170 MB
+  model into the image that was never loaded.
 
 ## [2.2.2] — 2026-08-05 — _faster rebuilds, infra cleanup_
 
