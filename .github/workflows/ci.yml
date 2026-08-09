@@ -61,6 +61,11 @@ jobs:
           node-version: 26
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      # setup-node gives whatever npm ships with Node 26 (11.x). The image
+      # builds the SPA on npm 12 (Dockerfile ARG NPM_VERSION), so pin the same
+      # one here — otherwise this job green-lights a toolchain that never ships.
+      - name: Pin npm to the version the image builds with
+        run: npm install -g npm@12.0.2
       - run: npm ci
       - name: Typecheck
         run: npx tsc -b --noEmit
