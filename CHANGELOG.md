@@ -23,20 +23,28 @@ failure scrolls past unnoticed.
   runs. Warnings and errors still print; only the chatter is dropped.
 
 ### Fixed
-- **onnxruntime GPU-discovery warnings during the image build.** It probes
-  `/sys/class/drm` on import and logged a `[W:onnxruntime…]` pair per missing
-  card — guaranteed noise in a container, which has none. The rembg model
-  pre-download now runs at logger severity 3 (errors only). Scoped to that
-  build step: the **runtime keeps onnxruntime's default logging**, so genuine
-  problems still surface in container logs.
+- **onnxruntime device-probe warnings during the image build.** It probes the
+  host for GPUs while `import onnxruntime` runs and logs a `[W:onnxruntime…]`
+  line per device it can't read — guaranteed noise in a container, which has
+  none. The messages come from C++ straight to fd 2 *during the import*, so
+  `set_default_logger_severity()` runs too late; the rembg pre-download now
+  redirects at the fd level across the import and restores it immediately.
+  Scoped to that build step: the **runtime keeps onnxruntime's default
+  logging**, so genuine problems still surface in container logs.
 - **`StarletteDeprecationWarning` on every backend test run.** starlette's
   `TestClient` deprecated `httpx` in favour of `httpx2`; added `httpx2` to the
   dev group. Test-only — the app's own outbound calls (eBay, Google Vision,
   melinrecap) still use `httpx`, which is current at 0.28.1 and not deprecated
   in its own right.
 
-Net: image build goes from 9 noise lines to **0**; `uv run pytest` from
-"190 passed, 1 warning" to "190 passed".
+- **`setup.sh` and CI now use the image's npm.** Pinning npm only in the
+  Dockerfile created fresh drift — CI and bare metal stayed on npm 11 while the
+  image built on 12, so the frontend CI job was green-lighting a toolchain that
+  never ships. `setup.sh` gained `ensure_npm` (a floor check, like `node_ok`),
+  and the CI frontend job pins the same version.
+
+Net, measured in CI's own log: image build **9 noise lines → 0**, and
+`uv run pytest` from "190 passed, 1 warning" to "190 passed".
 
 ## [2.3.0] — 2026-08-09 — _frontend tests, react-router 8, code-review cleanup_
 
