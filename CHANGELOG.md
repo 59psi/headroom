@@ -6,6 +6,38 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.3.1] — 2026-08-09 — _quiet the build_
+
+The Docker build printed 9 lines of warning/notice noise on every run. None of
+it was a failure — every build was green — but noise like this is how a real
+failure scrolls past unnoticed.
+
+### Changed
+- **npm pinned to 12.0.2 in the frontend build stage.** `node:26` bundles npm
+  11.x, which printed *"New major version of npm available! 11.19.0 → 12.0.2"*
+  on every image build. Now pinned explicitly (`ARG NPM_VERSION`), matching how
+  the uv toolchain is already pinned — bump it alongside the base image.
+  Verified npm 12 installs, typechecks, tests and builds this project before
+  pinning it.
+- `NPM_CONFIG_LOGLEVEL=warn` in that stage — npm 12 logs a notice per script it
+  runs. Warnings and errors still print; only the chatter is dropped.
+
+### Fixed
+- **onnxruntime GPU-discovery warnings during the image build.** It probes
+  `/sys/class/drm` on import and logged a `[W:onnxruntime…]` pair per missing
+  card — guaranteed noise in a container, which has none. The rembg model
+  pre-download now runs at logger severity 3 (errors only). Scoped to that
+  build step: the **runtime keeps onnxruntime's default logging**, so genuine
+  problems still surface in container logs.
+- **`StarletteDeprecationWarning` on every backend test run.** starlette's
+  `TestClient` deprecated `httpx` in favour of `httpx2`; added `httpx2` to the
+  dev group. Test-only — the app's own outbound calls (eBay, Google Vision,
+  melinrecap) still use `httpx`, which is current at 0.28.1 and not deprecated
+  in its own right.
+
+Net: image build goes from 9 noise lines to **0**; `uv run pytest` from
+"190 passed, 1 warning" to "190 passed".
+
 ## [2.3.0] — 2026-08-09 — _frontend tests, react-router 8, code-review cleanup_
 
 ### ⚠️ Requirements

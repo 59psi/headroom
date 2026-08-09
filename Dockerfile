@@ -11,6 +11,15 @@
 # Stage 1 — Frontend bundle
 # ============================================================ #
 FROM node:26-trixie-slim AS frontend
+# node:26 bundles npm 11.x, which prints a "New major version available" notice
+# on every build. Pin the npm we actually want rather than living with the
+# nag — same convention as the uv pin below. Bump this alongside the base image.
+ARG NPM_VERSION=12.0.2
+RUN npm install -g "npm@${NPM_VERSION}"
+# npm 12 logs a "notice" line for every script it runs. Warnings and errors
+# still print — this only drops the informational chatter, so a real problem
+# in the SPA build stays visible instead of scrolling past in a wall of notices.
+ENV NPM_CONFIG_LOGLEVEL=warn
 WORKDIR /build
 COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm ci
@@ -57,7 +66,11 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # keeping it here means a source edit doesn't re-download ~40s of ONNX weights.
 ARG REMBG_MODEL=u2netp
 ENV HEADROOM_REMBG_MODEL=${REMBG_MODEL}
-RUN /opt/venv/bin/python -c "from rembg import new_session; new_session('${REMBG_MODEL}')"
+# onnxruntime probes /sys/class/drm for GPUs on import and logs a WARNING per
+# missing card — a container has none, so it's guaranteed noise that buries real
+# build errors. Severity 3 = errors only, and ONLY for this build step: the
+# runtime keeps onnxruntime's default logging so genuine problems still surface.
+RUN /opt/venv/bin/python -c "import onnxruntime; onnxruntime.set_default_logger_severity(3); from rembg import new_session; new_session('${REMBG_MODEL}')"
 
 COPY src ./src
 COPY README.md ./
