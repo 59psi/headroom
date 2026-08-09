@@ -75,7 +75,8 @@ It is tracked in git (was previously local-only and drifted stale) — keep it c
 - Vitest config lives in the `test` block of `vite.config.ts` (imported from `vitest/config`) so tests inherit the plugins and the `__APP_VERSION__`/`__BUILD_SHA__` defines instead of a second config that can drift
 - API modules are `vi.mock`ed at the module boundary — **mock the real payload shape**: pydantic serialises fields with defaults, so `ApiKeyStatus(configured=False)` is `{configured, source: null, masked: null}`, not `{configured}` alone. `tsc` catches the mismatch because test files are inside `src/`
 - Query controls **must** carry `aria-label` (the visible `<label>` elements have no `htmlFor`, so nothing else associates them). This is an accessibility requirement first and makes `getByLabelText` work as a side effect
-- 27 passing
+- `src/routing.test.tsx` pins the react-router behaviour the route table relies on (pathless layout routes via `Outlet`, public routes outside the shell, static-over-dynamic precedence, `useParams`/`useNavigate`/`useSearchParams`) — added with the v8 upgrade so "the breaking changes don't apply to us" stays a checked claim
+- 35 passing
 
 ## Key Patterns
 

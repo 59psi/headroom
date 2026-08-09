@@ -442,13 +442,20 @@ uv run uvicorn headroom.app:app --reload     # Backend (port 8000)
 cd frontend && npm run dev                   # Frontend (port 5173)
 cd frontend && npm run build                 # Type-check + production SPA build
 cd frontend && npm run typecheck             # Type-check only
-uv run pytest                                # All tests
-uv run pytest tests/test_search.py -k color  # Single test
+uv run pytest                                # Backend tests (190)
+uv run pytest tests/test_search.py -k color  # Single backend test
+cd frontend && npm test                      # Frontend tests (35)
+cd frontend && npm run test:watch            # Frontend tests, watch mode
 ```
 
-Tests use in-memory SQLite, stub out `rembg`, authenticate through a seeded
-test session, and never call the Anthropic, Google, eBay, or Sharetribe APIs
-— every external boundary has a test seam.
+**Backend** tests use in-memory SQLite, stub out `rembg`, authenticate through a
+seeded test session, and never call the Anthropic, Google, eBay, or Sharetribe
+APIs — every external boundary has a test seam.
+
+**Frontend** tests run under Vitest + Testing Library in jsdom, with the API
+modules mocked at the module boundary. Test files live beside the components
+inside `src/`, so `npm run typecheck` covers them too. CI runs typecheck →
+tests → production build on every PR.
 
 ## Architecture
 
@@ -463,7 +470,10 @@ src/headroom/
 ├── models/                      # User, Case, Hat, HatColor, WearLog, Purchase,
 │                                #  ColorwayEntry, ShareLink, ImportJob, …
 ├── routes/                      # auth, hats, cases, rooms, search, meta,
-│                                #  settings, admin, import_jobs, share_links
+│   │                            #  settings, import_jobs, share_links
+│   └── admin/                   # errors, backups, activity, reports, ebay,
+│                                #  catalog — prefix + auth applied once
+├── schemas/                     # Pydantic I/O, one module per route area
 └── services/
     ├── claude_analysis.py       # Claude Vision tool-use → structured result
     ├── background_removal.py    # rembg (ONNX) → transparent PNG
@@ -479,10 +489,26 @@ src/headroom/
     └── backup_service.py        # scheduled + on-demand tar.gz
 ```
 
-**Frontend** — React 19, Vite, TypeScript, TanStack Query, zero UI framework:
-hand-rolled synthwave design system in two CSS files, PWA-installable, native
-`<datalist>` autocomplete, hand-rolled WebAuthn plumbing. No component
-library, no CSS framework, no state-management dependency.
+**Frontend** — React 19, Vite, TypeScript, TanStack Query, react-router 8,
+Vitest + Testing Library, zero UI framework: hand-rolled synthwave design
+system in two CSS files, PWA-installable, native `<datalist>` autocomplete,
+hand-rolled WebAuthn plumbing. No component library, no CSS framework, no
+state-management dependency.
+
+```
+frontend/src/
+├── pages/                       # one per route (SettingsPage is a composition
+│                                #  root over components/settings/)
+├── components/
+│   ├── layout/                  # AppShell, TopNav, BottomNav, Footer
+│   ├── common/                  # spinner, badges, swatches, modals
+│   ├── photos/                  # capture + cropper
+│   ├── hats/                    # filter bar + hat-form fields shared by pages
+│   └── settings/                # one card per Settings concern
+├── api/                         # typed fetch clients
+├── types/                       # interfaces mirroring the Pydantic schemas
+└── test/                        # Vitest setup + renderWithProviders
+```
 
 **Data model**: Rooms → Cases → Hats. Cases are type-exclusive (regular or
 beanie) with per-case capacity. The Default Room cannot be deleted. Disposed

@@ -81,8 +81,9 @@ those three cards now show their own inline "Loading…" instead.
 ## Follow-up: frontend test coverage
 
 The gap called out above — "verified structurally, not behaviourally" — is now
-closed. Vitest 4 + Testing Library 16 (jsdom), **27 tests**, wired into the
-existing CI frontend job (no new job, no new workflow trigger).
+closed. Vitest 4 + Testing Library 16 (jsdom), **27 tests** at the time of
+writing (35 as of v2.3.0 — the react-router 8 upgrade added 8 routing tests),
+wired into the existing CI frontend job (no new job, no new workflow trigger).
 
 What they cover, chosen to be the things the refactor could plausibly have
 broken and that nothing else catches:
