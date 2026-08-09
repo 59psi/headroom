@@ -11,6 +11,15 @@
 # Stage 1 — Frontend bundle
 # ============================================================ #
 FROM node:26-trixie-slim AS frontend
+# node:26 bundles npm 11.x, which prints a "New major version available" notice
+# on every build. Pin the npm we actually want rather than living with the
+# nag — same convention as the uv pin below. Bump this alongside the base image.
+ARG NPM_VERSION=12.0.2
+RUN npm install -g "npm@${NPM_VERSION}"
+# npm 12 logs a "notice" line for every script it runs. Warnings and errors
+# still print — this only drops the informational chatter, so a real problem
+# in the SPA build stays visible instead of scrolling past in a wall of notices.
+ENV NPM_CONFIG_LOGLEVEL=warn
 WORKDIR /build
 COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm ci
@@ -57,7 +66,18 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # keeping it here means a source edit doesn't re-download ~40s of ONNX weights.
 ARG REMBG_MODEL=u2netp
 ENV HEADROOM_REMBG_MODEL=${REMBG_MODEL}
-RUN /opt/venv/bin/python -c "from rembg import new_session; new_session('${REMBG_MODEL}')"
+# onnxruntime probes the host for GPUs while `import onnxruntime` runs and logs
+# a WARNING per device it can't read — guaranteed noise in a container, which
+# has none, and it buries real build errors. The messages come from C++ straight
+# to fd 2 *during the import*, so set_default_logger_severity() runs too late to
+# stop them; only an fd-level redirect works, and it is restored immediately so
+# anything rembg reports afterwards still surfaces. Build-step only — the
+# runtime keeps onnxruntime's default logging.
+RUN /opt/venv/bin/python -c "\
+import os; _n=os.open(os.devnull, os.O_WRONLY); _e=os.dup(2); os.dup2(_n, 2); \
+import onnxruntime; os.dup2(_e, 2); os.close(_n); os.close(_e); \
+onnxruntime.set_default_logger_severity(3); \
+from rembg import new_session; new_session('${REMBG_MODEL}')"
 
 COPY src ./src
 COPY README.md ./
