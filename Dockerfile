@@ -66,11 +66,18 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # keeping it here means a source edit doesn't re-download ~40s of ONNX weights.
 ARG REMBG_MODEL=u2netp
 ENV HEADROOM_REMBG_MODEL=${REMBG_MODEL}
-# onnxruntime probes /sys/class/drm for GPUs on import and logs a WARNING per
-# missing card — a container has none, so it's guaranteed noise that buries real
-# build errors. Severity 3 = errors only, and ONLY for this build step: the
-# runtime keeps onnxruntime's default logging so genuine problems still surface.
-RUN /opt/venv/bin/python -c "import onnxruntime; onnxruntime.set_default_logger_severity(3); from rembg import new_session; new_session('${REMBG_MODEL}')"
+# onnxruntime probes the host for GPUs while `import onnxruntime` runs and logs
+# a WARNING per device it can't read — guaranteed noise in a container, which
+# has none, and it buries real build errors. The messages come from C++ straight
+# to fd 2 *during the import*, so set_default_logger_severity() runs too late to
+# stop them; only an fd-level redirect works, and it is restored immediately so
+# anything rembg reports afterwards still surfaces. Build-step only — the
+# runtime keeps onnxruntime's default logging.
+RUN /opt/venv/bin/python -c "\
+import os; _n=os.open(os.devnull, os.O_WRONLY); _e=os.dup(2); os.dup2(_n, 2); \
+import onnxruntime; os.dup2(_e, 2); os.close(_n); os.close(_e); \
+onnxruntime.set_default_logger_severity(3); \
+from rembg import new_session; new_session('${REMBG_MODEL}')"
 
 COPY src ./src
 COPY README.md ./

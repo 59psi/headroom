@@ -51,6 +51,11 @@ jobs:
   frontend:
     name: frontend (typecheck + test + build)
     runs-on: ubuntu-latest
+    env:
+      # npm 12 logs a notice per script it runs, and the global install below
+      # makes npm 11 print its upgrade nag. Warnings and errors still print —
+      # this drops only the chatter, matching the Dockerfile's frontend stage.
+      NPM_CONFIG_LOGLEVEL: warn
     defaults:
       run:
         working-directory: frontend
