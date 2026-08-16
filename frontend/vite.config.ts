@@ -9,8 +9,12 @@ import react from '@vitejs/plugin-react'
 
 // Bake the package.json version into the bundle as `__APP_VERSION__`. The
 // Footer reads it so the running build is always self-identifying.
+// `import.meta.dirname`, not `__dirname`: this config is ESM ("type": "module")
+// and Vite's upcoming native config loader evaluates it without the CJS shims,
+// so `__dirname` becomes a ReferenceError there. Needs Node 20.11+; package.json
+// already floors at 22.22.
 const pkg = JSON.parse(
-  readFileSync(resolve(__dirname, 'package.json'), 'utf-8'),
+  readFileSync(resolve(import.meta.dirname, 'package.json'), 'utf-8'),
 ) as { version: string }
 
 // Build identifier for `__BUILD_SHA__`: the HEADROOM_BUILD_SHA env/build-arg

@@ -6,6 +6,21 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+### Fixed
+- `vite.config.ts` used `__dirname`, which only exists because Vite's current
+  config loader wraps the file in CJS shims. The config is ESM
+  (`"type": "module"`), and Vite's `configLoader: 'native'` — slated to become
+  the default — evaluates it without those shims, where `__dirname` is a
+  `ReferenceError` that would break every build. Now `import.meta.dirname`
+  (Node 20.11+; `engines` already floors at 22.22), which also silences the
+  deprecation warning printed on every build and test run.
+
+### Changed
+- CLAUDE.md documents the merge/tag procedure from a git worktree.
+  `gh pr merge --delete-branch` merges on the server and *then* fails its local
+  cleanup with `fatal: 'main' is already used by worktree`, which reads as "the
+  merge failed" when it actually succeeded.
+
 ## [2.5.0] — 2026-08-16 — _current Claude models_
 
 ### Changed
