@@ -300,12 +300,29 @@ def _apply_construction(hat: Hat, construction: str | None) -> None:
         hat.hydrolite = True
 
 
+def _keep_on_null(incoming: str | None, current: str | None) -> str | None:
+    """A non-answer from Claude leaves what's already there alone.
+
+    `brand`, `model_name` and `artist_series` are all hand-editable on the Edit
+    Hat form, and the tool schema tells Claude to return null rather than guess
+    — most emphatically for `artist_series` ("guessing here is worse than
+    leaving it empty"). Passing that null straight through would erase what the
+    owner typed every time they tapped Reanalyze, which is precisely the
+    special-edition case they typed it in for. A real answer still wins, so
+    Claude can still correct an earlier identification.
+
+    `logo_detected` deliberately does NOT go through here: it records what is
+    visible in *this* photo, so null there is an answer, not a gap.
+    """
+    return incoming if incoming else current
+
+
 def _apply_analysis(hat: Hat, analysis: HatAnalysis) -> None:
-    hat.brand = analysis.brand
+    hat.brand = _keep_on_null(analysis.brand, hat.brand)
     hat.logo_detected = analysis.logo_detected
-    hat.artist_series = analysis.artist_series
+    hat.artist_series = _keep_on_null(analysis.artist_series, hat.artist_series)
     _apply_construction(hat, analysis.construction)
-    hat.model_name = analysis.model_name
+    hat.model_name = _keep_on_null(analysis.model_name, hat.model_name)
     hat.model_confidence = analysis.model_confidence
     hat.style_descriptor = analysis.style_descriptor
     hat.design_notes = analysis.design_notes
