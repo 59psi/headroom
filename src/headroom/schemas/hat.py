@@ -30,6 +30,19 @@ class HatStyle(StrEnum):
     beanie = "beanie"
 
 
+# What a hat gets when the caller doesn't say. Three entry points create hats
+# without full details — the bulk-import form, its worker fallback, and the
+# Android share target — and each used to restate these literals, so changing
+# the default meant finding all three and they could silently disagree
+# (photos shared from the phone landing differently than the same photos
+# bulk-imported). One dict, imported by all of them.
+HAT_DEFAULTS: dict[str, str] = {
+    "condition": HatCondition.new.value,
+    "size": HatSize.classic.value,
+    "style": HatStyle.a_game.value,
+}
+
+
 class ColorTag(BaseModel):
     color_name: str
     general_color: str = ""

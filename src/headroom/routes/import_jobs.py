@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.database import get_db
+from headroom.schemas.hat import HAT_DEFAULTS
 from headroom.services import import_service
 from headroom.utils.photo import validate_image_content_type
 
@@ -67,9 +68,9 @@ def _job_to_dict(job) -> dict:
 async def create_import_job(
     photos: list[UploadFile],
     case_id: Annotated[int | None, Form()] = None,
-    condition: Annotated[str, Form()] = "new",
-    size: Annotated[str, Form()] = "classic",
-    style: Annotated[str, Form()] = "a_game",
+    condition: Annotated[str, Form()] = HAT_DEFAULTS["condition"],
+    size: Annotated[str, Form()] = HAT_DEFAULTS["size"],
+    style: Annotated[str, Form()] = HAT_DEFAULTS["style"],
     db: AsyncSession = Depends(get_db),
 ):
     """Multipart upload of N photo files. Returns the job ID immediately."""

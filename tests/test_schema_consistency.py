@@ -51,3 +51,31 @@ async def test_hat_migration_ddl_covers_every_model_column():
         "Hat model columns absent from _HAT_COLUMN_DDL — an upgraded database "
         f"would be missing these and every hat read would fail: {sorted(missing)}"
     )
+
+
+async def test_rooms_migration_backfills_exactly_one_default():
+    """An upgraded DB must end up with exactly one room flagged is_default.
+
+    The flag replaced a hardcoded `room_id == 1`, so the backfill deliberately
+    keys on MIN(id) rather than the literal 1 — a database whose original room
+    was deleted or re-keyed still has to come out with a usable fallback, or
+    case creation and room deletion both break on the upgraded install.
+    """
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text("CREATE TABLE rooms (id INTEGER PRIMARY KEY, name VARCHAR(100))")
+            )
+            # Note: no room with id 1 — the pre-flag code would have had nothing
+            # to fall back on here.
+            conn.execute(text("INSERT INTO rooms (id, name) VALUES (3, 'Office'), (7, 'Attic')"))
+            _run_migrations(conn)
+            rows = conn.execute(
+                text("SELECT id, is_default FROM rooms ORDER BY id")
+            ).all()
+    finally:
+        engine.dispose()
+
+    flagged = [r[0] for r in rows if r[1]]
+    assert flagged == [3], f"expected only the lowest id flagged, got {rows}"

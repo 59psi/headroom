@@ -512,8 +512,10 @@ frontend/src/
 ```
 
 **Data model**: Rooms → Cases → Hats. Cases are type-exclusive (regular or
-beanie) with per-case capacity. The Default Room cannot be deleted. Disposed
-hats keep their history but free their slot.
+beanie) with per-case capacity. Exactly one room is the **default** — new cases
+go there and orphaned cases land there — so it's the only one that can't be
+deleted; designate another room as default to free it up. Disposed hats keep
+their history but free their slot.
 
 ---
 

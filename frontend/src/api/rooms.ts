@@ -27,6 +27,11 @@ export function deleteRoom(id: number) {
   return apiFetch<void>(`/api/rooms/${id}`, { method: 'DELETE' });
 }
 
+/** Move the default flag to this room, freeing the previous one for deletion. */
+export function setDefaultRoom(id: number) {
+  return apiFetch<RoomRead>(`/api/rooms/${id}/default`, { method: 'POST' });
+}
+
 /** Room options for filter dropdowns (value/label format). */
 export function getRoomOptions() {
   return apiFetch<{ value: number; label: string }[]>('/api/meta/rooms');

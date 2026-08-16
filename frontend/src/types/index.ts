@@ -162,6 +162,9 @@ export interface RoomRead {
   id: number;
   name: string;
   case_count: number;
+  /** Exactly one room is the default: the fallback for orphaned cases and the
+   *  room new cases land in. It's the only room that can't be deleted. */
+  is_default: boolean;
   created_at: string;
   updated_at: string;
 }

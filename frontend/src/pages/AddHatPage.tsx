@@ -6,7 +6,8 @@ import { getApiKeyStatus } from '../api/settings';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { NewCaseModal } from '../components/common/NewCaseModal';
 import {
-  useHatFormOptions, useHatPhoto, PhotoCard, HatBasicsCard, type HatBasics,
+  useHatFormOptions, useHatPhoto, PhotoCard, HatBasicsCard,
+  DEFAULT_HAT_BASICS, type HatBasics,
 } from '../components/hats/HatFormFields';
 
 export function AddHatPage() {
@@ -15,9 +16,7 @@ export function AddHatPage() {
   const [searchParams] = useSearchParams();
 
   const [basics, setBasics] = useState<HatBasics>({
-    style: 'a_game',
-    size: 'classic',
-    condition: 'new',
+    ...DEFAULT_HAT_BASICS,
     caseId: searchParams.get('caseId') || '',
     dateLastWorn: '',
   });

@@ -22,7 +22,7 @@ from headroom.config import settings as config_settings
 from headroom.database import async_session
 from headroom.models.hat import Hat
 from headroom.models.import_job import ImportJob, ImportJobItem
-from headroom.schemas.hat import HatCreate, HatStyle
+from headroom.schemas.hat import HAT_DEFAULTS, HatCreate, HatStyle
 from headroom.services import hat_service
 from headroom.services.activity_service import log_activity
 from headroom.services.hat_analysis_pipeline import finalize_hat_photo
@@ -213,9 +213,9 @@ async def _process_item(item_id: int) -> None:
             defaults = json.loads(job.defaults_json or "{}")
             create_data = HatCreate(
                 case_id=defaults.get("case_id"),
-                condition=defaults.get("condition", "new"),
-                size=defaults.get("size", "classic"),
-                style=defaults.get("style", "a_game"),
+                condition=defaults.get("condition", HAT_DEFAULTS["condition"]),
+                size=defaults.get("size", HAT_DEFAULTS["size"]),
+                style=defaults.get("style", HAT_DEFAULTS["style"]),
             )
 
             # Create the hat row first

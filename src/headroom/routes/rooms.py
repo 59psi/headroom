@@ -13,6 +13,7 @@ def _room_to_read(room) -> RoomRead:
         id=room.id,
         name=room.name,
         case_count=len(room.cases) if room.cases else 0,
+        is_default=bool(room.is_default),
         created_at=room.created_at,
         updated_at=room.updated_at,
     )
@@ -41,6 +42,13 @@ async def update_room(
     room_id: int, data: RoomUpdate, db: AsyncSession = Depends(get_db)
 ):
     room = await room_service.update_room(db, room_id, data)
+    return _room_to_read(room)
+
+
+@router.post("/{room_id}/default", response_model=RoomRead)
+async def make_default_room(room_id: int, db: AsyncSession = Depends(get_db)):
+    """Move the default flag to this room, freeing the previous one for deletion."""
+    room = await room_service.set_default_room(db, room_id)
     return _room_to_read(room)
 
 

@@ -6,6 +6,42 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.4.0] — 2026-08-16 — _any room can be the default_
+
+### Added
+- **The default room is now a flag, not a hardcoded id.** Previously room `id=1`
+  was permanently undeletable, no matter how you'd since reorganised. Any room
+  can now take the role via **Make default** on the Rooms page
+  (`POST /api/rooms/{id}/default`), which frees the previous one for deletion.
+  The Rooms page shows a **Default** badge and only disables delete on the room
+  that actually holds the flag.
+
+### Changed
+- `RoomRead` gains `is_default`. `CaseCreate.room_id` is now optional — omitting
+  it resolves to whichever room currently holds the flag instead of literally
+  room 1. Both changes are backward compatible: an omitted `room_id` still lands
+  in the default room.
+- **New-hat defaults live in one place.** `condition=new / size=classic /
+  style=a_game` were independently hardcoded in the bulk-import endpoint, the
+  import worker's fallback, and the Android share target. Changing the default
+  meant finding all three, and they could silently disagree — photos shared from
+  a phone landing differently than the same photos bulk-imported. All three now
+  read `HAT_DEFAULTS` (`schemas/hat.py`), with a test that fails if any drifts.
+  The two frontend forms likewise share one `DEFAULT_HAT_BASICS` constant.
+
+### Fixed
+- Deleting a room reassigns its cases to the room that currently holds the
+  default flag. It previously wrote `room_id=1` unconditionally, which would
+  have pointed at a missing row the moment room 1 became deletable.
+
+### Migration
+- Adds `rooms.is_default` and backfills the **lowest room id** (not literally 1,
+  so a database whose original room was re-keyed still ends up with a usable
+  fallback). `ensure_default_room()` now repairs the "exactly one default"
+  invariant on every boot — creating a room if the table is empty, flagging the
+  lowest id if none is flagged, and clearing extras if several are. No action
+  needed on upgrade.
+
 ## [2.3.1] — 2026-08-09 — _quiet the build_
 
 The Docker build printed 9 lines of warning/notice noise on every run. None of

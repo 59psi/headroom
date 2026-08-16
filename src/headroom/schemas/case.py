@@ -11,7 +11,10 @@ class CaseType(StrEnum):
 
 class CaseCreate(BaseModel):
     case_type: CaseType
-    room_id: int = 1
+    # None → whichever room is currently flagged is_default, resolved in
+    # case_service.create_case. Was a hardcoded 1, which pinned new cases to a
+    # room that can now be deleted.
+    room_id: int | None = None
     # Per-case hat capacity; None → type default (4 regular / 6 beanie)
     capacity: int | None = Field(None, ge=1, le=50)
 

@@ -18,6 +18,22 @@ export interface HatBasics {
 /** Sentinel option value that opens the "create a case" modal instead of selecting one. */
 export const NEW_CASE_VALUE = '__new__';
 
+/**
+ * Pre-selection for any form that creates hats (Add Hat, Bulk Import).
+ *
+ * Mirrors `HAT_DEFAULTS` in `src/headroom/schemas/hat.py`, which is what the
+ * server applies when a request omits these. Kept in one place per side rather
+ * than restated per page — `tests/test_import.py` pins the server half so the
+ * three backend entry points can't drift from each other.
+ */
+// Widened to `string` on purpose: `as const` would infer literal types and make
+// these unusable as useState seeds for controls whose value is a plain string.
+export const DEFAULT_HAT_BASICS: { style: string; size: string; condition: string } = {
+  style: 'a_game',
+  size: 'classic',
+  condition: 'new',
+};
+
 /** The four dropdown sources both hat forms need, plus a single loading flag. */
 export function useHatFormOptions() {
   const styles = useQuery({ queryKey: ['meta', 'styles'], queryFn: getStyles });
