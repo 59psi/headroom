@@ -193,3 +193,86 @@ async def test_construction_only_ever_sets_flags_never_clears_them(client):
 
     _apply_construction(hat, None)
     assert hat.hydro is True and hat.hydrolite is True
+
+
+@pytest.mark.anyio
+async def test_analysis_never_erases_a_typed_identity(client):
+    """A null from Claude must not wipe brand / model / artist the owner typed.
+
+    The tool schema tells Claude to answer null rather than guess, and it says
+    so most forcefully for `artist_series` ("guessing here is worse than
+    leaving it empty"). Special editions are exactly the hats Claude is least
+    able to name and the owner most wants recorded, so passing that null
+    through would erase the field every time they tapped Reanalyze — the same
+    "absence of evidence isn't evidence of absence" rule the construction
+    flags follow above.
+    """
+    from headroom.models.hat import Hat
+    from headroom.services.hat_analysis_pipeline import _apply_analysis
+
+    hat = Hat(brand="melin", model_name="Coronado", artist_series="Skye Walker")
+
+    _apply_analysis(
+        hat,
+        HatAnalysis(
+            brand=None,
+            model_name=None,
+            model_confidence="low",
+            style_descriptor="fitted snapback",
+            design_notes="Could not identify.",
+            estimated_new_price_usd=None,
+            artist_series=None,
+            colors=[],
+        ),
+    )
+
+    assert hat.artist_series == "Skye Walker", "a null answer must not erase the collab"
+    assert hat.brand == "melin"
+    assert hat.model_name == "Coronado"
+
+
+@pytest.mark.anyio
+async def test_analysis_still_overwrites_with_a_real_answer(client):
+    """The guard only blocks erasure — Claude can still correct itself."""
+    from headroom.models.hat import Hat
+    from headroom.services.hat_analysis_pipeline import _apply_analysis
+
+    hat = Hat(brand="melin", model_name="Coronado", artist_series="Skye Walker")
+
+    _apply_analysis(
+        hat,
+        HatAnalysis(
+            brand="New Era",
+            model_name="59FIFTY",
+            model_confidence="high",
+            style_descriptor="fitted",
+            design_notes="Wool fitted cap.",
+            estimated_new_price_usd=45.0,
+            artist_series="melin x OluKai",
+            colors=[],
+        ),
+    )
+
+    assert hat.artist_series == "melin x OluKai"
+    assert hat.brand == "New Era"
+    assert hat.model_name == "59FIFTY"
+
+
+@pytest.mark.anyio
+async def test_patch_hat_round_trips_artist_series(client):
+    """The Edit Hat form's new Artist / Collab field must persist and read back."""
+    create = await client.post(
+        "/api/hats",
+        json={"condition": "new", "size": "classic", "style": "collab"},
+    )
+    hat_id = create.json()["id"]
+    assert create.json()["artist_series"] is None
+
+    resp = await client.put(
+        f"/api/hats/{hat_id}", json={"artist_series": "melin x Austin Gamblers"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["artist_series"] == "melin x Austin Gamblers"
+
+    fetched = await client.get(f"/api/hats/{hat_id}")
+    assert fetched.json()["artist_series"] == "melin x Austin Gamblers"

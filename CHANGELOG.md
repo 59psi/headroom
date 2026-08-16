@@ -6,6 +6,29 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.6.1] — 2026-08-16 — _name the collab yourself_
+
+### Added
+- **Artist / Collab is editable.** `artist_series` was readable on the hat page
+  but there was no way to set or correct it — 2.6.0 shipped it as a Claude-only
+  field. It now has an input in the Edit Hat form's AI / Pricing Overrides card,
+  which is exactly where "override anything Claude got wrong" belongs. Special
+  editions are the hats Claude is least likely to name and the ones most worth
+  recording.
+
+### Fixed
+- **A re-analysis no longer erases a brand, model or collab you typed.**
+  `_apply_analysis` assigned Claude's answer straight through, nulls included,
+  so tapping Reanalyze wiped any of those three fields Claude couldn't identify
+  — and the tool schema explicitly tells it to answer null rather than guess,
+  most forcefully for `artist_series` ("guessing here is worse than leaving it
+  empty"). Without this the new field would have been erased by the very
+  workflow it exists for. A real answer still wins, so Claude can still correct
+  an earlier identification; only erasure is blocked. `logo_detected` is
+  deliberately exempt — it records what is visible in *this* photo, so null
+  there is an answer, not a gap. Same rule the construction flags already
+  followed.
+
 ## [2.6.0] — 2026-08-16 — _analysis gets out of your way_
 
 ### Added

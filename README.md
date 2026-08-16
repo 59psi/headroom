@@ -443,9 +443,9 @@ uv run uvicorn headroom.app:app --reload     # Backend (port 8000)
 cd frontend && npm run dev                   # Frontend (port 5173)
 cd frontend && npm run build                 # Type-check + production SPA build
 cd frontend && npm run typecheck             # Type-check only
-uv run pytest                                # Backend tests (190)
+uv run pytest                                # Backend tests (216)
 uv run pytest tests/test_search.py -k color  # Single backend test
-cd frontend && npm test                      # Frontend tests (35)
+cd frontend && npm test                      # Frontend tests (40)
 cd frontend && npm run test:watch            # Frontend tests, watch mode
 ```
 

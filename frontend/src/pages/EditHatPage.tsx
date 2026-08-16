@@ -26,6 +26,7 @@ export function EditHatPage() {
   });
   const [brand, setBrand] = useState('');
   const [modelName, setModelName] = useState('');
+  const [artistSeries, setArtistSeries] = useState('');
   const [colorway, setColorway] = useState('');
   const [purchasePrice, setPurchasePrice] = useState('');
   const [estimatedPrice, setEstimatedPrice] = useState('');
@@ -58,6 +59,7 @@ export function EditHatPage() {
       });
       setBrand(hat.data.brand || '');
       setModelName(hat.data.model_name || '');
+      setArtistSeries(hat.data.artist_series || '');
       setColorway(hat.data.colorway || '');
       setPurchasePrice(hat.data.purchase_price != null ? String(hat.data.purchase_price) : '');
       setEstimatedPrice(hat.data.estimated_new_price != null ? String(hat.data.estimated_new_price) : '');
@@ -80,6 +82,7 @@ export function EditHatPage() {
       if (basics.dateLastWorn) data.date_last_worn = basics.dateLastWorn;
       data.brand = brand || null;
       data.model_name = modelName || null;
+      data.artist_series = artistSeries || null;
       data.colorway = colorway || null;
       data.purchase_price = purchasePrice ? Number(purchasePrice) : null;
       data.design_notes = designNotes || null;
@@ -152,6 +155,22 @@ export function EditHatPage() {
               <datalist id="model-options">
                 {modelOptions.data?.map(o => <option key={o.value} value={o.value} />)}
               </datalist>
+            </div>
+
+            <div className="mb-3">
+              <label className="form-label">Artist / Collab</label>
+              <input
+                type="text"
+                aria-label="Artist / Collab"
+                className="form-control"
+                value={artistSeries}
+                onChange={e => setArtistSeries(e.target.value)}
+                placeholder="e.g. Skye Walker, melin x OluKai"
+              />
+              <div className="form-text small">
+                Signature collaborations and artist series. Claude fills this in when it
+                recognises one — anything you type here survives a re-analysis.
+              </div>
             </div>
 
             <div className="mb-3">
