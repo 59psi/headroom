@@ -6,6 +6,43 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.6.2] — 2026-08-16 — _hats that keep their brims_
+
+### Fixed
+- **The Docker image was still being built with `u2netp`.** 2.6.0 changed the
+  code default to `isnet-general-use` because `u2netp` trims hat bills, but
+  `docker-compose.yml` passed `REMBG_MODEL: ${REMBG_MODEL:-u2netp}` as a build
+  arg — which bakes the model into the image *and* sets
+  `ENV HEADROOM_REMBG_MODEL=u2netp`, beating the code default. So the
+  documented install path (`docker compose up -d --build`) never got the fix,
+  and the README table still advertised the old default. Compose now defaults
+  to `isnet-general-use`; `REMBG_MODEL=u2netp docker compose up -d --build`
+  remains the escape hatch, and README matches.
+- **Cutouts rendered faded / "ghosted".** Background removal took the model's
+  raw mask, so mid-confidence regions came through as semi-transparent alpha
+  and the hat looked washed out over the near-black canvas. `remove()` now runs
+  with `post_process_mask=True`, which opens the mask, blurs it and thresholds
+  at 127 — every pixel ends up fully opaque or fully clear. The blur runs
+  before the threshold, so the silhouette stays smooth instead of going jagged.
+- **Re-analysis destroyed the cutout a little more each time.** A queued
+  Reanalyze called `finalize_hat_photo`, which always ran background removal —
+  and for a stored `hats/x.png` the output path resolves to the *input file*.
+  rembg re-segmented an already-transparent image and wrote it back over the
+  only copy, so every tap ate further into the alpha and trimmed more of the
+  bill. Background removal is now skipped when the input is already a cutout;
+  uploads are normalised to JPEG first, so a `.png` here can only mean
+  "already cut out". This is what made the fading progressive.
+- **Navigation kept the previous page's scroll position.** Saving a hat and
+  tapping through to add another dropped you at the bottom of an empty form.
+  A `<ScrollToTop />` in the app shell resets it on each navigation.
+  Back/Forward are deliberately exempt — returning to a list you were halfway
+  down should keep your place.
+
+### Note
+Existing hats keep the cutouts they were already given; the improvements apply
+to photos processed from here on. The pre-cutout JPEG is not retained, so there
+is nothing to re-cut from.
+
 ## [2.6.1] — 2026-08-16 — _name the collab yourself_
 
 ### Added

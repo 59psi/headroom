@@ -60,18 +60,29 @@ async def finalize_hat_photo(
     """
     photo_dir = processed_jpeg_path.parent
 
-    # 1. Background removal → transparent PNG, swap as canonical
-    t_rembg0 = time.monotonic()
-    cutout_target = photo_dir / processed_jpeg_path.stem
-    transparent_path = await remove_background(processed_jpeg_path, cutout_target)
-    t_rembg = time.monotonic() - t_rembg0
-    if transparent_path is not None and transparent_path.exists():
-        # Drop the JPEG, keep the PNG
-        if transparent_path.resolve() != processed_jpeg_path.resolve():
-            processed_jpeg_path.unlink(missing_ok=True)
-        canonical_path = transparent_path
-    else:
-        canonical_path = processed_jpeg_path
+    # 1. Background removal → transparent PNG, swap as canonical.
+    #
+    # Skipped when the input IS already a cutout. Uploads are normalised to JPEG
+    # before they reach here, so a .png input can only be a photo that has been
+    # through rembg already — which is exactly what the reanalyze path hands us.
+    # Re-running it there is destructive, not merely wasteful: `cutout_target`
+    # is the stem, `_remove_sync` appends ".png", so the output path resolves to
+    # the *input file*. rembg would re-segment an image whose background is
+    # already transparent and write the result back over the only copy, eating
+    # further into the alpha and trimming a little more of the bill on every
+    # pass. That is the progressive fading — each Reanalyze made it worse.
+    t_rembg = 0.0
+    canonical_path = processed_jpeg_path
+    if processed_jpeg_path.suffix.lower() != ".png":
+        t_rembg0 = time.monotonic()
+        cutout_target = photo_dir / processed_jpeg_path.stem
+        transparent_path = await remove_background(processed_jpeg_path, cutout_target)
+        t_rembg = time.monotonic() - t_rembg0
+        if transparent_path is not None and transparent_path.exists():
+            # Drop the JPEG, keep the PNG
+            if transparent_path.resolve() != processed_jpeg_path.resolve():
+                processed_jpeg_path.unlink(missing_ok=True)
+            canonical_path = transparent_path
 
     hat.photo_path = f"hats/{canonical_path.name}"
 

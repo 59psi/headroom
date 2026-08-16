@@ -55,7 +55,16 @@ def _remove_sync(input_path: Path, output_path: Path) -> Path:
         # rembg works best from RGBA / RGB Pillow images
         if src.mode not in ("RGB", "RGBA"):
             src = src.convert("RGBA")
-        cut = remove(src, session=session)
+        # post_process_mask binarises the alpha channel: rembg opens the mask,
+        # blurs it (sigma 2) and then thresholds at 127, so every pixel ends up
+        # fully opaque or fully clear. Without it a saliency model's soft,
+        # mid-confidence regions come through as semi-transparent alpha and the hat
+        # renders washed out — "ghosted" — over the near-black canvas. The blur
+        # runs before the threshold, so the silhouette stays smooth rather than
+        # going jagged. Safe to binarise only because the default model is
+        # confident about the bill; with a low-capacity model a hard threshold
+        # would clip it off entirely.
+        cut = remove(src, session=session, post_process_mask=True)
 
     final_path = output_path.with_suffix(".png")
     cut.save(final_path, "PNG", optimize=True)
