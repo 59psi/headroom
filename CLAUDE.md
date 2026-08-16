@@ -80,7 +80,7 @@ It is tracked in git (was previously local-only and drifted stale) — keep it c
 
 ## Key Patterns
 
-- **Async relationship loading**: Always use `selectinload()` for relationships; after commit + relationship changes, call `db.expire_all()` then re-query (see `_reload_hat()`, `_reload_case()`)
+- **Async relationship loading**: Always use `selectinload()` for relationships; after commit + relationship changes, call `db.expire_all()` then re-query (see `_reload_hat()`, `_reload_case()`). `expire_all()` is **synchronous** on `AsyncSession` (no `await`), and `run_sync()` takes a **sync** callable — passing an `async def` fails at runtime, not at import
 - **Database migrations**: `database.py:_run_migrations()` runs `ALTER TABLE` against existing DBs using **fully-static** DDL strings (no f-string interpolation into `text()`); `_HAT_COLUMN_DDL` is the source of truth for hat-column additions. `tests/test_schema_consistency.py` enforces that EVERY `Hat` model column is covered by the DDL (a forgotten entry bricks every hat read on an upgraded DB). New tables (activity_log, import_jobs, import_job_items, wear_log) are picked up by `Base.metadata.create_all`
 - **Adding a Hat column**: model + `_HAT_COLUMN_DDL` + `HatRead` + `types/index.ts`. There is deliberately **no** hand-written ORM→schema mapper: `HatRead` is `from_attributes=True` and `_hat_to_read()` is just `HatRead.model_validate(hat)`. Values that aren't columns (`wear_count`, `case_display_id`, `case_type`, `room_id`, `room_name`) are `@property` on the `Hat` model beside `display_id`, so nothing outside the model walks `hat.case.room`. `tests/test_hats.py::test_hat_read_exposes_every_derived_field` pins all of them plus the unassigned-hat null case
 - **SQLite tuning**: WAL + `busy_timeout` + `synchronous=NORMAL` on connect (`database.py`), so a transient `database is locked` waits rather than raising — important for the import worker + background loops on a Pi
@@ -117,6 +117,7 @@ It is tracked in git (was previously local-only and drifted stale) — keep it c
 - Dev dependencies in `[dependency-groups] dev` in pyproject.toml
 - Frontend API functions in `frontend/src/api/`, types in `frontend/src/types/`
 - `datetime.now(timezone.utc)` over the deprecated `datetime.utcnow()`
+- **JSX separators**: use the literal Unicode `·` in `<option>` labels, not the HTML entity `&middot;` — JSX renders entities inside expressions literally, so the entity shows up as raw text in the dropdown
 - Dockerfile must run as a non-root `USER` (semgrep-enforced); dependency install is `uv sync --frozen` only (a lock/manifest mismatch fails the build — run `uv lock` and commit)
 - **Rules of Hooks**: every `useState` / `useMemo` / `useEffect` / `useQuery` must run on every render — never call hooks after an early `return`. Common bug source on pages with `if (isLoading) return <Spinner />` followed by a derived `useMemo`
 - **Mobile bottom-nav layout**: `.bottom-nav` uses `display: flex` with `flex: 1 1 0` items. The `.d-lg-none` utility class **must not** force `display: initial` at mobile breakpoints — that overrides the flex and stacks tabs vertically
