@@ -1,6 +1,6 @@
 """Vision-based hat analysis powered by Claude.
 
-Sends a hat photo to Claude Sonnet 4.6, requests structured output via tool-use
+Sends a hat photo to the configured Claude model, requests structured output via tool-use
 (brand, model, style descriptor, colors with tier, estimated retail price, design
 notes, and a confidence label). Uses prompt caching for the system prompt so
 repeated analysis calls are cheap.

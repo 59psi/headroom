@@ -2,14 +2,26 @@ import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getModel, setModel, clearModel } from '../../api/settings';
 
-// Curated list of Claude models known to support vision + tool use.
-// "Other…" reveals a free-text input for anything not in the list.
-const KNOWN_MODELS: { id: string; label: string }[] = [
-  { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6 — balanced (default)' },
-  { id: 'claude-sonnet-4-5', label: 'Sonnet 4.5 — older, cheaper' },
-  { id: 'claude-opus-4-7', label: 'Opus 4.7 — most capable, pricier' },
+// Curated list of Claude models known to support vision + tool use, which is
+// all this app needs from a model. Deliberately relative ("cheapest", not
+// "$1/MTok") — Anthropic's price list changes and a hardcoded number rots.
+//
+// Legacy ids are kept listed rather than dropped: an install that saved one
+// stays on a named option instead of silently falling through to "Other…"
+// with its id in a free-text box. They still work; they're just superseded.
+// "Other…" covers anything not here, including models newer than this build.
+const CURRENT_MODELS: { id: string; label: string }[] = [
+  { id: 'claude-sonnet-5', label: 'Sonnet 5 — balanced (default)' },
   { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5 — fastest, cheapest' },
+  { id: 'claude-opus-5', label: 'Opus 5 — more capable, pricier' },
+  { id: 'claude-fable-5', label: 'Fable 5 — most capable, priciest' },
 ];
+const LEGACY_MODELS: { id: string; label: string }[] = [
+  { id: 'claude-opus-4-7', label: 'Opus 4.7' },
+  { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
+  { id: 'claude-sonnet-4-5', label: 'Sonnet 4.5' },
+];
+const KNOWN_MODELS = [...CURRENT_MODELS, ...LEGACY_MODELS];
 const OTHER = '__other__';
 
 export function ClaudeModelCard() {
@@ -68,6 +80,7 @@ export function ClaudeModelCard() {
         )}
         <label className="form-label">Model</label>
         <select
+          aria-label="Model"
           className="form-select mb-2"
           value={modelSelect}
           onChange={e => {
@@ -77,14 +90,22 @@ export function ClaudeModelCard() {
             else setModelDraft('');
           }}
         >
-          {KNOWN_MODELS.map(m => (
-            <option key={m.id} value={m.id}>{m.label}</option>
-          ))}
+          <optgroup label="Current">
+            {CURRENT_MODELS.map(m => (
+              <option key={m.id} value={m.id}>{m.label}</option>
+            ))}
+          </optgroup>
+          <optgroup label="Legacy — still available, superseded">
+            {LEGACY_MODELS.map(m => (
+              <option key={m.id} value={m.id}>{m.label}</option>
+            ))}
+          </optgroup>
           <option value={OTHER}>Other (enter custom ID)…</option>
         </select>
         {modelSelect === OTHER && (
           <input
             type="text"
+            aria-label="Custom model ID"
             className="form-control mb-2"
             placeholder="claude-…"
             value={modelDraft}

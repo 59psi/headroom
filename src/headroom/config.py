@@ -52,11 +52,13 @@ class Settings(BaseSettings):
     # the JS bundle. Override via env if Treet ever rotates it.
     melin_client_id: str = "89cea352-482e-4f00-a2c1-5bf3d5036e7b"
 
-    # Default Claude vision model. `claude-sonnet-4-6` is a current Anthropic
-    # Sonnet id (Claude 4.6 family). Override with HEADROOM_ANTHROPIC_MODEL if
-    # you want a different model, or use POST /api/settings/api-key/test in
-    # the UI to verify the configured model + key actually work end-to-end.
-    anthropic_model: str = "claude-sonnet-4-6"
+    # Default Claude vision model. Sonnet is the balanced tier and the right
+    # default for one-image-in / one-tool-call-out analysis; Sonnet 5 is both
+    # newer and cheaper than the 4.6 it replaced. Every current Claude model
+    # accepts image input, so any of them works here — the Settings UI lists
+    # the useful ones. Override with HEADROOM_ANTHROPIC_MODEL, or use
+    # POST /api/settings/api-key/test to verify a model id + key end-to-end.
+    anthropic_model: str = "claude-sonnet-5"
 
     # Per-request timeout (seconds) for outbound HTTP (Claude / Melin Recap).
     http_timeout: float = 30.0

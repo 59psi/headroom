@@ -391,7 +391,7 @@ link-only if the API is unreachable.
 | `HEADROOM_UPLOAD_DIR` | `uploads` | Where photos live on disk |
 | `HEADROOM_CORS_ORIGINS` | `["http://localhost:5173"]` | Allowed CORS origins (JSON list) |
 | `HEADROOM_ANTHROPIC_API_KEY` | _(unset)_ | Default API key (overridden by DB value) |
-| `HEADROOM_ANTHROPIC_MODEL` | `claude-sonnet-4-6` | Claude model for vision analysis |
+| `HEADROOM_ANTHROPIC_MODEL` | `claude-sonnet-5` | Claude model for vision analysis |
 | `HEADROOM_GOOGLE_VISION_API_KEY` | _(unset)_ | Fallback brand (logo) detection. DB value wins |
 | `HEADROOM_MELIN_CLIENT_ID` | _(baked in)_ | Public Sharetribe client id for live Melin resale stats |
 | `HEADROOM_EBAY_APP_ID` / `HEADROOM_EBAY_CERT_ID` | _(unset)_ | eBay Browse API comps (Production keyset) |
