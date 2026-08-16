@@ -6,6 +6,8 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.6.0] — 2026-08-16 — _analysis gets out of your way_
+
 ### Added
 - **Photo analysis is queued instead of blocking the upload.** `POST /api/hats/
   {id}/photo` now saves the photo, marks the hat `analysis_status='pending'` and
