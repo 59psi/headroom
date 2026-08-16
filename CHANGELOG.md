@@ -19,6 +19,8 @@ All notable changes are documented here. This project follows
   exception, a crash mid-analysis is re-queued on boot, and if no worker is
   draining the queue the route runs the pipeline inline rather than dropping it.
 - **Hydrolite** added to the hat style list.
+- **Clear All** on the hat's Color Palette card wipes the whole palette in one
+  call, instead of removing swatches one modal at a time after a bad analysis.
 
 ### Changed
 - **Default background-removal model is now `isnet-general-use`** (was
@@ -43,6 +45,11 @@ All notable changes are documented here. This project follows
   the correction was overwritten by the very value being corrected. An
   explicitly-typed name now wins and is snapped to the palette's spelling (so
   chip search still matches); the hex is consulted only when the field is blank.
+- **Colour ranks are renumbered server-side.** `PUT /api/hats/{id}/colors`
+  stored the client's `dominance_rank` verbatim. The UI edits and removes a
+  colour BY rank, so a duplicate made one tap hit two rows — and a gap invited
+  one, since the add path picks `colors.length + 1` (ranks `[1,3]` + length 2 →
+  3). Ranks now follow submitted position, so they are always dense and unique.
 - **The SQLite write lock was held across the whole analysis.** Setting
   `photo_path` before the pipeline's first DB read let autoflush open a write
   transaction, which SQLite holds until commit — so the lock stayed held through

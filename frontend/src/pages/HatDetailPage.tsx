@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate, Link } from 'react-router';
-import { getHat, deleteHat, uploadHatPhoto, reanalyzeHat, refreshEbayForHat, undisposeHat } from '../api/hats';
+import { getHat, deleteHat, uploadHatPhoto, reanalyzeHat, refreshEbayForHat, undisposeHat, updateHatColors } from '../api/hats';
 import { apiFetch } from '../api/client';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ConditionBadge } from '../components/common/ConditionBadge';
@@ -83,6 +83,17 @@ export function HatDetailPage() {
     mutationFn: () => reanalyzeHat(id),
     onMutate: () => setReanalyzing(true),
     onSettled: () => setReanalyzing(false),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['hat', id] });
+      qc.invalidateQueries({ queryKey: ['hats'] });
+    },
+  });
+
+  // Wipe the whole palette in one call — PUT /colors replaces the set, so an
+  // empty list IS the delete-all. Beats removing swatches one modal at a time
+  // after a bad analysis.
+  const clearColorsMutation = useMutation({
+    mutationFn: () => updateHatColors(id, []),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['hat', id] });
       qc.invalidateQueries({ queryKey: ['hats'] });
@@ -401,14 +412,33 @@ export function HatDetailPage() {
         <div className="card-body">
           <div className="d-flex justify-content-between align-items-center mb-2">
             <div className="card-title mb-0">Color Palette</div>
-            <button
-              type="button"
-              className="btn btn-outline-primary btn-sm"
-              onClick={() => setColorEditOpen(-1)}
-            >
-              + Add Color
-            </button>
+            <div className="d-flex gap-2">
+              {data.colors.length > 0 && (
+                <button
+                  type="button"
+                  className="btn btn-outline-danger btn-sm"
+                  onClick={() => {
+                    if (confirm(`Remove all ${data.colors.length} colors from this hat?`)) {
+                      clearColorsMutation.mutate();
+                    }
+                  }}
+                  disabled={clearColorsMutation.isPending}
+                >
+                  {clearColorsMutation.isPending ? 'Clearing…' : 'Clear All'}
+                </button>
+              )}
+              <button
+                type="button"
+                className="btn btn-outline-primary btn-sm"
+                onClick={() => setColorEditOpen(-1)}
+              >
+                + Add Color
+              </button>
+            </div>
           </div>
+          {clearColorsMutation.error && (
+            <div className="alert alert-danger small">{String(clearColorsMutation.error)}</div>
+          )}
           {data.colors.length === 0 ? (
             <p className="text-muted small mb-0">
               No colors yet — tap "Add Color" to seed the palette manually, or run Reanalyze.

@@ -112,7 +112,14 @@ async def update_hat_colors(
     for color in list(hat.colors):
         await db.delete(color)
 
-    for c in data.colors:
+    # Rank by position, ignoring whatever the client sent. Ranks are the only
+    # handle the UI has on a row — it edits and removes BY rank — so a duplicate
+    # makes one tap hit two colours, and a gap invites one: the add path picks
+    # `colors.length + 1`, which collides the moment the ranks aren't dense
+    # (ranks [1,3] + length 2 → 3). Storing them verbatim let that state persist.
+    # Position is already the client's intended order, so this is authoritative
+    # rather than a guess.
+    for rank, c in enumerate(data.colors, start=1):
         # An explicitly-typed general_color is a CORRECTION and must win. This
         # used to derive the name from the hex whenever a hex was present, so
         # editing a mis-detected colour to "green" while its (wrong) grey hex
@@ -130,7 +137,7 @@ async def update_hat_colors(
             color_name=c.color_name,
             general_color=general,
             hex_value=c.hex_value,
-            dominance_rank=c.dominance_rank,
+            dominance_rank=rank,
             tier=c.tier or "primary",
         ))
 

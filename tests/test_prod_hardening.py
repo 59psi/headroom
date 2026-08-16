@@ -100,6 +100,47 @@ async def test_put_colors_keeps_a_hand_typed_general_color(client):
     assert color["general_color"] != normalize_hex_name("#8a8a8a", "heather slate")
 
 
+async def test_put_colors_renumbers_ranks_densely(client):
+    """Ranks come back dense and unique no matter what the client sent.
+
+    The UI edits and removes a colour BY rank, so a duplicate makes one tap hit
+    two rows, and a gap invites one — the add path picks `colors.length + 1`,
+    which collides as soon as ranks aren't dense (ranks [1,3] + length 2 → 3).
+    Storing client ranks verbatim let that state persist between requests.
+    """
+    hat = await _make_hat(client)
+    resp = await client.put(
+        f"/api/hats/{hat['id']}/colors",
+        json={"colors": [
+            {"color_name": "a", "general_color": "red", "hex_value": "#ff0000",
+             "dominance_rank": 7, "tier": "primary"},
+            {"color_name": "b", "general_color": "blue", "hex_value": "#0000ff",
+             "dominance_rank": 7, "tier": "secondary"},   # duplicate of the above
+            {"color_name": "c", "general_color": "green", "hex_value": "#00ff00",
+             "dominance_rank": 2, "tier": "accent"},      # out of order, leaves a gap
+        ]},
+    )
+    assert resp.status_code == 200, resp.text
+    ranks = [c["dominance_rank"] for c in resp.json()["colors"]]
+    assert ranks == [1, 2, 3], ranks
+    # Renumbering must follow submitted ORDER, not re-sort by the sent rank.
+    assert [c["color_name"] for c in resp.json()["colors"]] == ["a", "b", "c"]
+
+
+async def test_put_colors_with_empty_list_clears_the_palette(client):
+    """The "Clear All" button is just a PUT of []."""
+    hat = await _make_hat(client)
+    await client.put(
+        f"/api/hats/{hat['id']}/colors",
+        json={"colors": [{"color_name": "a", "general_color": "red",
+                          "hex_value": "#ff0000", "dominance_rank": 1,
+                          "tier": "primary"}]},
+    )
+    resp = await client.put(f"/api/hats/{hat['id']}/colors", json={"colors": []})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["colors"] == []
+
+
 # --- wear log idempotency (Doppler) ------------------------------------- #
 
 
