@@ -133,6 +133,7 @@ async def create_hat(db: AsyncSession, data: HatCreate) -> Hat:
         condition=data.condition,
         size=data.size,
         style=data.style,
+        hydrolite=data.hydrolite,
         date_last_worn=data.date_last_worn,
         is_beanie=is_beanie,
     )

@@ -24,7 +24,12 @@ All notable changes are documented here. This project follows
   no logo in frame. The Google Vision fallback fills it too — LOGO_DETECTION
   only fires on a visible mark, so that path is evidence by construction. Shown
   under Identification on the hat page.
-- **Hydrolite** added to the hat style list.
+- **HYDROLite checkbox on the hat form.** HYDROLite is melin CONSTRUCTION —
+  featherweight build, bonded seams, gel-welded logos, antimicrobial sweatband —
+  offered across A-Game, Coronado, Trenches and the rest, so any hat can be one.
+  It is a per-hat flag (`hydrolite`), deliberately NOT a `HatStyle` value: as a
+  style it would need a second entry per model and would split one model's hats
+  across two style buckets. Shown as a badge on the hat page.
 - **Clear All** on the hat's Color Palette card wipes the whole palette in one
   call, instead of removing swatches one modal at a time after a bad analysis.
 
@@ -36,6 +41,12 @@ All notable changes are documented here. This project follows
   slower inference, which stopped mattering once analysis left the request path.
   `HEADROOM_REMBG_MODEL=u2netp` restores the old behaviour.
 
+### Fixed
+- **The photo button never offered your library.** The file input carried
+  `capture="environment"`, which does not *prefer* the camera — it forces it, so
+  iOS and Android skipped the picker and opened the rear camera, making an
+  existing photo impossible to choose. Removed, so the normal Photo Library /
+  Take Photo / Browse sheet appears.
 ### Fixed
 - **Modals were painted over by the page behind them.** The photo cropper's zoom
   slider and "Use This" button ended up underneath the Details card's

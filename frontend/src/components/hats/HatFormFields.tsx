@@ -9,6 +9,8 @@ export interface HatBasics {
   style: string;
   size: string;
   condition: string;
+  /** melin HYDROLite construction — orthogonal to style, so any model can be one. */
+  hydrolite: boolean;
   /** Case id as a string ('' = unassigned), matching the <select> value. */
   caseId: string;
   /** ISO date or '' */
@@ -28,10 +30,11 @@ export const NEW_CASE_VALUE = '__new__';
  */
 // Widened to `string` on purpose: `as const` would infer literal types and make
 // these unusable as useState seeds for controls whose value is a plain string.
-export const DEFAULT_HAT_BASICS: { style: string; size: string; condition: string } = {
+export const DEFAULT_HAT_BASICS: { style: string; size: string; condition: string; hydrolite: boolean } = {
   style: 'a_game',
   size: 'classic',
   condition: 'new',
+  hydrolite: false,
 };
 
 /** The four dropdown sources both hat forms need, plus a single loading flag. */
@@ -125,6 +128,27 @@ export function HatBasicsCard({
               <option key={c.value} value={c.value}>{c.label}</option>
             ))}
           </select>
+        </div>
+
+        {/* Sits with Style rather than in it: HYDROLite is a construction melin
+            offers ACROSS models, so a hat is "a Coronado, in HYDROLite", never
+            "a HYDROLite instead of a Coronado". */}
+        <div className="mb-3">
+          <label className="d-flex align-items-center gap-2" style={{ cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              aria-label="HYDROLite construction"
+              checked={values.hydrolite}
+              onChange={e => onChange('hydrolite', e.target.checked)}
+              style={{ width: 20, height: 20, flexShrink: 0 }}
+            />
+            <span>
+              HYDROLite
+              <span className="text-secondary small d-block">
+                Featherweight, bonded seams, gel-welded logo, antimicrobial sweatband
+              </span>
+            </span>
+          </label>
         </div>
 
         <div className="mb-3">

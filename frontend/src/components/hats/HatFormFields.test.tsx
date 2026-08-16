@@ -20,11 +20,12 @@ vi.mock('../../api/cases', () => ({
 }));
 
 const BASICS: HatBasics = {
-  style: 'a_game', size: 'classic', condition: 'new', caseId: '', dateLastWorn: '',
+  style: 'a_game', size: 'classic', condition: 'new', hydrolite: false,
+  caseId: '', dateLastWorn: '',
 };
 
 function Harness(props: {
-  onChange: (k: keyof HatBasics, v: string) => void;
+  onChange: <K extends keyof HatBasics>(k: K, v: HatBasics[K]) => void;
   onCreateCase: () => void;
   values?: HatBasics;
   caseLabel?: string;

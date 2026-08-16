@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, func, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from headroom.database import Base
@@ -50,6 +50,16 @@ class Hat(Base):
     # from `brand` because that can be inferred from shape, colourway or a hang
     # tag with no logo in frame at all. This one answers "was a mark visible,
     # and who owns it", which is the difference between a guess and evidence.
+    # HYDROLite is melin CONSTRUCTION, not a model line: featherweight build,
+    # bonded seams, gel-welded logos, antimicrobial sweatband. It is offered
+    # across A-Game, Coronado, Trenches and the rest, so ANY hat can be one --
+    # which is exactly why it is a flag here and not a HatStyle value. Making it
+    # a style would have forced a second entry per model and split one model's
+    # hats across two style buckets.
+    hydrolite: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("0")
+    )
+
     logo_detected: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     analysis_status: Mapped[str | None] = mapped_column(String(20), nullable=True)  # ok/error/skipped

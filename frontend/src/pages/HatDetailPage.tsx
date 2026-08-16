@@ -139,6 +139,14 @@ export function HatDetailPage() {
           {data.display_id || `Hat #${data.id}`}
         </h1>
         <div className="d-flex gap-2 align-items-center">
+          {data.hydrolite && (
+            <span
+              className="badge bg-info"
+              title="melin HYDROLite construction: featherweight, bonded seams, gel-welded logo, antimicrobial sweatband"
+            >
+              HYDROLite
+            </span>
+          )}
           <AnalysisStatus hat={data} />
           <ConditionBadge condition={data.condition} />
         </div>

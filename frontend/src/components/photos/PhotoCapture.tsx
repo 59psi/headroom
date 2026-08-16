@@ -72,11 +72,16 @@ export function PhotoCapture({ onCapture, previewUrl, hidePreview }: Props) {
       >
         {hidePreview ? 'Replace Photo' : previewUrl ? 'Change Photo' : 'Capture / Upload'}
       </button>
+      {/* No `capture` attribute on purpose. `capture="environment"` doesn't
+          *prefer* the camera, it FORCES it: iOS and Android skip the picker
+          entirely and open the rear camera, so an existing photo can't be
+          chosen at all. Plain `accept="image/*"` gets the normal action sheet
+          — Photo Library / Take Photo / Browse — which still reaches the
+          camera in one extra tap while making the library reachable at all. */}
       <input
         ref={inputRef}
         type="file"
         accept="image/*"
-        capture="environment"
         onChange={handleChange}
         hidden
       />

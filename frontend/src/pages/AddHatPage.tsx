@@ -34,6 +34,7 @@ export function AddHatPage() {
     mutationFn: async () => {
       const data: Record<string, unknown> = {
         style: basics.style, size: basics.size, condition: basics.condition,
+        hydrolite: basics.hydrolite,
       };
       if (basics.caseId) data.case_id = Number(basics.caseId);
       if (basics.dateLastWorn) data.date_last_worn = basics.dateLastWorn;
