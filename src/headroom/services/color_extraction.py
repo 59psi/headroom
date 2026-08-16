@@ -109,6 +109,23 @@ def normalize_hex_name(hex_value: str | None, fallback: str) -> str:
     return nearest_color_name(rgb) if rgb else fallback
 
 
+_PALETTE_NAMES: dict[str, str] = {name.lower(): name for name, _rgb in _PALETTE}
+
+
+def normalize_color_name(name: str) -> str:
+    """Snap a hand-typed colour name onto the palette's spelling.
+
+    The counterpart to `normalize_hex_name` for the case where a human, not the
+    analyser, supplied the name. Matching by NAME rather than by hex is the
+    whole point: a person correcting a mis-detected colour is telling us the
+    stored hex is wrong, so re-deriving from that hex would just reinstate the
+    error. Anything not in the palette passes through trimmed and unchanged —
+    the user's word beats our vocabulary.
+    """
+    cleaned = (name or "").strip()
+    return _PALETTE_NAMES.get(cleaned.lower(), cleaned)
+
+
 # --------------------- perceptual color distance ---------------------- #
 # sRGB → CIELAB, pure Python (D65). Euclidean distance in LAB (ΔE*76) is
 # a good-enough perceptual metric for "show me hats close to this color".

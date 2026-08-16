@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { portalToBody } from './ModalPortal';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { updateHatColors } from '../../api/hats';
 import type { ColorTag } from '../../types';
@@ -78,7 +79,7 @@ export function ColorEditModal({ hatId, colors, editingRank, onClose }: Props) {
     },
   });
 
-  return (
+  return portalToBody(
     <div className="modal" onClick={onClose}>
       <div className="modal-dialog" style={{ maxWidth: 460 }} onClick={e => e.stopPropagation()}>
         <div className="modal-content">

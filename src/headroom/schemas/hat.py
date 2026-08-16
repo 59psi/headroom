@@ -26,6 +26,7 @@ class HatStyle(StrEnum):
     legend = "legend"
     caddy = "caddy"
     coast = "coast"
+    hydrolite = "hydrolite"
     collab = "collab"
     beanie = "beanie"
 

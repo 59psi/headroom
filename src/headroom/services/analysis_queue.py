@@ -1,0 +1,178 @@
+"""Queued photo analysis, so uploading a hat returns immediately.
+
+The upload route used to run the whole pipeline inline — rembg, then Claude,
+then eBay, then Melin Recap. Every stage is individually bounded, but they add
+up: Claude alone is `http_timeout` (30s) times the Anthropic SDK's default
+`max_retries=2`, i.e. three attempts, and rembg on a Pi is tens of seconds
+before that. A single upload could hold the request open for minutes with no
+signal to the browser, which reads as a hang.
+
+Now the route saves the photo, marks the hat `analysis_status='pending'`, and
+hands the id to this queue. One worker drains it — the same single-consumer
+shape as `import_service`, and for the same reason: rembg and Claude serialise
+anyway, so extra workers buy nothing and multiply the failure modes.
+
+Deliberately mirrors `import_service`'s durability rules, because the failure
+modes are identical:
+  * the loop survives ANY per-item exception (a bad photo must not kill it)
+  * `_recover_on_boot` re-queues hats stranded in 'pending' by a crash or
+    restart, so a power cut on a Pi costs a retry rather than a hat that sits
+    "Analyzing…" forever
+  * when no worker is running, `enqueue` reports so and the caller runs the
+    pipeline inline — work is never silently dropped
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from datetime import datetime, timezone
+
+from sqlalchemy import select
+
+from headroom.config import settings as config_settings
+from headroom.database import async_session
+from headroom.models.hat import Hat
+from headroom.services.hat_analysis_pipeline import finalize_hat_photo
+
+logger = logging.getLogger(__name__)
+
+# The status a hat wears between "photo saved" and "worker got to it". Any other
+# analysis_status value is terminal, so this is also the exact set the boot
+# sweep re-queues.
+PENDING = "pending"
+
+_queue: asyncio.Queue[int] | None = None  # holds hat IDs
+_worker_task: asyncio.Task | None = None
+
+
+def worker_alive() -> bool:
+    """True if the background analysis worker exists and is still running."""
+    return _worker_task is not None and not _worker_task.done()
+
+
+def enqueue(hat_id: int) -> bool:
+    """Queue a hat for analysis. False means nothing is draining the queue.
+
+    A False return is the caller's cue to run the pipeline inline rather than
+    drop the work — that is what keeps the feature correct when the worker is
+    disabled (tests, `HEADROOM_ANALYSIS_WORKER_ENABLED=0`) or has died.
+    """
+    if _queue is None or not worker_alive():
+        return False
+    _queue.put_nowait(hat_id)
+    return True
+
+
+async def _process_hat(hat_id: int) -> None:
+    """Run the full pipeline for one hat in its own session."""
+    async with async_session() as db:
+        hat = (await db.execute(select(Hat).where(Hat.id == hat_id))).scalar_one_or_none()
+        if hat is None:
+            return  # deleted between upload and analysis
+        if hat.analysis_status != PENDING:
+            return  # already handled, or re-queued twice by the boot sweep
+        if not hat.photo_path:
+            hat.analysis_status = "error"
+            hat.analysis_error = "Photo missing before analysis could run."
+            hat.analyzed_at = datetime.now(timezone.utc)
+            await db.commit()
+            return
+
+        photo_path = config_settings.upload_dir / hat.photo_path
+        if not photo_path.exists():
+            hat.analysis_status = "error"
+            hat.analysis_error = f"Photo file missing on disk: {hat.photo_path}"
+            hat.analyzed_at = datetime.now(timezone.utc)
+            await db.commit()
+            return
+
+        await finalize_hat_photo(db, hat, photo_path)
+        await db.commit()
+
+
+async def _mark_failed(hat_id: int, exc: Exception) -> None:
+    """Record a pipeline crash on the hat itself.
+
+    Without this a hat that blew up mid-analysis keeps `analysis_status`
+    'pending' forever, and the UI spins on it indefinitely — the exact symptom
+    the queue was meant to remove.
+    """
+    try:
+        async with async_session() as db:
+            hat = (await db.execute(select(Hat).where(Hat.id == hat_id))).scalar_one_or_none()
+            if hat is not None and hat.analysis_status == PENDING:
+                hat.analysis_status = "error"
+                hat.analysis_error = str(exc)[:1000]
+                hat.analyzed_at = datetime.now(timezone.utc)
+                await db.commit()
+    except Exception as inner:  # noqa: BLE001 — bookkeeping must not raise
+        logger.warning("Analysis error-bookkeeping failed for hat %s: %s", hat_id, inner)
+
+
+async def _worker_loop() -> None:
+    """Background task: drain the analysis queue forever."""
+    assert _queue is not None
+    logger.info("Analysis worker started.")
+    try:
+        while True:
+            hat_id = await _queue.get()
+            try:
+                await _process_hat(hat_id)
+            except Exception as exc:  # noqa: BLE001 — one bad hat must NOT kill
+                # the worker, or every later upload hangs on 'pending' forever.
+                logger.exception("Analysis worker: unhandled error on hat %s: %s", hat_id, exc)
+                await _mark_failed(hat_id, exc)
+            finally:
+                _queue.task_done()
+    except asyncio.CancelledError:
+        logger.info("Analysis worker cancelled.")
+        raise
+
+
+async def _recover_on_boot() -> None:
+    """Re-queue hats left 'pending' by a crash or restart."""
+    assert _queue is not None
+    async with async_session() as db:
+        stranded = (await db.execute(
+            select(Hat.id).where(Hat.analysis_status == PENDING)
+        )).scalars().all()
+    for hat_id in stranded:
+        _queue.put_nowait(hat_id)
+    if stranded:
+        logger.info("Re-queued %d hat(s) stranded mid-analysis.", len(stranded))
+
+
+async def start_worker() -> None:
+    """Wire up the queue + worker. Called from app.lifespan."""
+    global _queue, _worker_task
+    _queue = asyncio.Queue()
+    _worker_task = asyncio.create_task(_worker_loop())
+    await _recover_on_boot()
+
+
+async def stop_worker() -> None:
+    global _queue, _worker_task
+    if _worker_task is not None:
+        _worker_task.cancel()
+        try:
+            await _worker_task
+        except asyncio.CancelledError:
+            pass
+        _worker_task = None
+    _queue = None
+
+
+def _queue_depth() -> int:
+    """How many hats are waiting. Surfaced by /health/ready."""
+    return _queue.qsize() if _queue is not None else 0
+
+
+__all__ = [
+    "PENDING",
+    "enqueue",
+    "start_worker",
+    "stop_worker",
+    "worker_alive",
+    "_queue_depth",
+]

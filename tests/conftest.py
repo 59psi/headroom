@@ -4,6 +4,12 @@ import os
 # app code imports run.
 os.environ.setdefault("HEADROOM_BACKUP_ENABLED", "false")
 os.environ.setdefault("HEADROOM_IMPORT_WORKER_ENABLED", "false")
+# Off by design, not convenience: with the worker running, photo analysis is
+# queued and the upload route returns before it finishes, so every test that
+# asserts on analysis results would race it. Off, the route runs the pipeline
+# inline — the same code, synchronously. tests/test_analysis_queue.py drives
+# the queued path explicitly.
+os.environ.setdefault("HEADROOM_ANALYSIS_WORKER_ENABLED", "false")
 os.environ.setdefault("HEADROOM_MDNS_ENABLED", "false")
 
 import pytest

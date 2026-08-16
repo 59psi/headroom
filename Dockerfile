@@ -64,7 +64,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 # Before COPY src on purpose: this only needs rembg (installed above), so
 # keeping it here means a source edit doesn't re-download ~40s of ONNX weights.
-ARG REMBG_MODEL=u2netp
+ARG REMBG_MODEL=isnet-general-use
 ENV HEADROOM_REMBG_MODEL=${REMBG_MODEL}
 # onnxruntime probes the host for GPUs while `import onnxruntime` runs and logs
 # a WARNING per device it can't read — guaranteed noise in a container, which
@@ -92,7 +92,7 @@ FROM base AS runtime
 # Re-declare so the chosen model reaches THIS stage: `ARG` is scoped per stage,
 # and hardcoding u2netp here silently discarded the build arg — the image then
 # carried a pre-downloaded model it would never load.
-ARG REMBG_MODEL=u2netp
+ARG REMBG_MODEL=isnet-general-use
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH" \

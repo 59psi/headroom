@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { portalToBody } from './ModalPortal';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { createCase } from '../../api/cases';
 import { listRooms } from '../../api/rooms';
@@ -30,7 +31,7 @@ export function NewCaseModal({ show, onClose, onCreated }: Props) {
 
   if (!show) return null;
 
-  return (
+  return portalToBody(
     <div className="modal" onClick={onClose}>
       <div className="modal-dialog" onClick={e => e.stopPropagation()}>
         <div className="modal-content">

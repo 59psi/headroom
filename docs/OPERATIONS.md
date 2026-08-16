@@ -87,7 +87,8 @@ fleet-default, the UI is the per-install override.
 | `HEADROOM_RP_ID` | `localhost` | Passkey (WebAuthn) relying-party id — must equal the serving domain. Set automatically by the HTTPS overlay |
 | `HEADROOM_ORIGIN` | `http://localhost:8000` | Full origin for passkey verification. Set automatically by the HTTPS overlay |
 | `HEADROOM_HTTP_TIMEOUT` | `30.0` | Outbound HTTP (Claude, Google, eBay, Melin) |
-| `HEADROOM_REMBG_MODEL` | `u2netp` | See §7 Raspberry Pi |
+| `HEADROOM_REMBG_MODEL` | `isnet-general-use` | See §7 Raspberry Pi |
+| `HEADROOM_ANALYSIS_WORKER_ENABLED` | `true` | Queue photo analysis off the request. Off = run it inline (slow uploads) |
 | `HEADROOM_LOG_LEVEL` | `INFO` | Applies when no other logging config is active |
 | `HEADROOM_BACKUP_ENABLED` | `true` | Scheduled backups on/off (on-demand download always works) |
 | `HEADROOM_BACKUP_INTERVAL_HOURS` | `24` | Scheduled backup cadence |
@@ -321,10 +322,13 @@ thing standing between the internet and your hats.
   build) or build/push from a faster machine with
   `docker buildx build --platform linux/arm64,linux/amd64 -t <registry>/headroom:latest --push .`
 - The rembg model is pre-downloaded **into the image** at build time so the
-  Pi never fetches it at runtime. Default `u2netp` (4.7 MB) takes 5–15 s per
-  photo on a Pi 4. `HEADROOM_REMBG_MODEL=isnet-general-use` gives sharper
-  cutouts at the cost of a ~170 MB model and slower inference — rebuild the
-  image after changing it (the model bakes in via a build arg).
+  Pi never fetches it at runtime. Default `isnet-general-use` (~170 MB).
+  `u2netp` (4.7 MB) is far faster — 5–15 s per photo on a Pi 4 — but its low
+  capacity loses thin protruding shapes, which on a hat means the BILL: it
+  keeps the crown and cuts the brim off. Since analysis moved onto the
+  background worker nothing waits on the slower model, so accuracy wins by
+  default. Rebuild the image after changing it (the model bakes in via a
+  build arg): `REMBG_MODEL=u2netp docker compose up -d --build`.
 - SQLite on an SD card is fine at hat-collection scale, but SD cards die:
   that's what §4's off-machine backup copy is for.
 

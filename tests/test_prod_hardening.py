@@ -49,7 +49,7 @@ async def test_undispose_reassigns_position_no_collision(client):
 # --- R12: PUT /colors must normalize general_color ---------------------- #
 
 
-async def test_put_colors_normalizes_general_color(client):
+async def test_put_colors_derives_general_color_from_hex_when_left_blank(client):
     from headroom.services.color_extraction import normalize_hex_name
 
     hat = await _make_hat(client)
@@ -57,7 +57,7 @@ async def test_put_colors_normalizes_general_color(client):
         f"/api/hats/{hat['id']}/colors",
         json={"colors": [{
             "color_name": "heather slate",
-            "general_color": "totally-bogus-name",
+            "general_color": "",
             "hex_value": "#ff0000",
             "dominance_rank": 1,
             "tier": "primary",
@@ -65,10 +65,39 @@ async def test_put_colors_normalizes_general_color(client):
     )
     assert resp.status_code == 200, resp.text
     color = resp.json()["colors"][0]
-    # Stored general_color is snapped to the palette from the hex, not the
-    # client's free-text — so it stays searchable by the color chips.
-    assert color["general_color"] != "totally-bogus-name"
+    # Nothing to honour, so the hex decides — keeps the value on the palette
+    # vocabulary the colour-chip search matches against.
     assert color["general_color"] == normalize_hex_name("#ff0000", "heather slate")
+
+
+async def test_put_colors_keeps_a_hand_typed_general_color(client):
+    """A typed general_color is a correction and must survive the round trip.
+
+    This previously asserted the opposite — that the hex always won — on
+    searchability grounds. That was wrong in the case the field exists for:
+    correcting a MIS-DETECTED colour. The stored hex is part of what's wrong, so
+    re-deriving from it discarded the fix and silently restored the bad value
+    (type "green" over a mis-detected grey, get "gray" back).
+    """
+    from headroom.services.color_extraction import normalize_hex_name
+
+    hat = await _make_hat(client)
+    resp = await client.put(
+        f"/api/hats/{hat['id']}/colors",
+        json={"colors": [{
+            "color_name": "heather slate",
+            "general_color": "Green",          # palette name, wrong-looking hex
+            "hex_value": "#8a8a8a",            # grey — what was mis-detected
+            "dominance_rank": 1,
+            "tier": "primary",
+        }]},
+    )
+    assert resp.status_code == 200, resp.text
+    color = resp.json()["colors"][0]
+    # Snapped to the palette's own spelling (so chip search still matches), but
+    # emphatically NOT replaced by the grey the hex would have produced.
+    assert color["general_color"] == "green"
+    assert color["general_color"] != normalize_hex_name("#8a8a8a", "heather slate")
 
 
 # --- wear log idempotency (Doppler) ------------------------------------- #

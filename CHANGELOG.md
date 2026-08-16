@@ -6,7 +6,50 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+### Added
+- **Photo analysis is queued instead of blocking the upload.** `POST /api/hats/
+  {id}/photo` now saves the photo, marks the hat `analysis_status='pending'` and
+  returns immediately; a background worker (`analysis_queue.py`) runs rembg →
+  Claude → eBay → Melin. You can keep adding hats while earlier ones analyse.
+  The hat page shows a spinning **Analyzing…** badge and polls until the status
+  is terminal. Previously the request stayed open for the whole pipeline —
+  Claude alone is a 30s timeout × the SDK's 3 attempts, after tens of seconds of
+  rembg — which read as a hang. `reanalyze` queues too when a Claude key is set.
+  Durability mirrors the bulk-import worker: the loop survives any per-hat
+  exception, a crash mid-analysis is re-queued on boot, and if no worker is
+  draining the queue the route runs the pipeline inline rather than dropping it.
+- **Hydrolite** added to the hat style list.
+
+### Changed
+- **Default background-removal model is now `isnet-general-use`** (was
+  `u2netp`). u2netp is 4.7 MB and was picked for Pi speed, but its low capacity
+  loses thin protruding shapes — on a hat that is precisely the **bill**, so
+  cutouts came back as brimless crowns. The heavier model costs ~170 MB and
+  slower inference, which stopped mattering once analysis left the request path.
+  `HEADROOM_REMBG_MODEL=u2netp` restores the old behaviour.
+
 ### Fixed
+- **Modals were painted over by the page behind them.** The photo cropper's zoom
+  slider and "Use This" button ended up underneath the Details card's
+  style/size/condition selects. `.modal` is `z-index: 1050`, but z-index only
+  ranks siblings *within a stacking context*, and `.card-body` is
+  `position: relative; z-index: 1` — so a modal rendered inside a card was
+  confined to that card's slot in the page order and any later card covered it.
+  All four modals now render through a `<body>` portal, which also immunises
+  them against the `overflow: hidden` and `transform` containing-block traps.
+- **Editing a mis-detected colour silently reverted.** Typing "green" over a
+  colour Claude had read as grey saved "gray": `PUT /api/hats/{id}/colors`
+  re-derived `general_color` from the stored hex whenever one was present, so
+  the correction was overwritten by the very value being corrected. An
+  explicitly-typed name now wins and is snapped to the palette's spelling (so
+  chip search still matches); the hex is consulted only when the field is blank.
+- **The SQLite write lock was held across the whole analysis.** Setting
+  `photo_path` before the pipeline's first DB read let autoflush open a write
+  transaction, which SQLite holds until commit — so the lock stayed held through
+  Claude, eBay and Melin. Any concurrent write then waited out `busy_timeout`
+  and failed with "database is locked", which the new queue would have made
+  routine (adding a hat while another analyses). The network-bound section now
+  runs under `no_autoflush`.
 - `vite.config.ts` used `__dirname`, which only exists because Vite's current
   config loader wraps the file in CJS shims. The config is ESM
   (`"type": "module"`), and Vite's `configLoader: 'native'` — slated to become

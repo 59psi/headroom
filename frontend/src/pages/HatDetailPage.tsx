@@ -15,13 +15,17 @@ function AnalysisStatus({ hat }: { hat: HatRead }) {
   if (!hat.analysis_status) return null;
   const status = hat.analysis_status;
   const label =
-    status === 'ok' ? 'Analyzed'
+    status === 'pending' ? 'Analyzing…'
+    : status === 'ok' ? 'Analyzed'
     : status === 'skipped' ? 'No API key'
     : status === 'fallback' ? 'Basic ID (fallback)'
     : 'Analysis failed';
   return (
     <span className={`hr-analysis-status ${status}`} title={hat.analysis_error || undefined}>
-      <span className="dot" />
+      {/* A spinning ring rather than the static dot: 'pending' is the one status
+          that resolves on its own, and the motion is what tells you the page is
+          still live rather than stuck — the complaint the queue was fixing. */}
+      {status === 'pending' ? <span className="hr-analysis-spinner" /> : <span className="dot" />}
       {label}
     </span>
   );
@@ -59,6 +63,12 @@ export function HatDetailPage() {
     queryKey: ['hat', id],
     queryFn: () => getHat(id),
     enabled: !isNaN(id),
+    // Analysis runs on a background worker now, so the result arrives after
+    // this page has already rendered. Poll while it's pending and stop the
+    // moment it reaches any terminal status — returning false is what ends the
+    // polling, so a hat that errors or is skipped doesn't get hammered forever.
+    refetchInterval: query =>
+      query.state.data?.analysis_status === 'pending' ? 2000 : false,
   });
 
   const removeMutation = useMutation({
