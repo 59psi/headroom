@@ -37,8 +37,10 @@ still removed, and fallback color swatches still appear.
 
 **Rooms → Cases → Hats.**
 
-- **Rooms** are physical locations. The *Default Room* always exists (and
-  can't be deleted — deleting another room moves its cases there).
+- **Rooms** are physical locations. Exactly one is the **default**: new cases
+  go there when you don't pick a room, and deleting a room moves its cases
+  there. That makes it the only room you can't delete — hit **Make default**
+  on another room first, then the original is deletable like any other.
 - **Cases** hold hats and are type-exclusive (regular hats or beanies,
   never mixed). Default capacity is **4 regular / 6 beanies**, and each
   case can override it (e.g. 3 for a Melin case you don't want to cram).

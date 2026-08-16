@@ -19,6 +19,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.database import get_db
+from headroom.schemas.hat import HAT_DEFAULTS
 from headroom.services import import_service
 from headroom.utils.photo import validate_image_content_type
 
@@ -47,6 +48,6 @@ async def share_target(
 
     job = await import_service.create_job(
         db, files=valid,
-        defaults={"condition": "new", "size": "classic", "style": "a_game"},
+        defaults=dict(HAT_DEFAULTS),
     )
     return RedirectResponse(f"/hats/import?job={job.id}", status_code=303)

@@ -9,6 +9,7 @@ import {
 } from '../api/settings';
 import { getStyles, getSizes, getConditions } from '../api/hats';
 import { listCases } from '../api/cases';
+import { DEFAULT_HAT_BASICS } from '../components/hats/HatFormFields';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 
 const MAX_FILES = 100;
@@ -48,9 +49,9 @@ export function BulkImportPage() {
   const cases = useQuery({ queryKey: ['cases'], queryFn: listCases });
   const recentJobs = useQuery({ queryKey: ['admin', 'import-jobs'], queryFn: () => listImportJobs(10) });
 
-  const [defaultCondition, setDefaultCondition] = useState('new');
-  const [defaultSize, setDefaultSize] = useState('classic');
-  const [defaultStyle, setDefaultStyle] = useState('a_game');
+  const [defaultCondition, setDefaultCondition] = useState(DEFAULT_HAT_BASICS.condition);
+  const [defaultSize, setDefaultSize] = useState(DEFAULT_HAT_BASICS.size);
+  const [defaultStyle, setDefaultStyle] = useState(DEFAULT_HAT_BASICS.style);
   const [defaultCaseId, setDefaultCaseId] = useState('');
 
   const job = useQuery({

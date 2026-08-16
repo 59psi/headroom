@@ -92,7 +92,11 @@ async def setup_db():
     async with test_session_factory() as session:
         result = await session.execute(select(Room).where(Room.id == 1))
         if not result.scalar_one_or_none():
-            session.add(Room(id=1, name="Default Room"))
+            # is_default mirrors what database.ensure_default_room() seeds in
+            # production — it's the flag, not the id, that makes this the
+            # fallback room, so the fixture has to set it or case creation
+            # would fall back to "lowest id" by accident rather than by design.
+            session.add(Room(id=1, name="Default Room", is_default=True))
             await session.commit()
 
     yield

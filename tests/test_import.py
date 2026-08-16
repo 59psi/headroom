@@ -97,3 +97,36 @@ async def test_cancel_marks_queued_items_cancelled(client):
     body = resp.json()
     assert body["status"] == "cancelled"
     assert all(it["status"] == "cancelled" for it in body["items"])
+
+
+@pytest.mark.anyio
+async def test_new_hat_defaults_are_shared_by_every_entry_point():
+    """Three paths create hats without full details — the bulk-import form, its
+    worker fallback, and the Android share target. They used to restate
+    ("new", "classic", "a_game") independently, so a change to one silently
+    diverged the others: photos shared from a phone would land differently than
+    the same photos bulk-imported. Pin them to the single source.
+    """
+    import inspect as _inspect
+
+    from headroom.routes import import_jobs, share
+    from headroom.schemas.hat import HAT_DEFAULTS
+    from headroom.services import import_service
+
+    # The form endpoint's declared defaults.
+    params = _inspect.signature(import_jobs.create_import_job).parameters
+    for field in ("condition", "size", "style"):
+        assert params[field].default == HAT_DEFAULTS[field], (
+            f"import_jobs.create_import_job {field} default drifted from HAT_DEFAULTS"
+        )
+
+    # The share target and the worker fallback both read the same dict.
+    assert "HAT_DEFAULTS" in _inspect.getsource(share.share_target)
+    assert "HAT_DEFAULTS" in _inspect.getsource(import_service._process_item)
+
+    # And the values are real enum members, not typos.
+    from headroom.schemas.hat import HatCondition, HatSize, HatStyle
+
+    HatCondition(HAT_DEFAULTS["condition"])
+    HatSize(HAT_DEFAULTS["size"])
+    HatStyle(HAT_DEFAULTS["style"])

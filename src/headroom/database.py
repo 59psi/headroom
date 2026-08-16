@@ -82,6 +82,7 @@ def _run_migrations(conn) -> None:
                 "CREATE TABLE rooms ("
                 "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
                 "  name VARCHAR(100) UNIQUE NOT NULL,"
+                "  is_default BOOLEAN NOT NULL DEFAULT 0,"
                 "  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
                 "  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP"
                 ")"
@@ -98,6 +99,25 @@ def _run_migrations(conn) -> None:
                 ")"
             )
         )
+
+    # Re-inspect rather than reuse `existing_tables`: that snapshot predates the
+    # CREATE TABLE above, so on a *fresh* database it would say "no rooms table"
+    # and skip the column check entirely — while `create_all` is then a no-op
+    # because the table now exists. That combination shipped a fresh container
+    # with a rooms table missing is_default and crashed on boot.
+    if "rooms" in inspect(conn).get_table_names():
+        columns = [c["name"] for c in inspect(conn).get_columns("rooms")]
+        # v2.4 — the fallback room became a flag instead of a hardcoded id=1.
+        # Backfill picks the lowest id rather than literally 1, so a database
+        # whose original room was renamed or re-keyed still ends up with exactly
+        # one default. `ensure_default_room()` re-checks the invariant on boot.
+        if "is_default" not in columns:
+            conn.execute(
+                text("ALTER TABLE rooms ADD COLUMN is_default BOOLEAN NOT NULL DEFAULT 0")
+            )
+            conn.execute(
+                text("UPDATE rooms SET is_default = 1 WHERE id = (SELECT MIN(id) FROM rooms)")
+            )
 
     if "cases" in existing_tables:
         columns = [c["name"] for c in inspector.get_columns("cases")]
@@ -147,14 +167,36 @@ def _run_migrations(conn) -> None:
 
 
 async def ensure_default_room() -> None:
-    """Seed the default room using raw SQL to avoid cascading relationship loads."""
+    """Guarantee exactly one room carries `is_default`. Raw SQL to avoid
+    cascading relationship loads.
+
+    Repairs three states on every boot:
+      * no rooms at all        -> create 'Default Room' and flag it
+      * rooms but none flagged -> flag the lowest id
+      * more than one flagged  -> keep the lowest id, clear the rest
+
+    The flag is what makes a room the reassignment target and the default for
+    new cases, so "exactly one" is a real invariant, not a nicety — zero flagged
+    rooms would break case creation, and two would make the target ambiguous.
+    """
     async with async_session() as db:
-        result = await db.execute(text("SELECT id FROM rooms WHERE id = 1"))
-        if not result.scalar_one_or_none():
+        if not (await db.execute(text("SELECT COUNT(*) FROM rooms"))).scalar():
             await db.execute(
-                text("INSERT INTO rooms (id, name) VALUES (1, 'Default Room')")
+                text("INSERT INTO rooms (name, is_default) VALUES ('Default Room', 1)")
             )
             await db.commit()
+            return
+
+        flagged = (
+            await db.execute(text("SELECT COUNT(*) FROM rooms WHERE is_default = 1"))
+        ).scalar()
+        if flagged == 1:
+            return
+        await db.execute(text("UPDATE rooms SET is_default = 0"))
+        await db.execute(
+            text("UPDATE rooms SET is_default = 1 WHERE id = (SELECT MIN(id) FROM rooms)")
+        )
+        await db.commit()
 
 
 async def init_db() -> None:

@@ -1,26 +1,48 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
-import { listRooms, createRoom, updateRoom, deleteRoom } from '../api/rooms';
+import { listRooms, createRoom, updateRoom, deleteRoom, setDefaultRoom } from '../api/rooms';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import type { RoomRead } from '../types';
 
-function RoomCard({ room, onEdit, onDelete }: { room: RoomRead; onEdit: (id: number, name: string) => void; onDelete: (id: number) => void }) {
+function RoomCard({ room, onEdit, onDelete, onMakeDefault }: {
+  room: RoomRead;
+  onEdit: (id: number, name: string) => void;
+  onDelete: (id: number) => void;
+  onMakeDefault: (id: number) => void;
+}) {
   return (
     <div className="card mb-2">
       <div className="card-body d-flex justify-content-between align-items-center gap-2 flex-wrap">
         <div>
-          <div className="fw-bold fs-5" style={{ color: 'var(--text)' }}>{room.name}</div>
+          <div className="fw-bold fs-5 d-flex align-items-center gap-2" style={{ color: 'var(--text)' }}>
+            {room.name}
+            {room.is_default && (
+              <span className="badge" style={{
+                background: 'rgba(0,240,255,0.15)', color: 'var(--neon-cyan)',
+                fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.06em',
+              }}>Default</span>
+            )}
+          </div>
           <div className="text-muted small font-mono">
             {room.case_count} case{room.case_count !== 1 ? 's' : ''}
           </div>
         </div>
         <div className="d-flex gap-1">
+          {!room.is_default && (
+            <button
+              className="btn btn-sm btn-outline-primary"
+              title="Make this the room new cases go to, and where cases land when their room is deleted"
+              onClick={() => onMakeDefault(room.id)}
+            >Make default</button>
+          )}
           <button className="btn btn-sm btn-outline-secondary" onClick={() => onEdit(room.id, room.name)}>Rename</button>
           <button
             className="btn btn-sm btn-outline-danger"
-            disabled={room.id === 1}
-            title={room.id === 1 ? 'Default room cannot be deleted' : 'Delete room'}
+            disabled={room.is_default}
+            title={room.is_default
+              ? 'The default room cannot be deleted — make another room the default first'
+              : 'Delete room'}
             onClick={() => onDelete(room.id)}
           >Delete</button>
         </div>
@@ -65,6 +87,14 @@ export function RoomsPage() {
     },
   });
 
+  const defaultMut = useMutation({
+    mutationFn: (id: number) => setDefaultRoom(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['rooms'] });
+      qc.invalidateQueries({ queryKey: ['meta', 'rooms'] });
+    },
+  });
+
   function handleEdit(id: number, name: string) {
     setEditingId(id);
     setEditName(name);
@@ -73,8 +103,11 @@ export function RoomsPage() {
   function handleDelete(id: number) {
     const room = roomsQ.data?.find(r => r.id === id);
     if (!room) return;
+    // Name the actual destination — it's whichever room holds the flag, which
+    // is no longer necessarily one called "Default Room".
+    const defaultRoomName = roomsQ.data?.find(r => r.is_default)?.name ?? 'the default room';
     const msg = room.case_count > 0
-      ? `Delete "${room.name}"? Its ${room.case_count} case(s) will move to Default Room.`
+      ? `Delete "${room.name}"? Its ${room.case_count} case(s) will move to ${defaultRoomName}.`
       : `Delete "${room.name}"?`;
     if (confirm(msg)) deleteMut.mutate(id);
   }
@@ -93,7 +126,7 @@ export function RoomsPage() {
     </div>
   );
 
-  const anyError = createMut.error || updateMut.error || deleteMut.error;
+  const anyError = createMut.error || updateMut.error || deleteMut.error || defaultMut.error;
 
   return (
     <>
@@ -103,7 +136,9 @@ export function RoomsPage() {
 
       <p className="text-secondary small mb-3">
         Rooms organize where your cases are stored. Each case belongs to one room.
-        The Default Room cannot be deleted.
+        One room is the <strong>default</strong>: new cases go there, and cases land
+        there when their room is deleted. It's the only room that can't be deleted —
+        make another room the default first to free it up.
       </p>
 
       {editingId && (
@@ -130,7 +165,13 @@ export function RoomsPage() {
       )}
 
       {roomsQ.data?.map(r => (
-        <RoomCard key={r.id} room={r} onEdit={handleEdit} onDelete={handleDelete} />
+        <RoomCard
+          key={r.id}
+          room={r}
+          onEdit={handleEdit}
+          onDelete={handleDelete}
+          onMakeDefault={id => defaultMut.mutate(id)}
+        />
       ))}
 
       <div className="card mt-3">
