@@ -251,6 +251,10 @@ async def run_fallback_analysis(
         provided.append("colors from photo cutout")
     if brand:
         hat.brand = brand
+        # Google Vision's LOGO_DETECTION only fires on a mark it actually saw,
+        # so this path is evidence by construction — exactly what the field
+        # records. Naming the source keeps it honest about who found it.
+        hat.logo_detected = f"{brand} — logo detected by Google Vision"
         provided.append("brand via Google logo detection")
         _apply_resale_pointer(hat)
         await refresh_melin_resale(hat)
@@ -281,6 +285,7 @@ def _apply_resale_pointer(hat: Hat) -> None:
 
 def _apply_analysis(hat: Hat, analysis: HatAnalysis) -> None:
     hat.brand = analysis.brand
+    hat.logo_detected = analysis.logo_detected
     hat.model_name = analysis.model_name
     hat.model_confidence = analysis.model_confidence
     hat.style_descriptor = analysis.style_descriptor

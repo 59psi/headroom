@@ -32,7 +32,9 @@ Hurley, Patagonia, Stetson, and most other modern lifestyle hat brands.
 
 When given a single hat photo you will:
   1. Identify the brand if possible (look for embroidered logos, hangtags,
-     liner prints, distinctive shapes).
+     liner prints, distinctive shapes). Separately record `logo_detected`
+     ONLY when a mark is genuinely visible in frame, naming the mark and its
+     owning brand — that field is evidence, while `brand` may be an inference.
   2. Identify the specific model name when the brand has named lines.
   3. Describe the silhouette / style (e.g. "fitted snapback", "5-panel
      trucker", "cuffed beanie").
@@ -67,6 +69,18 @@ HAT_ANALYSIS_TOOL = {
             "brand": {
                 "type": ["string", "null"],
                 "description": "Brand name (e.g. 'Melin', 'New Era'). Null if unknown.",
+            },
+            "logo_detected": {
+                "type": ["string", "null"],
+                "description": (
+                    "ONLY if a logo, wordmark or monogram is actually VISIBLE in"
+                    " the photo: describe the mark and name the brand that owns"
+                    " it, e.g. 'Melin — M monogram, front panel' or"
+                    " \"New Era — flag on the left panel\". Null if no mark is"
+                    " legible. Do NOT fill this in from an inference about the"
+                    " brand — this field records what is visible, not what you"
+                    " concluded."
+                ),
             },
             "model_name": {
                 "type": ["string", "null"],
@@ -122,6 +136,7 @@ HAT_ANALYSIS_TOOL = {
         },
         "required": [
             "brand",
+            "logo_detected",
             "model_name",
             "model_confidence",
             "style_descriptor",
@@ -148,6 +163,11 @@ class HatAnalysis:
     style_descriptor: str
     design_notes: str
     estimated_new_price_usd: float | None
+    # Defaulted, unlike the fields above: the tool schema still REQUIRES Claude
+    # to answer (null is a valid answer), but a caller or fixture that doesn't
+    # care about logos shouldn't have to say so — and dataclass ordering forces
+    # every defaulted field below the undefaulted ones regardless.
+    logo_detected: str | None = None
     colors: list[AnalyzedColor] = field(default_factory=list)
     raw: dict | None = None
 
@@ -259,6 +279,7 @@ async def analyze_hat_image(
         ]
         return HatAnalysis(
             brand=payload.get("brand"),
+            logo_detected=payload.get("logo_detected"),
             model_name=payload.get("model_name"),
             model_confidence=payload.get("model_confidence", "low"),
             style_descriptor=payload.get("style_descriptor", ""),

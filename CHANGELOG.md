@@ -18,6 +18,12 @@ All notable changes are documented here. This project follows
   Durability mirrors the bulk-import worker: the loop survives any per-hat
   exception, a crash mid-analysis is re-queued on boot, and if no worker is
   draining the queue the route runs the pipeline inline rather than dropping it.
+- **`logo_detected` field.** Claude Vision now records the mark it actually SAW
+  and the brand that owns it ("Melin — M monogram, front panel"), kept apart
+  from `brand`, which can be inferred from shape, colourway or a hang tag with
+  no logo in frame. The Google Vision fallback fills it too — LOGO_DETECTION
+  only fires on a visible mark, so that path is evidence by construction. Shown
+  under Identification on the hat page.
 - **Hydrolite** added to the hat style list.
 - **Clear All** on the hat's Color Palette card wipes the whole palette in one
   call, instead of removing swatches one modal at a time after a bad analysis.

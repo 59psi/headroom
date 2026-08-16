@@ -39,6 +39,7 @@ def stub_claude(monkeypatch):
     async def _fake_analyze(_image_path, _api_key, model=None, selected_style=None):  # noqa: ARG001
         return HatAnalysis(
             brand="Melin",
+            logo_detected="Melin — M monogram, front panel",
             model_name="A-Game Hydro",
             model_confidence="high",
             style_descriptor="fitted snapback",
@@ -87,6 +88,8 @@ async def test_upload_persists_full_claude_analysis(client, stub_claude):
     assert data["analysis_error"] is None
     assert data["analyzed_at"] is not None
     assert data["brand"] == "Melin"
+    # Records what was SEEN, separately from `brand`, which may be inferred.
+    assert data["logo_detected"] == "Melin — M monogram, front panel"
     assert data["model_name"] == "A-Game Hydro"
     assert data["model_confidence"] == "high"
     assert data["style_descriptor"] == "fitted snapback"

@@ -82,6 +82,7 @@ class HatUpdate(BaseModel):
     style: HatStyle | None = None
     date_last_worn: date | None = None
     brand: str | None = None
+    logo_detected: str | None = None
     model_name: str | None = None
     colorway: str | None = None
     purchase_price: float | None = None
@@ -119,6 +120,7 @@ class HatRead(BaseModel):
 
     # AI / pricing fields
     brand: str | None = None
+    logo_detected: str | None = None
     model_name: str | None = None
     colorway: str | None = None
     purchase_price: float | None = None

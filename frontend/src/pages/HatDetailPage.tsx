@@ -163,6 +163,16 @@ export function HatDetailPage() {
                     {data.style_descriptor}
                   </div>
                 )}
+                {data.logo_detected && (
+                  <div
+                    className="text-secondary small"
+                    style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6 }}
+                    title="A mark was actually visible in the photo — this is evidence, not an inference from shape or colourway"
+                  >
+                    <span aria-hidden="true">◉</span>
+                    <span>Logo: {data.logo_detected}</span>
+                  </div>
+                )}
               </div>
               {data.model_confidence && (
                 <span className={`badge ${data.model_confidence === 'high' ? 'bg-info' : data.model_confidence === 'medium' ? 'bg-warning' : 'bg-secondary'}`}>

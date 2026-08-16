@@ -46,6 +46,12 @@ class Hat(Base):
     resale_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     # Analysis bookkeeping
+    # What logo/wordmark the analyser actually SAW, and whose it is — kept apart
+    # from `brand` because that can be inferred from shape, colourway or a hang
+    # tag with no logo in frame at all. This one answers "was a mark visible,
+    # and who owns it", which is the difference between a guess and evidence.
+    logo_detected: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
     analysis_status: Mapped[str | None] = mapped_column(String(20), nullable=True)  # ok/error/skipped
     analysis_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     analyzed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
