@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.config import settings
 from headroom.database import get_db
-from headroom.services import import_service, settings_service
+from headroom.services import analysis_queue, import_service, settings_service
 
 router = APIRouter()
 
@@ -76,6 +76,14 @@ async def ready(request: Request, db: AsyncSession = Depends(get_db)):
             },
             "anthropic_key": {"ok": True, "configured": bool(api_key), "source": source},
             "import_worker": {"ok": import_service.worker_alive()},
+            # Depth alongside liveness: a live worker with a growing backlog is
+            # a different problem from a dead one, and both show up to a user as
+            # "my hat says Analyzing…". Authenticated-only, like import_worker —
+            # queue depth is operational detail.
+            "analysis_worker": {
+                "ok": analysis_queue.worker_alive(),
+                "queued": analysis_queue._queue_depth(),
+            },
         }
     else:
         checks = {

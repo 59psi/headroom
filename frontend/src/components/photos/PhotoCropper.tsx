@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 import Cropper, { type Area } from 'react-easy-crop';
+import { portalToBody } from '../common/ModalPortal';
 
 interface Props {
   imageUrl: string;
@@ -93,7 +94,7 @@ export function PhotoCropper({ imageUrl, filename, onCancel, onCropped }: Props)
     }
   }
 
-  return (
+  return portalToBody(
     <div className="modal" onClick={(e) => { if (e.target === e.currentTarget) onCancel(); }}>
       <div className="modal-dialog" style={{ maxWidth: 600 }} onClick={e => e.stopPropagation()}>
         <div className="modal-content">

@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, func, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from headroom.database import Base
@@ -46,6 +46,36 @@ class Hat(Base):
     resale_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     # Analysis bookkeeping
+    # What logo/wordmark the analyser actually SAW, and whose it is — kept apart
+    # from `brand` because that can be inferred from shape, colourway or a hang
+    # tag with no logo in frame at all. This one answers "was a mark visible,
+    # and who owns it", which is the difference between a guess and evidence.
+    # HYDROLite is melin CONSTRUCTION, not a model line: featherweight build,
+    # bonded seams, gel-welded logos, antimicrobial sweatband. It is offered
+    # across A-Game, Coronado, Trenches and the rest, so ANY hat can be one --
+    # which is exactly why it is a flag here and not a HatStyle value. Making it
+    # a style would have forced a second entry per model and split one model's
+    # hats across two style buckets.
+    hydrolite: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("0")
+    )
+    # HYDRO is the sibling technology — melin lists HYDRO and HYDROLite as
+    # separate collections, so they get separate flags. A hat is realistically
+    # one or the other, but that is not enforced in the schema: the analyser
+    # picks at most one (see the `construction` tool field) and a human is
+    # allowed to record whatever the hat in their hand actually says.
+    hydro: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("0")
+    )
+    # Named artist / signature collaboration, when the hat is one. melin brands
+    # these as Signature Collaborations and Special Projects and names them for
+    # the collaborator ("Skye Walker", "melin x OluKai"), so this holds that
+    # name. Distinct from the `collab` STYLE, which only says "some collab" —
+    # this says WHICH, which is the part that drives collectability and resale.
+    artist_series: Mapped[str | None] = mapped_column(String(160), nullable=True)
+
+    logo_detected: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
     analysis_status: Mapped[str | None] = mapped_column(String(20), nullable=True)  # ok/error/skipped
     analysis_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     analyzed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

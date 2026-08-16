@@ -49,7 +49,7 @@ async def test_undispose_reassigns_position_no_collision(client):
 # --- R12: PUT /colors must normalize general_color ---------------------- #
 
 
-async def test_put_colors_normalizes_general_color(client):
+async def test_put_colors_derives_general_color_from_hex_when_left_blank(client):
     from headroom.services.color_extraction import normalize_hex_name
 
     hat = await _make_hat(client)
@@ -57,7 +57,7 @@ async def test_put_colors_normalizes_general_color(client):
         f"/api/hats/{hat['id']}/colors",
         json={"colors": [{
             "color_name": "heather slate",
-            "general_color": "totally-bogus-name",
+            "general_color": "",
             "hex_value": "#ff0000",
             "dominance_rank": 1,
             "tier": "primary",
@@ -65,10 +65,80 @@ async def test_put_colors_normalizes_general_color(client):
     )
     assert resp.status_code == 200, resp.text
     color = resp.json()["colors"][0]
-    # Stored general_color is snapped to the palette from the hex, not the
-    # client's free-text — so it stays searchable by the color chips.
-    assert color["general_color"] != "totally-bogus-name"
+    # Nothing to honour, so the hex decides — keeps the value on the palette
+    # vocabulary the colour-chip search matches against.
     assert color["general_color"] == normalize_hex_name("#ff0000", "heather slate")
+
+
+async def test_put_colors_keeps_a_hand_typed_general_color(client):
+    """A typed general_color is a correction and must survive the round trip.
+
+    This previously asserted the opposite — that the hex always won — on
+    searchability grounds. That was wrong in the case the field exists for:
+    correcting a MIS-DETECTED colour. The stored hex is part of what's wrong, so
+    re-deriving from it discarded the fix and silently restored the bad value
+    (type "green" over a mis-detected grey, get "gray" back).
+    """
+    from headroom.services.color_extraction import normalize_hex_name
+
+    hat = await _make_hat(client)
+    resp = await client.put(
+        f"/api/hats/{hat['id']}/colors",
+        json={"colors": [{
+            "color_name": "heather slate",
+            "general_color": "Green",          # palette name, wrong-looking hex
+            "hex_value": "#8a8a8a",            # grey — what was mis-detected
+            "dominance_rank": 1,
+            "tier": "primary",
+        }]},
+    )
+    assert resp.status_code == 200, resp.text
+    color = resp.json()["colors"][0]
+    # Snapped to the palette's own spelling (so chip search still matches), but
+    # emphatically NOT replaced by the grey the hex would have produced.
+    assert color["general_color"] == "green"
+    assert color["general_color"] != normalize_hex_name("#8a8a8a", "heather slate")
+
+
+async def test_put_colors_renumbers_ranks_densely(client):
+    """Ranks come back dense and unique no matter what the client sent.
+
+    The UI edits and removes a colour BY rank, so a duplicate makes one tap hit
+    two rows, and a gap invites one — the add path picks `colors.length + 1`,
+    which collides as soon as ranks aren't dense (ranks [1,3] + length 2 → 3).
+    Storing client ranks verbatim let that state persist between requests.
+    """
+    hat = await _make_hat(client)
+    resp = await client.put(
+        f"/api/hats/{hat['id']}/colors",
+        json={"colors": [
+            {"color_name": "a", "general_color": "red", "hex_value": "#ff0000",
+             "dominance_rank": 7, "tier": "primary"},
+            {"color_name": "b", "general_color": "blue", "hex_value": "#0000ff",
+             "dominance_rank": 7, "tier": "secondary"},   # duplicate of the above
+            {"color_name": "c", "general_color": "green", "hex_value": "#00ff00",
+             "dominance_rank": 2, "tier": "accent"},      # out of order, leaves a gap
+        ]},
+    )
+    assert resp.status_code == 200, resp.text
+    ranks = [c["dominance_rank"] for c in resp.json()["colors"]]
+    assert ranks == [1, 2, 3], ranks
+    # Renumbering must follow submitted ORDER, not re-sort by the sent rank.
+    assert [c["color_name"] for c in resp.json()["colors"]] == ["a", "b", "c"]
+
+
+async def test_put_colors_with_empty_list_clears_the_palette(client):
+    """The "Clear All" button is just a PUT of []."""
+    hat = await _make_hat(client)
+    await client.put(
+        f"/api/hats/{hat['id']}/colors",
+        json={"colors": [{"color_name": "a", "general_color": "red",
+                          "hex_value": "#ff0000", "dominance_rank": 1,
+                          "tier": "primary"}]},
+    )
+    resp = await client.put(f"/api/hats/{hat['id']}/colors", json={"colors": []})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["colors"] == []
 
 
 # --- wear log idempotency (Doppler) ------------------------------------- #
@@ -117,6 +187,7 @@ async def test_health_ready_redacts_for_anonymous(anon_client):
     assert "source" not in key_check           # no key source leaked
     assert "path" not in body["checks"]["uploads_writable"]  # no fs path leaked
     assert "import_worker" not in body["checks"]  # operational detail hidden
+    assert "analysis_worker" not in body["checks"]  # incl. queue depth
 
 
 async def test_health_ready_full_detail_for_authenticated(client):
@@ -124,6 +195,8 @@ async def test_health_ready_full_detail_for_authenticated(client):
     assert "source" in body["checks"]["anthropic_key"]
     assert "path" in body["checks"]["uploads_writable"]
     assert "import_worker" in body["checks"]
+    assert "analysis_worker" in body["checks"]
+    assert "queued" in body["checks"]["analysis_worker"]
 
 
 # --- public branding logo (login page); settings logo stays gated ------- #

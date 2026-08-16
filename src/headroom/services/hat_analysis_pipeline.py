@@ -58,7 +58,6 @@ async def finalize_hat_photo(
     The transparent PNG (if produced) replaces the JPEG as the canonical photo.
     Mutates `hat` in place. Caller is responsible for the final commit.
     """
-    upload_dir = settings.upload_dir
     photo_dir = processed_jpeg_path.parent
 
     # 1. Background removal → transparent PNG, swap as canonical
@@ -76,43 +75,54 @@ async def finalize_hat_photo(
 
     hat.photo_path = f"hats/{canonical_path.name}"
 
-    # 2. Claude analysis
-    api_key, _source = await settings_service.get_anthropic_key(db)
-    if not api_key:
-        hat.analysis_status = "skipped"
-        hat.analysis_error = "No Anthropic API key configured."
-        hat.analyzed_at = datetime.now(timezone.utc)
-        await run_fallback_analysis(
-            db, hat, canonical_path, reason="No Anthropic API key configured"
-        )
-        return hat
+    # Everything below interleaves DB reads (API key, model, eBay creds) with
+    # slow network calls. With autoflush on, the FIRST of those reads flushes
+    # the `photo_path` write above — which opens a SQLite write transaction, and
+    # SQLite holds that lock until commit. The lock would therefore stay held
+    # across the entire Claude + eBay + Melin sequence: minutes, worst case.
+    # Every other writer in the process then waits out `busy_timeout` and fails
+    # with "database is locked" — so adding a second hat while the first is
+    # analysing would error out. Deferring the flush shrinks the lock window to
+    # the caller's commit. Safe because nothing in here re-queries the hat row;
+    # the pending change only has to be visible at commit time.
+    with db.no_autoflush:
+        # 2. Claude analysis
+        api_key, _source = await settings_service.get_anthropic_key(db)
+        if not api_key:
+            hat.analysis_status = "skipped"
+            hat.analysis_error = "No Anthropic API key configured."
+            hat.analyzed_at = datetime.now(timezone.utc)
+            await run_fallback_analysis(
+                db, hat, canonical_path, reason="No Anthropic API key configured"
+            )
+            return hat
 
-    model_id, _model_source = await settings_service.get_anthropic_model(db)
+        model_id, _model_source = await settings_service.get_anthropic_model(db)
 
-    t_claude0 = time.monotonic()
-    try:
-        analysis: HatAnalysis = await analyze_hat_image(
-            canonical_path, api_key,
-            model=model_id, selected_style=hat.style,
-        )
-    except ClaudeAnalysisError as exc:
-        logger.warning(
-            "Hat analysis failed for hat %s (rembg=%.2fs claude=%.2fs): %s",
-            hat.id, t_rembg, time.monotonic() - t_claude0, exc,
-        )
-        hat.analysis_status = "error"
-        hat.analysis_error = str(exc)
-        hat.analyzed_at = datetime.now(timezone.utc)
-        await run_fallback_analysis(
-            db, hat, canonical_path, reason=f"Claude analysis failed: {exc}"
-        )
-        return hat
-    t_claude = time.monotonic() - t_claude0
+        t_claude0 = time.monotonic()
+        try:
+            analysis: HatAnalysis = await analyze_hat_image(
+                canonical_path, api_key,
+                model=model_id, selected_style=hat.style,
+            )
+        except ClaudeAnalysisError as exc:
+            logger.warning(
+                "Hat analysis failed for hat %s (rembg=%.2fs claude=%.2fs): %s",
+                hat.id, t_rembg, time.monotonic() - t_claude0, exc,
+            )
+            hat.analysis_status = "error"
+            hat.analysis_error = str(exc)
+            hat.analyzed_at = datetime.now(timezone.utc)
+            await run_fallback_analysis(
+                db, hat, canonical_path, reason=f"Claude analysis failed: {exc}"
+            )
+            return hat
+        t_claude = time.monotonic() - t_claude0
 
-    _apply_analysis(hat, analysis)
-    t_ebay0 = time.monotonic()
-    await _refresh_ebay_comps(db, hat)
-    await refresh_melin_resale(hat)
+        _apply_analysis(hat, analysis)
+        t_ebay0 = time.monotonic()
+        await _refresh_ebay_comps(db, hat)
+        await refresh_melin_resale(hat)
     logger.info(
         "hat=%s analyzed · rembg=%.2fs claude=%.2fs ebay+resale=%.2fs status=%s",
         hat.id, t_rembg, t_claude, time.monotonic() - t_ebay0, hat.analysis_status,
@@ -241,6 +251,10 @@ async def run_fallback_analysis(
         provided.append("colors from photo cutout")
     if brand:
         hat.brand = brand
+        # Google Vision's LOGO_DETECTION only fires on a mark it actually saw,
+        # so this path is evidence by construction — exactly what the field
+        # records. Naming the source keeps it honest about who found it.
+        hat.logo_detected = f"{brand} — logo detected by Google Vision"
         provided.append("brand via Google logo detection")
         _apply_resale_pointer(hat)
         await refresh_melin_resale(hat)
@@ -269,8 +283,28 @@ def _apply_resale_pointer(hat: Hat) -> None:
     hat.resale_checked_at = datetime.now(timezone.utc)
 
 
+def _apply_construction(hat: Hat, construction: str | None) -> None:
+    """Set the hydro / hydrolite flags from Claude's single `construction` value.
+
+    Additive on purpose — this only ever turns a flag ON. Every other field here
+    is overwritten by a re-analysis, which is right for things only the analyser
+    supplies, but these two are also a checkbox a human ticks. Clearing on
+    "standard" would mean a reanalyse silently un-ticks a box the owner set
+    while holding the hat, and Claude cannot reliably see bonded seams or a
+    gel-welded logo in every photo — absence of evidence, not evidence of
+    absence. Unticking stays a human action.
+    """
+    if construction == "hydro":
+        hat.hydro = True
+    elif construction == "hydrolite":
+        hat.hydrolite = True
+
+
 def _apply_analysis(hat: Hat, analysis: HatAnalysis) -> None:
     hat.brand = analysis.brand
+    hat.logo_detected = analysis.logo_detected
+    hat.artist_series = analysis.artist_series
+    _apply_construction(hat, analysis.construction)
     hat.model_name = analysis.model_name
     hat.model_confidence = analysis.model_confidence
     hat.style_descriptor = analysis.style_descriptor

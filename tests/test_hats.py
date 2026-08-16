@@ -173,3 +173,67 @@ async def test_unassign_hat(client):
 async def test_hat_nonexistent_case(client):
     resp = await _create_hat(client, case_id=999)
     assert resp.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_hydrolite_is_orthogonal_to_style(client):
+    """HYDROLite is melin CONSTRUCTION, not a model line.
+
+    It ships across A-Game, Coronado, Trenches and the rest, so it has to be a
+    per-hat flag: as a HatStyle value it would need a second entry per model and
+    would split one model's hats across two style buckets. This pins that the
+    flag rides alongside style rather than replacing it, on create and update.
+    """
+    hat = (await client.post("/api/hats", json={
+        "condition": "new", "size": "classic", "style": "coronado", "hydrolite": True,
+    })).json()
+    assert hat["hydrolite"] is True
+    assert hat["style"] == "coronado"   # still its own model
+
+    # Togglable without disturbing the model.
+    off = (await client.put(f"/api/hats/{hat['id']}", json={"hydrolite": False})).json()
+    assert off["hydrolite"] is False
+    assert off["style"] == "coronado"
+
+
+@pytest.mark.anyio
+async def test_hydrolite_defaults_to_false_when_omitted(client):
+    hat = (await client.post("/api/hats", json={
+        "condition": "new", "size": "classic", "style": "a_game",
+    })).json()
+    assert hat["hydrolite"] is False
+
+
+@pytest.mark.anyio
+async def test_hydrolite_is_not_a_style_option(client):
+    """Guards the mistake this replaced — it must not reappear in the model list."""
+    styles = (await client.get("/api/meta/styles")).json()
+    assert "hydrolite" not in [s["value"] for s in styles]
+
+
+@pytest.mark.anyio
+async def test_hydro_and_hydrolite_are_independent_flags(client):
+    """Two constructions, two flags — set, cleared and read back independently."""
+    hat = (await client.post("/api/hats", json={
+        "condition": "new", "size": "classic", "style": "coronado", "hydro": True,
+    })).json()
+    assert hat["hydro"] is True
+    assert hat["hydrolite"] is False
+
+    swapped = (await client.put(
+        f"/api/hats/{hat['id']}", json={"hydro": False, "hydrolite": True}
+    )).json()
+    assert swapped["hydro"] is False
+    assert swapped["hydrolite"] is True
+
+
+@pytest.mark.anyio
+async def test_artist_series_round_trips(client):
+    hat = (await client.post("/api/hats", json={
+        "condition": "new", "size": "classic", "style": "collab",
+    })).json()
+    assert hat["artist_series"] is None
+    named = (await client.put(
+        f"/api/hats/{hat['id']}", json={"artist_series": "Skye Walker"}
+    )).json()
+    assert named["artist_series"] == "Skye Walker"

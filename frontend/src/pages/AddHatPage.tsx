@@ -34,6 +34,8 @@ export function AddHatPage() {
     mutationFn: async () => {
       const data: Record<string, unknown> = {
         style: basics.style, size: basics.size, condition: basics.condition,
+        hydrolite: basics.hydrolite,
+        hydro: basics.hydro,
       };
       if (basics.caseId) data.case_id = Number(basics.caseId);
       if (basics.dateLastWorn) data.date_last_worn = basics.dateLastWorn;
@@ -90,7 +92,10 @@ export function AddHatPage() {
           className="btn btn-primary w-100 btn-lg"
           disabled={mutation.isPending}
         >
-          {mutation.isPending ? 'Saving · Claude analyzing…' : 'Save Hat'}
+          {/* No longer "Claude analyzing…": the upload returns as soon as the
+              photo is saved and analysis is queued, so claiming otherwise
+              would overstate what this button is waiting on. */}
+          {mutation.isPending ? 'Saving…' : 'Save Hat'}
         </button>
       </form>
 

@@ -1,8 +1,16 @@
 """Background removal for hat photos using rembg (ONNX-based).
 
-The default model is `u2netp` — a 4.7MB lightweight U²-Net designed for edge
-devices like a Raspberry Pi. Heavier models can be selected via the
-`HEADROOM_REMBG_MODEL` env var (e.g. 'u2net', 'silueta', 'isnet-general-use').
+The default model is `isnet-general-use`. It used to be `u2netp` (4.7MB), chosen
+for Pi-friendliness, but that model's low capacity loses *thin protruding
+structures* — and a hat is mostly one blob (the crown) with exactly one thin
+protrusion (the bill). u2netp reliably kept the crown and trimmed the bill,
+producing cutouts of hats with no brim.
+
+The cost is size and time: ~179MB and a slower inference. That became an
+acceptable trade once analysis moved off the request path into
+`analysis_queue` — nothing is waiting on it, so accuracy beats latency here.
+Set `HEADROOM_REMBG_MODEL` to go back ('u2netp', 'silueta') or heavier
+('birefnet-general'); the Docker image pre-caches whatever `REMBG_MODEL` names.
 
 Concurrency: rembg sessions wrap an `onnxruntime.InferenceSession`, which is
 thread-safe for `Run()` calls when invoked through `asyncio.to_thread`. We
@@ -23,7 +31,7 @@ from PIL import Image
 
 logger = logging.getLogger(__name__)
 
-_MODEL_NAME = os.environ.get("HEADROOM_REMBG_MODEL", "u2netp")
+_MODEL_NAME = os.environ.get("HEADROOM_REMBG_MODEL", "isnet-general-use")
 _session = None
 # Single-shot lock used ONLY around lazy session creation, not around inference.
 # The session itself is reentrant once initialised.

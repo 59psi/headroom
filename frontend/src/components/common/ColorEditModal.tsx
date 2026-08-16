@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { portalToBody } from './ModalPortal';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { updateHatColors } from '../../api/hats';
 import type { ColorTag } from '../../types';
@@ -47,7 +48,12 @@ export function ColorEditModal({ hatId, colors, editingRank, onClose }: Props) {
     mutationFn: () => {
       const next: ColorTag = {
         color_name: name.trim() || 'unnamed',
-        general_color: general.trim() || name.trim() || 'unnamed',
+        // Blank means "derive it from the hex" — the server does that, snapping
+        // to the filter palette. Don't substitute the *specific* name here: it's
+        // free text ("cobalt blue"), and since a typed general_color is now
+        // honoured verbatim, sending it would store an off-palette value and
+        // quietly drop the hat out of the colour-chip search.
+        general_color: general.trim(),
         hex_value: hex,
         dominance_rank: editingRank ?? colors.length + 1,
         tier,
@@ -78,7 +84,7 @@ export function ColorEditModal({ hatId, colors, editingRank, onClose }: Props) {
     },
   });
 
-  return (
+  return portalToBody(
     <div className="modal" onClick={onClose}>
       <div className="modal-dialog" style={{ maxWidth: 460 }} onClick={e => e.stopPropagation()}>
         <div className="modal-content">

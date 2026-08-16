@@ -22,7 +22,7 @@ export function EditHatPage() {
   const options = useHatFormOptions();
 
   const [basics, setBasics] = useState<HatBasics>({
-    style: '', size: '', condition: '', caseId: '', dateLastWorn: '',
+    style: '', size: '', condition: '', hydrolite: false, hydro: false, caseId: '', dateLastWorn: '',
   });
   const [brand, setBrand] = useState('');
   const [modelName, setModelName] = useState('');
@@ -51,6 +51,8 @@ export function EditHatPage() {
         style: hat.data.style,
         size: hat.data.size,
         condition: hat.data.condition,
+        hydrolite: hat.data.hydrolite,
+        hydro: hat.data.hydro,
         caseId: hat.data.case_id?.toString() || '',
         dateLastWorn: hat.data.date_last_worn || '',
       });
@@ -72,6 +74,8 @@ export function EditHatPage() {
     mutationFn: async () => {
       const data: Record<string, unknown> = {
         style: basics.style, size: basics.size, condition: basics.condition,
+        hydrolite: basics.hydrolite,
+        hydro: basics.hydro,
       };
       if (basics.dateLastWorn) data.date_last_worn = basics.dateLastWorn;
       data.brand = brand || null;

@@ -19,8 +19,8 @@ from headroom.schemas.hat import (
     HatUpdate,
     WearCreate,
 )
-from headroom.services import hat_service
-from headroom.services.color_extraction import normalize_hex_name
+from headroom.services import analysis_queue, hat_service, settings_service
+from headroom.services.color_extraction import normalize_color_name, normalize_hex_name
 from headroom.services.hat_analysis_pipeline import (
     finalize_hat_photo,
     reanalyze_existing_photo,
@@ -112,22 +112,32 @@ async def update_hat_colors(
     for color in list(hat.colors):
         await db.delete(color)
 
-    for c in data.colors:
-        # Normalize general_color onto the curated palette from the hex, exactly
-        # as the analysis pipeline does — otherwise a manually edited hat stores
-        # the client's free-text value verbatim and silently drops out of the
-        # general_color chip search (which matches on the normalized palette).
+    # Rank by position, ignoring whatever the client sent. Ranks are the only
+    # handle the UI has on a row — it edits and removes BY rank — so a duplicate
+    # makes one tap hit two colours, and a gap invites one: the add path picks
+    # `colors.length + 1`, which collides the moment the ranks aren't dense
+    # (ranks [1,3] + length 2 → 3). Storing them verbatim let that state persist.
+    # Position is already the client's intended order, so this is authoritative
+    # rather than a guess.
+    for rank, c in enumerate(data.colors, start=1):
+        # An explicitly-typed general_color is a CORRECTION and must win. This
+        # used to derive the name from the hex whenever a hex was present, so
+        # editing a mis-detected colour to "green" while its (wrong) grey hex
+        # stayed put simply re-derived "gray" and overwrote the fix — the edit
+        # looked like it silently reverted. Only fall back to the hex when the
+        # field is blank. Names still snap to the palette's spelling so the
+        # general_color chip search keeps matching.
         general = (
-            normalize_hex_name(c.hex_value, c.general_color or c.color_name)
-            if c.hex_value
-            else (c.general_color or "")
+            normalize_color_name(c.general_color)
+            if (c.general_color or "").strip()
+            else (normalize_hex_name(c.hex_value, c.color_name) if c.hex_value else "")
         )
         db.add(HatColor(
             hat_id=hat.id,
             color_name=c.color_name,
             general_color=general,
             hex_value=c.hex_value,
-            dominance_rank=c.dominance_rank,
+            dominance_rank=rank,
             tier=c.tier or "primary",
         ))
 
@@ -166,9 +176,21 @@ async def upload_hat_photo(
         old_path = settings.upload_dir / hat.photo_path
         old_path.unlink(missing_ok=True)
 
-    # Pipeline: bg removal + Claude analysis (in-place mutation of `hat`)
-    await finalize_hat_photo(db, hat, final_path)
+    # The photo itself is saved and shown immediately; the slow part (rembg →
+    # Claude → eBay → Melin) is handed to the analysis worker so this request
+    # returns in milliseconds instead of minutes and you can keep adding hats.
+    # `enqueue` returning False means nothing is draining the queue, in which
+    # case we run inline rather than leave the hat 'pending' forever.
+    hat.photo_path = f"hats/{final_path.name}"
+    hat.analysis_status = analysis_queue.PENDING
+    hat.analysis_error = None
+    hat.analyzed_at = None
     await db.commit()
+
+    if not analysis_queue.enqueue(hat.id):
+        await finalize_hat_photo(db, hat, final_path)
+        await db.commit()
+
     db.expire_all()
     return _hat_to_read(await hat_service.get_hat(db, hat_id))
 
@@ -187,6 +209,21 @@ async def reanalyze_hat(hat_id: int, db: AsyncSession = Depends(get_db)):
     photo_path = settings.upload_dir / hat.photo_path
     if not photo_path.exists():
         raise HTTPException(status_code=404, detail="Photo file missing on disk")
+
+    # Queue only the slow case. With a Claude key configured this is the same
+    # multi-minute sequence the upload path had, so it goes to the worker. With
+    # no key it's just local fallback colour extraction — fast, and running it
+    # inline is what preserves the 400 below, which can only be decided by
+    # actually attempting the fallback.
+    api_key, _source = await settings_service.get_anthropic_key(db)
+    if api_key:
+        hat.analysis_status = analysis_queue.PENDING
+        hat.analysis_error = None
+        hat.analyzed_at = None
+        await db.commit()
+        if analysis_queue.enqueue(hat.id):
+            db.expire_all()
+            return _hat_to_read(await hat_service.get_hat(db, hat_id))
 
     applied = await reanalyze_existing_photo(db, hat, photo_path)
     if not applied:

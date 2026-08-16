@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { portalToBody } from './ModalPortal';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { disposeHat } from '../../api/hats';
 
@@ -39,7 +40,7 @@ export function DisposeModal({ hatId, show, onClose }: Props) {
 
   if (!show) return null;
 
-  return (
+  return portalToBody(
     <div className="modal" onClick={onClose}>
       <div className="modal-dialog" onClick={e => e.stopPropagation()}>
         <div className="modal-content">

@@ -9,6 +9,10 @@ export interface HatBasics {
   style: string;
   size: string;
   condition: string;
+  /** melin HYDROLite construction — orthogonal to style, so any model can be one. */
+  hydrolite: boolean;
+  /** melin HYDRO construction — the sibling technology, likewise any model. */
+  hydro: boolean;
   /** Case id as a string ('' = unassigned), matching the <select> value. */
   caseId: string;
   /** ISO date or '' */
@@ -28,10 +32,14 @@ export const NEW_CASE_VALUE = '__new__';
  */
 // Widened to `string` on purpose: `as const` would infer literal types and make
 // these unusable as useState seeds for controls whose value is a plain string.
-export const DEFAULT_HAT_BASICS: { style: string; size: string; condition: string } = {
+export const DEFAULT_HAT_BASICS: {
+  style: string; size: string; condition: string; hydrolite: boolean; hydro: boolean;
+} = {
   style: 'a_game',
   size: 'classic',
   condition: 'new',
+  hydrolite: false,
+  hydro: false,
 };
 
 /** The four dropdown sources both hat forms need, plus a single loading flag. */
@@ -125,6 +133,46 @@ export function HatBasicsCard({
               <option key={c.value} value={c.value}>{c.label}</option>
             ))}
           </select>
+        </div>
+
+        {/* Beside Style rather than inside it: these are constructions melin
+            offers ACROSS models, so a hat is "a Coronado, in HYDROLite", never
+            "a HYDROLite instead of a Coronado". Two independent checkboxes and
+            not a 3-way radio — realistically a hat is one or the other, but the
+            schema doesn't enforce that, so the form shouldn't either. Claude
+            picks at most one; a person can record whatever the hat says. */}
+        <div className="mb-3">
+          <label className="form-label">Construction</label>
+          <label className="d-flex align-items-center gap-2 mb-2" style={{ cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              aria-label="HYDROLite construction"
+              checked={values.hydrolite}
+              onChange={e => onChange('hydrolite', e.target.checked)}
+              style={{ width: 20, height: 20, flexShrink: 0 }}
+            />
+            <span>
+              HYDROLite
+              <span className="text-secondary small d-block">
+                Featherweight, bonded seams, gel-welded logo, antimicrobial sweatband
+              </span>
+            </span>
+          </label>
+          <label className="d-flex align-items-center gap-2" style={{ cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              aria-label="HYDRO construction"
+              checked={values.hydro}
+              onChange={e => onChange('hydro', e.target.checked)}
+              style={{ width: 20, height: 20, flexShrink: 0 }}
+            />
+            <span>
+              HYDRO
+              <span className="text-secondary small d-block">
+                Water-resistant build — usually named in the model ("A-Game Hydro")
+              </span>
+            </span>
+          </label>
         </div>
 
         <div className="mb-3">

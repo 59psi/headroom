@@ -6,7 +6,90 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.6.0] — 2026-08-16 — _analysis gets out of your way_
+
+### Added
+- **Photo analysis is queued instead of blocking the upload.** `POST /api/hats/
+  {id}/photo` now saves the photo, marks the hat `analysis_status='pending'` and
+  returns immediately; a background worker (`analysis_queue.py`) runs rembg →
+  Claude → eBay → Melin. You can keep adding hats while earlier ones analyse.
+  The hat page shows a spinning **Analyzing…** badge and polls until the status
+  is terminal. Previously the request stayed open for the whole pipeline —
+  Claude alone is a 30s timeout × the SDK's 3 attempts, after tens of seconds of
+  rembg — which read as a hang. `reanalyze` queues too when a Claude key is set.
+  Durability mirrors the bulk-import worker: the loop survives any per-hat
+  exception, a crash mid-analysis is re-queued on boot, and if no worker is
+  draining the queue the route runs the pipeline inline rather than dropping it.
+- **`logo_detected` field.** Claude Vision now records the mark it actually SAW
+  and the brand that owns it ("Melin — M monogram, front panel"), kept apart
+  from `brand`, which can be inferred from shape, colourway or a hang tag with
+  no logo in frame. The Google Vision fallback fills it too — LOGO_DETECTION
+  only fires on a visible mark, so that path is evidence by construction. Shown
+  under Identification on the hat page.
+- **HYDRO + HYDROLite checkboxes, and Claude sets them.** melin lists HYDRO and
+  HYDROLite as separate technologies offered across the model lines, so they are
+  two per-hat flags. Claude answers a single `construction` field
+  (standard/hydro/hydrolite), which is mapped to the flags — one exclusive value
+  rather than two booleans, so it cannot return a hat that is somehow both.
+  Applying it is **additive**: analysis turns a flag ON and never off, because
+  these are also checkboxes a human ticks and a re-analysis returning "standard"
+  (which happens whenever bonded seams or a gel-welded logo aren't legible)
+  must not silently un-tick them.
+- **`artist_series` field.** Claude names the collaborator on signature
+  collaborations / artist series ("Skye Walker", "melin x OluKai"), which the
+  `collab` STYLE could not — it only says *some* collab, not which one, and
+  which one is what drives collectability. Instructed to leave it null rather
+  than guess.
+- **HYDROLite checkbox on the hat form.** HYDROLite is melin CONSTRUCTION —
+  featherweight build, bonded seams, gel-welded logos, antimicrobial sweatband —
+  offered across A-Game, Coronado, Trenches and the rest, so any hat can be one.
+  It is a per-hat flag (`hydrolite`), deliberately NOT a `HatStyle` value: as a
+  style it would need a second entry per model and would split one model's hats
+  across two style buckets. Shown as a badge on the hat page.
+- **Clear All** on the hat's Color Palette card wipes the whole palette in one
+  call, instead of removing swatches one modal at a time after a bad analysis.
+
+### Changed
+- **Default background-removal model is now `isnet-general-use`** (was
+  `u2netp`). u2netp is 4.7 MB and was picked for Pi speed, but its low capacity
+  loses thin protruding shapes — on a hat that is precisely the **bill**, so
+  cutouts came back as brimless crowns. The heavier model costs ~170 MB and
+  slower inference, which stopped mattering once analysis left the request path.
+  `HEADROOM_REMBG_MODEL=u2netp` restores the old behaviour.
+
 ### Fixed
+- **The photo button never offered your library.** The file input carried
+  `capture="environment"`, which does not *prefer* the camera — it forces it, so
+  iOS and Android skipped the picker and opened the rear camera, making an
+  existing photo impossible to choose. Removed, so the normal Photo Library /
+  Take Photo / Browse sheet appears.
+### Fixed
+- **Modals were painted over by the page behind them.** The photo cropper's zoom
+  slider and "Use This" button ended up underneath the Details card's
+  style/size/condition selects. `.modal` is `z-index: 1050`, but z-index only
+  ranks siblings *within a stacking context*, and `.card-body` is
+  `position: relative; z-index: 1` — so a modal rendered inside a card was
+  confined to that card's slot in the page order and any later card covered it.
+  All four modals now render through a `<body>` portal, which also immunises
+  them against the `overflow: hidden` and `transform` containing-block traps.
+- **Editing a mis-detected colour silently reverted.** Typing "green" over a
+  colour Claude had read as grey saved "gray": `PUT /api/hats/{id}/colors`
+  re-derived `general_color` from the stored hex whenever one was present, so
+  the correction was overwritten by the very value being corrected. An
+  explicitly-typed name now wins and is snapped to the palette's spelling (so
+  chip search still matches); the hex is consulted only when the field is blank.
+- **Colour ranks are renumbered server-side.** `PUT /api/hats/{id}/colors`
+  stored the client's `dominance_rank` verbatim. The UI edits and removes a
+  colour BY rank, so a duplicate made one tap hit two rows — and a gap invited
+  one, since the add path picks `colors.length + 1` (ranks `[1,3]` + length 2 →
+  3). Ranks now follow submitted position, so they are always dense and unique.
+- **The SQLite write lock was held across the whole analysis.** Setting
+  `photo_path` before the pipeline's first DB read let autoflush open a write
+  transaction, which SQLite holds until commit — so the lock stayed held through
+  Claude, eBay and Melin. Any concurrent write then waited out `busy_timeout`
+  and failed with "database is locked", which the new queue would have made
+  routine (adding a hat while another analyses). The network-bound section now
+  runs under `no_autoflush`.
 - `vite.config.ts` used `__dirname`, which only exists because Vite's current
   config loader wraps the file in CJS shims. The config is ESM
   (`"type": "module"`), and Vite's `configLoader: 'native'` — slated to become

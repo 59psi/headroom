@@ -39,6 +39,7 @@ def stub_claude(monkeypatch):
     async def _fake_analyze(_image_path, _api_key, model=None, selected_style=None):  # noqa: ARG001
         return HatAnalysis(
             brand="Melin",
+            logo_detected="Melin — M monogram, front panel",
             model_name="A-Game Hydro",
             model_confidence="high",
             style_descriptor="fitted snapback",
@@ -87,6 +88,8 @@ async def test_upload_persists_full_claude_analysis(client, stub_claude):
     assert data["analysis_error"] is None
     assert data["analyzed_at"] is not None
     assert data["brand"] == "Melin"
+    # Records what was SEEN, separately from `brand`, which may be inferred.
+    assert data["logo_detected"] == "Melin — M monogram, front panel"
     assert data["model_name"] == "A-Game Hydro"
     assert data["model_confidence"] == "high"
     assert data["style_descriptor"] == "fitted snapback"
@@ -165,3 +168,28 @@ async def test_claude_error_marks_hat_status_error(client, monkeypatch):
     assert data["analysis_status"] == "error"
     assert "Invalid Anthropic API key" in data["analysis_error"]
     assert data["colors"] == []
+
+
+@pytest.mark.anyio
+async def test_construction_only_ever_sets_flags_never_clears_them(client):
+    """Claude turning a construction flag ON is additive; it must not un-tick.
+
+    These two are also user-facing checkboxes. A re-analysis returning
+    'standard' — which Claude will do whenever bonded seams or a gel-welded
+    logo aren't legible in the photo — must not silently undo what the owner
+    ticked while holding the hat. Absence of evidence isn't evidence of absence.
+    """
+    from headroom.models.hat import Hat
+    from headroom.services.hat_analysis_pipeline import _apply_construction
+
+    hat = Hat(hydro=False, hydrolite=True)
+
+    _apply_construction(hat, "standard")
+    assert hat.hydrolite is True, "a 'standard' verdict must not clear the flag"
+
+    _apply_construction(hat, "hydro")
+    assert hat.hydro is True
+    assert hat.hydrolite is True  # still untouched
+
+    _apply_construction(hat, None)
+    assert hat.hydro is True and hat.hydrolite is True

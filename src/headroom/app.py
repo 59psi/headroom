@@ -14,7 +14,13 @@ from fastapi.staticfiles import StaticFiles
 from headroom.config import env_flag, settings
 from headroom.database import async_session, init_db
 from headroom.routes import api_router
-from headroom.services import activity_service, backup_service, import_service, mdns_service
+from headroom.services import (
+    activity_service,
+    analysis_queue,
+    backup_service,
+    import_service,
+    mdns_service,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +135,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if env_flag("HEADROOM_IMPORT_WORKER_ENABLED"):
         await import_service.start_worker()
 
+    # Photo-analysis worker — drains queued single-hat uploads so the upload
+    # request returns immediately. Off means the upload route runs the pipeline
+    # inline (the pre-queue behaviour), never silently skips it.
+    if env_flag("HEADROOM_ANALYSIS_WORKER_ENABLED"):
+        await analysis_queue.start_worker()
+
     # mDNS LAN discovery (headroom.local) — best-effort, disabled in tests.
     # zeroconf probes for ~1s before registering; keep it off the boot path.
     mdns_task = asyncio.create_task(mdns_service.start_mdns())
@@ -158,6 +170,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 except asyncio.CancelledError:
                     pass
         await import_service.stop_worker()
+        await analysis_queue.stop_worker()
         await mdns_service.stop_mdns()
 
 
