@@ -397,7 +397,7 @@ link-only if the API is unreachable.
 | `HEADROOM_EBAY_APP_ID` / `HEADROOM_EBAY_CERT_ID` | _(unset)_ | eBay Browse API comps (Production keyset) |
 | `HEADROOM_RP_ID` | `localhost` | Passkey relying-party id — must equal the serving domain (HTTPS overlay sets it) |
 | `HEADROOM_ORIGIN` | `http://localhost:8000` | Full origin for passkey verification (HTTPS overlay sets it) |
-| `HEADROOM_REMBG_MODEL` | `u2netp` | rembg model (`u2netp` is Pi-friendly; `isnet-general-use` is sharper, ~170MB) |
+| `HEADROOM_REMBG_MODEL` | `isnet-general-use` | rembg model (~179MB; keeps hat bills. `u2netp` is 4.7MB and far faster but trims thin brims) |
 | `HEADROOM_HTTP_TIMEOUT` | `30.0` | Outbound HTTP timeout in seconds |
 | `HEADROOM_LOG_LEVEL` | `INFO` | Log level when running uvicorn directly |
 | `HEADROOM_BACKUP_ENABLED` | `true` | Scheduled backups on/off |
@@ -428,8 +428,12 @@ docker buildx build --platform linux/arm64,linux/amd64 \
   -t your-registry/headroom:latest --push .
 ```
 
-The default `u2netp` rembg model is 4.7MB and runs in 5–15 seconds per photo
-on a Pi 4. Photos, database, and backups live in the `headroom-data` volume —
+The default `isnet-general-use` rembg model is ~179MB and takes appreciably
+longer per photo on a Pi 4 than the old 4.7MB `u2netp` — a trade made once
+analysis moved off the request path, since nothing waits on it and `u2netp`
+cut the bills off hats. Build with `REMBG_MODEL=u2netp docker compose up -d
+--build` to go back. Photos, database, and backups live in the `headroom-data`
+volume —
 see [OPERATIONS.md §4](docs/OPERATIONS.md#4-backups--restore) for the backup
 and restore procedure.
 
@@ -443,9 +447,9 @@ uv run uvicorn headroom.app:app --reload     # Backend (port 8000)
 cd frontend && npm run dev                   # Frontend (port 5173)
 cd frontend && npm run build                 # Type-check + production SPA build
 cd frontend && npm run typecheck             # Type-check only
-uv run pytest                                # Backend tests (216)
+uv run pytest                                # Backend tests (219)
 uv run pytest tests/test_search.py -k color  # Single backend test
-cd frontend && npm test                      # Frontend tests (40)
+cd frontend && npm test                      # Frontend tests (44)
 cd frontend && npm run test:watch            # Frontend tests, watch mode
 ```
 

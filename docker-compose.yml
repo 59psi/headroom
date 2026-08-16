@@ -9,8 +9,8 @@ services:
         HEADROOM_BUILD_SHA: ${HEADROOM_BUILD_SHA:-}
         # Which rembg model gets pre-downloaded INTO the image and used at
         # runtime. Change it at build time so the weights are baked in:
-        #   REMBG_MODEL=isnet-general-use docker compose up -d --build
-        REMBG_MODEL: ${REMBG_MODEL:-u2netp}
+        #   REMBG_MODEL=u2netp docker compose up -d --build
+        REMBG_MODEL: ${REMBG_MODEL:-isnet-general-use}
     image: headroom:latest
     container_name: headroom
     restart: unless-stopped
