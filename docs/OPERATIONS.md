@@ -80,7 +80,7 @@ fleet-default, the UI is the per-install override.
 | `HEADROOM_UPLOAD_DIR` | `uploads` | Docker image sets `/data/uploads` |
 | `HEADROOM_CORS_ORIGINS` | `["http://localhost:5173"]` | JSON list. Compose file sets `["http://localhost:8000"]` |
 | `HEADROOM_ANTHROPIC_API_KEY` | _(unset)_ | Claude Vision analysis. DB value wins |
-| `HEADROOM_ANTHROPIC_MODEL` | `claude-sonnet-4-6` | Changeable in the Settings UI too |
+| `HEADROOM_ANTHROPIC_MODEL` | `claude-sonnet-5` | Changeable in the Settings UI too |
 | `HEADROOM_GOOGLE_VISION_API_KEY` | _(unset)_ | Fallback brand (logo) detection. DB value wins |
 | `HEADROOM_MELIN_CLIENT_ID` | _(baked in)_ | Public Sharetribe client id for live Melin resale stats; override only if Treet rotates it |
 | `HEADROOM_EBAY_APP_ID` / `HEADROOM_EBAY_CERT_ID` | _(unset)_ | eBay Browse API comps. Must be a **Production** keyset (sandbox keys 401) |

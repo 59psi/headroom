@@ -6,6 +6,34 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.5.0] — 2026-08-16 — _current Claude models_
+
+### Changed
+- **The Claude model list is current again.** The picker offered the 4.5–4.7
+  generation and defaulted to `claude-sonnet-4-6`, which Anthropic now
+  classifies as legacy. The default is now **`claude-sonnet-5`** — newer *and*
+  cheaper than the 4.6 it replaces ($2/$10 per MTok vs $3/$15). The Settings
+  picker lists the current lineup (Sonnet 5, Haiku 4.5, Opus 5, Fable 5) under
+  a **Current** group, with the superseded ids kept under **Legacy** so an
+  install that saved one stays on a named option instead of silently falling
+  through to "Other…". Any model id remains enterable by hand.
+- **This only changes the default.** If you set a model in Settings, that choice
+  is stored in the database and still wins — nothing is migrated or overwritten.
+  Installs on the default will start using Sonnet 5 after upgrading; use
+  **Test connection** on the Settings page to confirm the key reaches it.
+
+### Added
+- Consistency tests (`tests/test_docs_consistency.py`) asserting that the README
+  env table, the OPERATIONS env table, and the Settings picker's "(default)"
+  label all still match `config.anthropic_model`. Nothing linked those four
+  places, which is how the app spent a model generation advertising a superseded
+  id with every test green.
+
+### Fixed
+- The Claude model `<select>` and its custom-id input had no accessible name —
+  the visible `<label>` carries no `htmlFor`, so screen readers announced them
+  unlabelled. Both now set `aria-label`.
+
 ## [2.4.0] — 2026-08-16 — _any room can be the default_
 
 ### Added

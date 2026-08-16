@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../test/utils';
 import { SettingsPage } from './SettingsPage';
 import { AnthropicKeyCard } from '../components/settings/AnthropicKeyCard';
+import { ClaudeModelCard } from '../components/settings/ClaudeModelCard';
 import * as settingsApi from '../api/settings';
 import type { ApiKeyStatus } from '../types';
 
@@ -15,7 +16,7 @@ vi.mock('../api/settings', () => ({
   testApiKey: vi.fn(async () => ({ ok: true, detail: 'Reachable.' })),
   getGoogleVisionKeyStatus: vi.fn(async () => ({ configured: false, source: null, masked: null })),
   setGoogleVisionKey: vi.fn(), deleteGoogleVisionKey: vi.fn(),
-  getModel: vi.fn(async () => ({ model_id: 'claude-sonnet-4-6', source: 'default' })),
+  getModel: vi.fn(async () => ({ model_id: 'claude-sonnet-5', source: 'default' })),
   setModel: vi.fn(), clearModel: vi.fn(),
   getMdnsStatus: vi.fn(async () => ({
     enabled: true, advertising: true, hostname: 'headroom.local', port: 8000,
@@ -82,7 +83,7 @@ describe('SettingsPage', () => {
   it("surfaces data from each card's own query rather than a page-level fetch", async () => {
     renderWithProviders(<SettingsPage />);
     expect(await screen.findByText('sk-an…wxyz')).toBeInTheDocument();       // key card
-    expect(await screen.findByText('claude-sonnet-4-6')).toBeInTheDocument(); // model card
+    expect(await screen.findByText('claude-sonnet-5')).toBeInTheDocument(); // model card
     expect(await screen.findByText('http://headroom.local:8000')).toBeInTheDocument(); // mDNS card
     expect(await screen.findByText(/Signed in as/)).toBeInTheDocument();      // account card
   });
@@ -125,11 +126,37 @@ describe('AnthropicKeyCard loading guard', () => {
     expect(await screen.findByText(/Reachable\./)).toBeInTheDocument();
 
     // Simulate the Model card saving a different model.
-    vi.mocked(settingsApi.getModel).mockResolvedValue({ model_id: 'claude-opus-4-7', source: 'database' });
+    vi.mocked(settingsApi.getModel).mockResolvedValue({ model_id: 'claude-opus-5', source: 'database' });
     await client.invalidateQueries({ queryKey: ['settings', 'model'] });
 
     await waitFor(() => {
       expect(screen.queryByText(/Reachable\./)).not.toBeInTheDocument();
     });
+  });
+});
+
+describe('ClaudeModelCard', () => {
+  async function renderWithStoredModel(model_id: string) {
+    vi.mocked(settingsApi.getModel).mockResolvedValue({ model_id, source: 'database' });
+    renderWithProviders(<ClaudeModelCard />);
+    await screen.findByText(model_id);
+    return screen.getByLabelText('Model') as HTMLSelectElement;
+  }
+
+  it('keeps a superseded model on its own named option', async () => {
+    // The whole reason legacy ids stay in the list. Dropping them would leave
+    // an install that had saved one showing "Other…" with its id in a free-text
+    // box — it still works, but it reads like the setting broke on upgrade.
+    const select = await renderWithStoredModel('claude-sonnet-4-6');
+    expect(select.value).toBe('claude-sonnet-4-6');
+    expect(screen.queryByLabelText('Custom model ID')).not.toBeInTheDocument();
+  });
+
+  it('falls back to a custom-id box for a model it has never heard of', async () => {
+    // Models ship faster than this app does, so an unrecognised id must stay
+    // editable rather than being silently replaced by a listed one.
+    const select = await renderWithStoredModel('claude-from-the-future-9');
+    expect(select.value).toBe('__other__');
+    expect(screen.getByLabelText('Custom model ID')).toHaveValue('claude-from-the-future-9');
   });
 });

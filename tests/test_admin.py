@@ -17,18 +17,20 @@ async def test_get_model_returns_default_when_unset(client):
 
 
 async def test_set_model_persists(client):
-    resp = await client.put("/api/settings/model", json={"model_id": "claude-sonnet-4-5"})
+    # Deliberately not the configured default, so "source: database" is proved
+    # by the write rather than coincidentally true.
+    resp = await client.put("/api/settings/model", json={"model_id": "claude-opus-5"})
     assert resp.status_code == 200
-    assert resp.json() == {"model_id": "claude-sonnet-4-5", "source": "database"}
+    assert resp.json() == {"model_id": "claude-opus-5", "source": "database"}
 
     # GET reflects the change
     resp = await client.get("/api/settings/model")
-    assert resp.json()["model_id"] == "claude-sonnet-4-5"
+    assert resp.json()["model_id"] == "claude-opus-5"
     assert resp.json()["source"] == "database"
 
 
 async def test_clear_model_falls_back_to_default(client):
-    await client.put("/api/settings/model", json={"model_id": "claude-opus-4-7"})
+    await client.put("/api/settings/model", json={"model_id": "claude-opus-5"})
     resp = await client.delete("/api/settings/model")
     assert resp.status_code == 204
     resp = await client.get("/api/settings/model")
