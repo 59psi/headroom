@@ -79,3 +79,26 @@ async def test_rooms_migration_backfills_exactly_one_default():
 
     flagged = [r[0] for r in rows if r[1]]
     assert flagged == [3], f"expected only the lowest id flagged, got {rows}"
+
+
+async def test_fresh_database_rooms_table_matches_the_model():
+    """`_run_migrations` CREATEs `rooms` itself, which makes `create_all` a no-op
+    for that table — so the hand-written DDL, not the model, is what a brand new
+    install actually gets. If the two drift, the container crashes on first boot
+    (this exact gap shipped a rooms table with no is_default and 500'd startup).
+    """
+    from headroom.models.room import Room
+
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        with engine.begin() as conn:
+            _run_migrations(conn)  # empty DB, as on a first run
+            created = {c["name"] for c in inspect(conn).get_columns("rooms")}
+    finally:
+        engine.dispose()
+
+    missing = set(Room.__table__.columns.keys()) - created
+    assert not missing, (
+        "Room model columns absent from the CREATE TABLE in _run_migrations — a "
+        f"fresh install would crash on boot: {sorted(missing)}"
+    )

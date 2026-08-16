@@ -68,7 +68,7 @@ It is tracked in git (was previously local-only and drifted stale) — keep it c
 - `tests/` — Async tests, in-memory SQLite, conftest seeds default room, stubs out `rembg` (heavy model) AND disables backup + import-worker + mDNS via env vars
 - **Auth in tests**: the `client` fixture seeds an owner (`testowner`, api_token `hr_test-api-token`) + a session row directly and presets the cookie — one argon2 hash per run, not per test. `anon_client` is unauthenticated for auth-flow tests. `app` fixture must set `app.state.session_factory = test_session_factory` or the gate middleware hits the real DB
 - Tests never call the Anthropic, Google, eBay, or Sharetribe APIs; the pipeline degrades to `analysis_status='skipped'`/`'fallback'` when no key is set
-- 195 passing
+- 196 passing
 
 **Frontend tests** (Vitest 4 + Testing Library 16, jsdom):
 - Co-located `*.test.tsx` beside the component. `src/test/setup.ts` registers the jest-dom matchers + `cleanup`; `src/test/utils.tsx` exports `renderWithProviders` (fresh QueryClient per test, `retry: false`, plus MemoryRouter)

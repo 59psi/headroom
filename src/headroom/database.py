@@ -82,6 +82,7 @@ def _run_migrations(conn) -> None:
                 "CREATE TABLE rooms ("
                 "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
                 "  name VARCHAR(100) UNIQUE NOT NULL,"
+                "  is_default BOOLEAN NOT NULL DEFAULT 0,"
                 "  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
                 "  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP"
                 ")"
@@ -99,8 +100,13 @@ def _run_migrations(conn) -> None:
             )
         )
 
-    if "rooms" in existing_tables:
-        columns = [c["name"] for c in inspector.get_columns("rooms")]
+    # Re-inspect rather than reuse `existing_tables`: that snapshot predates the
+    # CREATE TABLE above, so on a *fresh* database it would say "no rooms table"
+    # and skip the column check entirely — while `create_all` is then a no-op
+    # because the table now exists. That combination shipped a fresh container
+    # with a rooms table missing is_default and crashed on boot.
+    if "rooms" in inspect(conn).get_table_names():
+        columns = [c["name"] for c in inspect(conn).get_columns("rooms")]
         # v2.4 — the fallback room became a flag instead of a hardcoded id=1.
         # Backfill picks the lowest id rather than literally 1, so a database
         # whose original room was renamed or re-keyed still ends up with exactly
