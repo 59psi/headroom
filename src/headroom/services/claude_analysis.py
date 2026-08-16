@@ -35,7 +35,10 @@ When given a single hat photo you will:
      liner prints, distinctive shapes). Separately record `logo_detected`
      ONLY when a mark is genuinely visible in frame, naming the mark and its
      owning brand — that field is evidence, while `brand` may be an inference.
-  2. Identify the specific model name when the brand has named lines.
+  2. Identify the specific model name when the brand has named lines. If it is
+     a signature collaboration or artist series, name the collaborator in
+     `artist_series` — melin names these for the partner (e.g. "Skye Walker",
+     "melin x OluKai"). Leave it null rather than guessing.
   3. Describe the silhouette / style (e.g. "fitted snapback", "5-panel
      trucker", "cuffed beanie").
   4. Extract the dominant primary, secondary, and tertiary colors with both
@@ -80,6 +83,35 @@ HAT_ANALYSIS_TOOL = {
                     " legible. Do NOT fill this in from an inference about the"
                     " brand — this field records what is visible, not what you"
                     " concluded."
+                ),
+            },
+            "construction": {
+                "type": "string",
+                "enum": ["standard", "hydro", "hydrolite"],
+                "description": (
+                    "melin's water-resistant construction, if any. 'hydro' —"
+                    " HYDRO, usually named in the product name ('A-Game Hydro')."
+                    " 'hydrolite' — HYDROLite: featherweight, bonded (not"
+                    " stitched) seams, a gel-welded rubbery logo rather than"
+                    " embroidery, and an antimicrobial sweatband. 'standard' if"
+                    " it is neither or you cannot tell. These are offered across"
+                    " every model line, so this is independent of model_name —"
+                    " a hat is 'a Coronado in HYDROLite', not 'a HYDROLite'."
+                ),
+            },
+            "artist_series": {
+                "type": ["string", "null"],
+                "description": (
+                    "If this is a signature collaboration or artist series, name"
+                    " the collaborator — melin brands these as Signature"
+                    " Collaborations / Special Projects and names them for the"
+                    " partner, e.g. 'Skye Walker', 'melin x OluKai',"
+                    " 'melin x Austin Gamblers'. Tells: a bespoke woven or"
+                    " leather patch instead of the standard mark, illustrated"
+                    " artwork, a co-branded logo lockup, or a printed interior"
+                    " lining. Name the artist or partner, NOT the model. Null"
+                    " unless you can actually identify the collaboration —"
+                    " guessing here is worse than leaving it empty."
                 ),
             },
             "model_name": {
@@ -137,6 +169,8 @@ HAT_ANALYSIS_TOOL = {
         "required": [
             "brand",
             "logo_detected",
+            "construction",
+            "artist_series",
             "model_name",
             "model_confidence",
             "style_descriptor",
@@ -168,6 +202,10 @@ class HatAnalysis:
     # care about logos shouldn't have to say so — and dataclass ordering forces
     # every defaulted field below the undefaulted ones regardless.
     logo_detected: str | None = None
+    # "standard" | "hydro" | "hydrolite". One value, not two booleans, so the
+    # model physically cannot return a hat that is both.
+    construction: str | None = None
+    artist_series: str | None = None
     colors: list[AnalyzedColor] = field(default_factory=list)
     raw: dict | None = None
 
@@ -280,6 +318,8 @@ async def analyze_hat_image(
         return HatAnalysis(
             brand=payload.get("brand"),
             logo_detected=payload.get("logo_detected"),
+            construction=payload.get("construction"),
+            artist_series=payload.get("artist_series"),
             model_name=payload.get("model_name"),
             model_confidence=payload.get("model_confidence", "low"),
             style_descriptor=payload.get("style_descriptor", ""),

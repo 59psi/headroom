@@ -24,6 +24,20 @@ All notable changes are documented here. This project follows
   no logo in frame. The Google Vision fallback fills it too — LOGO_DETECTION
   only fires on a visible mark, so that path is evidence by construction. Shown
   under Identification on the hat page.
+- **HYDRO + HYDROLite checkboxes, and Claude sets them.** melin lists HYDRO and
+  HYDROLite as separate technologies offered across the model lines, so they are
+  two per-hat flags. Claude answers a single `construction` field
+  (standard/hydro/hydrolite), which is mapped to the flags — one exclusive value
+  rather than two booleans, so it cannot return a hat that is somehow both.
+  Applying it is **additive**: analysis turns a flag ON and never off, because
+  these are also checkboxes a human ticks and a re-analysis returning "standard"
+  (which happens whenever bonded seams or a gel-welded logo aren't legible)
+  must not silently un-tick them.
+- **`artist_series` field.** Claude names the collaborator on signature
+  collaborations / artist series ("Skye Walker", "melin x OluKai"), which the
+  `collab` STYLE could not — it only says *some* collab, not which one, and
+  which one is what drives collectability. Instructed to leave it null rather
+  than guess.
 - **HYDROLite checkbox on the hat form.** HYDROLite is melin CONSTRUCTION —
   featherweight build, bonded seams, gel-welded logos, antimicrobial sweatband —
   offered across A-Game, Coronado, Trenches and the rest, so any hat can be one.

@@ -59,6 +59,20 @@ class Hat(Base):
     hydrolite: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("0")
     )
+    # HYDRO is the sibling technology — melin lists HYDRO and HYDROLite as
+    # separate collections, so they get separate flags. A hat is realistically
+    # one or the other, but that is not enforced in the schema: the analyser
+    # picks at most one (see the `construction` tool field) and a human is
+    # allowed to record whatever the hat in their hand actually says.
+    hydro: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("0")
+    )
+    # Named artist / signature collaboration, when the hat is one. melin brands
+    # these as Signature Collaborations and Special Projects and names them for
+    # the collaborator ("Skye Walker", "melin x OluKai"), so this holds that
+    # name. Distinct from the `collab` STYLE, which only says "some collab" —
+    # this says WHICH, which is the part that drives collectability and resale.
+    artist_series: Mapped[str | None] = mapped_column(String(160), nullable=True)
 
     logo_detected: Mapped[str | None] = mapped_column(String(255), nullable=True)
 

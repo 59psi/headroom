@@ -55,7 +55,9 @@ export interface HatRead {
   // AI / pricing
   brand: string | null;
   logo_detected: string | null;
+  artist_series: string | null;
   hydrolite: boolean;
+  hydro: boolean;
   model_name: string | null;
   colorway: string | null;
   purchase_price: number | null;

@@ -20,7 +20,7 @@ vi.mock('../../api/cases', () => ({
 }));
 
 const BASICS: HatBasics = {
-  style: 'a_game', size: 'classic', condition: 'new', hydrolite: false,
+  style: 'a_game', size: 'classic', condition: 'new', hydrolite: false, hydro: false,
   caseId: '', dateLastWorn: '',
 };
 

@@ -73,6 +73,7 @@ class HatCreate(BaseModel):
     size: HatSize
     style: HatStyle
     hydrolite: bool = False
+    hydro: bool = False
     date_last_worn: date | None = None
 
 
@@ -81,9 +82,11 @@ class HatUpdate(BaseModel):
     size: HatSize | None = None
     style: HatStyle | None = None
     hydrolite: bool | None = None
+    hydro: bool | None = None
     date_last_worn: date | None = None
     brand: str | None = None
     logo_detected: str | None = None
+    artist_series: str | None = None
     model_name: str | None = None
     colorway: str | None = None
     purchase_price: float | None = None
@@ -115,6 +118,7 @@ class HatRead(BaseModel):
     size: HatSize
     style: HatStyle
     hydrolite: bool = False
+    hydro: bool = False
     is_beanie: bool
     colors: list[ColorTag]
     room_id: int | None
@@ -123,6 +127,7 @@ class HatRead(BaseModel):
     # AI / pricing fields
     brand: str | None = None
     logo_detected: str | None = None
+    artist_series: str | None = None
     model_name: str | None = None
     colorway: str | None = None
     purchase_price: float | None = None

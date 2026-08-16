@@ -35,6 +35,7 @@ export function AddHatPage() {
       const data: Record<string, unknown> = {
         style: basics.style, size: basics.size, condition: basics.condition,
         hydrolite: basics.hydrolite,
+        hydro: basics.hydro,
       };
       if (basics.caseId) data.case_id = Number(basics.caseId);
       if (basics.dateLastWorn) data.date_last_worn = basics.dateLastWorn;

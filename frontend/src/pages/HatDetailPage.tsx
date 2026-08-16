@@ -140,11 +140,13 @@ export function HatDetailPage() {
         </h1>
         <div className="d-flex gap-2 align-items-center">
           {data.hydrolite && (
-            <span
-              className="badge bg-info"
-              title="melin HYDROLite construction: featherweight, bonded seams, gel-welded logo, antimicrobial sweatband"
-            >
+            <span className="badge bg-info" title="melin HYDROLite construction: featherweight, bonded seams, gel-welded logo, antimicrobial sweatband">
               HYDROLite
+            </span>
+          )}
+          {data.hydro && (
+            <span className="badge bg-info" title="melin HYDRO water-resistant construction">
+              HYDRO
             </span>
           )}
           <AnalysisStatus hat={data} />
@@ -169,6 +171,15 @@ export function HatDetailPage() {
                 {data.style_descriptor && (
                   <div className="text-secondary small" style={{ marginTop: 4 }}>
                     {data.style_descriptor}
+                  </div>
+                )}
+                {data.artist_series && (
+                  <div
+                    className="font-mono small"
+                    style={{ marginTop: 6, color: 'var(--neon-cyan)' }}
+                    title="Signature collaboration / artist series"
+                  >
+                    ✦ {data.artist_series}
                   </div>
                 )}
                 {data.logo_detected && (

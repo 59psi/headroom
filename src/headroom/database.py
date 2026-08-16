@@ -41,6 +41,8 @@ _HAT_COLUMN_DDL: dict[str, str] = {
     "brand": "ALTER TABLE hats ADD COLUMN brand VARCHAR(80)",
     "logo_detected": "ALTER TABLE hats ADD COLUMN logo_detected VARCHAR(255)",
     "hydrolite": "ALTER TABLE hats ADD COLUMN hydrolite BOOLEAN NOT NULL DEFAULT 0",
+    "hydro": "ALTER TABLE hats ADD COLUMN hydro BOOLEAN NOT NULL DEFAULT 0",
+    "artist_series": "ALTER TABLE hats ADD COLUMN artist_series VARCHAR(160)",
     "model_name": "ALTER TABLE hats ADD COLUMN model_name VARCHAR(120)",
     "model_confidence": "ALTER TABLE hats ADD COLUMN model_confidence VARCHAR(10)",
     "style_descriptor": "ALTER TABLE hats ADD COLUMN style_descriptor VARCHAR(120)",

@@ -283,9 +283,28 @@ def _apply_resale_pointer(hat: Hat) -> None:
     hat.resale_checked_at = datetime.now(timezone.utc)
 
 
+def _apply_construction(hat: Hat, construction: str | None) -> None:
+    """Set the hydro / hydrolite flags from Claude's single `construction` value.
+
+    Additive on purpose — this only ever turns a flag ON. Every other field here
+    is overwritten by a re-analysis, which is right for things only the analyser
+    supplies, but these two are also a checkbox a human ticks. Clearing on
+    "standard" would mean a reanalyse silently un-ticks a box the owner set
+    while holding the hat, and Claude cannot reliably see bonded seams or a
+    gel-welded logo in every photo — absence of evidence, not evidence of
+    absence. Unticking stays a human action.
+    """
+    if construction == "hydro":
+        hat.hydro = True
+    elif construction == "hydrolite":
+        hat.hydrolite = True
+
+
 def _apply_analysis(hat: Hat, analysis: HatAnalysis) -> None:
     hat.brand = analysis.brand
     hat.logo_detected = analysis.logo_detected
+    hat.artist_series = analysis.artist_series
+    _apply_construction(hat, analysis.construction)
     hat.model_name = analysis.model_name
     hat.model_confidence = analysis.model_confidence
     hat.style_descriptor = analysis.style_descriptor
