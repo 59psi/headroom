@@ -187,6 +187,7 @@ async def test_health_ready_redacts_for_anonymous(anon_client):
     assert "source" not in key_check           # no key source leaked
     assert "path" not in body["checks"]["uploads_writable"]  # no fs path leaked
     assert "import_worker" not in body["checks"]  # operational detail hidden
+    assert "analysis_worker" not in body["checks"]  # incl. queue depth
 
 
 async def test_health_ready_full_detail_for_authenticated(client):
@@ -194,6 +195,8 @@ async def test_health_ready_full_detail_for_authenticated(client):
     assert "source" in body["checks"]["anthropic_key"]
     assert "path" in body["checks"]["uploads_writable"]
     assert "import_worker" in body["checks"]
+    assert "analysis_worker" in body["checks"]
+    assert "queued" in body["checks"]["analysis_worker"]
 
 
 # --- public branding logo (login page); settings logo stays gated ------- #

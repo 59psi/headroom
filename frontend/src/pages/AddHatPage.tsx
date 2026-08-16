@@ -90,7 +90,10 @@ export function AddHatPage() {
           className="btn btn-primary w-100 btn-lg"
           disabled={mutation.isPending}
         >
-          {mutation.isPending ? 'Saving · Claude analyzing…' : 'Save Hat'}
+          {/* No longer "Claude analyzing…": the upload returns as soon as the
+              photo is saved and analysis is queued, so claiming otherwise
+              would overstate what this button is waiting on. */}
+          {mutation.isPending ? 'Saving…' : 'Save Hat'}
         </button>
       </form>
 
