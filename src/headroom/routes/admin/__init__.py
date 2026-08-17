@@ -12,11 +12,19 @@ accidentally ship an unguarded admin route.
 from fastapi import APIRouter, Depends
 
 from headroom.auth import require_admin
-from headroom.routes.admin import activity, backups, catalog, ebay, errors, reports
+from headroom.routes.admin import (
+    activity,
+    analysis,
+    backups,
+    catalog,
+    ebay,
+    errors,
+    reports,
+)
 
 router = APIRouter(
     prefix="/api/admin", tags=["admin"], dependencies=[Depends(require_admin)]
 )
 
-for _sub in (errors, backups, activity, reports, ebay, catalog):
+for _sub in (errors, backups, activity, reports, ebay, catalog, analysis):
     router.include_router(_sub.router)

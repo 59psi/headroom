@@ -148,3 +148,28 @@ export function listImportJobs(limit = 20) {
 export function cancelImportJob(id: number) {
   return apiFetch<ImportJob>(`/api/hats/import/${id}`, { method: 'DELETE' });
 }
+
+export interface PendingHat {
+  id: number;
+  display_id: string | null;
+  label: string | null;
+  photo_path: string | null;
+}
+
+export interface AnalysisQueueStatus {
+  worker_alive: boolean;
+  queued: number;
+  pending_count: number;
+  pending: PendingHat[];
+}
+
+export function getAnalysisQueue() {
+  return apiFetch<AnalysisQueueStatus>('/api/admin/analysis/queue');
+}
+
+export function reanalyzeAll(onlyPricedByClaude: boolean) {
+  return apiFetch<{ queued: number; worker_alive: boolean }>(
+    `/api/admin/analysis/reanalyze-all?only_priced_by_claude=${onlyPricedByClaude}`,
+    { method: 'POST' },
+  );
+}

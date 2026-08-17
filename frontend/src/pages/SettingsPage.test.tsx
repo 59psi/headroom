@@ -23,6 +23,10 @@ vi.mock('../api/settings', () => ({
     ip: '192.168.1.20', url: 'http://headroom.local:8000',
   })),
   getRecentErrors: vi.fn(async () => []),
+  getAnalysisQueue: vi.fn(async () => ({
+    worker_alive: true, queued: 0, pending_count: 0, pending: [],
+  })),
+  reanalyzeAll: vi.fn(),
   listBackups: vi.fn(async () => []),
   backupDownloadUrl: vi.fn(() => '/api/admin/backup'),
   getActivityLog: vi.fn(async () => []),
@@ -50,6 +54,7 @@ const CARD_TITLES = [
   'Claude API Key',
   'Claude Model',
   'Google Vision Key (fallback)',
+  'Analysis Queue',
   'Recent Analysis Errors',
   'eBay Comparable Listings (optional)',
   'LAN Discovery (mDNS)',
@@ -68,7 +73,7 @@ beforeEach(() => { vi.clearAllMocks(); });
 
 describe('SettingsPage', () => {
   it('renders every card, in the documented order', async () => {
-    // The page is a composition root over 15 modules; dropping one is a silent
+    // The page is a composition root over 16 modules; dropping one is a silent
     // failure nothing else in the toolchain catches. Scoped to `.card-title`
     // because card *bodies* mention other cards by name (ShareTargetCard points
     // at "Account"), so a bare text query is ambiguous.
