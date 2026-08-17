@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import { getColorPalette, searchHats, searchHatsByColor } from '../api/search';
 import { ColorSwatches } from '../components/common/ColorSwatch';
 import { ConditionBadge } from '../components/common/ConditionBadge';
@@ -12,11 +12,20 @@ import {
 import type { ColorSearchResult, SearchResult } from '../types';
 
 export function SearchPage() {
-  const [query, setQuery] = useState('');
-  const [searchTerm, setSearchTerm] = useState('');
+  // `?q=` and `?color=` let other pages hand off a search — the stats page's
+  // colour bars link straight to the ranked results for that shade. Initial
+  // value only; the controls own the state from then on.
+  const [searchParams] = useSearchParams();
+  const initialQuery = searchParams.get('q') ?? '';
+  const [query, setQuery] = useState(initialQuery);
+  const [searchTerm, setSearchTerm] = useState(initialQuery);
   const [exactColors, setExactColors] = useState(false);
-  const [colorHex, setColorHex] = useState<string | null>(null);
-  const [pickerHex, setPickerHex] = useState('#8cb9e1');
+  const [colorHex, setColorHex] = useState<string | null>(
+    () => searchParams.get('color'),
+  );
+  const [pickerHex, setPickerHex] = useState(
+    () => searchParams.get('color') ?? '#8cb9e1',
+  );
 
   const hatFilters = useHatFilters();
   const { filters, activeCount: activeFilterCount, isOpen: filtersOpen, setIsOpen: setFiltersOpen } = hatFilters;

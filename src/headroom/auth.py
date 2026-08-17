@@ -86,6 +86,16 @@ require_admin = require_user
 # maximal — this app serves its own SPA from its own origin and loads nothing
 # from anywhere else, so a strict policy costs nothing and there is no CDN to
 # grandfather in.
+#
+# That last claim was false for six releases. `tokens.css` pulled the four
+# typefaces from Google Fonts, so `style-src 'self'` and `font-src 'self'`
+# blocked the app's entire type system from 2.12.0 onward and everything
+# rendered in system-ui. Nobody saw it: existing users had the fonts cached
+# from before the header existed, a blocked font logs to the console and
+# nowhere else, and text that is merely the wrong shape still reads fine.
+# The fonts are now bundled (see `main.tsx`), which makes the comment true.
+# Keep it true — if something here needs an external origin, self-host it
+# instead of widening the policy.
 _SECURITY_HEADERS = {
     # No external scripts, styles, fonts, frames or XHR targets. 'unsafe-inline'
     # for style-src only: the SPA sets inline `style=` attributes in several

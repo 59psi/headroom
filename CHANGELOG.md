@@ -6,6 +6,96 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.19.0] — 2026-08-17
+
+### Added
+- **Stats page (`/stats`).** Everything the collection is, as numbers and
+  charts: totals, condition/style/size/brand/construction/colourway splits,
+  colour distribution, hats and value by room, case fill levels, acquisitions
+  and spend over time, and leaderboards for most valuable, most expensive,
+  most worn and best cost-per-wear. Reachable from the home page's stat rail
+  and from Valuation. Charts are hand-rolled SVG/CSS for the same reason this
+  app has no UI framework — a charting library brings its own opinions about
+  colour and type to argue with.
+- **Price-paid tracking end to end.** `purchase_price` and `purchased_at` are
+  now settable when you *add* a hat, not only when editing one — the receipt
+  is in hand at that moment, and it was previously unreachable for anything
+  bought secondhand or in person. Valuation gained a "What you've paid" card
+  with totals, coverage, average, and a list of hats still missing a price.
+- **Home page counts are links.** Hats, Cases and Rooms go to their lists;
+  Archive and Daily deep-link into the Cases page's own type filter. The Cases
+  type filter now lives in the URL (`/cases?type=archive`), the hat filters
+  seed from query params (`/hats?style=a_game`), and Search accepts `?q=` and
+  `?color=` — so the stats charts link straight into a filtered view.
+
+### Changed
+- **The valuation maths, substantially — read this one.** Previous totals were
+  overstated. Both price feeds report *asking* prices — the eBay integration
+  reads currently-listed items and the melinrecap figure is a median of live
+  listings — and both were being summed at face value. Worse, whenever a
+  market price existed, condition was ignored entirely: every copy of a model
+  got the same number whether it was tagged or beaten. Market signals are now
+  discounted 15% for the gap between ask and sale and then adjusted for the
+  hat's actual condition, so headline figures will **drop**. They were wrong
+  before, not now.
+- **The home page caption said something the code no longer did.** It read
+  "Resale = manual override, else condition-based estimate (NWT 65% · New 45%
+  · Worn 30%)" long after `resale_price` had become an automatic feed, so
+  almost nothing was going through the multipliers it named. Valuation now
+  carries a "How the sale estimate is worked out" card that states the method
+  and shows how many hats rest on each kind of signal.
+- **One valuation rule instead of three.** It was implemented separately in
+  the home page, the valuation page and the server's inventory report, and had
+  drifted in all three. It now lives in `frontend/src/lib/valuation.ts`, with
+  `src/headroom/services/valuation.py` mirroring it for the server-rendered
+  report and `tests/test_valuation_parity.py` failing the build if the two
+  ever disagree.
+- **Home page stats are one panel, not five buttons.** Each was a bordered
+  card with a gradient bar — the same recipe this stylesheet uses for a
+  primary button — so they read as buttons containing numbers, left "Rooms"
+  alone on a fifth row at phone width, and took nearly half the first screen.
+- **The home carousel no longer glows.** It carried a pink glow and a pink
+  radial behind the photo, the only lit element on the page; it now uses the
+  same border, surface and shadow as every other card.
+- **Hat page pricing tiles** are two-up rather than three-across (a four-digit
+  price and a source line don't fit in 110px), label the feeds as *asks*
+  rather than "Resale (manual)", show what you paid, and show the estimated
+  sale value with a plain-English note on how it was reached.
+
+### Fixed
+- **The app's own CSP had been blocking its own fonts since 2.12.0.** The
+  security headers set `style-src 'self'` and `font-src 'self'` while
+  `tokens.css` still pulled Audiowide, Orbitron, Inter and JetBrains Mono from
+  Google Fonts, so the entire type system was stripped and everything rendered
+  in system-ui. It stayed invisible because anyone who had used Headroom
+  before 2.12.0 had the fonts cached — only a new device saw it, and there is
+  no visible error, just text of the wrong shape. The fonts are now bundled
+  from `@fontsource*` packages, which also means the design no longer depends
+  on a Google CDN being reachable from your LAN.
+- **A hand-entered resale price no longer survives only by luck.** Every
+  analysis of a Melin hat reset the price to null and relied on the live feed
+  putting a number back; when the marketplace API was unreachable it didn't,
+  and a price you had typed was gone with nothing to recover it from — on a
+  path that also runs unattended from the bulk re-analyse queue. Prices you
+  enter are now marked as yours, used as given, and never overwritten.
+- **Cost per wear used the retail estimate** when no purchase price was
+  recorded, so a hat bought on sale showed a cost per wear it never had. It
+  now appears only when there is a real price to divide.
+- **Unpriced hats are excluded from totals rather than counted as $0**, and
+  the count of them is shown. "Retention %" is computed only across hats
+  present in both totals, instead of dividing two differently-sized
+  populations by each other.
+- The deprecated `apple-mobile-web-app-capable` meta tag warned on every page
+  load; the standard `mobile-web-app-capable` now sits beside it.
+
+### Added (schema)
+- `hats.resale_price_scope` — `manual` | `model` | `category`, recording what
+  `resale_price` is a price *of*. A category median is the going rate for a
+  whole style rather than a valuation of one hat, and valuation needs to tell
+  those apart without parsing a display string.
+
+319 backend + 81 frontend tests.
+
 ## [2.18.2] — 2026-08-17
 
 ### Fixed

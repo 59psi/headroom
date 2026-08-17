@@ -10,6 +10,7 @@ import { ColorEditModal } from '../components/common/ColorEditModal';
 import { AnalysisStatus } from '../components/hats/AnalysisStatus';
 import { useState } from 'react';
 import { invalidateHatViews } from '../lib/invalidate';
+import { money, valueHat } from '../lib/valuation';
 
 /**
  * Hover text for the constructions worth explaining. Anything not listed —
@@ -123,6 +124,9 @@ export function HatDetailPage() {
   );
 
   const caseTypeLabel = data.case_type === 'archive' ? 'Archive' : data.case_type === 'daily_wear' ? 'Daily Wear' : null;
+  // Plain call, not a hook — it's pure and cheap, and putting it here keeps it
+  // below the `!data` guard without needing a null-safe variant.
+  const hatValue = valueHat(data);
 
   return (
     <>
@@ -262,9 +266,15 @@ export function HatDetailPage() {
               <div className="text-secondary small mt-2 d-flex gap-3 flex-wrap">
                 <span>Worn <strong>{data.wear_count}×</strong></span>
                 {data.date_last_worn && <span>last: {data.date_last_worn}</span>}
-                {data.wear_count > 0 && (data.purchase_price ?? data.estimated_new_price) != null && (
+                {/* Cost per wear needs what was PAID. It used to fall back to
+                    the estimated retail price, which answers a different
+                    question — a hat bought half-price showed a cost per wear
+                    it never had, on the one figure meant to reflect a real
+                    decision. Absent a purchase price, the honest output is
+                    nothing. */}
+                {data.wear_count > 0 && data.purchase_price != null && (
                   <span>
-                    ${(((data.purchase_price ?? data.estimated_new_price) as number) / data.wear_count).toFixed(2)}/wear
+                    ${(data.purchase_price / data.wear_count).toFixed(2)}/wear
                   </span>
                 )}
                 {data.wear_count > 0 && (
@@ -295,7 +305,8 @@ export function HatDetailPage() {
       </div>
 
       {/* Pricing */}
-      {(data.estimated_new_price !== null || data.resale_price_url || data.ebay_search_url) && (
+      {(data.estimated_new_price !== null || data.purchase_price !== null
+        || data.resale_price_url || data.ebay_search_url) && (
         <div className="card mb-3">
           <div className="card-body">
             <div className="d-flex justify-content-between align-items-center mb-2">
@@ -318,29 +329,55 @@ export function HatDetailPage() {
                 </button>
               )}
             </div>
+            {/* Two-up rather than three-across: at 375px the old row gave each
+                tile ~110px, which a four-digit price and a source line don't
+                fit into. */}
             <div className="row g-2">
-              <div className="col-4">
+              <div className="col-6">
                 <PriceTile
                   label="New Retail"
                   value={data.estimated_new_price ?? null}
                   source={data.estimated_new_price_source}
                 />
               </div>
-              <div className="col-4">
+              <div className="col-6">
                 <PriceTile
-                  label="eBay Median"
+                  label="Paid"
+                  value={data.purchase_price ?? null}
+                  source={data.purchased_at
+                    ? new Date(data.purchased_at).toLocaleDateString()
+                    : 'not recorded'}
+                />
+              </div>
+              <div className="col-6">
+                <PriceTile
+                  label="eBay ask"
                   value={data.ebay_median_price ?? null}
                   source={data.ebay_listing_count != null
-                    ? `${data.ebay_listing_count} listings`
+                    ? `median of ${data.ebay_listing_count} live listings`
                     : 'configure eBay key'}
                 />
               </div>
-              <div className="col-4">
+              <div className="col-6">
+                {/* Was labelled "Resale (manual)" while holding a scraped
+                    median for all but the rare hand-entered price — the label
+                    named the exception. */}
                 <PriceTile
-                  label="Resale (manual)"
+                  label="Resale ask"
                   value={data.resale_price ?? null}
                   source={data.resale_price_source}
                 />
+              </div>
+            </div>
+            {/* The figure the collection totals actually use, shown next to
+                the raw inputs so the two can be reconciled on one screen. */}
+            <div className="hr-metric mt-2">
+              <div className="hr-metric-label">Est. sale value</div>
+              <div className="hr-metric-value hr-price hr-price-large">
+                {hatValue.value != null ? money(hatValue.value) : '—'}
+              </div>
+              <div className="text-muted mt-1" style={{ fontSize: '0.7rem', lineHeight: 1.45 }}>
+                {hatValue.explanation}
               </div>
             </div>
             <div className="d-flex gap-2 flex-wrap mt-3">

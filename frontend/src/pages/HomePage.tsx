@@ -5,6 +5,8 @@ import { listAllHats } from '../api/hats';
 import { listRooms } from '../api/rooms';
 import { getLogo } from '../api/settings';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
+import { StatTiles } from '../components/charts/Charts';
+import { money, valueCollection } from '../lib/valuation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 function shuffleArray<T>(arr: T[]): T[] {
@@ -88,35 +90,7 @@ export function HomePage() {
 
   // ALL hooks must run on every render in the same order — Rules of Hooks.
   // The valuation useMemo MUST live above the early-return below.
-  const valuation = useMemo(() => {
-    // Resale heuristic — applied only when the hat doesn't have a user-set
-    // resale_price. Rough industry rules of thumb for branded headwear.
-    const RESALE_MULTIPLIER: Record<string, number> = {
-      new_with_tags: 0.65,
-      new: 0.45,
-      worn: 0.30,
-    };
-    const buckets: Record<string, { count: number; newTotal: number; resaleTotal: number; label: string }> = {
-      new_with_tags: { count: 0, newTotal: 0, resaleTotal: 0, label: 'New w/ Tags' },
-      new: { count: 0, newTotal: 0, resaleTotal: 0, label: 'New' },
-      worn: { count: 0, newTotal: 0, resaleTotal: 0, label: 'Worn' },
-    };
-    let appraisedHatCount = 0;
-    (hats.data ?? []).forEach(h => {
-      const bucket = buckets[h.condition];
-      if (!bucket) return;
-      bucket.count += 1;
-      const newPrice = h.estimated_new_price ?? 0;
-      if (newPrice > 0) appraisedHatCount += 1;
-      const resaleMult = RESALE_MULTIPLIER[h.condition] ?? 0.4;
-      const resalePrice = h.resale_price ?? newPrice * resaleMult;
-      bucket.newTotal += newPrice;
-      bucket.resaleTotal += resalePrice;
-    });
-    const totalNew = Object.values(buckets).reduce((s, b) => s + b.newTotal, 0);
-    const totalResale = Object.values(buckets).reduce((s, b) => s + b.resaleTotal, 0);
-    return { buckets, totalNew, totalResale, appraisedHatCount };
-  }, [hats.data]);
+  const valuation = useMemo(() => valueCollection(hats.data ?? []), [hats.data]);
 
   if (cases.isLoading || hats.isLoading) return <LoadingSpinner />;
 
@@ -136,38 +110,41 @@ export function HomePage() {
         <p>The Outrun-grade vault for your hat collection.</p>
       </div>
 
-      <div className="hr-stat-grid mb-3">
-        <div className="hr-stat" style={{ '--accent': 'var(--gradient-pink-cyan)' } as React.CSSProperties}>
-          <div className="hr-stat-value">{totalHats}</div>
-          <div className="hr-stat-label">Hats</div>
+      {/* Every count here is a question with an answer elsewhere in the app
+          ("35 cases" → show me them), so every count is the link to it.
+          Archive and Daily deep-link into the Cases page's own type filter
+          rather than duplicating a filtered list. */}
+      <nav className="hr-stat-rail mb-3" aria-label="Collection summary">
+        <div className="hr-stat-row">
+          <Link to="/hats" className="hr-stat-cell">
+            <span className="hr-stat-num">{totalHats}</span>
+            <span className="hr-stat-cap">Hats</span>
+          </Link>
+          <Link to="/cases" className="hr-stat-cell">
+            <span className="hr-stat-num">{totalCases}</span>
+            <span className="hr-stat-cap">Cases</span>
+          </Link>
+          <Link to="/rooms" className="hr-stat-cell">
+            <span className="hr-stat-num">{totalRooms}</span>
+            <span className="hr-stat-cap">Rooms</span>
+          </Link>
         </div>
-        <div className="hr-stat" style={{ '--accent': 'var(--gradient-cyan-purple)' } as React.CSSProperties}>
-          <div className="hr-stat-value">{totalCases}</div>
-          <div className="hr-stat-label">Cases</div>
+        <div className="hr-stat-sub">
+          <Link to="/cases?type=archive"><b>{archiveCases}</b> Archive</Link>
+          <Link to="/cases?type=daily_wear"><b>{dailyCases}</b> Daily</Link>
+          <Link to="/stats" className="hr-stat-sub-cta">All stats →</Link>
         </div>
-        <div className="hr-stat">
-          <div className="hr-stat-value">{archiveCases}</div>
-          <div className="hr-stat-label">Archive</div>
-        </div>
-        <div className="hr-stat">
-          <div className="hr-stat-value">{dailyCases}</div>
-          <div className="hr-stat-label">Daily</div>
-        </div>
-        <div className="hr-stat">
-          <div className="hr-stat-value">{totalRooms}</div>
-          <div className="hr-stat-label">Rooms</div>
-        </div>
-      </div>
+      </nav>
 
       <div className="card hr-feature mb-3">
         <div className="card-body">
           <div className="d-flex justify-content-between align-items-start gap-2 flex-wrap mb-3">
-            <div>
+            <div style={{ minWidth: 0 }}>
               <div className="card-title mb-1">Valuation Overview</div>
               <div className="text-secondary small">
-                {valuation.totalNew > 0
-                  ? <>Across {valuation.appraisedHatCount} appraised hat{valuation.appraisedHatCount === 1 ? '' : 's'}. Resale = manual override, else condition-based estimate (NWT 65% · New 45% · Worn 30%).</>
-                  : <>No appraised hats yet — upload a photo with Claude configured to populate this.</>
+                {valuation.valued > 0
+                  ? <>Estimated sale value of {valuation.valued} of {valuation.total} hats.</>
+                  : <>No priced hats yet — upload a photo with Claude configured, or enter prices by hand.</>
                 }
               </div>
             </div>
@@ -176,59 +153,46 @@ export function HomePage() {
             </Link>
           </div>
 
-          {valuation.totalNew > 0 && (
+          {valuation.valued > 0 && (
             <>
-              <div className="row g-2 mb-3">
-                <div className="col-6">
-                  <div className="hr-metric">
-                    <div className="hr-metric-label">Original (new)</div>
-                    <div className="hr-metric-value hr-price hr-price-large">
-                      ${valuation.totalNew.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                    </div>
-                  </div>
-                </div>
-                <div className="col-6">
-                  <div className="hr-metric">
-                    <div className="hr-metric-label">Est. resale</div>
-                    <div className="hr-metric-value hr-price hr-price-large">
-                      ${valuation.totalResale.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                    </div>
-                    <div className="text-muted" style={{ fontSize: '0.7rem', marginTop: 2 }}>
-                      {`${Math.round((valuation.totalResale / valuation.totalNew) * 100)}% of new`}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="hr-tier-label mb-2">By condition</div>
-              {(['new_with_tags', 'new', 'worn'] as const).map(key => {
-                const b = valuation.buckets[key];
-                if (b.count === 0) return null;
-                return (
-                  <div key={key} className="hr-color-row" style={{ paddingTop: '0.5rem' }}>
-                    <div className="flex-grow-1">
-                      <div className="fw-semibold">{b.label}</div>
-                      <div className="text-muted small font-mono">
-                        {b.count} hat{b.count === 1 ? '' : 's'}
-                      </div>
-                    </div>
-                    <div className="text-end">
-                      <div className="font-mono small">
-                        <span className="text-secondary">new </span>
-                        <span style={{ color: 'var(--neon-cyan)' }}>
-                          ${b.newTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                        </span>
-                      </div>
-                      <div className="font-mono small">
-                        <span className="text-secondary">resale </span>
-                        <span style={{ color: 'var(--neon-pink)' }}>
-                          ${b.resaleTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+              <StatTiles tiles={[
+                {
+                  label: 'Paid',
+                  value: money(valuation.spentTotal),
+                  tone: 'purple',
+                  sub: valuation.costUnknown > 0
+                    ? `${valuation.spentCount} of ${valuation.total} known`
+                    : 'all hats',
+                },
+                {
+                  label: 'Retail value',
+                  value: money(valuation.retailTotal),
+                  tone: 'cyan',
+                  sub: `${valuation.retailCount} appraised`,
+                },
+                {
+                  label: 'Est. sale value',
+                  value: money(valuation.marketTotal),
+                  tone: 'pink',
+                  sub: valuation.retentionPct != null
+                    ? `${valuation.retentionPct}% of retail`
+                    : undefined,
+                },
+                {
+                  label: 'vs. paid',
+                  value: valuation.unrealizedGain != null
+                    ? `${valuation.unrealizedGain >= 0 ? '+' : '−'}${money(Math.abs(valuation.unrealizedGain))}`
+                    : '—',
+                  tone: valuation.unrealizedGain != null && valuation.unrealizedGain >= 0 ? 'cyan' : 'muted',
+                  sub: valuation.unrealizedGain != null
+                    ? 'where cost is known'
+                    : 'no purchase prices yet',
+                },
+              ]} />
+              <p className="text-muted small mb-0 mt-3" style={{ fontSize: '0.72rem', lineHeight: 1.5 }}>
+                Sale value is an estimate from asking prices, discounted for
+                condition — not a quote. <Link to="/valuation">See how it's worked out</Link>.
+              </p>
             </>
           )}
         </div>

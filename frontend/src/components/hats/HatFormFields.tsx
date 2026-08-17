@@ -23,6 +23,12 @@ export interface HatBasics {
   caseId: string;
   /** ISO date or '' */
   dateLastWorn: string;
+  /** What was paid, as typed ('' = not stated). Kept as a string so the input
+   *  stays controlled while it's mid-edit — a `number|null` field turns "12."
+   *  into NaN on the keystroke before the cents. */
+  purchasePrice: string;
+  /** ISO date the hat was bought, or '' */
+  purchasedAt: string;
 }
 
 // Defined by the picker that uses it; re-exported so existing importers of
@@ -219,6 +225,47 @@ export function HatBasicsCard({
             isBeanie={values.style === 'beanie'}
             onCreateCase={onCreateCase}
           />
+        </div>
+
+        {/* Cost basis, at add time for the same reason as the collection name
+            above: the receipt is in hand now. It is also the only figure in
+            the app that is a fact rather than an estimate, and nothing else
+            can derive it — a hat bought secondhand or on sale has no other
+            route to a price except the order-history import, which won't have
+            covered it. */}
+        <div className="row g-2 mb-3">
+          <div className="col-7">
+            <label className="form-label" htmlFor="hat-purchase-price">Price paid</label>
+            <input
+              id="hat-purchase-price"
+              type="number"
+              inputMode="decimal"
+              step="0.01"
+              min="0"
+              aria-label="Price paid"
+              className="form-control"
+              placeholder="optional"
+              value={values.purchasePrice}
+              onChange={e => onChange('purchasePrice', e.target.value)}
+            />
+          </div>
+          <div className="col-5">
+            <label className="form-label" htmlFor="hat-purchased-at">Bought on</label>
+            <input
+              id="hat-purchased-at"
+              type="date"
+              aria-label="Bought on"
+              className="form-control"
+              value={values.purchasedAt}
+              onChange={e => onChange('purchasedAt', e.target.value)}
+            />
+          </div>
+          <div className="col-12">
+            <div className="form-text">
+              Drives cost-per-wear and the collection's cost basis. Leave blank
+              if you'd rather import it from your order history in Settings.
+            </div>
+          </div>
         </div>
 
         <div className="mb-3">

@@ -15,6 +15,7 @@ import { SearchPage } from './pages/SearchPage';
 import { DuplicatesPage } from './pages/DuplicatesPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { ValuationPage } from './pages/ValuationPage';
+import { StatsPage } from './pages/StatsPage';
 import { BulkImportPage } from './pages/BulkImportPage';
 import { LoginPage } from './pages/LoginPage';
 import { SharePage } from './pages/SharePage';
@@ -51,6 +52,7 @@ export function App() {
             <Route path="/search" element={<SearchPage />} />
             <Route path="/duplicates" element={<DuplicatesPage />} />
             <Route path="/valuation" element={<ValuationPage />} />
+            <Route path="/stats" element={<StatsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Route>
         </Routes>

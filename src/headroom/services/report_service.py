@@ -18,6 +18,7 @@ from sqlalchemy.orm import selectinload
 from headroom.config import settings
 from headroom.models.case import Case
 from headroom.models.hat import Hat
+from headroom.services import valuation
 
 
 def _fmt_dollars(v: float | None) -> str:
@@ -25,14 +26,21 @@ def _fmt_dollars(v: float | None) -> str:
 
 
 def _best_value(h: Hat) -> tuple[float | None, str]:
-    """Pick the most authoritative current-value figure for the report."""
-    if h.ebay_median_price:
-        return h.ebay_median_price, "eBay median"
-    if h.resale_price:
-        return h.resale_price, "manual"
-    if h.estimated_new_price:
-        return h.estimated_new_price, "Claude estimate"
-    return None, "—"
+    """Current-value figure for the report, via the app's one valuation rule.
+
+    This used to be a fourth, private ranking: eBay's median first, then
+    `resale_price` labelled "manual", then full retail. Every part of that was
+    wrong by the time it was read. Both feeds report ASKING prices, so neither
+    was discounted; `resale_price` had long since stopped being manual and was
+    a scraped median wearing that label; and falling through to undiscounted
+    retail valued a worn hat at the price of a new one. The report is the
+    document that goes to an insurer, so it is the last place that should have
+    been quietly disagreeing with the rest of the app.
+    """
+    result = valuation.value_hat(h)
+    if result.value is None:
+        return None, "—"
+    return result.value, valuation.BASIS_LABEL[result.basis]
 
 
 async def render_report(

@@ -669,67 +669,331 @@ button.card:hover::before,
   .hr-hero p { font-size: 1.05rem; }
 }
 
-/* ===== Stat cards ============================================== */
-.hr-stat-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 0.75rem;
-}
+/* ===== Stat rail =================================================
+   One object, not five.
 
-@media (min-width: 768px) {
-  .hr-stat-grid { grid-template-columns: repeat(5, 1fr); }
-}
+   The previous version was five separate cards, each with its own border and
+   its own gradient bar across the top — which is the exact recipe this
+   stylesheet uses for a primary button, so they read as five buttons that
+   happened to contain numbers. Two-up on a phone it also left "Rooms" alone
+   on a fifth row, and burned close to half the first screen before any hat
+   was visible.
 
-.hr-stat {
+   Here the counts share one surface and are divided by hairlines. Nothing has
+   a fill, a border or a shadow of its own; the tap affordance is the pressed
+   state, which is how a list row behaves rather than how a button does.
+   Archive and Daily move to a sub-row because they are subdivisions of Cases,
+   not peers of it — the old grid gave all five equal weight and implied the
+   collection had five unrelated dimensions. */
+.hr-stat-rail {
   background: var(--bg-card);
+  background-image: var(--gradient-card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 1rem;
-  text-align: center;
-  position: relative;
   overflow: hidden;
 }
 
-.hr-stat::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: var(--accent, var(--gradient-pink-cyan));
+.hr-stat-row {
+  display: flex;
 }
 
-.hr-stat-value {
+.hr-stat-cell {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.15rem;
+  padding: 0.85rem 0.4rem;
+  /* Comfortably past the 44px tap-target floor even at the smallest size. */
+  min-height: 72px;
+  text-decoration: none;
+  border-left: 1px solid var(--border-soft);
+  transition: background 0.15s ease;
+}
+
+.hr-stat-cell:first-child { border-left: 0; }
+
+/* Pointer devices get a hover; touch gets the press. Combining them would
+   leave the tint stuck on after a tap on iOS, since :hover latches there. */
+@media (hover: hover) {
+  .hr-stat-cell:hover { background: rgba(255, 255, 255, 0.04); }
+}
+
+.hr-stat-cell:active { background: rgba(255, 255, 255, 0.07); }
+
+.hr-stat-num {
   font-family: var(--font-display);
-  font-size: 2rem;
-  font-weight: 400;
-  letter-spacing: 0.04em;
+  font-size: 1.75rem;
+  line-height: 1;
+  letter-spacing: 0.02em;
   background: var(--gradient-pink-cyan);
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  line-height: 1.1;
 }
 
-.hr-stat-label {
+.hr-stat-cap {
   font-family: var(--font-heading);
-  font-size: 0.65rem;
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--text-muted);
+}
+
+.hr-stat-sub {
+  display: flex;
+  align-items: stretch;
+  border-top: 1px solid var(--border-soft);
+}
+
+.hr-stat-sub > * {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.6rem 0.5rem;
+  min-height: 44px;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  text-decoration: none;
+  border-left: 1px solid var(--border-soft);
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.hr-stat-sub > *:first-child { border-left: 0; }
+
+@media (hover: hover) {
+  .hr-stat-sub > a:hover { background: rgba(255, 255, 255, 0.04); color: var(--text); }
+}
+
+.hr-stat-sub > a:active { background: rgba(255, 255, 255, 0.07); }
+
+.hr-stat-sub b {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--neon-cyan);
+}
+
+.hr-stat-sub .hr-stat-sub-cta {
+  color: var(--neon-pink);
+  font-weight: 600;
+}
+
+/* ===== Number tiles ==============================================
+   Used on the valuation and stats pages for headline figures. Same
+   restraint as the rail: a tinted panel, no border, no glow. */
+.hr-tile-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+@media (min-width: 720px) {
+  .hr-tile-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+.hr-tile {
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: var(--radius-sm);
+  padding: 0.7rem 0.75rem;
+  min-width: 0;
+}
+
+.hr-tile-label {
+  font-family: var(--font-heading);
+  font-size: 0.58rem;
   text-transform: uppercase;
   letter-spacing: 0.12em;
   color: var(--text-muted);
-  margin-top: 0.35rem;
+  margin-bottom: 0.3rem;
+}
+
+.hr-tile-value {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 1.25rem;
+  line-height: 1.1;
+  /* Long dollar totals must shrink rather than overflow the tile on a phone. */
+  overflow-wrap: anywhere;
+}
+
+.hr-tile-sub {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  margin-top: 0.25rem;
+  line-height: 1.35;
+}
+
+.hr-tile-cyan .hr-tile-value { color: var(--neon-cyan); }
+.hr-tile-pink .hr-tile-value { color: var(--neon-pink); }
+.hr-tile-purple .hr-tile-value { color: var(--neon-purple); }
+.hr-tile-muted .hr-tile-value { color: var(--text-secondary); }
+
+/* ===== Charts ====================================================
+   See components/charts/Charts.tsx for why these are hand-rolled. */
+.hr-barlist {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.hr-barlist-row { min-width: 0; }
+
+.hr-barlist-row-link {
+  text-decoration: none;
+  display: block;
+  border-radius: var(--radius-sm);
+  transition: background 0.15s ease;
+}
+
+@media (hover: hover) {
+  .hr-barlist-row-link:hover { background: rgba(255, 255, 255, 0.04); }
+}
+
+.hr-barlist-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin-bottom: 0.25rem;
+}
+
+.hr-barlist-label {
+  font-size: 0.82rem;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.hr-barlist-value {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.hr-barlist-track {
+  height: 7px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-input);
+  overflow: hidden;
+}
+
+.hr-barlist-fill {
+  height: 100%;
+  border-radius: var(--radius-pill);
+  transition: width 0.4s ease;
+}
+
+.hr-donut-wrap {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.hr-donut {
+  width: 148px;
+  height: 148px;
+  flex-shrink: 0;
+}
+
+.hr-donut-center-value {
+  font-family: var(--font-display);
+  font-size: 22px;
+  fill: var(--text);
+}
+
+.hr-donut-center-label {
+  font-family: var(--font-heading);
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  fill: var(--text-muted);
+}
+
+.hr-donut-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 1 1 180px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.hr-donut-legend li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  min-width: 0;
+}
+
+.hr-legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.hr-legend-label {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.hr-legend-value {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text);
+  flex-shrink: 0;
+}
+
+.hr-legend-pct {
+  color: var(--text-muted);
+  margin-left: 0.4rem;
+}
+
+/* A long series scrolls inside its card rather than widening the page. */
+.hr-timeseries-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.hr-chart-axis {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  fill: var(--text-muted);
 }
 
 /* ===== Carousel ================================================ */
+/* Matched to every other card on the page: the same border, the same surface,
+   the same shadow. It previously carried `--glow-pink` plus a pink radial
+   behind the photo, which put a lit halo around one element on a page where
+   nothing else has one — the hat read as if it were selected, and the spill
+   tinted the whole lower third of the phone screen. The photo is the subject;
+   it doesn't need help being looked at. */
 .hr-carousel {
   border-radius: var(--radius);
   overflow: hidden;
-  border: 1px solid var(--border-bright);
-  box-shadow: var(--shadow-lg), var(--glow-pink);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
   max-width: 560px;
   margin: 0 auto;
   background: var(--bg-card);
+  background-image: var(--gradient-card);
   position: relative;
 }
 
@@ -738,9 +1002,9 @@ button.card:hover::before,
   width: 100%;
   aspect-ratio: 16 / 9;
   object-fit: contain;
-  background:
-    radial-gradient(ellipse at center, rgba(255, 46, 182, 0.15), transparent 60%),
-    var(--bg-card);
+  /* Transparent PNGs need something behind them; the page's own surface, not
+     a spotlight. */
+  background: transparent;
 }
 
 .hr-carousel .carousel-caption {

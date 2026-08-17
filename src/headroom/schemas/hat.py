@@ -128,6 +128,14 @@ class HatCreate(BaseModel):
     # form meant typing them twice, or hoping Claude guessed.
     artist_series: str | None = None
     model_name: str | None = None
+    # Same reasoning, applied to cost basis: the receipt is in hand at the
+    # moment a hat is added and nowhere to be found a week later. Without this
+    # the only ways to record a price were the Edit form or an order-history
+    # import, so anything bought secondhand or in person had no cost basis at
+    # all — and a purchase price is the one figure in this app that is a fact
+    # rather than an estimate.
+    purchase_price: float | None = None
+    purchased_at: datetime | None = None
     # Deprecated, accepted for back-compat. Read `construction` instead.
     hydrolite: bool = False
     hydro: bool = False
@@ -217,6 +225,7 @@ class HatRead(BaseModel):
     resale_price_source: str | None = None
     resale_price_url: str | None = None
     resale_checked_at: datetime | None = None
+    resale_price_scope: str | None = None
     analysis_status: str | None = None
     analysis_stage: str | None = None
     analysis_job_id: int | None = None

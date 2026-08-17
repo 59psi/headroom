@@ -51,6 +51,7 @@ const HAT: HatRead = {
   resale_price: null,
   resale_price_source: null,
   resale_price_url: null,
+  resale_price_scope: null,
   resale_checked_at: null,
   analysis_status: 'ok',
   analysis_stage: null,

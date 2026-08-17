@@ -47,6 +47,22 @@ class Hat(Base):
     resale_price_source: Mapped[str | None] = mapped_column(String(80), nullable=True)
     resale_price_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     resale_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # How much `resale_price` is actually about THIS hat. The three values are
+    # not degrees of confidence in one measurement -- they are three different
+    # measurements that happen to share a column:
+    #   "manual"   -- a person typed it. Authoritative; nothing is applied to it.
+    #   "model"    -- median asking price of listings matching this model name.
+    #                 A comparable. Still an ASK, so valuation discounts it.
+    #   "category" -- median asking price of every listing in the style category,
+    #                 because too few model listings existed to be worth using.
+    #                 That is a price level for "an Odysea", not a value for this
+    #                 Odysea, and treating it as one gave every hat in a category
+    #                 the same number and made the collection total meaningless.
+    # `resale_price_source` carries the same fact inside a display sentence;
+    # valuation needs to branch on it, and parsing prose for " model listings"
+    # would silently start valuing the collection differently the day someone
+    # reworded the label.
+    resale_price_scope: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     # Analysis bookkeeping
     # What logo/wordmark the analyser actually SAW, and whose it is — kept apart

@@ -1,200 +1,354 @@
+/**
+ * What the collection cost, what it's worth, and — the part that used to be
+ * missing — how that second number is arrived at.
+ *
+ * The arithmetic lives in `lib/valuation`; this page is presentation plus the
+ * explanation of the method. See that module for why the old "Est. resale"
+ * figure was overstated and why its caption described a calculation that was
+ * mostly not running.
+ */
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
-import { listAllHats } from '../api/hats';
+import { listAllHats, listDisposedHats } from '../api/hats';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
+import { BarList, ChartCard, StatTiles } from '../components/charts/Charts';
+import {
+  ASK_TO_SOLD, BASIS_LABEL, CONDITION_VS_MARKET, RETAIL_RETENTION,
+  costOf, money, realizedTotals, valueCollection, valueHat, type ValueBasis,
+} from '../lib/valuation';
 import type { HatRead } from '../types';
 import { tileSrc } from '../lib/photo';
 
-const RESALE_MULTIPLIER: Record<string, number> = {
-  new_with_tags: 0.65,
-  new: 0.45,
-  worn: 0.30,
+const CONDITION_LABELS: Record<string, string> = {
+  new_with_tags: 'New with tags',
+  new: 'New',
+  worn: 'Worn',
 };
-
-function resaleFor(h: HatRead): number {
-  const newPrice = h.estimated_new_price ?? 0;
-  const fallback = newPrice * (RESALE_MULTIPLIER[h.condition] ?? 0.4);
-  return h.resale_price ?? fallback;
-}
-
-function fmt$(n: number): string {
-  return `$${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
-}
 
 interface Bucket {
   key: string;
   label: string;
   count: number;
-  newTotal: number;
-  resaleTotal: number;
+  paid: number;
+  paidCount: number;
+  value: number;
+  valuedCount: number;
 }
 
-function bucketize(hats: HatRead[], keyFn: (h: HatRead) => string | null, labelFn: (k: string) => string = (k) => k): Bucket[] {
+function bucketize(
+  hats: HatRead[],
+  keyFn: (h: HatRead) => string | null,
+  labelFn: (k: string) => string = k => k,
+): Bucket[] {
   const map = new Map<string, Bucket>();
   for (const h of hats) {
     const k = keyFn(h);
     if (!k) continue;
-    const newPrice = h.estimated_new_price ?? 0;
-    const resale = resaleFor(h);
-    const existing = map.get(k);
-    if (existing) {
-      existing.count += 1;
-      existing.newTotal += newPrice;
-      existing.resaleTotal += resale;
-    } else {
-      map.set(k, { key: k, label: labelFn(k), count: 1, newTotal: newPrice, resaleTotal: resale });
-    }
+    const bucket = map.get(k) ?? {
+      key: k, label: labelFn(k), count: 0, paid: 0, paidCount: 0, value: 0, valuedCount: 0,
+    };
+    bucket.count += 1;
+    const paid = costOf(h);
+    if (paid != null) { bucket.paid += paid; bucket.paidCount += 1; }
+    const { value } = valueHat(h);
+    if (value != null) { bucket.value += value; bucket.valuedCount += 1; }
+    map.set(k, bucket);
   }
-  return Array.from(map.values()).sort((a, b) => b.newTotal - a.newTotal);
+  return Array.from(map.values()).sort((a, b) => b.value - a.value || b.count - a.count);
 }
 
 function BucketTable({ title, buckets }: { title: string; buckets: Bucket[] }) {
   if (buckets.length === 0) return null;
   return (
-    <div className="card mb-3">
-      <div className="card-body">
-        <div className="card-title mb-2">{title}</div>
-        {buckets.map(b => (
-          <div key={b.key} className="hr-color-row" style={{ paddingTop: '0.5rem' }}>
-            <div className="flex-grow-1" style={{ minWidth: 0 }}>
-              <div className="fw-semibold" style={{
-                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-              }}>{b.label}</div>
-              <div className="text-muted small font-mono">{b.count} hat{b.count === 1 ? '' : 's'}</div>
-            </div>
-            <div className="text-end">
-              <div className="font-mono small">
-                <span className="text-secondary">new </span>
-                <span style={{ color: 'var(--neon-cyan)' }}>{fmt$(b.newTotal)}</span>
-              </div>
-              <div className="font-mono small">
-                <span className="text-secondary">resale </span>
-                <span style={{ color: 'var(--neon-pink)' }}>{fmt$(b.resaleTotal)}</span>
-              </div>
+    <ChartCard title={title}>
+      {buckets.map(b => (
+        <div key={b.key} className="hr-color-row" style={{ paddingTop: '0.5rem' }}>
+          <div className="flex-grow-1" style={{ minWidth: 0 }}>
+            <div
+              className="fw-semibold"
+              style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+            >{b.label}</div>
+            <div className="text-muted small font-mono">
+              {b.count} hat{b.count === 1 ? '' : 's'}
             </div>
           </div>
-        ))}
-      </div>
+          <div className="text-end">
+            <div className="font-mono small">
+              <span className="text-secondary">paid </span>
+              <span style={{ color: 'var(--neon-purple)' }}>
+                {b.paidCount > 0 ? money(b.paid) : '—'}
+              </span>
+            </div>
+            <div className="font-mono small">
+              <span className="text-secondary">worth </span>
+              <span style={{ color: 'var(--neon-pink)' }}>
+                {b.valuedCount > 0 ? money(b.value) : '—'}
+              </span>
+            </div>
+          </div>
+        </div>
+      ))}
+    </ChartCard>
+  );
+}
+
+function HatList({ hats, valueFor }: { hats: HatRead[]; valueFor: (h: HatRead) => string }) {
+  return (
+    <div>
+      {hats.map((h, i) => (
+        <Link
+          key={h.id}
+          to={`/hats/${h.id}`}
+          className="hr-color-row text-decoration-none"
+          style={{ paddingTop: '0.5rem' }}
+        >
+          <div className="font-mono fw-bold" style={{ color: 'var(--neon-purple)', minWidth: 22 }}>
+            {i + 1}.
+          </div>
+          {h.photo_path ? (
+            <img src={tileSrc(h)} alt="" className="hr-thumb flex-shrink-0" style={{ width: 40, height: 40 }} />
+          ) : (
+            <div className="rounded flex-shrink-0" style={{ width: 40, height: 40, background: 'rgba(0,0,0,0.3)' }} />
+          )}
+          <div className="flex-grow-1" style={{ minWidth: 0 }}>
+            <div className="font-mono small" style={{ color: 'var(--neon-cyan)' }}>
+              {h.display_id || `Hat #${h.id}`}
+            </div>
+            <div
+              className="text-secondary small"
+              style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+            >
+              {h.brand || h.style.replace(/_/g, ' ')}{h.model_name && ` · ${h.model_name}`}
+            </div>
+          </div>
+          <div className="font-mono fw-bold flex-shrink-0" style={{ color: 'var(--neon-pink)' }}>
+            {valueFor(h)}
+          </div>
+        </Link>
+      ))}
     </div>
   );
 }
 
 export function ValuationPage() {
-  const hats = useQuery({ queryKey: ['hats'], queryFn: listAllHats });
+  const hatsQ = useQuery({ queryKey: ['hats'], queryFn: listAllHats });
+  const disposedQ = useQuery({ queryKey: ['hats', 'disposed'], queryFn: listDisposedHats });
 
-  const analysis = useMemo(() => {
-    const data = hats.data ?? [];
-    const appraised = data.filter(h => (h.estimated_new_price ?? 0) > 0);
-    const totalNew = appraised.reduce((s, h) => s + (h.estimated_new_price ?? 0), 0);
-    const totalResale = appraised.reduce((s, h) => s + resaleFor(h), 0);
+  const hats = useMemo(() => hatsQ.data ?? [], [hatsQ.data]);
+  const disposed = useMemo(() => disposedQ.data ?? [], [disposedQ.data]);
 
-    const conditionLabels: Record<string, string> = {
-      new_with_tags: 'New with Tags',
-      new: 'New',
-      worn: 'Worn',
-    };
+  const totals = useMemo(() => valueCollection(hats), [hats]);
+  const realized = useMemo(() => realizedTotals(disposed), [disposed]);
 
-    return {
-      totalHats: data.length,
-      appraisedCount: appraised.length,
-      unappraisedCount: data.length - appraised.length,
-      totalNew,
-      totalResale,
-      retentionPct: totalNew > 0 ? Math.round((totalResale / totalNew) * 100) : 0,
-      byCondition: bucketize(data, h => h.condition, k => conditionLabels[k] ?? k),
-      byBrand: bucketize(data, h => h.brand, k => k),
-      byStyle: bucketize(data, h => h.style, k => k.replace(/_/g, ' ')),
-      byRoom: bucketize(data, h => h.room_name, k => k),
-      topByNew: [...appraised]
-        .sort((a, b) => (b.estimated_new_price ?? 0) - (a.estimated_new_price ?? 0))
-        .slice(0, 10),
-      topByResale: [...appraised]
-        .sort((a, b) => resaleFor(b) - resaleFor(a))
-        .slice(0, 10),
-      neglected: [...data]
-        .filter(h => !h.disposed_at)
-        .sort((a, b) => (a.date_last_worn ?? '0000') < (b.date_last_worn ?? '0000') ? -1 : 1)
-        .slice(0, 5),
-    };
-  }, [hats.data]);
+  const basisRows = useMemo(() => {
+    const order: ValueBasis[] = ['manual', 'comp', 'retail', 'category', 'none'];
+    return order
+      .map(b => ({
+        label: BASIS_LABEL[b],
+        value: totals.byBasis[b].count,
+        display: b === 'none'
+          ? `${totals.byBasis[b].count} hats · not counted`
+          : `${totals.byBasis[b].count} hats · ${money(totals.byBasis[b].total)}`,
+      }))
+      .filter(r => r.value > 0);
+  }, [totals]);
 
-  if (hats.isLoading) return <LoadingSpinner />;
+  const missingCost = useMemo(
+    () => hats.filter(h => costOf(h) == null).slice(0, 10),
+    [hats],
+  );
 
-  if (analysis.appraisedCount === 0) {
-    return (
-      <>
-        <h1 className="mb-3">Valuation</h1>
-        <div className="card mb-3">
-          <div className="card-body text-center py-5">
-            <p className="text-secondary mb-2">
-              No appraised hats yet ({analysis.totalHats} hat{analysis.totalHats === 1 ? '' : 's'} in collection).
-            </p>
-            <p className="text-muted small mb-3">
-              Upload hat photos with a Claude API key configured — Claude estimates the
-              new retail price during analysis. You can also enter prices manually on
-              each hat's edit page.
-            </p>
-            <Link to="/settings" className="btn btn-outline-primary btn-sm">Configure API Key</Link>
-          </div>
-        </div>
-      </>
-    );
-  }
+  const buckets = useMemo(() => ({
+    condition: bucketize(hats, h => h.condition, k => CONDITION_LABELS[k] ?? k),
+    brand: bucketize(hats, h => h.brand),
+    style: bucketize(hats, h => h.style, k => k.replace(/_/g, ' ')),
+    room: bucketize(hats, h => h.room_name),
+  }), [hats]);
+
+  const topValued = useMemo(
+    () => [...hats]
+      .filter(h => valueHat(h).value != null)
+      .sort((a, b) => (valueHat(b).value ?? 0) - (valueHat(a).value ?? 0))
+      .slice(0, 10),
+    [hats],
+  );
+
+  const neglected = useMemo(
+    () => [...hats]
+      .sort((a, b) => ((a.date_last_worn ?? '0000') < (b.date_last_worn ?? '0000') ? -1 : 1))
+      .slice(0, 5),
+    [hats],
+  );
+
+  if (hatsQ.isLoading) return <LoadingSpinner />;
+
+  const avgPaid = totals.spentCount > 0 ? totals.spentTotal / totals.spentCount : 0;
 
   return (
     <>
       <div className="d-flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
         <h1>Valuation</h1>
-        <Link to="/" className="btn btn-outline-secondary btn-sm">← Home</Link>
+        <div className="d-flex gap-2">
+          <Link to="/stats" className="btn btn-outline-primary btn-sm">Stats →</Link>
+          <Link to="/" className="btn btn-outline-secondary btn-sm">← Home</Link>
+        </div>
       </div>
 
       <div className="card hr-feature mb-3">
         <div className="card-body">
-          <div className="card-title">Collection Totals</div>
-          <div className="row g-2 mb-2">
-            <div className="col-6">
-              <div className="hr-metric">
-                <div className="hr-metric-label">Original (new)</div>
-                <div className="hr-metric-value hr-price hr-price-large">{fmt$(analysis.totalNew)}</div>
-              </div>
-            </div>
-            <div className="col-6">
-              <div className="hr-metric">
-                <div className="hr-metric-label">Est. resale</div>
-                <div className="hr-metric-value hr-price hr-price-large">{fmt$(analysis.totalResale)}</div>
-                <div className="text-muted" style={{ fontSize: '0.7rem', marginTop: 2 }}>
-                  {analysis.retentionPct}% of new
-                </div>
-              </div>
-            </div>
-          </div>
-          <p className="text-muted small mb-0" style={{ fontSize: '0.75rem' }}>
-            Across {analysis.appraisedCount} appraised hat{analysis.appraisedCount === 1 ? '' : 's'}
-            {analysis.unappraisedCount > 0 && ` · ${analysis.unappraisedCount} not yet appraised`}.
-            Resale = manual override per hat, else estimate (NWT 65% · New 45% · Worn 30%).
+          <div className="card-title mb-2">Collection totals</div>
+          <StatTiles tiles={[
+            {
+              label: 'Paid',
+              value: money(totals.spentTotal),
+              tone: 'purple',
+              sub: `${totals.spentCount} of ${totals.total} hats priced`,
+            },
+            {
+              label: 'Retail value',
+              value: money(totals.retailTotal),
+              tone: 'cyan',
+              sub: `${totals.retailCount} appraised`,
+            },
+            {
+              label: 'Est. sale value',
+              value: money(totals.marketTotal),
+              tone: 'pink',
+              sub: totals.retentionPct != null ? `${totals.retentionPct}% of retail` : undefined,
+            },
+            {
+              label: 'vs. paid',
+              value: totals.unrealizedGain != null
+                ? `${totals.unrealizedGain >= 0 ? '+' : '−'}${money(Math.abs(totals.unrealizedGain))}`
+                : '—',
+              tone: totals.unrealizedGain != null && totals.unrealizedGain >= 0 ? 'cyan' : 'muted',
+              sub: totals.unrealizedGain != null
+                ? 'hats with both figures'
+                : 'needs purchase prices',
+            },
+          ]} />
+          {totals.unvalued > 0 && (
+            <p className="text-muted small mb-0 mt-3" style={{ fontSize: '0.72rem' }}>
+              {totals.unvalued} hat{totals.unvalued === 1 ? ' has' : 's have'} no
+              price data at all and {totals.unvalued === 1 ? 'is' : 'are'} left out
+              of every figure above rather than counted as $0.
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* ===== The method, stated ===== */}
+      <ChartCard
+        title="How the sale estimate is worked out"
+        subtitle="Each hat uses the best signal it has. Stronger bases first."
+      >
+        <BarList data={basisRows} colorize />
+        <div className="text-secondary small mt-3" style={{ fontSize: '0.78rem', lineHeight: 1.6 }}>
+          <p className="mb-2">
+            <strong>Neither price feed knows what anything sold for.</strong> The
+            eBay integration reads currently-listed items and the melinrecap
+            figure is a median of live listings — both are <em>asking</em>{' '}
+            prices. Taking them at face value overstated the collection, which
+            is why every market number here is cut by{' '}
+            {Math.round((1 - ASK_TO_SOLD) * 100)}% for the gap between what a
+            seller asks and what a hat goes for.
+          </p>
+          <p className="mb-2">
+            A market median also covers hats in every condition, so it's then
+            adjusted for the condition of yours — {Object.entries(CONDITION_VS_MARKET)
+              .map(([k, v]) => `${CONDITION_LABELS[k] ?? k} ${Math.round(v * 100)}%`)
+              .join(' · ')}.
+          </p>
+          <p className="mb-2">
+            With no comparable listings, the estimate falls back to a share of
+            new retail: {Object.entries(RETAIL_RETENTION)
+              .map(([k, v]) => `${CONDITION_LABELS[k] ?? k} ${Math.round(v * 100)}%`)
+              .join(' · ')}.
+          </p>
+          <p className="mb-0">
+            <strong>{BASIS_LABEL.category}</strong> is the weak one: no listings
+            matched the model, so it borrows the median across the whole style
+            category. That's the going rate for a hat of that shape, not a
+            valuation of this hat — worth knowing if a lot of the total rests
+            on it.
           </p>
         </div>
-      </div>
+      </ChartCard>
 
-      <BucketTable title="By Condition" buckets={analysis.byCondition} />
-      <BucketTable title="By Brand" buckets={analysis.byBrand} />
-      <BucketTable title="By Style" buckets={analysis.byStyle} />
-      <BucketTable title="By Room" buckets={analysis.byRoom} />
+      {/* ===== Price paid ===== */}
+      <ChartCard
+        title="What you've paid"
+        subtitle={
+          totals.costUnknown > 0
+            ? <>{totals.costUnknown} hat{totals.costUnknown === 1 ? '' : 's'} still
+               have no purchase price. Import your order history from Settings, or
+               set one on a hat's edit page.</>
+            : <>Every hat has a purchase price on record.</>
+        }
+        action={
+          totals.costUnknown > 0
+            ? <Link to="/settings" className="btn btn-outline-primary btn-sm flex-shrink-0">Import</Link>
+            : undefined
+        }
+      >
+        <StatTiles tiles={[
+          { label: 'Total paid', value: money(totals.spentTotal), tone: 'purple' },
+          { label: 'Average', value: totals.spentCount > 0 ? money(avgPaid) : '—', tone: 'muted' },
+          {
+            label: 'Priced',
+            value: `${totals.spentCount}/${totals.total}`,
+            tone: 'cyan',
+            sub: `${Math.round((totals.spentCount / Math.max(totals.total, 1)) * 100)}% covered`,
+          },
+          {
+            label: 'Sold for',
+            value: money(realized.proceeds),
+            tone: 'pink',
+            sub: realized.netGain != null
+              ? `${realized.netGain >= 0 ? '+' : '−'}${money(Math.abs(realized.netGain))} vs cost`
+              : `${realized.sold} sold`,
+          },
+        ]} />
+        {missingCost.length > 0 && (
+          <>
+            <div className="hr-tier-label mt-3 mb-2">Missing a price</div>
+            <HatList hats={missingCost} valueFor={() => 'set price'} />
+            {totals.costUnknown > missingCost.length && (
+              <p className="text-muted small mb-0 mt-2">
+                …and {totals.costUnknown - missingCost.length} more.
+              </p>
+            )}
+          </>
+        )}
+      </ChartCard>
 
-      <div className="card mb-3">
-        <div className="card-body">
-          <div className="card-title mb-2">Most Valuable (new)</div>
-          {analysis.topByNew.map((h, i) => (
+      <BucketTable title="By condition" buckets={buckets.condition} />
+      <BucketTable title="By brand" buckets={buckets.brand} />
+      <BucketTable title="By style" buckets={buckets.style} />
+      <BucketTable title="By room" buckets={buckets.room} />
+
+      <ChartCard title="Most valuable">
+        {topValued.length ? (
+          <HatList hats={topValued} valueFor={h => money(valueHat(h).value ?? 0)} />
+        ) : (
+          <p className="text-muted small mb-0">
+            No hats have a value estimate yet. Add a Claude API key in{' '}
+            <Link to="/settings">Settings</Link> and analyse a photo, or enter
+            prices by hand.
+          </p>
+        )}
+      </ChartCard>
+
+      <ChartCard title="Wear rotation" subtitle="Longest since last worn — give these some sun.">
+        <div>
+          {neglected.map(h => (
             <Link
               key={h.id}
               to={`/hats/${h.id}`}
               className="hr-color-row text-decoration-none"
               style={{ paddingTop: '0.5rem' }}
             >
-              <div className="font-mono fw-bold" style={{ color: 'var(--neon-purple)', minWidth: 24 }}>
-                {i + 1}.
-              </div>
               {h.photo_path ? (
                 <img src={tileSrc(h)} alt="" className="hr-thumb flex-shrink-0" style={{ width: 40, height: 40 }} />
               ) : (
@@ -204,81 +358,17 @@ export function ValuationPage() {
                 <div className="font-mono small" style={{ color: 'var(--neon-cyan)' }}>
                   {h.display_id || `Hat #${h.id}`}
                 </div>
-                <div className="text-secondary small" style={{
-                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                }}>
-                  {h.brand || h.style.replace(/_/g, ' ')}
-                  {h.model_name && ` · ${h.model_name}`}
+                <div className="text-secondary small">
+                  {h.brand || h.style.replace(/_/g, ' ')}{h.model_name && ` · ${h.model_name}`}
                 </div>
               </div>
-              <div className="font-mono fw-bold" style={{ color: 'var(--neon-cyan)' }}>
-                {fmt$(h.estimated_new_price ?? 0)}
-              </div>
-            </Link>
-          ))}
-        </div>
-      </div>
-
-      <div className="card mb-3">
-        <div className="card-body">
-          <div className="card-title mb-2">Most Valuable (resale)</div>
-          {analysis.topByResale.map((h, i) => (
-            <Link
-              key={h.id}
-              to={`/hats/${h.id}`}
-              className="hr-color-row text-decoration-none"
-              style={{ paddingTop: '0.5rem' }}
-            >
-              <div className="font-mono fw-bold" style={{ color: 'var(--neon-purple)', minWidth: 24 }}>
-                {i + 1}.
-              </div>
-              {h.photo_path ? (
-                <img src={tileSrc(h)} alt="" className="hr-thumb flex-shrink-0" style={{ width: 40, height: 40 }} />
-              ) : (
-                <div className="rounded flex-shrink-0" style={{ width: 40, height: 40, background: 'rgba(0,0,0,0.3)' }} />
-              )}
-              <div className="flex-grow-1" style={{ minWidth: 0 }}>
-                <div className="font-mono small" style={{ color: 'var(--neon-cyan)' }}>
-                  {h.display_id || `Hat #${h.id}`}
-                </div>
-                <div className="text-secondary small" style={{
-                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                }}>
-                  {h.brand || h.style.replace(/_/g, ' ')}
-                  {h.model_name && ` · ${h.model_name}`}
-                </div>
-              </div>
-              <div className="font-mono fw-bold" style={{ color: 'var(--neon-pink)' }}>
-                {fmt$(resaleFor(h))}
-              </div>
-            </Link>
-          ))}
-        </div>
-      </div>
-
-      {/* === Wear rotation: most neglected active hats === */}
-      <div className="card mb-3">
-        <div className="card-body">
-          <div className="card-title">Wear Rotation</div>
-          <p className="text-secondary small mb-2">Longest since last worn — give these some sun:</p>
-          {analysis.neglected.map(h => (
-            <Link key={h.id} to={`/hats/${h.id}`} className="hr-color-row text-decoration-none" style={{ paddingTop: '0.5rem' }}>
-              {h.photo_path ? (
-                <img src={tileSrc(h)} alt="" className="hr-thumb flex-shrink-0" style={{ width: 40, height: 40 }} />
-              ) : (
-                <div className="rounded flex-shrink-0" style={{ width: 40, height: 40, background: 'rgba(0,0,0,0.3)' }} />
-              )}
-              <div className="flex-grow-1" style={{ minWidth: 0 }}>
-                <div className="font-mono small" style={{ color: 'var(--neon-cyan)' }}>{h.display_id || `Hat #${h.id}`}</div>
-                <div className="text-secondary small">{h.brand || h.style.replace(/_/g, ' ')}{h.model_name && ` · ${h.model_name}`}</div>
-              </div>
-              <div className="text-secondary small font-mono">
+              <div className="text-secondary small font-mono flex-shrink-0">
                 {h.date_last_worn ?? 'never worn'}
               </div>
             </Link>
           ))}
         </div>
-      </div>
+      </ChartCard>
     </>
   );
 }

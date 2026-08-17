@@ -60,6 +60,8 @@ _HAT_COLUMN_DDL: dict[str, str] = {
     "resale_price_source": "ALTER TABLE hats ADD COLUMN resale_price_source VARCHAR(80)",
     "resale_price_url": "ALTER TABLE hats ADD COLUMN resale_price_url VARCHAR(500)",
     "resale_checked_at": "ALTER TABLE hats ADD COLUMN resale_checked_at DATETIME",
+    # v2.19 — "manual" | "model" | "category": what resale_price is a price OF.
+    "resale_price_scope": "ALTER TABLE hats ADD COLUMN resale_price_scope VARCHAR(20)",
     "analysis_status": "ALTER TABLE hats ADD COLUMN analysis_status VARCHAR(20)",
     "analysis_stage": "ALTER TABLE hats ADD COLUMN analysis_stage VARCHAR(20)",
     "analysis_job_id": "ALTER TABLE hats ADD COLUMN analysis_job_id INTEGER",

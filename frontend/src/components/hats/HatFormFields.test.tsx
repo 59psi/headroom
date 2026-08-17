@@ -28,7 +28,7 @@ vi.mock('../../api/cases', () => ({
 
 const BASICS: HatBasics = {
   style: 'a_game', size: 'classic', condition: 'new', construction: '', artistSeries: '',
-  caseId: '', dateLastWorn: '',
+  caseId: '', dateLastWorn: '', purchasePrice: '', purchasedAt: '',
 };
 
 function Harness(props: {
