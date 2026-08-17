@@ -29,6 +29,8 @@ export interface CaseRead {
   room_name: string;
   /** Computed server-side from the same rule the write path enforces, so the
    *  picker can't disagree with what a save will accept. */
+  /** Up to 4 hat photos for the collage the Cases grid renders. */
+  hat_thumbs: string[];
   accepts_regular: boolean;
   accepts_beanie: boolean;
   free_regular: number;

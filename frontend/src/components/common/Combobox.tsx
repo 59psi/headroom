@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useId } from 'react';
 import { usePickerOpen } from './usePickerOpen';
+import { AnchoredList } from './AnchoredList';
 
 /**
  * A text field with a visible, tappable list of known values.
@@ -34,6 +35,9 @@ export function Combobox({
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
   const wrapRef = useRef<HTMLDivElement>(null);
+  // State, not a ref: the list positions against this element, and a plain
+  // ref would still be null on the render that first opens the list.
+  const [inputEl, setInputEl] = useState<HTMLInputElement | null>(null);
   const listId = useId();
 
   // Filter on what's typed, but show everything when the field is empty or
@@ -48,7 +52,12 @@ export function Combobox({
   useEffect(() => {
     if (!open) return;
     function onDocDown(e: PointerEvent) {
-      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+      const target = e.target as HTMLElement;
+      // The list is portalled into <body>, so it is no longer a descendant of
+      // the wrapper — without this second check, pointerdown on an option
+      // closes the list before the option's own mousedown can land.
+      if (wrapRef.current?.contains(target) || target.closest('.hr-combobox-list')) return;
+      setOpen(false);
     }
     document.addEventListener('pointerdown', onDocDown);
     return () => document.removeEventListener('pointerdown', onDocDown);
@@ -88,6 +97,7 @@ export function Combobox({
     <div className="hr-combobox" ref={wrapRef}>
       <label className="form-label" htmlFor={id}>{label}</label>
       <input
+        ref={setInputEl}
         id={id}
         aria-label={label}
         className="form-control"
@@ -102,8 +112,7 @@ export function Combobox({
         onFocus={() => setOpen(true)}
         onKeyDown={onKeyDown}
       />
-      {open && shown.length > 0 && (
-        <ul className="hr-combobox-list" id={listId} role="listbox">
+      <AnchoredList anchor={inputEl} open={open && shown.length > 0} id={listId} role="listbox">
           {shown.map((option, i) => {
             const selected = option.toLowerCase() === query;
             return (
@@ -126,8 +135,7 @@ export function Combobox({
               </li>
             );
           })}
-        </ul>
-      )}
+      </AnchoredList>
       {help && <div className="form-text">{help}</div>}
     </div>
   );
