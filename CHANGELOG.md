@@ -8,6 +8,24 @@ All notable changes are documented here. This project follows
 
 ## [2.8.1] — 2026-08-16 — _say what it's doing_
 
+### Fixed
+- **The 2.8.0 price anchors were incomplete, and one number was invented.**
+  They covered whatever products turned up in a search rather than the model
+  lines the app actually enumerates — Trenches, which is in the prompt's own
+  list, had no anchor at all — and the stated "$59–$99 band" had no data point
+  at $59 behind it.
+
+  Re-researched properly. The finding that matters: **construction drives the
+  price, not the model line.** A-Game Hydro, Coronado Anchored Hydro and
+  Trenches Icon Hydro are all $69, which is why Trenches never needed its own
+  anchor — but **HYDROLite is the premium tier at $89–$99** and had no mention
+  at all, despite `hydrolite` being a flag the app already tracks. The prompt
+  now carries HYDRO ($69, up to $89), HYDROLite ($89–$99, explicitly priced
+  *above* HYDRO), Thermal ($79–$99) and beanies (~$79), tells Claude to read
+  the construction rather than the model line, and puts the floor at $60 where
+  the evidence actually is. A test pins the anchors so a future prompt edit
+  can't quietly drop them.
+
 ### Added
 - **The analysing spinner now says which step is running** — "Removing
   background…", "Identifying the hat…", "Checking prices…", "Checking resale…"
@@ -28,7 +46,7 @@ All notable changes are documented here. This project follows
   terminal status, and any one of them forgetting would leave a confident label
   on work that had stopped.
 
-236 backend + 44 frontend tests.
+237 backend + 44 frontend tests.
 
 ## [2.8.0] — 2026-08-16 — _see the queue, fix the prices_
 
