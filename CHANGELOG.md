@@ -6,6 +6,34 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.15.0] — 2026-08-17 — _one Neon_
+
+### Changed
+- **The collection field autocompletes**, like construction — suggestions come
+  from `GET /api/meta/collections`, the names already in use. No curated list:
+  melin names these for the partner or the drop, so any fixed list is wrong by
+  the next release.
+
+- **Typing past a suggestion no longer creates a duplicate.** Autocomplete only
+  makes drift *less likely*; a value that case-insensitively matches something
+  already recorded is now stored with the existing spelling, so "Neon", "NEON"
+  and "neon" converge on one collection instead of three that never find each
+  other in search. Applies to `construction` too, where the curated list wins —
+  typing "hydrolite" stores "HYDROLite".
+
+  Case and whitespace only. "Piña" and "Pina" stay distinct: collapsing accents
+  would be guessing, and merging two collections that genuinely differ is worse
+  than keeping two spellings of one.
+
+### Added
+- **A one-time merge for variants that already exist.** Canonicalisation covers
+  writes, so anything recorded before it — or imported — keeps whatever was
+  typed. Runs once on boot behind `vocabulary_merged_v1`, keeping the curated
+  spelling where there is one and otherwise the most *common* variant, so a
+  single early typo can't rename the collection everything else uses.
+
+294 backend + 63 frontend tests.
+
 ## [2.14.0] — 2026-08-17 — _sixty cases_
 
 ### Changed

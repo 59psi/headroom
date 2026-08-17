@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 from headroom.models.case import Case
 from headroom.models.hat import Hat
 from headroom.schemas.hat import (
+    KNOWN_CONSTRUCTIONS,
     HatCreate,
     HatDispose,
     HatStyle,
@@ -15,6 +16,7 @@ from headroom.schemas.hat import (
     construction_from_flags,
 )
 from headroom.services import capacity as capacity_rules
+from headroom.services import vocabulary
 from headroom.services.activity_service import log_and_commit
 
 # Re-exported for the tests and callers that referenced them here first; the
@@ -149,12 +151,19 @@ async def create_hat(db: AsyncSession, data: HatCreate) -> Hat:
         # Empty string from an untouched form field means "not stated", same as
         # omitting it — storing "" would make the hat look annotated when the
         # owner never typed anything.
-        artist_series=data.artist_series or None,
+        # Canonicalised so "Neon"/"NEON"/"neon" converge on the spelling
+        # already recorded — free text without this becomes five collections
+        # that never find each other in search.
+        artist_series=await vocabulary.canonicalize(db, Hat.artist_series, data.artist_series),
         model_name=data.model_name or None,
     )
     # After construction so the derived flags are set from the text, not left
     # at their column defaults.
-    hat.set_construction(data.construction)
+    hat.set_construction(
+        await vocabulary.canonicalize(
+            db, Hat.construction, data.construction, known=KNOWN_CONSTRUCTIONS
+        )
+    )
     db.add(hat)
     await db.commit()
     await log_and_commit(
@@ -234,7 +243,16 @@ async def update_hat(db: AsyncSession, hat_id: int, data: HatUpdate) -> Hat:
     hydrolite = update_data.pop("hydrolite", None)
     hydro = update_data.pop("hydro", None)
     if "construction" in update_data:
-        hat.set_construction(update_data.pop("construction"))
+        hat.set_construction(
+            await vocabulary.canonicalize(
+                db, Hat.construction, update_data.pop("construction"),
+                known=KNOWN_CONSTRUCTIONS,
+            )
+        )
+    if update_data.get("artist_series"):
+        update_data["artist_series"] = await vocabulary.canonicalize(
+            db, Hat.artist_series, update_data["artist_series"]
+        )
     elif legacy_sent:
         wants_lite = hat.hydrolite if hydrolite is None else hydrolite
         wants_hydro = hat.hydro if hydro is None else hydro

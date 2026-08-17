@@ -109,6 +109,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from headroom.services import auth_service, hat_service, settings_service
 
     async with async_session() as db:
+        # One-time: collapse case/whitespace variants of the free-text
+        # vocabulary fields ("Neon"/"NEON"/"neon" -> one collection).
+        # Canonicalisation only covers writes, so values that predate it, or
+        # arrived by import, need this once.
+        if await settings_service.get_setting(db, "vocabulary_merged_v1") is None:
+            from headroom.models.hat import Hat
+            from headroom.schemas.hat import KNOWN_CONSTRUCTIONS
+            from headroom.services import vocabulary
+
+            merged = await vocabulary.merge_case_variants(
+                db, Hat.construction, known=KNOWN_CONSTRUCTIONS
+            )
+            merged += await vocabulary.merge_case_variants(db, Hat.artist_series)
+            await settings_service.set_setting(db, "vocabulary_merged_v1", "done")
+            if merged:
+                logger.info("Merged %d case-variant vocabulary value(s)", merged)
         if await settings_service.get_setting(db, "color_names_normalized_v1") is None:
             changed = await hat_service.normalize_existing_colors(db)
             await settings_service.set_setting(db, "color_names_normalized_v1", "done")

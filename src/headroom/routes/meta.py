@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.database import get_db
@@ -10,7 +9,7 @@ from headroom.schemas.hat import (
     HatSize,
     HatStyle,
 )
-from headroom.services import room_service
+from headroom.services import room_service, vocabulary
 from headroom.services.catalog_service import catalog_options
 from headroom.services.color_extraction import palette
 
@@ -69,19 +68,23 @@ async def list_constructions(db: AsyncSession = Depends(get_db)):
     entries come first because they are the common answers; the rest follow
     alphabetically. Case-insensitive de-dupe, keeping the curated casing.
     """
-    seen = {c.casefold(): c for c in KNOWN_CONSTRUCTIONS}
-    rows = (
-        await db.execute(
-            select(Hat.construction)
-            .where(Hat.construction.is_not(None))
-            .distinct()
-        )
-    ).scalars().all()
-    extra = sorted(
-        {v.strip() for v in rows if v and v.strip().casefold() not in seen},
-        key=str.casefold,
-    )
-    return list(KNOWN_CONSTRUCTIONS) + extra
+    curated = {c.casefold() for c in KNOWN_CONSTRUCTIONS}
+    in_use = await vocabulary.distinct_values(db, Hat.construction)
+    return list(KNOWN_CONSTRUCTIONS) + [
+        v for v in in_use if v.casefold() not in curated
+    ]
+
+
+@router.get("/collections")
+async def list_collections(db: AsyncSession = Depends(get_db)):
+    """Collection / collaboration names already in use, for autocomplete.
+
+    No curated list, unlike constructions: melin names these for the partner or
+    the drop, so any list written today is wrong by the next release. What
+    stops "Neon"/"NEON"/"neon" becoming three collections is this plus
+    `vocabulary.canonicalize` on write, not a fixed vocabulary.
+    """
+    return await vocabulary.distinct_values(db, Hat.artist_series)
 
 
 @router.get("/colorways")
