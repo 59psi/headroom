@@ -6,6 +6,117 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.7.0] — 2026-08-16 — _the code review release_
+
+A full two-axis review of the codebase (standards + spec) plus wiring, bug and
+optimization passes. Everything below was found by that review; nothing here
+was reported from use.
+
+### Fixed — data loss and silent truncation
+
+- **Backups omitted the write-ahead log.** The DB runs in WAL mode, so commits
+  live in `headroom.db-wal` until a checkpoint folds them into the main file —
+  and the tarball contained only the main file. Every commit since the last
+  checkpoint was silently absent from the backup, and a checkpoint landing
+  during the tar read could produce a torn copy that restores as "database disk
+  image is malformed". Both are invisible until a restore. Backups now ask
+  SQLite for a proper snapshot (`VACUUM INTO`), which folds in the WAL and
+  writes one self-contained file without blocking writers; if that fails it
+  falls back to the raw file set *including* the `-wal`/`-shm` sidecars. The
+  regression test is stark — with a plain file copy the restored DB doesn't even
+  have the table.
+- **The hat list stopped at 50.** `GET /api/hats` defaults to `limit=50` and the
+  Hats grid, Home carousel and Valuation page all fetched with no limit. Past 50
+  hats the grid silently hid them and **every valuation total was wrong**. Those
+  three views now request the whole collection explicitly (`listAllHats`), and
+  the API ceiling was raised to match.
+- **Re-analysis could overwrite a photo you'd just replaced.** The worker held a
+  hat for minutes, then wrote back a `photo_path` from before the replacement,
+  orphaning the new photo and leaving it unanalysed. The result is now discarded
+  if the committed photo changed while the pipeline ran.
+- **A hat could sit "Analyzing…" forever.** With the worker disabled there is no
+  boot sweep either, so an inline pipeline failure stranded `analysis_status`
+  on `pending` with no endpoint able to clear it. Both paths now stamp a
+  terminal status.
+
+### Fixed — behaviour
+
+- **New cases ignored the default room, and could be orphaned outright.** The
+  frontend hardcoded `room_id: 1` regardless of what the picker showed,
+  bypassing the `is_default` flag entirely. Delete the room that happened to be
+  id 1 — which that flag exists to permit — and every case created afterwards
+  pointed at a room that wasn't there. The symptoms never named the cause: the
+  case reported its room as **"Unknown"**, and the room it should have been in
+  reported **zero cases**. Three fixes: the picker now defaults to whichever
+  room actually carries the flag; `POST /api/cases` rejects an unknown
+  `room_id`, as does `PUT /api/cases/{display_id}` — nothing below that
+  layer enforces it, there is no `PRAGMA foreign_keys`, and editing a case's
+  room is the path used to *repair* an orphan; and
+  **existing orphans are reattached to the default room on boot**, alongside
+  the `ensure_default_room` check that guarantees there is one.
+- **"Cancel" in the photo cropper uploaded the photo.** Cancel, ×, and a stray
+  tap on the backdrop were all wired to "use the original", so on the hat page a
+  mis-tap replaced the photo and re-ran the pipeline. Cancel now cancels;
+  skipping the crop got its own **Use Original** button.
+- **Editing a hat discarded what you were typing.** The form re-seeded from the
+  server on every refetch, and since 2.6.0 the row changes *while you edit it* —
+  so a completing analysis reverted your fields mid-sentence. It now seeds once
+  per hat.
+- **The hex field couldn't be typed into.** It only accepted input that already
+  matched a complete 6-digit value, so every partial keystroke was rejected and
+  the box snapped back. You could paste; you could not type.
+- **The Home carousel could crash the page.** The active index was never clamped,
+  so a list that shrank under it (a hat disposed elsewhere, then a refetch) threw
+  and dropped the whole page to the error boundary. It also reshuffled on every
+  poll, making the visible hat jump at random.
+- **Case occupancy went stale.** Disposing, deleting, adding or re-assigning a
+  hat invalidated `['hats']` but not the case-shaped views, so the Cases page and
+  case detail kept showing the old contents. All hat mutations now go through one
+  `invalidateHatViews` helper.
+- **Bulk Import dead-ended on a bad `?job=`.** The upload form is hidden whenever
+  a job id is set, so a stale link showed a header and nothing else — while
+  polling the 404 every two seconds forever. The error is now shown with a way
+  out, and a cancelled job gets an exit button like a finished one does.
+- **`hydro` / `hydrolite` searches found nothing.** USAGE promised "`hydro` finds
+  every Hydro", but 2.6.0 moved them from `style` values to boolean columns that
+  no text match could reach. Both terms match their flag again, and search now
+  also covers `artist_series`.
+- **Case detail ignored a per-case capacity override**, showing "3/4" for a case
+  limited to 3 and inviting an add the API then rejected.
+- The login page redirected during render; three-column price tiles never became
+  thirds because `.col-4` was used but never defined (along with four other
+  utility classes); the settings error-list refresh left the nav badge stale;
+  camera images were pinned in memory for the life of the SPA.
+
+### Performance
+
+- **`GET /api/rooms` loaded the entire collection to produce a case count.**
+  `selectinload(Room.cases)` cascades through mapper-level eager loads into
+  every hat, colour and wear-log row — measured 30ms vs 0.3ms for the COUNT that
+  replaces it, on a machine several times faster than a Pi.
+- Colour search converted the target colour to LAB once per stored swatch
+  instead of once per search.
+
+### Changed
+
+- `logo_detected` aside, analysis no longer erases `brand` / `model_name` /
+  `artist_series` (shipped in 2.6.1, noted here for completeness).
+- Shutdown no longer aborts if a background task had already died holding an
+  exception — the import and analysis workers were left running and mDNS never
+  sent its goodbye packets.
+- `analysis_queue._queue_depth` / `_mark_failed` are now public
+  (`queue_depth` / `mark_failed`); `/health/ready` no longer reaches into a
+  private name.
+- Removed dead code: the `custom_style_detail` column (unread since the initial
+  commit), and three uncalled functions. Existing databases keep the column;
+  it is simply no longer mapped.
+- Docs no longer quote test counts. That claim has now gone stale twice, so the
+  suite is the source of truth and the per-release number lives here.
+- `nanoid` bumped to 3.3.18 (GHSA-2v37-7h3g-55p8, build-time only via
+  vite → postcss).
+
+229 backend + 44 frontend tests.
+
 ## [2.6.2] — 2026-08-16 — _hats that keep their brims_
 
 ### Fixed

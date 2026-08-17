@@ -42,7 +42,7 @@ async def list_conditions():
 @router.get("/rooms")
 async def list_rooms(db: AsyncSession = Depends(get_db)):
     rooms = await room_service.list_rooms(db)
-    return [{"value": r.id, "label": r.name} for r in rooms]
+    return [{"value": r.id, "label": r.name} for r, _count in rooms]
 
 
 @router.get("/colors")

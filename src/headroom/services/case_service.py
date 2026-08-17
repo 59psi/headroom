@@ -38,6 +38,13 @@ async def create_case(db: AsyncSession, data: CaseCreate) -> Case:
     room_id = data.room_id
     if room_id is None:
         room_id = await room_service.get_default_room_id(db)
+    elif not await room_service.room_exists(db, room_id):
+        # Defence in depth behind the frontend fix. Nothing enforces this at the
+        # DB level (no `PRAGMA foreign_keys`), so an id for a room that isn't
+        # there used to be written straight through — and the symptoms never
+        # named the cause: the case reported its room as "Unknown", and the room
+        # it should have been in reported zero cases.
+        raise HTTPException(status_code=404, detail=f"Room {room_id} not found")
     case = Case(
         case_type=data.case_type,
         sequence_number=seq,
@@ -81,6 +88,12 @@ async def update_case(
         case.sequence_number = seq
         case.display_id = _make_display_id(data.case_type, seq)
     if data.room_id is not None:
+        # Validated for the same reason as on create: nothing below this layer
+        # enforces it, so an id for a missing room would orphan the case — and
+        # this is the path used to *repair* an orphan, which makes silently
+        # writing another bad id the worst possible failure here.
+        if not await room_service.room_exists(db, data.room_id):
+            raise HTTPException(status_code=404, detail=f"Room {data.room_id} not found")
         case.room_id = data.room_id
     if data.capacity is not None:
         case.capacity = data.capacity

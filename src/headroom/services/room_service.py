@@ -1,5 +1,5 @@
 from fastapi import HTTPException
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -18,11 +18,28 @@ async def _reload_room(db: AsyncSession, room_id: int) -> Room:
     return result.scalar_one()
 
 
-async def list_rooms(db: AsyncSession) -> list[Room]:
-    result = await db.execute(
-        select(Room).options(selectinload(Room.cases)).order_by(Room.name)
+async def list_rooms(db: AsyncSession) -> list[tuple[Room, int]]:
+    """Every room paired with its case count, without loading the cases.
+
+    `selectinload(Room.cases)` reads harmlessly — the caller only wants
+    `len(room.cases)` — but `Case.hats`, `Hat.colors` and `Hat.wear_logs` are
+    all `lazy="selectin"` at the mapper, so pulling the cases cascades into
+    every hat, colour and wear-log row in the whole collection to produce a
+    number. The cost scaled with the size of the collection rather than the
+    number of rooms (~30ms vs ~0.3ms at 300 hats, and a Pi is several times
+    slower). One grouped COUNT gives the same answer.
+    """
+    counts = (
+        select(Case.room_id.label("room_id"), func.count(Case.id).label("n"))
+        .group_by(Case.room_id)
+        .subquery()
     )
-    return list(result.scalars().all())
+    result = await db.execute(
+        select(Room, func.coalesce(counts.c.n, 0))
+        .outerjoin(counts, counts.c.room_id == Room.id)
+        .order_by(Room.name)
+    )
+    return [(room, int(n)) for room, n in result.all()]
 
 
 async def get_room(db: AsyncSession, room_id: int) -> Room:
@@ -52,6 +69,12 @@ async def update_room(
         room.name = data.name
     await db.commit()
     return await _reload_room(db, room.id)
+
+
+async def room_exists(db: AsyncSession, room_id: int) -> bool:
+    """Cheap existence check — no relationship loads."""
+    result = await db.execute(select(Room.id).where(Room.id == room_id).limit(1))
+    return result.scalar_one_or_none() is not None
 
 
 async def get_default_room_id(db: AsyncSession) -> int:

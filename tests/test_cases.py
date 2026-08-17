@@ -106,3 +106,26 @@ async def test_create_case_in_room(client):
     data = resp.json()
     assert data["room_id"] == room_id
     assert data["room_name"] == "Closet"
+
+
+@pytest.mark.anyio
+async def test_moving_a_case_to_a_real_room_works_and_a_missing_one_is_rejected(client):
+    """Editing a case's room is the repair path for an orphaned case.
+
+    Writing another bad id here would be the worst possible failure, so the
+    same existence check as on create applies.
+    """
+    room = await client.post("/api/rooms", json={"name": "Bedroom"})
+    room_id = room.json()["id"]
+    case = await client.post("/api/cases", json={"case_type": "archive"})
+    display_id = case.json()["display_id"]
+
+    moved = await client.put(f"/api/cases/{display_id}", json={"room_id": room_id})
+    assert moved.status_code == 200
+    assert moved.json()["room_name"] == "Bedroom"
+
+    rooms = {r["name"]: r["case_count"] for r in (await client.get("/api/rooms")).json()}
+    assert rooms["Bedroom"] == 1, "the room it moved to must now count it"
+
+    bad = await client.put(f"/api/cases/{display_id}", json={"room_id": 99999})
+    assert bad.status_code == 404

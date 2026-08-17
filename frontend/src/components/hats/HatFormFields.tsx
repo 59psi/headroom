@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getStyles, getSizes, getConditions } from '../../api/hats';
 import { listCases } from '../../api/cases';
@@ -59,11 +59,25 @@ export function useHatFormOptions() {
 export function useHatPhoto() {
   const [photo, setPhoto] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  // Only ever holds a URL we minted. `setPhotoPreview` is also called with a
+  // server path (`/uploads/…`) by the Edit page, and revoking one of those
+  // would be meaningless — so track ours separately rather than revoking
+  // whatever happens to be in `photoPreview`.
+  const objectUrl = useRef<string | null>(null);
 
   function onCapture(file: File) {
+    if (objectUrl.current) URL.revokeObjectURL(objectUrl.current);
+    const url = URL.createObjectURL(file);
+    objectUrl.current = url;
     setPhoto(file);
-    setPhotoPreview(URL.createObjectURL(file));
+    setPhotoPreview(url);
   }
+
+  // Without this each retaken photo pinned a full-resolution camera image in
+  // memory for the lifetime of the SPA.
+  useEffect(() => () => {
+    if (objectUrl.current) URL.revokeObjectURL(objectUrl.current);
+  }, []);
 
   return { photo, photoPreview, setPhotoPreview, onCapture };
 }

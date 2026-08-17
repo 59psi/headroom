@@ -8,11 +8,13 @@ from headroom.services import room_service
 router = APIRouter(prefix="/api/rooms", tags=["rooms"])
 
 
-def _room_to_read(room) -> RoomRead:
+def _room_to_read(room, case_count: int | None = None) -> RoomRead:
+    """`case_count` is passed in by the list route, which counts in SQL rather
+    than loading the cases (and, through them, the entire collection)."""
     return RoomRead(
         id=room.id,
         name=room.name,
-        case_count=len(room.cases) if room.cases else 0,
+        case_count=case_count if case_count is not None else (len(room.cases) if room.cases else 0),
         is_default=bool(room.is_default),
         created_at=room.created_at,
         updated_at=room.updated_at,
@@ -28,7 +30,7 @@ async def create_room(data: RoomCreate, db: AsyncSession = Depends(get_db)):
 @router.get("", response_model=list[RoomRead])
 async def list_rooms(db: AsyncSession = Depends(get_db)):
     rooms = await room_service.list_rooms(db)
-    return [_room_to_read(r) for r in rooms]
+    return [_room_to_read(r, n) for r, n in rooms]
 
 
 @router.get("/{room_id}", response_model=RoomRead)

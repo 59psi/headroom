@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
-import { listHats } from '../api/hats';
+import { listAllHats } from '../api/hats';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ColorSwatches } from '../components/common/ColorSwatch';
 import { ConditionBadge } from '../components/common/ConditionBadge';
@@ -71,7 +71,7 @@ function GalleryItem({ hat }: { hat: HatRead }) {
 }
 
 export function HatsPage() {
-  const { data, isLoading, error } = useQuery({ queryKey: ['hats'], queryFn: () => listHats() });
+  const { data, isLoading, error } = useQuery({ queryKey: ['hats'], queryFn: listAllHats });
   const hatFilters = useHatFilters();
   const { filters, isOpen: filtersOpen, setIsOpen: setFiltersOpen } = hatFilters;
 
@@ -189,7 +189,7 @@ export function HatsPage() {
           {availableBrands.length > 0 && (
             <div className="col-6 col-md-3">
               <label className="form-label">Brand</label>
-              <select className="form-select form-select-sm" value={filterBrand} onChange={e => setFilterBrand(e.target.value)}>
+              <select aria-label="Brand" className="form-select form-select-sm" value={filterBrand} onChange={e => setFilterBrand(e.target.value)}>
                 <option value="">All</option>
                 {availableBrands.map(b => (
                   <option key={b} value={b}>{b}</option>

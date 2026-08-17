@@ -162,31 +162,39 @@ async def reanalyze_existing_photo(
     its own drifting copy. Mutates `hat`; caller commits. Returns False only when
     there is no Claude key AND the fallback produced nothing (caller → HTTP 400).
     """
-    api_key, _source = await settings_service.get_anthropic_key(db)
-    if not api_key:
-        return await run_fallback_analysis(
-            db, hat, photo_path, reason="No Anthropic API key configured"
-        )
+    # Same SQLite write-lock hazard `finalize_hat_photo` guards against, and for
+    # the same reason: once `_apply_analysis` dirties the hat, the next DB read
+    # (eBay creds, or the Google Vision key on the fallback path) autoflushes,
+    # which opens a write transaction SQLite holds until commit — across the
+    # eBay OAuth + Browse calls and two 30s Melin requests. Every other writer
+    # then waits out `busy_timeout` and fails with "database is locked", so
+    # tapping "wearing this today" during a reanalysis would 500.
+    with db.no_autoflush:
+        api_key, _source = await settings_service.get_anthropic_key(db)
+        if not api_key:
+            return await run_fallback_analysis(
+                db, hat, photo_path, reason="No Anthropic API key configured"
+            )
 
-    model_id, _msrc = await settings_service.get_anthropic_model(db)
-    try:
-        analysis = await analyze_hat_image(
-            photo_path, api_key, model=model_id, selected_style=hat.style
-        )
-    except ClaudeAnalysisError as exc:
-        logger.warning("Reanalysis failed for hat %s: %s", hat.id, exc)
-        hat.analysis_status = "error"
-        hat.analysis_error = str(exc)
-        hat.analyzed_at = datetime.now(timezone.utc)
-        await run_fallback_analysis(
-            db, hat, photo_path, reason=f"Claude analysis failed: {exc}"
-        )
+        model_id, _msrc = await settings_service.get_anthropic_model(db)
+        try:
+            analysis = await analyze_hat_image(
+                photo_path, api_key, model=model_id, selected_style=hat.style
+            )
+        except ClaudeAnalysisError as exc:
+            logger.warning("Reanalysis failed for hat %s: %s", hat.id, exc)
+            hat.analysis_status = "error"
+            hat.analysis_error = str(exc)
+            hat.analyzed_at = datetime.now(timezone.utc)
+            await run_fallback_analysis(
+                db, hat, photo_path, reason=f"Claude analysis failed: {exc}"
+            )
+            return True
+
+        _apply_analysis(hat, analysis)
+        await _refresh_ebay_comps(db, hat)
+        await refresh_melin_resale(hat)
         return True
-
-    _apply_analysis(hat, analysis)
-    await _refresh_ebay_comps(db, hat)
-    await refresh_melin_resale(hat)
-    return True
 
 
 async def refresh_melin_resale(hat: Hat) -> None:

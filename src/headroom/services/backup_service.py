@@ -13,6 +13,7 @@ import logging
 import os
 import shlex
 import tarfile
+import tempfile
 import time
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
@@ -47,6 +48,52 @@ def _db_path() -> Path | None:
     return Path.cwd() / raw
 
 
+def _snapshot_db_sync(db: Path, dest_dir: Path) -> Path:
+    """Produce a single-file, point-in-time copy of the SQLite DB.
+
+    The DB runs in WAL mode (`database.py`), so commits live in
+    `headroom.db-wal` until a checkpoint folds them back into the main file.
+    Adding only `headroom.db` to the tar therefore silently drops everything
+    committed since the last checkpoint — and since a checkpoint can land
+    *during* the tar's read, the copy can also come out torn and restore as
+    "database disk image is malformed". Either way the failure is invisible
+    until the day you actually need the backup.
+
+    `VACUUM INTO` asks SQLite for the snapshot instead of copying bytes behind
+    its back: it holds a read transaction, folds in the WAL, and writes one
+    self-contained file with no sidecars. Writers are not blocked.
+
+    Falls back to the raw file set (main + `-wal` + `-shm`) if the snapshot
+    fails for any reason — a restorable-with-effort backup beats no backup.
+    """
+    import sqlite3  # noqa: PLC0415 — stdlib, only needed on the backup path
+
+    dest = dest_dir / db.name
+    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    try:
+        conn.execute("VACUUM INTO ?", (str(dest),))
+    finally:
+        conn.close()
+    return dest
+
+
+def _add_db_to_tar(tar: tarfile.TarFile, db: Path, tmp_dir: Path) -> None:
+    """Add a consistent DB snapshot, or the raw file set if that fails."""
+    try:
+        snapshot = _snapshot_db_sync(db, tmp_dir)
+        tar.add(snapshot, arcname=f"data/{db.name}")
+        return
+    except Exception as exc:  # noqa: BLE001 — never let backup fail entirely
+        logger.warning(
+            "DB snapshot failed (%s); falling back to raw file + WAL sidecars", exc
+        )
+    tar.add(db, arcname=f"data/{db.name}")
+    for sidecar in (f"{db.name}-wal", f"{db.name}-shm"):
+        path = db.with_name(sidecar)
+        if path.exists():
+            tar.add(path, arcname=f"data/{sidecar}")
+
+
 def _build_tarball_sync(target_path: Path | None = None, include_uploads: bool = True) -> bytes | None:
     """Build a tar.gz of the DB (and optionally uploads). Always gzipped.
 
@@ -65,10 +112,11 @@ def _build_tarball_sync(target_path: Path | None = None, include_uploads: bool =
         # gzip level 6 — same as the default; balances compression and CPU
         # on a Pi. JPEGs barely compress regardless, the DB compresses well.
         with tarfile.open(fileobj=sink, mode="w:gz", compresslevel=6) as tar:
-            if db is not None and db.exists():
-                tar.add(db, arcname=f"data/{db.name}")
-            if include_uploads and uploads.exists():
-                tar.add(uploads, arcname="data/uploads")
+            with tempfile.TemporaryDirectory(prefix="headroom-snap-") as tmp:
+                if db is not None and db.exists():
+                    _add_db_to_tar(tar, db, Path(tmp))
+                if include_uploads and uploads.exists():
+                    tar.add(uploads, arcname="data/uploads")
         if buf is not None:
             return buf.getvalue()
         return None

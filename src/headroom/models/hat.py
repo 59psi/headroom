@@ -19,9 +19,6 @@ class Hat(Base):
     date_last_worn: Mapped[date | None] = mapped_column(Date, nullable=True)
     size: Mapped[str] = mapped_column(String(10))  # small, classic, x_large
     style: Mapped[str] = mapped_column(String(20))
-    custom_style_detail: Mapped[str | None] = mapped_column(
-        String(255), nullable=True
-    )
     is_beanie: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # AI-detected attributes
@@ -76,7 +73,7 @@ class Hat(Base):
 
     logo_detected: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    analysis_status: Mapped[str | None] = mapped_column(String(20), nullable=True)  # ok/error/skipped
+    analysis_status: Mapped[str | None] = mapped_column(String(20), nullable=True)  # pending/ok/fallback/skipped/error
     analysis_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     analyzed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 

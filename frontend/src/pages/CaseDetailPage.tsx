@@ -48,20 +48,32 @@ export function CaseDetailPage() {
 
   const typeLabel = data.case_type === 'archive' ? 'Archive' : 'Daily Wear';
 
+  // A per-case `capacity` overrides both type defaults server-side
+  // (`hat_service._validate_capacity`). Showing the defaults regardless meant a
+  // case limited to 3 read "3/4" and invited an add the API then rejected.
+  const maxBeanies = data.capacity ?? 6;
+  const maxRegular = data.capacity ?? 4;
+
   let capacityDisplay: React.ReactNode;
   if (data.hat_count === 0) {
-    capacityDisplay = <div className="text-center text-muted small">Empty — holds 4 hats or 6 beanies</div>;
+    capacityDisplay = (
+      <div className="text-center text-muted small">
+        {data.capacity
+          ? `Empty — holds ${data.capacity}`
+          : `Empty — holds ${maxRegular} hats or ${maxBeanies} beanies`}
+      </div>
+    );
   } else if (data.beanie_count > 0) {
     capacityDisplay = (
       <div className="text-center">
-        <div className="font-display" style={{ fontSize: '1.4rem', color: 'var(--neon-pink)' }}>{data.beanie_count}/6</div>
+        <div className="font-display" style={{ fontSize: '1.4rem', color: 'var(--neon-pink)' }}>{data.beanie_count}/{maxBeanies}</div>
         <div className="hr-tier-label">Beanies</div>
       </div>
     );
   } else {
     capacityDisplay = (
       <div className="text-center">
-        <div className="font-display" style={{ fontSize: '1.4rem', color: 'var(--neon-pink)' }}>{data.regular_count}/4</div>
+        <div className="font-display" style={{ fontSize: '1.4rem', color: 'var(--neon-pink)' }}>{data.regular_count}/{maxRegular}</div>
         <div className="hr-tier-label">Hats</div>
       </div>
     );

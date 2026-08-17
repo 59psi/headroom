@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { portalToBody } from './ModalPortal';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { disposeHat } from '../../api/hats';
+import { invalidateHatViews } from '../../lib/invalidate';
 
 interface Props {
   hatId: number;
@@ -32,8 +33,7 @@ export function DisposeModal({ hatId, show, onClose }: Props) {
       notes: notes.trim() || null,
     }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['hat', hatId] });
-      qc.invalidateQueries({ queryKey: ['hats'] });
+      invalidateHatViews(qc, hatId);
       onClose();
     },
   });

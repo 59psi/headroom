@@ -91,6 +91,7 @@ export function CasesPage() {
           >Daily Wear</button>
         </div>
         <select
+          aria-label="Room"
           className="form-select form-select-sm"
           style={{ maxWidth: 180 }}
           value={roomFilter}

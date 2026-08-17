@@ -166,3 +166,39 @@ async def test_boot_recovery_requeues_hats_stranded_pending(client, monkeypatch)
         assert after["analysis_status"] != analysis_queue.PENDING
     finally:
         await analysis_queue.stop_worker()
+
+
+@pytest.mark.anyio
+async def test_inline_failure_marks_the_hat_instead_of_stranding_it(
+    client, monkeypatch
+):
+    """With no worker, a pipeline crash must still reach a terminal status.
+
+    `enqueue()` returns False when nothing is draining the queue, so the route
+    runs the pipeline inline — and in that mode there is no worker to catch the
+    exception and no boot sweep to revisit the hat. An unhandled failure left
+    `analysis_status='pending'` forever, with the UI spinning and no endpoint
+    able to clear it short of re-uploading.
+    """
+    async def _boom(*_a, **_k):
+        raise RuntimeError("pipeline exploded")
+
+    monkeypatch.setattr(
+        "headroom.routes.hats.finalize_hat_photo", _boom
+    )
+
+    created = await client.post(
+        "/api/hats", json={"condition": "new", "size": "classic", "style": "a_game"}
+    )
+    hat_id = created.json()["id"]
+
+    resp = await client.post(
+        f"/api/hats/{hat_id}/photo",
+        files={"photo": ("h.jpg", _jpeg(), "image/jpeg")},
+    )
+
+    # The photo itself saved fine, so this is a success with a failed analysis —
+    # which is exactly what analysis_status exists to report.
+    assert resp.status_code == 200
+    assert resp.json()["analysis_status"] == "error"
+    assert "pipeline exploded" in (resp.json()["analysis_error"] or "")

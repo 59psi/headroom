@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
 import {
@@ -18,11 +18,16 @@ export function LoginPage() {
 
   const status = useQuery({ queryKey: ['auth', 'status'], queryFn: getAuthStatus, staleTime: 0 });
 
+  // Redirecting during render queues a state update in another component
+  // mid-render (and runs twice under StrictMode). An effect is the supported
+  // place for it.
+  const authed = status.data?.authenticated ?? false;
+  useEffect(() => {
+    if (authed) navigate('/', { replace: true });
+  }, [authed, navigate]);
+
   if (status.isLoading) return <LoadingSpinner />;
-  if (status.data?.authenticated) {
-    navigate('/', { replace: true });
-    return null;
-  }
+  if (authed) return null;
   const needsSetup = status.data?.needs_setup ?? false;
 
   async function submit(e: React.FormEvent) {

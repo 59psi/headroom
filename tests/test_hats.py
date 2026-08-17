@@ -237,3 +237,19 @@ async def test_artist_series_round_trips(client):
         f"/api/hats/{hat['id']}", json={"artist_series": "Skye Walker"}
     )).json()
     assert named["artist_series"] == "Skye Walker"
+
+
+@pytest.mark.anyio
+async def test_hats_list_accepts_the_whole_collection_limit(client):
+    """The Hats grid, Home carousel and Valuation totals all fetch every hat.
+
+    They filter and total client-side, so a short page doesn't read as
+    "page 1 of n" — it reads as hats having vanished and the collection being
+    worth less than it is. `FULL_COLLECTION_LIMIT` in `api/hats.ts` sends this
+    exact value, so the API has to accept it.
+    """
+    resp = await client.get("/api/hats?limit=1000")
+    assert resp.status_code == 200, "limit=1000 must be within the allowed range"
+
+    too_big = await client.get("/api/hats?limit=1001")
+    assert too_big.status_code == 422, "the ceiling should still bound the response"

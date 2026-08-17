@@ -82,7 +82,7 @@ async def ready(request: Request, db: AsyncSession = Depends(get_db)):
             # queue depth is operational detail.
             "analysis_worker": {
                 "ok": analysis_queue.worker_alive(),
-                "queued": analysis_queue._queue_depth(),
+                "queued": analysis_queue.queue_depth(),
             },
         }
     else:

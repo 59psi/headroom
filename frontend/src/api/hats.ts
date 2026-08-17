@@ -1,9 +1,24 @@
 import { apiFetch } from './client';
 import type { ColorTag, HatRead, MetaOption } from '../types';
 
+/**
+ * Matches the `le=` ceiling on `GET /api/hats`.
+ *
+ * The API defaults to 50 for the benefit of other callers, but every page that
+ * uses `listAllHats` filters, totals or shuffles client-side — so a short page
+ * doesn't read as "page 1 of n", it reads as hats having disappeared and the
+ * collection being worth less than it is.
+ */
+export const FULL_COLLECTION_LIMIT = 1000;
+
 export function listHats(params?: Record<string, string>) {
   const qs = params ? '?' + new URLSearchParams(params).toString() : '';
   return apiFetch<HatRead[]>(`/api/hats${qs}`);
+}
+
+/** Every active hat, for the views that need the whole collection at once. */
+export function listAllHats() {
+  return listHats({ limit: String(FULL_COLLECTION_LIMIT) });
 }
 
 export function getHat(id: number) {

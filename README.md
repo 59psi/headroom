@@ -407,6 +407,7 @@ link-only if the API is unreachable.
 | `HEADROOM_BACKUP_UPLOAD_TIMEOUT` | `600` | Seconds before the upload command is killed |
 | `HEADROOM_MDNS_INTERFACE` | _(detected LAN IP)_ | Interface the mDNS responder binds; an IP pins one NIC, `all` restores all-interfaces |
 | `HEADROOM_IMPORT_WORKER_ENABLED` | `true` | Bulk-import background worker |
+| `HEADROOM_ANALYSIS_WORKER_ENABLED` | `true` | Photo-analysis background worker (off ⇒ the upload route runs the pipeline inline) |
 | `HEADROOM_ACTIVITY_LOG_RETENTION_DAYS` | `90` | Audit rows kept (pruned daily) |
 | `HEADROOM_MDNS_ENABLED` | `true` | Advertise `headroom.local` on the LAN (Docker: stack `docker-compose.mdns.yml`, or `docker-compose.https-lan.yml` for passkey-grade HTTPS) |
 | `HEADROOM_MDNS_HOSTNAME` | `headroom` | mDNS host label — resolves as `<label>.local` |
@@ -447,9 +448,9 @@ uv run uvicorn headroom.app:app --reload     # Backend (port 8000)
 cd frontend && npm run dev                   # Frontend (port 5173)
 cd frontend && npm run build                 # Type-check + production SPA build
 cd frontend && npm run typecheck             # Type-check only
-uv run pytest                                # Backend tests (219)
+uv run pytest                                # Backend tests
 uv run pytest tests/test_search.py -k color  # Single backend test
-cd frontend && npm test                      # Frontend tests (44)
+cd frontend && npm test                      # Frontend tests
 cd frontend && npm run test:watch            # Frontend tests, watch mode
 ```
 

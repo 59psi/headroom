@@ -15,7 +15,14 @@ export function RecentErrorsCard() {
           <button
             type="button"
             className="btn btn-outline-secondary btn-sm"
-            onClick={() => qc.invalidateQueries({ queryKey: ['admin', 'recent-errors'] })}
+            onClick={() => {
+              qc.invalidateQueries({ queryKey: ['admin', 'recent-errors'] });
+              // The nav badge reads ['admin','recent-errors-count'], which is a
+              // sibling key, NOT a child — 'recent-errors' does not prefix-match
+              // 'recent-errors-count', so refreshing the card alone left the
+              // badge showing a count the list no longer agreed with.
+              qc.invalidateQueries({ queryKey: ['admin', 'recent-errors-count'] });
+            }}
             disabled={errors.isFetching}
           >
             {errors.isFetching ? '…' : 'Refresh'}

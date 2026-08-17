@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate } from 'react-router';
 import { getCase, updateCase, uploadCasePhoto } from '../api/cases';
@@ -54,10 +54,20 @@ export function EditCasePage() {
     },
   });
 
+  // Only ever holds a URL we minted — `photoPreview` may also be a server path.
+  const objectUrl = useRef<string | null>(null);
+
   function handlePhotoCapture(file: File) {
+    if (objectUrl.current) URL.revokeObjectURL(objectUrl.current);
+    const url = URL.createObjectURL(file);
+    objectUrl.current = url;
     setPhoto(file);
-    setPhotoPreview(URL.createObjectURL(file));
+    setPhotoPreview(url);
   }
+
+  useEffect(() => () => {
+    if (objectUrl.current) URL.revokeObjectURL(objectUrl.current);
+  }, []);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();

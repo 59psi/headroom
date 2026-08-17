@@ -18,7 +18,6 @@ from datetime import datetime, timedelta, timezone
 
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
-from fastapi import HTTPException
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -51,13 +50,6 @@ def is_rate_limited(client_ip: str, username: str) -> bool:
     key = f"{client_ip}:{username.lower()}"
     return len(_prune(key, time.monotonic())) >= _MAX_FAILURES
 
-
-def check_rate_limit(client_ip: str, username: str) -> None:
-    if is_rate_limited(client_ip, username):
-        raise HTTPException(
-            status_code=429,
-            detail="Too many failed logins — try again in a few minutes.",
-        )
 
 
 def record_failure(client_ip: str, username: str) -> None:
@@ -172,10 +164,6 @@ async def destroy_session(db: AsyncSession, session_id: str) -> None:
     await db.execute(delete(AuthSession).where(AuthSession.id == session_id))
     await db.commit()
 
-
-async def destroy_all_sessions(db: AsyncSession, user_id: int) -> None:
-    await db.execute(delete(AuthSession).where(AuthSession.user_id == user_id))
-    await db.commit()
 
 
 async def destroy_other_sessions(db: AsyncSession, user_id: int, keep: str | None) -> None:

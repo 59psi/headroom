@@ -1,3 +1,4 @@
+import logging
 import shutil
 import tempfile
 from datetime import datetime, timezone
@@ -31,6 +32,8 @@ from headroom.utils.photo import (
     validate_image_content_type,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/hats", tags=["hats"])
 
 
@@ -53,7 +56,12 @@ async def list_hats(
     condition: str | None = Query(None),
     status: str = Query("active", pattern="^(active|disposed|all)$"),
     offset: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
+    # The ceiling is what the whole-collection views need: the Hats grid,
+    # Valuation totals and the Home carousel all filter client-side, so a page
+    # that stops short does not look truncated — it looks like hats vanished and
+    # like the collection is worth less than it is. 1000 is well past a personal
+    # collection while still bounding the response.
+    limit: int = Query(50, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
 ):
     hats = await hat_service.list_hats(db, case_id, style, condition, status, offset, limit)
@@ -188,8 +196,20 @@ async def upload_hat_photo(
     await db.commit()
 
     if not analysis_queue.enqueue(hat.id):
-        await finalize_hat_photo(db, hat, final_path)
-        await db.commit()
+        # No worker means no boot sweep either, so an unhandled failure here
+        # would strand the hat on 'pending' with the UI spinning forever and no
+        # endpoint able to clear it. Stamp the terminal status the worker would
+        # have. The photo itself saved fine, so this stays a 200 — a failed
+        # analysis is what `analysis_status` exists to report.
+        try:
+            await finalize_hat_photo(db, hat, final_path)
+            await db.commit()
+        except Exception as exc:  # noqa: BLE001 — recorded on the hat instead
+            logger.exception("Inline analysis failed for hat %s: %s", hat_id, exc)
+            await db.rollback()
+            hat = await hat_service.get_hat(db, hat_id)
+            analysis_queue.stamp_failure(hat, exc)
+            await db.commit()
 
     db.expire_all()
     return _hat_to_read(await hat_service.get_hat(db, hat_id))

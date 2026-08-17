@@ -6,6 +6,8 @@ interface Props {
   imageUrl: string;
   filename: string;
   onCancel: () => void;
+  /** Skip cropping and keep the file exactly as picked. */
+  onUseOriginal: () => void;
   onCropped: (file: File) => void;
 }
 
@@ -72,7 +74,7 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
-export function PhotoCropper({ imageUrl, filename, onCancel, onCropped }: Props) {
+export function PhotoCropper({ imageUrl, filename, onCancel, onUseOriginal, onCropped }: Props) {
   const [crop, setCrop] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [rotation, setRotation] = useState(0);
@@ -148,7 +150,14 @@ export function PhotoCropper({ imageUrl, filename, onCancel, onCropped }: Props)
             </div>
           </div>
           <div className="modal-footer">
+            {/* Three distinct intents, three buttons. "Use Original" used to be
+                wired to Cancel, so dismissing the cropper — including a stray
+                tap on the backdrop — uploaded the photo anyway. On the hat page
+                that replaced the picture and re-ran the whole pipeline. */}
             <button type="button" className="btn btn-outline-secondary" onClick={onCancel}>Cancel</button>
+            <button type="button" className="btn btn-outline-secondary" onClick={onUseOriginal}>
+              Use Original
+            </button>
             <button
               type="button"
               className="btn btn-primary"

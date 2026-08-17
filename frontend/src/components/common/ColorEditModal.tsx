@@ -25,6 +25,11 @@ export function ColorEditModal({ hatId, colors, editingRank, onClose }: Props) {
   const target = isEdit ? colors.find(c => c.dominance_rank === editingRank) : null;
 
   const [hex, setHex] = useState(target?.hex_value ?? '#888888');
+  // What's in the text box, kept apart from the committed `hex`. The input
+  // used to write straight to `hex` and only when the value already matched
+  // a full 6-digit pattern — so every partial keystroke was rejected and the
+  // box snapped back. You could paste a whole value, never type one.
+  const [hexText, setHexText] = useState(target?.hex_value ?? '#888888');
   const [name, setName] = useState(target?.color_name ?? '');
   const [general, setGeneral] = useState(target?.general_color ?? '');
   const [tier, setTier] = useState(target?.tier ?? 'primary');
@@ -33,11 +38,13 @@ export function ColorEditModal({ hatId, colors, editingRank, onClose }: Props) {
   useEffect(() => {
     if (target) {
       setHex(target.hex_value);
+      setHexText(target.hex_value);
       setName(target.color_name);
       setGeneral(target.general_color);
       setTier(target.tier ?? 'primary');
     } else {
       setHex('#888888');
+      setHexText('#888888');
       setName('');
       setGeneral('');
       setTier('primary');
@@ -118,16 +125,18 @@ export function ColorEditModal({ hatId, colors, editingRank, onClose }: Props) {
               id="hr-color-input"
               type="color"
               value={hex}
-              onChange={e => setHex(e.target.value)}
+              onChange={e => { setHex(e.target.value); setHexText(e.target.value); }}
               style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
             />
 
-            <label className="form-label">Hex (or paste a value)</label>
+            <label className="form-label">Hex</label>
             <input
               type="text"
               className="form-control mb-3"
-              value={hex}
+              aria-label="Hex value"
+              value={hexText}
               onChange={e => {
+                setHexText(e.target.value);
                 const v = e.target.value.trim();
                 if (/^#?[0-9a-fA-F]{6}$/.test(v)) {
                   setHex(v.startsWith('#') ? v : `#${v}`);

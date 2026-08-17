@@ -410,6 +410,12 @@ button.card:hover::before,
   display: block;
 }
 
+.form-text {
+  margin-top: 0.35rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
 .form-check-input {
   width: 1.2em;
   height: 1.2em;
@@ -1234,6 +1240,7 @@ button.card:hover::before,
 .d-flex { display: flex !important; }
 .d-block { display: block !important; }
 .d-inline-block { display: inline-block !important; }
+.d-inline-flex { display: inline-flex !important; }
 .d-none { display: none !important; }
 
 @media (min-width: 992px) {
@@ -1287,6 +1294,7 @@ button.card:hover::before,
 .pt-1 { padding-top: 0.25rem !important; }
 
 .text-center { text-align: center !important; }
+.text-start { text-align: left !important; }
 .text-end { text-align: right !important; }
 .text-decoration-none { text-decoration: none !important; }
 
@@ -1310,6 +1318,7 @@ button.card:hover::before,
 /* Bootstrap col helpers */
 .col, [class^="col-"], [class*=" col-"] { padding: 0.5rem; box-sizing: border-box; }
 .col { flex: 1; min-width: 0; }
+.col-4 { flex: 0 0 33.333%; max-width: 33.333%; }
 .col-6 { flex: 0 0 50%; max-width: 50%; }
 .col-12 { flex: 0 0 100%; max-width: 100%; }
 
@@ -1329,6 +1338,7 @@ button.card:hover::before,
 }
 
 @media (min-width: 992px) {
+  .col-lg-3 { flex: 0 0 25%; max-width: 25%; }
   .row-cols-lg-3 > * { flex: 0 0 33.333%; max-width: 33.333%; }
   .row-cols-lg-4 > * { flex: 0 0 25%; max-width: 25%; }
 }

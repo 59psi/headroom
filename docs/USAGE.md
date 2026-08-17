@@ -69,13 +69,17 @@ Three ways, fastest first:
 
 ## 4. What happens to a photo
 
-Upload → resized/HEIC-converted → background removed (the hat becomes a
-transparent PNG floating on the synthwave canvas) → analyzed → priced.
+Upload → resized/HEIC-converted → **the request returns straight away**. The
+slow part — background removal (the hat becomes a transparent PNG floating on
+the synthwave canvas), Claude identification, then pricing — is handed to a
+background worker, so you can keep adding hats while earlier ones are still
+analysing. The hat page polls until the analysis reaches a final state.
 
-The status pill on the hat page tells you which path you got:
+The status pill on the hat page tells you where a hat is:
 
 | Pill | Meaning |
 |---|---|
+| **Analyzing…** (spinning) | Queued or in progress. Nothing to do — the page updates itself when it finishes |
 | **Analyzed** (green) | Full Claude identification: brand, model, colors, notes, estimated retail price |
 | **Basic ID (fallback)** (orange) | No Claude (or Claude errored). Colors were read from the hat cutout itself — background colors are excluded by design — and, with a Google key, the brand from its logo. Model/price stay empty |
 | **No API key** (purple) | No keys and no usable cutout; fill fields manually or add keys later |
@@ -130,8 +134,10 @@ Two ways in, both returning cards with the photo, the hat's name (brand +
 model when known), and **where it lives** ("📍 Case A-012 · Office"):
 
 - **Text search** — multi-term AND across name, brand, style, condition,
-  size, colors, and room (`navy classic melin` finds navy, classic-size
-  Melins; `hydro` finds every Hydro). Color terms match the normalized
+  size, colors, room, and artist/collab (`navy classic melin` finds navy,
+  classic-size Melins; `hydro` finds every HYDRO and `hydrolite` every
+  HYDROLite — those are per-hat construction flags rather than model lines,
+  and each term matches its flag; `skye walker` finds that signature series). Color terms match the normalized
   palette vocabulary by default; toggle *exact colors* to match the
   analyzer's original phrasing. Disposed hats never appear — they're not
   findable on a shelf.

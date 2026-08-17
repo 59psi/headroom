@@ -149,14 +149,28 @@ def _srgb_to_lab(rgb: tuple[int, int, int]) -> tuple[float, float, float]:
     return (116 * fy) - 16, 500 * (fx - fy), 200 * (fy - fz)
 
 
+def lab_of(hex_value: str) -> tuple[float, float, float] | None:
+    """Hex → CIE L*a*b*, or None if it doesn't parse.
+
+    Exposed so a caller comparing ONE colour against many can convert it once.
+    `_srgb_to_lab` runs three `** 2.4` powers per channel, and the colour search
+    was paying that for the search target on every stored swatch it looked at.
+    """
+    rgb = parse_hex(hex_value)
+    return None if rgb is None else _srgb_to_lab(rgb)
+
+
+def lab_distance(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
+    """ΔE*76 between two already-converted LAB triples."""
+    return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2) ** 0.5
+
+
 def color_distance(hex_a: str, hex_b: str) -> float | None:
     """Perceptual distance (ΔE*76) between two hex colors; None if unparsable."""
-    a, b = parse_hex(hex_a), parse_hex(hex_b)
+    a, b = lab_of(hex_a), lab_of(hex_b)
     if a is None or b is None:
         return None
-    la, aa, ba = _srgb_to_lab(a)
-    lb, ab, bb = _srgb_to_lab(b)
-    return ((la - lb) ** 2 + (aa - ab) ** 2 + (ba - bb) ** 2) ** 0.5
+    return lab_distance(a, b)
 
 
 def extract_hat_colors(image_path: Path, max_colors: int = 3) -> list[ExtractedColor]:
