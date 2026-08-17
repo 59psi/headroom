@@ -39,6 +39,12 @@ services:
     #
     # 1G suits a 2GB Pi. Raise it on bigger hardware; a value below ~640M will
     # kill the analysis worker mid-inference.
+    #
+    # Raspberry Pi OS ships with the memory cgroup DISABLED, so Docker prints
+    # "Your kernel does not support memory limit capabilities ... Limitation
+    # discarded" and ignores this. Add `cgroup_enable=memory cgroup_memory=1`
+    # to /boot/firmware/cmdline.txt and reboot — see docs/OPERATIONS.md §7.
+    # Harmless when unsupported; you just don't get the ceiling.
     mem_limit: ${HEADROOM_MEM_LIMIT:-1g}
     # Equal to mem_limit so the container cannot silently swap itself to a
     # crawl on an SD card instead of failing honestly.

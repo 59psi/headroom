@@ -6,7 +6,7 @@ module, which put half the admin schemas here and half there.
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class RecentError(BaseModel):
@@ -111,3 +111,38 @@ class ReanalyzeAllResult(BaseModel):
     queued: int
     worker_alive: bool
     job: AnalysisJobRead | None = None
+
+
+class PurchaseRead(BaseModel):
+    """A purchase-history line item.
+
+    Was a hand-built dict in the route, so the one endpoint carrying prices had
+    no declared shape.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    order_ref: str | None = None
+    order_date: datetime | None = None
+    item_title: str
+    model_name: str | None = None
+    colorway: str | None = None
+    price: float | None = None
+    quantity: int | None = None
+    hat_id: int | None = None
+    source: str | None = None
+
+
+class CatalogRefreshStarted(BaseModel):
+    """202 body for the colorway harvest.
+
+    The harvest walks up to 9 categories x 50 pages of an external API, which
+    is minutes of sequential round-trips. It used to run inside the request, so
+    the browser sat on an open connection long enough to hit any proxy timeout
+    in front of it and the work was invisible while it ran. It now runs as a
+    background task and this says so.
+    """
+
+    started: bool = True
+    detail: str = "Catalog refresh running in the background — check back shortly."

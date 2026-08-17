@@ -220,3 +220,42 @@ export interface BackupInfo {
   size_bytes: number;
   created_at: string;
 }
+
+/** One hat waiting in the analysis queue. Mirrors `PendingHat` in schemas/admin.py. */
+export interface PendingHat {
+  id: number;
+  display_id: string | null;
+  label: string | null;
+  stage: string | null;
+  photo_path: string | null;
+}
+
+/** A bulk re-analysis run. Progress is derived server-side, never accumulated. */
+export interface AnalysisJobRead {
+  id: number;
+  total: number;
+  done: number;
+  failed: number;
+  status: string;
+  started_at: string;
+  finished_at: string | null;
+}
+
+export interface AnalysisQueueStatus {
+  worker_alive: boolean;
+  queued: number;
+  pending_count: number;
+  pending: PendingHat[];
+  current_job: AnalysisJobRead | null;
+  recent_jobs: AnalysisJobRead[];
+}
+
+/** Whether the scheduled-backup task is actually working. */
+export interface BackupHealth {
+  enabled: boolean;
+  running: boolean;
+  last_attempt_at: string | null;
+  last_success_at: string | null;
+  last_error: string | null;
+  consecutive_failures: number;
+}

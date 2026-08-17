@@ -178,7 +178,7 @@ async def test_failed_login_writes_audit_row(client):
     assert any(row["kind"] == "auth.login_failed" for row in rows), rows
 
 
-# --- S2/R9: /health/ready redacts detail for anonymous callers ---------- #
+# --- S2/R9 (docs/AUDIT-HISTORY.md): /health/ready redacts for anonymous - #
 
 
 async def test_health_ready_redacts_for_anonymous(anon_client):

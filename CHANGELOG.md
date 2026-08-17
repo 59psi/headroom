@@ -6,6 +6,87 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.13.0] — 2026-08-17 — _one place for each thing_
+
+The layering and traceability findings the 2.12.0 release deliberately left,
+plus the test gap that let the crash class stay invisible.
+
+### Changed — the layering
+
+- **`share_links.py` has a service layer.** It was the only feature that lived
+  entirely in the transport layer — hand-rolled persistence, token-expiry
+  rules, and a second copy of the path-traversal check `app.py` already had.
+  That put the one surface reachable *without* a session in the hardest place
+  to test. Now `services/share_link_service.py` owns token validity and what a
+  token may see; the route is transport only.
+- **One definition of path containment.** `utils/paths.py::safe_join` is now
+  the single implementation, used by the SPA fallback and the share-photo
+  streamer. Both copies were correct — which is the problem: two correct copies
+  of a security check are two places that must both be fixed when it is wrong,
+  and one of them gets missed.
+- **No more hand-built dict responses.** `schemas/share.py`,
+  `schemas/import_job.py` and `PurchaseRead` replace them, so the public share
+  view and the purchase list have declared shapes and appear in the OpenAPI
+  document. The shared-collection payload is deliberately a projection, not
+  `HatRead` — prices, purchase history, disposition and analysis state are the
+  owner's business, and returning the full model while trusting the frontend
+  not to render the rest is exactly how that leaks.
+- **`schemas/auth.py`** holds the five models `routes/auth.py` declared inline
+  — the request bodies on the unauthenticated surface, whose validation rules
+  should be readable without opening the transport layer.
+- **Admin routes go through `hat_service`**, via `list_by_analysis_status`,
+  `count_by_analysis_status` and `ids_for_reanalysis`, rather than querying
+  `models.Hat` directly.
+- **`Purchase.hat` is a real relationship**, not a bare foreign key every
+  caller had to navigate by hand.
+- **The colorway harvest runs in the background** and returns `202`. It is up
+  to 9 categories × 50 pages of sequential external calls — minutes of work
+  inside a request, on an open connection, long enough for any reverse proxy
+  in front of it to time out first.
+- The three analysis/queue response types moved from `api/settings.ts` to
+  `types/index.ts` with every other API shape.
+
+### Added — tests for what the stub was hiding
+
+`tests/test_memory_bounds.py`. The suite stubs `remove_background` out entirely
+— rembg's model is 179MB — and that stub is why the crash class stayed
+invisible: every precondition sat in the code, green, for releases. The bounds
+are plain control flow, so they can be tested without the model. Removing the
+semaphore now fails with *"4 inferences ran at once; the bound is 1"*, which is
+precisely the pre-2.12 state.
+
+Covers the inference bound and its env override, a bad config value falling
+back rather than deadlocking, all three photo routes rejecting oversize before
+Pillow decodes anything, a normal photo still working, and bulk import handing
+the worker paths rather than bytes.
+
+### Fixed
+
+- `copy_upload_capped` bound its limit at import (`cap: int = MAX_PHOTO_BYTES`),
+  so it could never be changed — and an untestable limit is how the last one
+  went missing.
+- **`docs/AUDIT-HISTORY.md`** records what `R8`, `S2/R9`, `S5/R10`, `S4/S10`,
+  `S9/R6` and `R11` actually said. Ten of twelve in-code citations pointed at
+  documents that were never committed; a permanent reference to something
+  nobody can open is worse than none, because it implies a rationale exists to
+  be checked.
+
+### Fixed — the memory limit was being ignored on Pi
+
+Raspberry Pi OS ships with the memory cgroup disabled, so Docker printed
+*"Your kernel does not support memory limit capabilities ... Limitation
+discarded"* and dropped 2.12.0's `mem_limit` on the floor. The in-app bounds
+(upload caps, inference semaphore) were unaffected, but the container ceiling —
+the thing that turns a system-wide OOM kill into a diagnosable
+`OOMKilled=true` — was not actually in force.
+
+`docs/OPERATIONS.md` §7 now has the one-time fix (`cgroup_enable=memory
+cgroup_memory=1` in `cmdline.txt`, reboot), how to verify it took, and how to
+tell a memory kill from a Pi brown-out — undervoltage and thermal throttling
+during rembg's CPU burst produce an identical sudden death with no logs.
+
+280 backend + 61 frontend tests.
+
 ## [2.12.0] — 2026-08-17 — _the owner wins_
 
 A full-repo archaeology pass produced ~45 findings; this is all of them, plus

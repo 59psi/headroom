@@ -409,3 +409,48 @@ async def backfill_thumbnails(db: AsyncSession, limit: int = 5000) -> int:
     if made:
         await db.commit()
     return made
+
+
+async def list_by_analysis_status(
+    db: AsyncSession, status: str, limit: int = 50, newest_first: bool = False
+) -> list[Hat]:
+    """Hats in a given `analysis_status`, for the admin queue and error views.
+
+    Lives here rather than in the admin routes so the one place that knows how
+    to load a Hat (`_hat_loads`) stays the one place that does. Entities, not
+    columns: `display_id` is a derived property that walks `hat.case`, so it
+    cannot be selected — and it is the label a person actually recognises.
+    """
+    query = select(Hat).options(*_hat_loads()).where(Hat.analysis_status == status)
+    if newest_first:
+        query = query.order_by(Hat.analyzed_at.desc().nulls_last(), Hat.id.desc())
+    else:
+        query = query.order_by(Hat.id)
+    result = await db.execute(query.limit(max(1, min(limit, 100))))
+    return list(result.scalars().all())
+
+
+async def ids_for_reanalysis(
+    db: AsyncSession, only_priced_by_claude: bool = False
+) -> list[int]:
+    """Ids of every hat a bulk re-analysis should cover.
+
+    Ids rather than entities: the caller hands these to a queue, and the
+    routes↔worker boundary passes identifiers so a worker never holds an ORM
+    object from someone else's session.
+
+    Disposed hats are excluded — they are gone, and re-pricing them spends
+    Claude calls on inventory that is no longer owned.
+    """
+    stmt = select(Hat.id).where(Hat.photo_path.is_not(None), Hat.disposed_at.is_(None))
+    if only_priced_by_claude:
+        stmt = stmt.where(Hat.estimated_new_price_source == "Claude Vision")
+    return list((await db.execute(stmt.order_by(Hat.id))).scalars().all())
+
+
+async def count_by_analysis_status(db: AsyncSession, status: str) -> int:
+    """How many hats sit in one analysis status. Backs the nav error badge."""
+    result = await db.execute(
+        select(func.count(Hat.id)).where(Hat.analysis_status == status)
+    )
+    return int(result.scalar() or 0)

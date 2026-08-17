@@ -6,7 +6,8 @@ after upgrade — and because SQLAlchemy SELECTs every mapped column, ONE
 forgotten entry bricks every `Hat` read on that DB (total outage, not a
 degraded feature). This test simulates a legacy DB carrying only the original
 structural columns, runs the migration, and asserts every model column is
-present — converting the CLAUDE.md convention into an enforced invariant (R11).
+present — converting the CLAUDE.md convention into an enforced invariant
+(R11 — see docs/AUDIT-HISTORY.md).
 """
 
 import pytest

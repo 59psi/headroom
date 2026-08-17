@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from headroom.config import env_flag, settings
 from headroom.database import async_session, init_db
 from headroom.routes import api_router
+from headroom.utils.paths import safe_join
 from headroom.services import (
     activity_service,
     analysis_queue,
@@ -74,7 +75,8 @@ def _warn_if_multiprocess() -> None:
     and mDNS singleton are all in-memory and process-local. A second worker
     silently breaks passkey login (~50%), halves rate limiting, and can
     double-process imports into duplicate hats. Nothing shared backs them, so
-    this is a hard constraint, not a tuning knob (R8).
+    this is a hard constraint, not a tuning knob
+    (R8 — see docs/AUDIT-HISTORY.md).
     """
     for var in ("WEB_CONCURRENCY", "UVICORN_WORKERS", "GUNICORN_WORKERS"):
         raw = os.environ.get(var)
@@ -225,19 +227,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 def _safe_spa_path(full_path: str) -> Path | None:
-    """Resolve a SPA-fallback request and return a path inside FRONTEND_DIST or None.
+    """Resolve a SPA-fallback request to a path inside FRONTEND_DIST, or None.
 
-    Defends against path traversal: an attacker requesting `/%2e%2e/data/headroom.db`
-    must NOT escape the static frontend bundle. Resolve the candidate, then verify
-    it's within the frontend root before serving.
+    Defends against path traversal: an attacker requesting
+    `/%2e%2e/data/headroom.db` must NOT escape the static frontend bundle.
+    Thin wrapper over `utils.paths.safe_join`, which is the single definition
+    of that check — the share-photo streamer used to carry a second copy, and
+    two correct copies of a security check are two places to keep correct.
     """
-    try:
-        candidate = (FRONTEND_DIST / full_path).resolve(strict=False)
-    except (OSError, RuntimeError):
-        return None
-    if candidate != FRONTEND_DIST and not candidate.is_relative_to(FRONTEND_DIST):
-        return None
-    return candidate
+    return safe_join(FRONTEND_DIST, full_path)
 
 
 def create_app() -> FastAPI:

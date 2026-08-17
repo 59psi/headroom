@@ -36,7 +36,7 @@ async def ready(request: Request, db: AsyncSession = Depends(get_db)):
     This endpoint is unauthenticated (the Docker healthcheck polls it), so for
     anonymous callers it returns booleans ONLY — no raw exception strings, no
     filesystem paths, no API-key source. Authenticated callers see full detail
-    plus the import-worker liveness canary. (S2/R9)
+    plus the import-worker liveness canary. (S2/R9 — docs/AUDIT-HISTORY.md)
     """
     overall_ok = True
 

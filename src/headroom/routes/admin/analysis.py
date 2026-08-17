@@ -25,7 +25,7 @@ from headroom.schemas.admin import (
     PendingHat,
     ReanalyzeAllResult,
 )
-from headroom.services import analysis_job_service, analysis_queue
+from headroom.services import analysis_job_service, hat_service, analysis_queue
 
 router = APIRouter()
 
@@ -51,21 +51,9 @@ async def analysis_queue_status(db: AsyncSession = Depends(get_db)):
     picked up but not finished. They differ by design and both are useful: a
     non-empty `pending` with `worker_alive: false` means nothing is draining.
     """
-    # Entities rather than columns: `display_id` is a derived property that
-    # walks `hat.case`, so it can't be selected — and it's the label a person
-    # actually recognises. Bounded to 50, which is a backlog list, not a report.
-    hats = (
-        (
-            await db.execute(
-                select(Hat)
-                .options(selectinload(Hat.case))
-                .where(Hat.analysis_status == analysis_queue.PENDING)
-                .order_by(Hat.id)
-                .limit(50)
-            )
-        )
-        .scalars()
-        .all()
+    # Bounded to 50 — this is a backlog list, not a report.
+    hats = await hat_service.list_by_analysis_status(
+        db, analysis_queue.PENDING, limit=50
     )
 
     current = await analysis_job_service.current_job(db)
@@ -115,13 +103,9 @@ async def reanalyze_all(
     Disposed hats are excluded: they're gone, and re-pricing them spends
     Claude calls on inventory you no longer own.
     """
-    stmt = select(Hat.id).where(
-        Hat.photo_path.is_not(None), Hat.disposed_at.is_(None)
+    hat_ids = await hat_service.ids_for_reanalysis(
+        db, only_priced_by_claude=only_priced_by_claude
     )
-    if only_priced_by_claude:
-        stmt = stmt.where(Hat.estimated_new_price_source == "Claude Vision")
-
-    hat_ids = list((await db.execute(stmt.order_by(Hat.id))).scalars().all())
     if not hat_ids:
         return ReanalyzeAllResult(queued=0, worker_alive=analysis_queue.worker_alive())
 
