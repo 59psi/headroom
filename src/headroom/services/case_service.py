@@ -88,6 +88,12 @@ async def update_case(
         case.sequence_number = seq
         case.display_id = _make_display_id(data.case_type, seq)
     if data.room_id is not None:
+        # Validated for the same reason as on create: nothing below this layer
+        # enforces it, so an id for a missing room would orphan the case — and
+        # this is the path used to *repair* an orphan, which makes silently
+        # writing another bad id the worst possible failure here.
+        if not await room_service.room_exists(db, data.room_id):
+            raise HTTPException(status_code=404, detail=f"Room {data.room_id} not found")
         case.room_id = data.room_id
     if data.capacity is not None:
         case.capacity = data.capacity

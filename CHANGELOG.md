@@ -49,7 +49,9 @@ was reported from use.
   case reported its room as **"Unknown"**, and the room it should have been in
   reported **zero cases**. Three fixes: the picker now defaults to whichever
   room actually carries the flag; `POST /api/cases` rejects an unknown
-  `room_id` (nothing enforced it — there is no `PRAGMA foreign_keys`); and
+  `room_id`, as does `PUT /api/cases/{display_id}` — nothing below that
+  layer enforces it, there is no `PRAGMA foreign_keys`, and editing a case's
+  room is the path used to *repair* an orphan; and
   **existing orphans are reattached to the default room on boot**, alongside
   the `ensure_default_room` check that guarantees there is one.
 - **"Cancel" in the photo cropper uploaded the photo.** Cancel, ×, and a stray
@@ -113,7 +115,7 @@ was reported from use.
 - `nanoid` bumped to 3.3.18 (GHSA-2v37-7h3g-55p8, build-time only via
   vite → postcss).
 
-228 backend + 44 frontend tests.
+229 backend + 44 frontend tests.
 
 ## [2.6.2] — 2026-08-16 — _hats that keep their brims_
 
