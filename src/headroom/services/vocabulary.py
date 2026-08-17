@@ -15,20 +15,64 @@ Two layers stop it:
    EXISTING spelling. That is what makes the guarantee hold rather than merely
    making duplicates less likely.
 
-Deliberately only case/whitespace folding. "Piña" and "Pina" stay distinct:
-collapsing accents would be guessing at intent, and merging two collections
-that are genuinely different is worse than keeping two spellings of one.
+Folding covers case, whitespace AND accents, so "Piña", "Pina" and "PINA" are
+one collection. Accents were initially left alone on the theory that two names
+differing only by a diacritic might genuinely be different — in this collection
+they aren't, they are the same drop typed with and without a long-press on a
+phone keyboard, and three entries that never find each other in search is the
+concrete harm.
+
+When variants disagree, the ACCENTED spelling wins (see `_preferred`): an
+accent is a deliberate act, while dropping one is what happens when you're
+typing quickly, so the accented form is the better guess at the real name.
 """
 
 from __future__ import annotations
 
-from sqlalchemy import func, select
+import unicodedata
+
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import InstrumentedAttribute
 
 
 def _fold(value: str) -> str:
-    return " ".join(value.split()).casefold()
+    """Case-, whitespace- and accent-insensitive key for `value`.
+
+    NFKD splits an accented character into its base letter plus a combining
+    mark; dropping the marks leaves the base letters, so "Piña" and "Pina"
+    produce the same key.
+    """
+    collapsed = " ".join(value.split())
+    decomposed = unicodedata.normalize("NFKD", collapsed)
+    return "".join(c for c in decomposed if not unicodedata.combining(c)).casefold()
+
+
+def _accent_count(value: str) -> int:
+    """How many combining marks a spelling carries."""
+    return sum(1 for c in unicodedata.normalize("NFKD", value) if unicodedata.combining(c))
+
+
+def _preferred(variants: list[str], known: tuple[str, ...] = ()) -> str:
+    """Pick the spelling to keep from a group that folds to the same key.
+
+    One rule, used by both write-time canonicalisation and the one-time merge,
+    so a value cannot land differently depending on which path reached it.
+
+    In order: a curated spelling if one matches; then the most accents, because
+    adding one is deliberate and dropping one is a slip; then the most common,
+    so a single early typo doesn't rename what everything else uses; then
+    alphabetical, purely so the result never depends on row order.
+    """
+    key = _fold(variants[0])
+    for candidate in known:
+        if _fold(candidate) == key:
+            return candidate
+
+    counts: dict[str, int] = {}
+    for v in variants:
+        counts[v] = counts.get(v, 0) + 1
+    return sorted(counts, key=lambda v: (-_accent_count(v), -counts[v], v))[0]
 
 
 async def distinct_values(
@@ -68,6 +112,13 @@ async def canonicalize(
     FIRST, because it is authoritative even before any hat uses it: typing
     "hydrolite" into an empty database would otherwise store that spelling and
     leave the field permanently at odds with the list offering "HYDROLite".
+
+    Matching happens in Python, not SQL. It used to be a
+    `WHERE lower(col) = lower(?)`, which cannot fold accents — SQLite's
+    `lower()` is ASCII-only, so "Piña" and "PIÑA" don't even match each other
+    there, let alone "Pina". The candidate set is the DISTINCT values of one
+    column on a personal collection, so reading it per write is a few dozen
+    short strings.
     """
     if value is None:
         return None
@@ -75,33 +126,46 @@ async def canonicalize(
     if not cleaned:
         return None
 
+    key = _fold(cleaned)
     for candidate in known:
-        if candidate.casefold() == cleaned.casefold():
+        if _fold(candidate) == key:
             return candidate
 
-    existing = (
-        await db.execute(
-            select(column)
-            .where(func.lower(column) == cleaned.lower())
-            .limit(1)
-        )
-    ).scalar_one_or_none()
-    return existing or cleaned
+    rows = (
+        await db.execute(select(column).where(column.is_not(None)).distinct())
+    ).scalars().all()
+    matches = [" ".join(r.split()) for r in rows if r and r.strip() and _fold(r) == key]
+    if not matches:
+        return cleaned
+
+    on_record = _preferred(matches, known)
+    # What's on record wins ties — "snap to the existing spelling" is the whole
+    # point, and letting the typed form compete on equal terms would make
+    # "NEON" rename a collection recorded as "Neon" just by being typed once.
+    # It only loses when the typed value is strictly better informed, which
+    # here means it carries accents the stored one dropped. The merge then
+    # pulls the older rows across.
+    if _accent_count(cleaned) > _accent_count(on_record):
+        return cleaned
+    return on_record
 
 
 async def merge_case_variants(
     db: AsyncSession, column: InstrumentedAttribute, known: tuple[str, ...] = ()
 ) -> int:
-    """Collapse existing case/whitespace variants onto one spelling. Returns rows changed.
+    """Collapse existing case/whitespace/accent variants onto one spelling.
+
+    Returns the number of rows changed.
 
     Canonicalisation only applies to writes, so anything already recorded keeps
     whatever was typed at the time — this is the one-time repair for values
-    that entered before it, or through an import.
+    that entered before it, or through an import. `_preferred` decides which
+    spelling wins, so the merge and the write path cannot disagree.
 
-    Which spelling wins: a curated one if it matches, else the most COMMON
-    variant, with alphabetical order breaking ties so the outcome does not
-    depend on row order. Most-common rather than first-seen because a single
-    early typo should not rename the collection everything else uses.
+    Rows are matched by their exact stored value rather than by a SQL
+    expression, because the fold is accent-aware and SQLite's `lower()` is
+    ASCII-only — a `WHERE lower(col) = key` would silently skip every accented
+    row, which is precisely the group this exists to merge.
 
     Idempotent — running it again after it has converged changes nothing.
     """
@@ -113,23 +177,20 @@ async def merge_case_variants(
     for raw in rows:
         if not raw or not raw.strip():
             continue
-        cleaned = " ".join(raw.split())
-        groups.setdefault(_fold(cleaned), []).append(cleaned)
+        groups.setdefault(_fold(raw), []).append(raw)
 
-    curated = {k.casefold(): k for k in known}
     changed = 0
-    for key, variants in groups.items():
-        winner = curated.get(key)
-        if winner is None:
-            counts: dict[str, int] = {}
-            for v in variants:
-                counts[v] = counts.get(v, 0) + 1
-            winner = sorted(counts, key=lambda v: (-counts[v], v))[0]
-
+    for variants in groups.values():
+        # Compare on the cleaned form, but rewrite by the RAW stored value:
+        # " neon " and "neon" are the same variant to us and different strings
+        # to the database.
+        winner = _preferred([" ".join(v.split()) for v in variants], known)
+        stale = {v for v in variants if v != winner}
+        if not stale:
+            continue
         result = await db.execute(
             column.parent.class_.__table__.update()
-            .where(func.lower(func.trim(column)) == key)
-            .where(column != winner)
+            .where(column.in_(stale))
             .values({column.key: winner})
         )
         changed += result.rowcount or 0
