@@ -6,6 +6,25 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.18.2] — 2026-08-17
+
+### Fixed
+- **`setup.sh` now verifies the npm upgrade actually took.** It only checked
+  whether `npm install -g` exited cleanly, which it can do while changing
+  nothing you will run — so a setup that printed no error still left npm 11
+  building the SPA against an image pinned to 12. It now re-checks the version
+  afterwards and reports the mismatch immediately, rather than letting it
+  surface later as a build difference.
+
+  On a Homebrew node it says so specifically: the formula owns the `npm`
+  symlink into its Cellar, so a global upgrade is undone by the next
+  `brew upgrade node` and cannot be made to stick. Telling someone to re-run
+  the command would send them round a loop with no exit. This is cosmetic for
+  Docker deploys — the image installs its own pinned npm in the build stage —
+  and only matters when building the SPA locally for a bare-metal deploy.
+
+307 backend + 66 frontend tests.
+
 ## [2.18.1] — 2026-08-17
 
 ### Fixed
