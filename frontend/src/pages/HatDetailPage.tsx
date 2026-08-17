@@ -8,42 +8,19 @@ import { ImageLightbox } from '../components/common/ImageLightbox';
 import { PhotoCapture } from '../components/photos/PhotoCapture';
 import { DisposeModal } from '../components/common/DisposeModal';
 import { ColorEditModal } from '../components/common/ColorEditModal';
-import type { HatRead } from '../types';
+import { AnalysisStatus } from '../components/hats/AnalysisStatus';
 import { useState } from 'react';
 import { invalidateHatViews } from '../lib/invalidate';
 
 /**
- * What each pipeline step is called in the UI. The keys are the values
- * `hat_analysis_pipeline` publishes; anything unrecognised falls back to the
- * generic label rather than showing a raw enum.
+ * Hover text for the constructions worth explaining. Anything not listed —
+ * every specialty fabric — gets a plain "<name> construction", which is all
+ * there is to say about a material whose name already says it.
  */
-const STAGE_LABELS: Record<string, string> = {
-  cutout: 'Removing background…',
-  identifying: 'Identifying the hat…',
-  pricing: 'Checking prices…',
-  resale: 'Checking resale…',
+const CONSTRUCTION_TITLES: Record<string, string> = {
+  HYDROLite: 'melin HYDROLite: featherweight, bonded seams, gel-welded logo, antimicrobial sweatband',
+  HYDRO: 'melin HYDRO water-resistant construction',
 };
-
-function AnalysisStatus({ hat }: { hat: HatRead }) {
-  if (!hat.analysis_status) return null;
-  const status = hat.analysis_status;
-  const label =
-    status === 'pending'
-      ? (hat.analysis_stage && STAGE_LABELS[hat.analysis_stage]) || 'Analyzing…'
-    : status === 'ok' ? 'Analyzed'
-    : status === 'skipped' ? 'No API key'
-    : status === 'fallback' ? 'Basic ID (fallback)'
-    : 'Analysis failed';
-  return (
-    <span className={`hr-analysis-status ${status}`} title={hat.analysis_error || undefined}>
-      {/* A spinning ring rather than the static dot: 'pending' is the one status
-          that resolves on its own, and the motion is what tells you the page is
-          still live rather than stuck — the complaint the queue was fixing. */}
-      {status === 'pending' ? <span className="hr-analysis-spinner" /> : <span className="dot" />}
-      {label}
-    </span>
-  );
-}
 
 function PriceTile({ label, value, source }: { label: string; value: number | null; source?: string | null }) {
   return (
@@ -154,15 +131,16 @@ export function HatDetailPage() {
         <h1 className="font-mono" style={{ color: 'var(--neon-cyan)' }}>
           {data.display_id || `Hat #${data.id}`}
         </h1>
-        <div className="d-flex gap-2 align-items-center">
-          {data.hydrolite && (
-            <span className="badge bg-info" title="melin HYDROLite construction: featherweight, bonded seams, gel-welded logo, antimicrobial sweatband">
-              HYDROLite
-            </span>
-          )}
-          {data.hydro && (
-            <span className="badge bg-info" title="melin HYDRO water-resistant construction">
-              HYDRO
+        {/* `flex-wrap` so the row breaks onto a second line instead of
+            overflowing the viewport on a phone — this is the row that a
+            long badge used to push out of shape. */}
+        <div className="d-flex gap-2 align-items-center flex-wrap">
+          {/* Renders whatever the construction says, rather than one badge per
+              known flag. A hat in a specialty fabric used to show no badge at
+              all: the two booleans could only describe HYDRO and HYDROLite. */}
+          {data.construction && (
+            <span className="badge bg-info" title={CONSTRUCTION_TITLES[data.construction] || `${data.construction} construction`}>
+              {data.construction}
             </span>
           )}
           <AnalysisStatus hat={data} />

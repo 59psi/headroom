@@ -189,10 +189,15 @@ async def test_hydrolite_is_orthogonal_to_style(client):
     })).json()
     assert hat["hydrolite"] is True
     assert hat["style"] == "coronado"   # still its own model
+    # The legacy boolean is folded into the free-form field it replaced, so a
+    # pre-2.11 client's hat is indistinguishable from one added through the
+    # current form.
+    assert hat["construction"] == "HYDROLite"
 
     # Togglable without disturbing the model.
     off = (await client.put(f"/api/hats/{hat['id']}", json={"hydrolite": False})).json()
     assert off["hydrolite"] is False
+    assert off["construction"] is None
     assert off["style"] == "coronado"
 
 

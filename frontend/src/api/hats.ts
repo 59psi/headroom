@@ -103,3 +103,12 @@ export function getSizes() {
 export function getConditions() {
   return apiFetch<MetaOption[]>('/api/meta/conditions');
 }
+
+/**
+ * Construction suggestions: the curated list merged with every value already
+ * in use. Plain strings, not `MetaOption`s — the field is free text, so there
+ * is no value/label split to make.
+ */
+export function getConstructions() {
+  return apiFetch<string[]>('/api/meta/constructions');
+}

@@ -7,7 +7,7 @@ import * as hatsApi from '../api/hats';
 import type { HatRead } from '../types';
 
 /**
- * The Artist / Collab field is wired through a `Record<string, unknown>`
+ * The Collection / collab field is wired through a `Record<string, unknown>`
  * payload, so `tsc` cannot tell whether the state is actually placed on the
  * request. Forgetting the one payload line would leave a field that accepts
  * typing and silently discards it — invisible to every other check. These
@@ -29,6 +29,7 @@ const HAT: HatRead = {
   wear_count: 0,
   size: 'classic',
   style: 'collab',
+  construction: null,
   hydrolite: false,
   hydro: false,
   is_beanie: false,
@@ -79,6 +80,7 @@ vi.mock('../api/hats', () => ({
   getStyles: vi.fn(async () => [{ value: 'collab', label: 'Collab' }]),
   getSizes: vi.fn(async () => [{ value: 'classic', label: 'Classic' }]),
   getConditions: vi.fn(async () => [{ value: 'new', label: 'New' }]),
+  getConstructions: vi.fn(async () => ['HYDRO', 'HYDROLite', 'Thermal']),
 }));
 vi.mock('../api/cases', () => ({ listCases: vi.fn(async () => []) }));
 vi.mock('../api/client', () => ({ apiFetch: vi.fn(async () => []) }));
@@ -88,20 +90,20 @@ vi.mock('react-router', async (importOriginal) => ({
   useNavigate: () => vi.fn(),
 }));
 
-describe('EditHatPage — Artist / Collab', () => {
+describe('EditHatPage — Collection / collab', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('seeds the field from the hat', async () => {
     renderWithProviders(<EditHatPage />);
 
-    expect(await screen.findByLabelText('Artist / Collab')).toHaveValue('Skye Walker');
+    expect(await screen.findByLabelText('Collection or collaboration')).toHaveValue('Skye Walker');
   });
 
   it('submits what was typed as artist_series', async () => {
     const user = userEvent.setup();
     renderWithProviders(<EditHatPage />);
 
-    const field = await screen.findByLabelText('Artist / Collab');
+    const field = await screen.findByLabelText('Collection or collaboration');
     await user.clear(field);
     await user.type(field, 'melin x OluKai');
     await user.click(screen.getByRole('button', { name: 'Save Changes' }));
@@ -116,7 +118,7 @@ describe('EditHatPage — Artist / Collab', () => {
     const user = userEvent.setup();
     renderWithProviders(<EditHatPage />);
 
-    await user.clear(await screen.findByLabelText('Artist / Collab'));
+    await user.clear(await screen.findByLabelText('Collection or collaboration'));
     await user.click(screen.getByRole('button', { name: 'Save Changes' }));
 
     await waitFor(() => expect(hatsApi.updateHat).toHaveBeenCalled());

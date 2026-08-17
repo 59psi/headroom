@@ -11,6 +11,7 @@ vi.mock('../../api/hats', () => ({
   ]),
   getSizes: vi.fn(async () => [{ value: 'classic', label: 'Classic' }]),
   getConditions: vi.fn(async () => [{ value: 'new', label: 'New' }]),
+  getConstructions: vi.fn(async () => ['HYDRO', 'HYDROLite', 'Thermal']),
 }));
 
 vi.mock('../../api/rooms', () => ({

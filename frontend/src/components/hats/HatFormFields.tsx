@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { getStyles, getSizes, getConditions } from '../../api/hats';
+import { getStyles, getSizes, getConditions, getConstructions } from '../../api/hats';
 import { listCases } from '../../api/cases';
 import { PhotoCapture } from '../photos/PhotoCapture';
 
@@ -9,10 +9,14 @@ export interface HatBasics {
   style: string;
   size: string;
   condition: string;
-  /** melin HYDROLite construction — orthogonal to style, so any model can be one. */
-  hydrolite: boolean;
-  /** melin HYDRO construction — the sibling technology, likewise any model. */
-  hydro: boolean;
+  /**
+   * Free-form construction ('' = not stated), orthogonal to style so any model
+   * can be any of them. Structured suggestions come from
+   * `GET /api/meta/constructions`; anything else typed is stored verbatim.
+   */
+  construction: string;
+  /** Collection / collaboration name ('' = not stated). */
+  artistSeries: string;
   /** Case id as a string ('' = unassigned), matching the <select> value. */
   caseId: string;
   /** ISO date or '' */
@@ -33,24 +37,27 @@ export const NEW_CASE_VALUE = '__new__';
 // Widened to `string` on purpose: `as const` would infer literal types and make
 // these unusable as useState seeds for controls whose value is a plain string.
 export const DEFAULT_HAT_BASICS: {
-  style: string; size: string; condition: string; hydrolite: boolean; hydro: boolean;
+  style: string; size: string; condition: string; construction: string; artistSeries: string;
 } = {
   style: 'a_game',
   size: 'classic',
   condition: 'new',
-  hydrolite: false,
-  hydro: false,
+  construction: '',
+  artistSeries: '',
 };
 
-/** The four dropdown sources both hat forms need, plus a single loading flag. */
+/** The dropdown sources both hat forms need, plus a single loading flag. */
 export function useHatFormOptions() {
   const styles = useQuery({ queryKey: ['meta', 'styles'], queryFn: getStyles });
   const sizes = useQuery({ queryKey: ['meta', 'sizes'], queryFn: getSizes });
   const conditions = useQuery({ queryKey: ['meta', 'conditions'], queryFn: getConditions });
+  const constructions = useQuery({ queryKey: ['meta', 'constructions'], queryFn: getConstructions });
   const cases = useQuery({ queryKey: ['cases'], queryFn: listCases });
 
   return {
-    styles, sizes, conditions, cases,
+    styles, sizes, conditions, constructions, cases,
+    // `constructions` is deliberately absent: it only populates a datalist, so
+    // a slow or failed fetch costs suggestions, not the ability to type one.
     isLoading: styles.isLoading || sizes.isLoading || conditions.isLoading,
   };
 }
@@ -151,42 +158,59 @@ export function HatBasicsCard({
 
         {/* Beside Style rather than inside it: these are constructions melin
             offers ACROSS models, so a hat is "a Coronado, in HYDROLite", never
-            "a HYDROLite instead of a Coronado". Two independent checkboxes and
-            not a 3-way radio — realistically a hat is one or the other, but the
-            schema doesn't enforce that, so the form shouldn't either. Claude
-            picks at most one; a person can record whatever the hat says. */}
+            "a HYDROLite instead of a Coronado".
+
+            A datalist and not a <select>: melin ships specialty fabrics in
+            seasonal and collab drops, so any closed list is wrong by next
+            season. This offers the common answers as one tap while still
+            accepting whatever the tag in your hand actually says. The options
+            come from the server, which merges the curated list with every
+            value already in use — so a fabric typed once is a suggestion
+            after that, and the free-form half doesn't fill up with five
+            spellings of the same material. */}
         <div className="mb-3">
-          <label className="form-label">Construction</label>
-          <label className="d-flex align-items-center gap-2 mb-2" style={{ cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              aria-label="HYDROLite construction"
-              checked={values.hydrolite}
-              onChange={e => onChange('hydrolite', e.target.checked)}
-              style={{ width: 20, height: 20, flexShrink: 0 }}
-            />
-            <span>
-              HYDROLite
-              <span className="text-secondary small d-block">
-                Featherweight, bonded seams, gel-welded logo, antimicrobial sweatband
-              </span>
-            </span>
+          <label className="form-label" htmlFor="hat-construction">Construction</label>
+          <input
+            id="hat-construction"
+            list="hat-construction-options"
+            aria-label="Construction"
+            className="form-control"
+            placeholder="HYDRO, HYDROLite, Thermal…"
+            value={values.construction}
+            onChange={e => onChange('construction', e.target.value)}
+          />
+          <datalist id="hat-construction-options">
+            {options.constructions.data?.map(c => <option key={c} value={c} />)}
+          </datalist>
+          <div className="form-text">
+            Pick one or type the fabric. Leave blank if it's a standard build —
+            analysis will fill it in if it can identify the hat.
+          </div>
+        </div>
+
+        {/* Editable at ADD time, not only on the Edit form. A collection or
+            collaboration name is printed on the box and the hang tag, and is
+            frequently invisible in a photo of the hat itself — so the owner
+            standing there with it knows something the analyser cannot see, and
+            making them save first and edit second meant either a second trip
+            or hoping Claude guessed. Analysis leaves a filled-in value alone. */}
+        <div className="mb-3">
+          <label className="form-label" htmlFor="hat-artist-series">
+            Collection / collab <span className="text-secondary">(optional)</span>
           </label>
-          <label className="d-flex align-items-center gap-2" style={{ cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              aria-label="HYDRO construction"
-              checked={values.hydro}
-              onChange={e => onChange('hydro', e.target.checked)}
-              style={{ width: 20, height: 20, flexShrink: 0 }}
-            />
-            <span>
-              HYDRO
-              <span className="text-secondary small d-block">
-                Water-resistant build — usually named in the model ("A-Game Hydro")
-              </span>
-            </span>
-          </label>
+          <input
+            id="hat-artist-series"
+            aria-label="Collection or collaboration"
+            className="form-control"
+            placeholder="Piña, Skye Walker, melin x OluKai…"
+            value={values.artistSeries}
+            onChange={e => onChange('artistSeries', e.target.value)}
+          />
+          <div className="form-text">
+            Signature collaborations, artist series and named collections. Analysis
+            fills this in when it recognises one — anything you type survives a
+            re-analysis.
+          </div>
         </div>
 
         <div className="mb-3">

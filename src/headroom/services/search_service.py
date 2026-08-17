@@ -52,17 +52,22 @@ async def search_hats(
             Hat.brand.ilike(pattern),
             Hat.model_name.ilike(pattern),
             Hat.artist_series.ilike(pattern),
+            # Free-form since 2.11, so "canvas" finds a Waxed Canvas hat. The
+            # flag clauses below stay because they are not redundant with this:
+            # `hydro` must keep finding a hat recorded as "A-Game Hydro", and
+            # `hydrolite` must NOT drag in every HYDRO.
+            Hat.construction.ilike(pattern),
             Hat.id.in_(
                 select(HatColor.hat_id).where(color_field.ilike(pattern))
             ),
             Hat.case.has(Case.room.has(Room.name.ilike(pattern))),
         ]
-        # HYDRO / HYDROLite are boolean columns, not text, so no `ilike` above
-        # can ever match them. They used to be values of `style`, and USAGE
-        # still promised "`hydro` finds every Hydro" — moving them to flags in
-        # 2.6.0 quietly broke that. Matched on the term itself so the promise
-        # holds again. "hydro" is a prefix of "hydrolite", so check the longer
-        # word first or every HYDROLite search also drags in every HYDRO.
+        # HYDRO / HYDROLite also have boolean columns, derived from the text
+        # above. They used to be values of `style`, and USAGE still promised
+        # "`hydro` finds every Hydro" — moving them to flags in 2.6.0 quietly
+        # broke that. Matched on the term itself so the promise holds again.
+        # "hydro" is a prefix of "hydrolite", so check the longer word first or
+        # every HYDROLite search also drags in every HYDRO.
         low = term.lower()
         if "hydrolite" in low:
             clauses.append(Hat.hydrolite.is_(True))

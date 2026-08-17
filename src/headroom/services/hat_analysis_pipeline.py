@@ -362,21 +362,32 @@ def _apply_resale_pointer(hat: Hat) -> None:
     hat.resale_checked_at = datetime.now(timezone.utc)
 
 
-def _apply_construction(hat: Hat, construction: str | None) -> None:
-    """Set the hydro / hydrolite flags from Claude's single `construction` value.
+# Words that mean "no construction identified" rather than naming one.
+_NON_ANSWERS = frozenset({"standard", "none", "n/a", "na", "unknown", "regular"})
 
-    Additive on purpose — this only ever turns a flag ON. Every other field here
-    is overwritten by a re-analysis, which is right for things only the analyser
-    supplies, but these two are also a checkbox a human ticks. Clearing on
-    "standard" would mean a reanalyse silently un-ticks a box the owner set
-    while holding the hat, and Claude cannot reliably see bonded seams or a
-    gel-welded logo in every photo — absence of evidence, not evidence of
-    absence. Unticking stays a human action.
+
+def _apply_construction(hat: Hat, construction: str | None) -> None:
+    """Let a real answer from Claude correct the construction on record.
+
+    Corrective rather than additive since 2.11. It used to only ever turn a
+    boolean ON, because with two flags and no way to say "standard", clearing
+    on a non-answer would silently un-tick a box the owner set while holding
+    the hat. Free-form text removes that trap: "Thermal" is a positive
+    identification, not the absence of one, so it should win — the owner asked
+    for exactly this when they said Claude should be able to correct what they
+    typed.
+
+    A null still changes nothing. Claude cannot see bonded seams or a
+    gel-welded logo in every photo, so silence stays absence of evidence.
+
+    `_NON_ANSWERS` exists because the old tool schema was an enum whose "I
+    can't tell" member was the literal string "standard". A model still
+    answering that way — a cached prompt, a fine-tune, a future edit that
+    reinstates it — must not get "standard" written down as if it were a fabric,
+    which would both read as nonsense and clear the flags.
     """
-    if construction == "hydro":
-        hat.hydro = True
-    elif construction == "hydrolite":
-        hat.hydrolite = True
+    if construction and construction.strip().casefold() not in _NON_ANSWERS:
+        hat.set_construction(construction)
 
 
 def _keep_on_null(incoming: str | None, current: str | None) -> str | None:

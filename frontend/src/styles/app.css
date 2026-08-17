@@ -1160,30 +1160,17 @@ button.card:hover::before,
   text-transform: uppercase;
 }
 
+/* Pending is a step counter ("2/4"), so it gets tabular figures: the glyphs
+   are then equal-width and the pill stops twitching as the number changes.
+   The spinning ring this replaces was both too wide on a phone and, lacking
+   `flex-shrink: 0`, squashed into an ellipse whenever the row ran out of
+   room — it rendered as an egg, not a circle. */
 .hr-analysis-status.pending {
   background: rgba(0, 240, 255, 0.12);
   color: var(--neon-cyan);
   border: 1px solid rgba(0, 240, 255, 0.4);
-}
-
-/* Spinning ring for the one status that resolves on its own. */
-.hr-analysis-spinner {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  border: 1.5px solid currentColor;
-  border-top-color: transparent;
-  animation: hr-analysis-spin 0.7s linear infinite;
-}
-
-@keyframes hr-analysis-spin {
-  to { transform: rotate(360deg); }
-}
-
-/* Respect the OS "reduce motion" setting — the badge still reads as active via
-   its colour and label, so the spin is decoration, not information. */
-@media (prefers-reduced-motion: reduce) {
-  .hr-analysis-spinner { animation: none; }
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
 }
 
 .hr-analysis-status.ok {

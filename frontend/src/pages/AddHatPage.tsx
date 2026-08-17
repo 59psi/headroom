@@ -35,9 +35,12 @@ export function AddHatPage() {
     mutationFn: async () => {
       const data: Record<string, unknown> = {
         style: basics.style, size: basics.size, condition: basics.condition,
-        hydrolite: basics.hydrolite,
-        hydro: basics.hydro,
       };
+      // Only sent when typed. An empty string would be stored as a real value,
+      // making the hat look annotated when nothing was entered — and, worse,
+      // would count as an answer that stops analysis filling the gap in.
+      if (basics.construction.trim()) data.construction = basics.construction.trim();
+      if (basics.artistSeries.trim()) data.artist_series = basics.artistSeries.trim();
       if (basics.caseId) data.case_id = Number(basics.caseId);
       if (basics.dateLastWorn) data.date_last_worn = basics.dateLastWorn;
 

@@ -171,28 +171,67 @@ async def test_claude_error_marks_hat_status_error(client, monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_construction_only_ever_sets_flags_never_clears_them(client):
-    """Claude turning a construction flag ON is additive; it must not un-tick.
+async def test_claude_corrects_construction_but_silence_changes_nothing(client):
+    """A real identification wins; a non-answer leaves the record alone.
 
-    These two are also user-facing checkboxes. A re-analysis returning
-    'standard' — which Claude will do whenever bonded seams or a gel-welded
-    logo aren't legible in the photo — must not silently undo what the owner
-    ticked while holding the hat. Absence of evidence isn't evidence of absence.
+    Corrective since 2.11, where construction became free-form text. It used to
+    be additive-only, because with two booleans and no way to say "standard"
+    there was no distinction between "this is not HYDROLite" and "I can't see
+    whether it is" — so clearing risked un-ticking a box the owner set while
+    holding the hat. Naming a fabric is a positive identification, so it now
+    overwrites; silence still does not.
     """
     from headroom.models.hat import Hat
     from headroom.services.hat_analysis_pipeline import _apply_construction
 
-    hat = Hat(hydro=False, hydrolite=True)
+    hat = Hat()
+    hat.set_construction("HYDROLite")
 
-    _apply_construction(hat, "standard")
-    assert hat.hydrolite is True, "a 'standard' verdict must not clear the flag"
-
-    _apply_construction(hat, "hydro")
-    assert hat.hydro is True
-    assert hat.hydrolite is True  # still untouched
-
+    # Null is "I can't tell" — absence of evidence, not evidence of absence.
     _apply_construction(hat, None)
-    assert hat.hydro is True and hat.hydrolite is True
+    assert hat.construction == "HYDROLite"
+    assert hat.hydrolite is True
+
+    # So is the old enum's "I can't tell" member, which must never be stored as
+    # if it were a fabric.
+    _apply_construction(hat, "standard")
+    assert hat.construction == "HYDROLite", "'standard' is a non-answer, not a fabric"
+    assert hat.hydrolite is True
+
+    # A named fabric corrects the record — and the derived flags follow it,
+    # rather than being left behind describing the previous answer.
+    _apply_construction(hat, "Thermal")
+    assert hat.construction == "Thermal"
+    assert hat.hydrolite is False and hat.hydro is False
+
+
+@pytest.mark.anyio
+async def test_construction_flags_are_derived_not_assigned(client):
+    """`hydro`/`hydrolite` are an index over the text, so they can't disagree.
+
+    They stay real columns because search filters query them, which is exactly
+    what makes drift dangerous: a hat reading "Thermal" that still matches a
+    HYDRO filter is wrong in the one place the flags exist to serve.
+    """
+    from headroom.models.hat import Hat
+
+    hat = Hat()
+
+    # Substring, not equality — real answers arrive as product names.
+    hat.set_construction("A-Game Hydro")
+    assert hat.hydro is True and hat.hydrolite is False
+
+    # HYDROLite contains "hydro"; the more specific answer must win.
+    hat.set_construction("HYDROLite")
+    assert hat.hydrolite is True and hat.hydro is False
+
+    # An unrelated fabric clears both rather than leaving a stale one set.
+    hat.set_construction("Corduroy")
+    assert hat.hydro is False and hat.hydrolite is False
+
+    # Blank means "not stated", not the empty string.
+    hat.set_construction("   ")
+    assert hat.construction is None
 
 
 @pytest.mark.anyio
