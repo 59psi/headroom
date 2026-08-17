@@ -57,14 +57,41 @@ async def test_a_genuinely_new_collection_is_kept_as_typed(client):
     assert sorted((await client.get("/api/meta/collections")).json()) == ["Deep Sea", "Neon"]
 
 
-async def test_accents_are_not_folded_away(client):
-    """Only case and whitespace. Collapsing accents would merge two names that
-    may genuinely differ, which is worse than keeping two spellings of one."""
+async def test_accents_fold_together(client):
+    """"Piña" and "Pina" are one collection typed with and without a
+    long-press, not two drops."""
     await _add(client, artist_series="Piña")
-    other = await _add(client, artist_series="Pina")
+    plain = await _add(client, artist_series="Pina")
+    shouty = await _add(client, artist_series="PINA")
 
-    assert other["artist_series"] == "Pina"
-    assert len((await client.get("/api/meta/collections")).json()) == 2
+    assert plain["artist_series"] == "Piña"
+    assert shouty["artist_series"] == "Piña"
+    assert (await client.get("/api/meta/collections")).json() == ["Piña"]
+
+
+async def test_the_accented_spelling_wins_even_when_it_arrives_second(client):
+    """Adding an accent is deliberate; dropping one is what a phone keyboard
+    does to you. So the accented form is the better guess at the real name,
+    whichever order they were typed in."""
+    await _add(client, artist_series="Pina")
+    accented = await _add(client, artist_series="Piña")
+
+    assert accented["artist_series"] == "Piña"
+
+
+async def test_the_merge_pulls_unaccented_rows_across(client, db_session):
+    """The write path keeps the better name; the merge moves the older rows
+    onto it — otherwise the collection stays split until every hat is edited."""
+    from headroom.models.hat import Hat
+    from headroom.services import vocabulary
+
+    for _ in range(3):
+        await _add(client, artist_series="Pina")
+    await _add(client, artist_series="Piña")
+
+    await vocabulary.merge_case_variants(db_session, Hat.artist_series)
+
+    assert (await client.get("/api/meta/collections")).json() == ["Piña"]
 
 
 async def test_editing_canonicalises_too(client):

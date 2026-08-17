@@ -6,6 +6,35 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.16.0] — 2026-08-17 — _one Piña_
+
+### Changed
+- **Accents fold too.** 2.15.0 deliberately kept "Piña" and "Pina" apart, on
+  the theory that two names differing only by a diacritic might genuinely be
+  different collections. In this collection they aren't — they are one drop
+  typed with and without a long-press on a phone keyboard, and the concrete
+  harm is three entries that never find each other in search. `Piña`, `Pina`
+  and `PINA` are now one collection.
+
+  When variants disagree the **accented** spelling wins: adding an accent is a
+  deliberate act, while dropping one is what happens when you type quickly, so
+  it is the better guess at the real name. Typing `Piña` where only `Pina` is
+  on record therefore keeps the accent, and the one-time merge pulls the older
+  rows across.
+
+  On write, the value already on record still wins a *tie* — otherwise typing
+  `NEON` once would rename a collection recorded as `Neon`. It only loses when
+  the typed value is strictly better informed.
+
+### Fixed
+- Matching moved from SQL to Python. It was a `WHERE lower(col) = lower(?)`,
+  and SQLite's `lower()` is ASCII-only: it cannot fold accents, so `Piña` and
+  `PIÑA` did not even match *each other*, let alone `Pina`. The candidate set
+  is the distinct values of one column on a personal collection — a few dozen
+  short strings — so comparing in Python costs nothing and is actually correct.
+
+296 backend + 63 frontend tests.
+
 ## [2.15.0] — 2026-08-17 — _one Neon_
 
 ### Changed
