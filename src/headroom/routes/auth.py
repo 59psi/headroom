@@ -10,7 +10,6 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,21 +20,17 @@ from headroom.models.app_setting import AppSetting
 from headroom.models.user import PasskeyCredential, User
 from headroom.services import auth_service, passkey_service
 from headroom.services.activity_service import log_activity
+from headroom.schemas.auth import (
+    AuthStatus,
+    Credentials,
+    PasskeyLoginVerify,
+    PasskeyRegisterVerify,
+    PasswordChange,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
-
-
-class Credentials(BaseModel):
-    username: str = Field(min_length=3, max_length=60)
-    password: str = Field(min_length=8, max_length=200)
-
-
-class AuthStatus(BaseModel):
-    needs_setup: bool
-    authenticated: bool
-    username: str | None = None
 
 
 def _set_session_cookie(response: Response, request: Request, session_id: str) -> None:
@@ -76,7 +71,7 @@ async def first_run_setup(
     # Serialize first-run setup against a racing second POST: app_settings.key
     # is a PRIMARY KEY, so only one concurrent transaction can claim this
     # sentinel — the loser's INSERT collides and rolls back its owner account
-    # too, instead of both check-then-inserting two co-equal owners (S5/R10).
+    # too, instead of both check-then-inserting two co-equal owners (S5/R10 — docs/AUDIT-HISTORY.md).
     db.add(AppSetting(key="owner_setup_done", value="1"))
     try:
         user = await auth_service.create_user(db, data.username, data.password)
@@ -166,11 +161,6 @@ async def rotate_api_token(
     return {"api_token": user.api_token}
 
 
-class PasswordChange(BaseModel):
-    current_password: str
-    new_password: str = Field(min_length=8, max_length=200)
-
-
 @router.post("/password", status_code=204)
 async def change_password(
     data: PasswordChange,
@@ -230,12 +220,6 @@ async def passkey_register_options(
     return {"state_id": state_id, "options": options}
 
 
-class PasskeyRegisterVerify(BaseModel):
-    state_id: str
-    credential: dict
-    name: str = "Passkey"
-
-
 @router.post("/passkeys/register/verify")
 async def passkey_register_verify(
     data: PasskeyRegisterVerify,
@@ -287,11 +271,6 @@ async def delete_passkey(
 async def passkey_login_options():
     state_id, options = passkey_service.authentication_options()
     return {"state_id": state_id, "options": options}
-
-
-class PasskeyLoginVerify(BaseModel):
-    state_id: str
-    credential: dict
 
 
 @router.post("/passkeys/login/verify", response_model=AuthStatus)

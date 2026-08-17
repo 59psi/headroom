@@ -10,8 +10,9 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.database import get_db
-from headroom.models.hat import Hat
 from headroom.schemas.admin import RecentError
+from headroom.models.hat import Hat
+from headroom.services import hat_service
 
 router = APIRouter()
 
@@ -27,13 +28,9 @@ def _safe_display_id(hat: Hat) -> str | None:
 @router.get("/recent-errors", response_model=list[RecentError])
 async def recent_errors(limit: int = 20, db: AsyncSession = Depends(get_db)):
     """Most recent hats with analysis_status='error', newest first."""
-    result = await db.execute(
-        select(Hat)
-        .where(Hat.analysis_status == "error")
-        .order_by(Hat.analyzed_at.desc().nulls_last(), Hat.id.desc())
-        .limit(max(1, min(limit, 100)))
+    rows = await hat_service.list_by_analysis_status(
+        db, "error", limit=limit, newest_first=True
     )
-    rows = result.scalars().all()
     return [
         RecentError(
             hat_id=h.id,
@@ -49,7 +46,4 @@ async def recent_errors(limit: int = 20, db: AsyncSession = Depends(get_db)):
 @router.get("/recent-errors/count")
 async def recent_errors_count(db: AsyncSession = Depends(get_db)):
     """Cheap count for nav-badge display."""
-    result = await db.execute(
-        select(func.count(Hat.id)).where(Hat.analysis_status == "error")
-    )
-    return {"count": int(result.scalar() or 0)}
+    return {"count": await hat_service.count_by_analysis_status(db, "error")}

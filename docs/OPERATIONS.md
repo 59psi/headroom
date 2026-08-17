@@ -334,6 +334,58 @@ thing standing between the internet and your hats.
 - SQLite on an SD card is fine at hat-collection scale, but SD cards die:
   that's what §4's off-machine backup copy is for.
 
+### Enable the memory cgroup (do this once)
+
+`docker compose up` prints this on Raspberry Pi OS:
+
+```
+! headroom  Your kernel does not support memory limit capabilities or the
+            cgroup is not mounted. Limitation discarded.
+```
+
+That means the `mem_limit` in `docker-compose.yml` is being **silently
+ignored**. Raspberry Pi OS ships with the memory cgroup off (it costs a little
+RAM and kernel overhead), so Docker cannot enforce a ceiling until you turn it
+on. Everything still runs — you just lose the protection.
+
+It matters because of what the ceiling is for. Without it, a memory spike
+competes for the whole machine and the kernel's OOM killer picks a victim
+system-wide — which can be sshd, or the container killed with `SIGKILL` so
+nothing is logged and there is no evidence afterwards. With it, Docker records
+`OOMKilled=true` against this container and the failure is diagnosable.
+
+Add these two options to the **end of the existing single line** in
+`/boot/firmware/cmdline.txt` (older images: `/boot/cmdline.txt`) — it must stay
+one line, space-separated:
+
+```
+cgroup_enable=memory cgroup_memory=1
+```
+
+Then reboot and confirm:
+
+```
+sudo reboot
+# after it comes back:
+docker info | grep -i "memory limit"      # expect no "WARNING: No memory limit support"
+docker inspect headroom --format '{{.HostConfig.Memory}}'   # expect 1073741824, not 0
+```
+
+Tune the ceiling with `HEADROOM_MEM_LIMIT` (default `1g`). Don't go below
+~640M — the analysis worker holds a ~179 MB model plus a decoded image, and a
+tighter limit kills it mid-inference on every upload.
+
+**If the app is ever killed anyway**, this is how you find out why:
+
+```
+docker inspect headroom --format '{{.State.ExitCode}} {{.State.OOMKilled}}'
+```
+
+`OOMKilled=true` means it hit the ceiling. A Pi that browns out under load
+(undervoltage, or thermal throttling during rembg's CPU burst) produces an
+identical-looking sudden death with no logs — check `vcgencmd get_throttled`,
+where anything other than `0x0` points at power or heat rather than memory.
+
 ---
 
 ## 8. External services & failure modes

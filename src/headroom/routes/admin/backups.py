@@ -28,7 +28,7 @@ async def download_backup(
     filename = backup_service.streaming_filename(include_uploads=include_uploads)
     # The backup tarball contains the whole DB (plaintext keys, tokens, session
     # ids, password hashes) — the single highest-value exfil artifact. Audit the
-    # download so a full-dataset export is never invisible (S4/S10).
+    # download so a full-dataset export is never invisible (S4/S10 — docs/AUDIT-HISTORY.md).
     await activity_service.log_activity(
         db, kind="backup.download", entity_type="system", entity_id=None,
         summary=f"Backup downloaded ({'full' if include_uploads else 'db-only'}): {filename}",

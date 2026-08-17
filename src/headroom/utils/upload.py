@@ -48,10 +48,15 @@ async def read_capped(upload: UploadFile, cap: int) -> bytes:
 def copy_upload_capped(
     upload: UploadFile,
     dest: BinaryIO,
-    cap: int = MAX_PHOTO_BYTES,
+    cap: int | None = None,
     what: str = "Photo",
 ) -> int:
     """Stream an upload to `dest`, aborting with 413 past `cap`. Returns bytes written.
+
+    `cap=None` means "the module default", read at CALL time. A default of
+    `cap: int = MAX_PHOTO_BYTES` would bind the value when this function is
+    defined, so the limit could never be changed afterwards — which also makes
+    it untestable, and an untestable limit is how the last one went missing.
 
     Streams rather than reading into memory, because the destination is a temp
     file and buffering the whole thing first would reintroduce the exact
@@ -59,17 +64,18 @@ def copy_upload_capped(
     named upload that is too big is a request to reject, not a batch item to
     skip.
     """
+    limit = MAX_PHOTO_BYTES if cap is None else cap
     written = 0
     while True:
         chunk = upload.file.read(_CHUNK)
         if not chunk:
             break
         written += len(chunk)
-        if written > cap:
+        if written > limit:
             raise HTTPException(
                 status_code=413,
                 detail=(
-                    f"{what} exceeds the {cap // 1024 // 1024} MB limit. "
+                    f"{what} exceeds the {limit // 1024 // 1024} MB limit. "
                     "Try a smaller image."
                 ),
             )

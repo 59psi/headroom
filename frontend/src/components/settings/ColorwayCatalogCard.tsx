@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '../../api/client';
+import { refreshColorwayCatalog } from '../../api/settings';
 
 export function ColorwayCatalogCard() {
   const qc = useQueryClient();
@@ -9,9 +10,10 @@ export function ColorwayCatalogCard() {
   });
 
   const refreshMut = useMutation({
-    mutationFn: () => apiFetch<{ titles_seen: number; new_entries: number; catalog_total: number }>(
-      '/api/admin/colorways/refresh', { method: 'POST' },
-    ),
+    // 202: the harvest is minutes of sequential external calls and now runs
+    // in the background, so this returns as soon as it has started rather than
+    // holding the connection open past whatever proxy sits in front of us.
+    mutationFn: () => refreshColorwayCatalog(),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['meta', 'colorways'] }),
   });
 
@@ -31,7 +33,7 @@ export function ColorwayCatalogCard() {
             onClick={() => refreshMut.mutate()}
             disabled={refreshMut.isPending}
           >
-            {refreshMut.isPending ? 'Harvesting… (takes ~a minute)' : 'Refresh from Melin Recap'}
+            {refreshMut.isPending ? 'Starting…' : 'Refresh from Melin Recap'}
           </button>
           <span className="text-secondary small font-mono">
             {models.data?.length ?? 0} models known
@@ -39,8 +41,8 @@ export function ColorwayCatalogCard() {
         </div>
         {refreshMut.data && (
           <div className="alert alert-success small mt-3 mb-0">
-            ✓ Swept {refreshMut.data.titles_seen} live listings — {refreshMut.data.new_entries} new
-            entries, {refreshMut.data.catalog_total} total in catalog.
+            ✓ {refreshMut.data.detail} The model count above updates once it lands —
+            reload in a minute or two.
           </div>
         )}
         {refreshMut.error && (

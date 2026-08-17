@@ -1,5 +1,13 @@
 import { apiFetch } from './client';
-import type { ApiKeyStatus, ApiKeyTestResult, MdnsStatus, ModelStatus, RecentError, BackupInfo, ActivityRow, EbayCredsStatus, ImportJob } from '../types';
+import type {
+  ActivityRow, AnalysisJobRead, AnalysisQueueStatus, ApiKeyStatus, ApiKeyTestResult,
+  BackupHealth, BackupInfo, EbayCredsStatus, ImportJob, MdnsStatus, ModelStatus,
+  RecentError,
+} from '../types';
+
+// Re-exported so existing imports from this module keep working; the
+// definitions themselves live in ../types with every other API shape.
+export type { AnalysisJobRead, AnalysisQueueStatus, BackupHealth } from '../types';
 
 export function getLogo() {
   return apiFetch<{ logo_path: string | null }>('/api/settings/logo');
@@ -149,33 +157,6 @@ export function cancelImportJob(id: number) {
   return apiFetch<ImportJob>(`/api/hats/import/${id}`, { method: 'DELETE' });
 }
 
-export interface PendingHat {
-  id: number;
-  display_id: string | null;
-  label: string | null;
-  photo_path: string | null;
-  stage: string | null;
-}
-
-export interface AnalysisJobRead {
-  id: number;
-  total: number;
-  done: number;
-  failed: number;
-  status: string;
-  started_at: string;
-  finished_at: string | null;
-}
-
-export interface AnalysisQueueStatus {
-  worker_alive: boolean;
-  queued: number;
-  pending_count: number;
-  pending: PendingHat[];
-  current_job: AnalysisJobRead | null;
-  recent_jobs: AnalysisJobRead[];
-}
-
 export function getAnalysisQueue() {
   return apiFetch<AnalysisQueueStatus>('/api/admin/analysis/queue');
 }
@@ -185,4 +166,16 @@ export function reanalyzeAll(onlyPricedByClaude: boolean) {
     `/api/admin/analysis/reanalyze-all?only_priced_by_claude=${onlyPricedByClaude}`,
     { method: 'POST' },
   );
+}
+
+/** Kick off the colorway harvest. 202 — the work continues in the background. */
+export function refreshColorwayCatalog() {
+  return apiFetch<{ started: boolean; detail: string }>(
+    '/api/admin/colorways/refresh', { method: 'POST' },
+  );
+}
+
+/** Whether scheduled backups are actually running — the file list can't say. */
+export function getBackupHealth() {
+  return apiFetch<BackupHealth>('/api/admin/backups/health');
 }

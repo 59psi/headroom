@@ -1,0 +1,129 @@
+"""Share links: creation, revocation, and what a token is allowed to see.
+
+The route module used to own all of this — persistence, the token-validity
+rules, and the shape of the public payload. That put the one part of the app
+reachable *without* a session entirely in the transport layer, where it was
+also the hardest to test without going through HTTP.
+
+Token validity is the security-relevant part and lives here, in one function,
+so there is a single answer to "is this token still good".
+"""
+
+from __future__ import annotations
+
+import secrets
+from datetime import datetime, timedelta, timezone
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from headroom.models.case import Case
+from headroom.models.hat import Hat
+from headroom.models.user import ShareLink
+from headroom.services.activity_service import log_and_commit
+
+# 32 bytes -> 256 bits of entropy, url-safe. The token IS the credential for
+# the public endpoints, so it has to be unguessable rather than merely unique.
+_TOKEN_BYTES = 32
+
+
+class ShareLinkInvalid(Exception):
+    """Token missing, revoked, or expired.
+
+    One exception for all three on purpose: the route turns it into an
+    identical 404, so a caller cannot tell a revoked link from a token that
+    never existed. Distinguishing them would confirm which guesses were once
+    real.
+    """
+
+
+async def list_links(db: AsyncSession) -> list[ShareLink]:
+    result = await db.execute(select(ShareLink).order_by(ShareLink.id.desc()))
+    return list(result.scalars().all())
+
+
+async def create_link(
+    db: AsyncSession, *, label: str, expires_days: int | None
+) -> ShareLink:
+    link = ShareLink(
+        token=secrets.token_urlsafe(_TOKEN_BYTES),
+        label=label,
+        expires_at=(
+            datetime.now(timezone.utc) + timedelta(days=expires_days)
+            if expires_days
+            else None
+        ),
+    )
+    db.add(link)
+    await db.commit()
+    await db.refresh(link)
+    await log_and_commit(
+        db, kind="share.created", entity_type="share_link", entity_id=link.id,
+        summary=f"Share link '{link.label}' created (exposes the full active collection)",
+    )
+    return link
+
+
+async def revoke_link(db: AsyncSession, link_id: int) -> ShareLink | None:
+    """Revoke by id. None when there is no such link."""
+    link = await db.get(ShareLink, link_id)
+    if link is None:
+        return None
+    link.revoked_at = datetime.now(timezone.utc)
+    await db.commit()
+    await log_and_commit(
+        db, kind="share.revoked", entity_type="share_link", entity_id=link.id,
+        summary=f"Share link '{link.label}' revoked",
+    )
+    return link
+
+
+async def resolve_token(db: AsyncSession, token: str) -> ShareLink:
+    """The link a token refers to, if it is still usable. Raises otherwise.
+
+    Naive `expires_at` values are read as UTC: SQLite has no timezone type, so
+    a datetime written as aware comes back naive, and comparing it to an aware
+    `now()` raises rather than expiring the link. Treating it as UTC matches
+    what was stored.
+    """
+    result = await db.execute(select(ShareLink).where(ShareLink.token == token))
+    link = result.scalar_one_or_none()
+    if link is None or link.revoked_at is not None:
+        raise ShareLinkInvalid
+    if link.expires_at is not None:
+        expires = link.expires_at
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        if expires < datetime.now(timezone.utc):
+            raise ShareLinkInvalid
+    return link
+
+
+async def shared_hats(db: AsyncSession) -> list[Hat]:
+    """Every hat a share link exposes: the active collection, in id order.
+
+    Disposed hats are excluded — a share link shows what is on the shelf, and
+    disposition metadata (what it sold for, who it went to) is nobody else's
+    business.
+    """
+    result = await db.execute(
+        select(Hat)
+        .options(selectinload(Hat.case).selectinload(Case.room), selectinload(Hat.colors))
+        .where(Hat.disposed_at.is_(None))
+        .order_by(Hat.id)
+    )
+    return list(result.scalars().all())
+
+
+async def shared_hat(db: AsyncSession, hat_id: int) -> Hat | None:
+    """A single shared hat, or None if it isn't one.
+
+    Re-checks `disposed_at` rather than trusting that the caller came from
+    `shared_hats`: this backs the photo endpoint, where the hat id arrives
+    straight from the URL.
+    """
+    hat = await db.get(Hat, hat_id)
+    if hat is None or hat.disposed_at is not None or not hat.photo_path:
+        return None
+    return hat

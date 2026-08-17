@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.database import get_db
 from headroom.schemas.hat import HAT_DEFAULTS
+from headroom.schemas.import_job import ImportJobCreated, ImportJobRead
 from headroom.services import import_service
 from headroom.utils.photo import validate_image_content_type
 
@@ -21,35 +22,13 @@ router = APIRouter(prefix="/api/hats/import", tags=["bulk-import"])
 # Ceiling on the total bytes accepted for one request. Files are spooled to
 # disk as they arrive rather than buffered, so this now bounds disk and job
 # size rather than RAM. Phone photos are a few MB, so this is
-# generous for real use while blocking the pathological case (S9/R6).
+# generous for real use while blocking the pathological case (S9/R6 — docs/AUDIT-HISTORY.md).
 _MAX_TOTAL_UPLOAD_BYTES = 750 * 1024 * 1024
 
 
-def _job_to_dict(job) -> dict:
-    return {
-        "id": job.id,
-        "created_at": job.created_at.isoformat() if job.created_at else None,
-        "finished_at": job.finished_at.isoformat() if job.finished_at else None,
-        "total": job.total,
-        "done": job.done,
-        "errors": job.errors,
-        "skipped": job.skipped,
-        "status": job.status,
-        "items": [
-            {
-                "id": i.id,
-                "filename": i.filename,
-                "status": i.status,
-                "hat_id": i.hat_id,
-                "error": i.error,
-                "bytes": i.bytes,
-            }
-            for i in (job.items or [])
-        ],
-    }
 
 
-@router.post("", status_code=202)
+@router.post("", status_code=202, response_model=ImportJobCreated)
 async def create_import_job(
     photos: list[UploadFile],
     case_id: Annotated[int | None, Form()] = None,
@@ -107,7 +86,7 @@ async def create_import_job(
             "style": style,
         }
         job = await import_service.create_job(db, files=files, defaults=defaults)
-        return {"id": job.id, "total": job.total, "status": job.status}
+        return ImportJobCreated(id=job.id, total=job.total, status=job.status)
     finally:
         # `create_job` copies what it keeps into the job's own staging dir, so
         # this temp copy is always disposable — including on the 413/400 paths,
@@ -134,23 +113,22 @@ def _spool(upload, dest, cap: int) -> int:
     return written
 
 
-@router.get("/{job_id}")
+@router.get("/{job_id}", response_model=ImportJobRead)
 async def get_import_job(job_id: int, db: AsyncSession = Depends(get_db)):
     job = await import_service.get_job(db, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Import job not found")
-    return _job_to_dict(job)
+    return job
 
 
-@router.get("")
+@router.get("", response_model=list[ImportJobRead])
 async def list_import_jobs(limit: int = 20, db: AsyncSession = Depends(get_db)):
-    jobs = await import_service.list_recent_jobs(db, limit=limit)
-    return [_job_to_dict(j) for j in jobs]
+    return await import_service.list_recent_jobs(db, limit=limit)
 
 
-@router.delete("/{job_id}")
+@router.delete("/{job_id}", response_model=ImportJobRead)
 async def cancel_import_job(job_id: int, db: AsyncSession = Depends(get_db)):
     job = await import_service.cancel_job(db, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Import job not found")
-    return _job_to_dict(job)
+    return job
