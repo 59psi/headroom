@@ -248,19 +248,7 @@ fi
 # automatically. Hooks keep it current after a pull, so the habit stays
 # `docker compose up -d --build` with nothing to remember.
 if [ -d .git ]; then
-  ./scripts/stamp-build.sh || warn "Could not write the build stamp (non-fatal)."
-  hooks_dir="$(git rev-parse --git-path hooks 2>/dev/null || echo .git/hooks)"
-  mkdir -p "$hooks_dir"
-  for hook in post-merge post-checkout post-rewrite; do
-    target="$hooks_dir/$hook"
-    if [ -e "$target" ] && ! grep -q 'stamp-build.sh' "$target" 2>/dev/null; then
-      warn "Leaving your existing $hook hook alone — add scripts/stamp-build.sh to it by hand for an auto-updating build stamp."
-      continue
-    fi
-    printf '#!/bin/sh\n# Refresh HEADROOM_BUILD_SHA in .env so the footer shows this commit.\nexec "$(git rev-parse --show-toplevel)/scripts/stamp-build.sh" >/dev/null 2>&1 || true\n' > "$target"
-    chmod +x "$target"
-  done
-  log "Build stamp written to .env; git hooks will keep it current."
+  ./scripts/stamp-build.sh --install-hooks || warn "Could not write the build stamp (non-fatal)."
 fi
 
 log "Setup complete! Run Headroom one of three ways:"

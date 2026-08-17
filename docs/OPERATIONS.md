@@ -262,16 +262,61 @@ you'll land on the first-run setup screen.
 
 ```bash
 git pull
-docker compose up --build -d     # Docker
+docker compose up -d --build     # Docker — SEE THE WARNING BELOW about overlays
 # — or —
 ./scripts/setup.sh --no-docker   # bare metal: re-sync deps + rebuild SPA, then restart uvicorn
 ```
+
+> **Re-run with the same `-f` flags you deploy with.** Compose applies only the
+> files named in the command, so a bare `docker compose up -d --build` on a
+> host running an overlay is not an upgrade — it is a switch to the base
+> config. On the `http80` overlay that means the Caddy sidecar isn't started
+> and the app goes back to `:8000`, so `http://headroom.local` stops
+> answering. Upgrade with the whole command:
+>
+> ```bash
+> git pull
+> docker compose -f docker-compose.yml -f docker-compose.http80.yml up -d --build
+> ```
 
 - Database migrations are **automatic**: `init_db()` runs inline DDL
   migrations at every boot. There is no separate migrate step and no
   downgrade path — take a backup before major upgrades.
 - Version sanity check: the footer of the web app shows the running build's
   version; compare with `CHANGELOG.md`.
+
+### The build stamp in the footer
+
+The footer shows `v2.18.0 · build a1b2c3d`. The version comes from
+`package.json`; the commit has to be supplied from the host, because
+`.dockerignore` excludes `.git` and the frontend build stage only receives
+`frontend/` — nothing inside the image can work out which commit it is.
+
+Do it once and forget it:
+
+```bash
+./scripts/stamp-build.sh --install-hooks
+```
+
+That writes `HEADROOM_BUILD_SHA` into `.env` (which compose reads
+automatically, whatever `-f` flags you use) and installs git hooks so every
+`git pull` refreshes it. `./scripts/setup.sh` does the same thing.
+
+Or set it inline per build:
+
+```bash
+HEADROOM_BUILD_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
+```
+
+Notes:
+
+- The arg was called `BUILD_SHA` before v2.0.0. That name is still accepted, so
+  older commands keep working — but a build arg that doesn't match simply
+  arrives empty, with no warning, and the footer just never shows a build.
+  That is exactly how it can go unnoticed for months.
+- A working tree with uncommitted changes is stamped `a1b2c3d-dirty`, so a
+  stamp can be trusted to mean precisely that commit.
+- No stamp at all is not an error — the footer shows the version alone.
 
 ---
 

@@ -6,6 +6,35 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.18.1] — 2026-08-17
+
+### Fixed
+- **`BUILD_SHA` works again as a name for the build stamp.** v2.0.0 renamed the
+  build arg to `HEADROOM_BUILD_SHA` and listed it as breaking — but a build arg
+  that doesn't match simply arrives empty, with no warning, so a command using
+  the old name kept working and silently stopped stamping. The old name is
+  accepted as a fallback.
+
+- **Docs: upgrading with an overlay.** `## Upgrades` said
+  `docker compose up --build -d`, which on a host running `http80` (or `mdns`,
+  or either HTTPS overlay) is not an upgrade — compose applies only the files
+  named, so the sidecar never starts and the app drops back to `:8000`. Now
+  states plainly that upgrades must repeat the same `-f` flags, with a worked
+  example.
+
+- **Docs: the build stamp was undocumented.** Neither README nor OPERATIONS
+  explained why the footer shows no build or how to make it — the one place it
+  appeared was a compose comment. OPERATIONS §5 now covers it, including that
+  a dirty tree is stamped `-dirty` and that no stamp is not an error.
+
+### Changed
+- `scripts/stamp-build.sh --install-hooks` installs the git hooks on its own,
+  so a running deployment can pick them up without re-running `setup.sh` —
+  which installs Docker, Node and the Python toolchain. `setup.sh` now
+  delegates to it rather than carrying a second copy.
+
+307 backend + 66 frontend tests.
+
 ## [2.18.0] — 2026-08-17 — _seen it twice_
 
 ### Added
