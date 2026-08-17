@@ -6,6 +6,30 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.8.1] — 2026-08-16 — _say what it's doing_
+
+### Added
+- **The analysing spinner now says which step is running** — "Removing
+  background…", "Identifying the hat…", "Checking prices…", "Checking resale…"
+  — instead of a bare "Analyzing…" for the whole multi-minute run. The queue
+  card shows it too, which is what separates the hat actually being worked on
+  from the ones queued behind it.
+
+  The stage is written from a **separate** short-lived session rather than by
+  committing the pipeline's own. That matters: the pipeline sets `photo_path`
+  early and commits only at the end precisely so the queue can throw the whole
+  run away if the photo was replaced mid-flight, and a mid-pipeline commit
+  would persist that stale path and defeat the guard. It is also not the
+  write-lock hazard `no_autoflush` protects against — this takes the lock and
+  gives it straight back, before the slow call starts.
+
+  A stage is never shown on a finished analysis. That is derived in `HatRead`
+  rather than cleared at each terminal transition: eight separate places set a
+  terminal status, and any one of them forgetting would leave a confident label
+  on work that had stopped.
+
+236 backend + 44 frontend tests.
+
 ## [2.8.0] — 2026-08-16 — _see the queue, fix the prices_
 
 ### Fixed

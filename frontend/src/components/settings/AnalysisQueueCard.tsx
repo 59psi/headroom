@@ -3,6 +3,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import { getAnalysisQueue, reanalyzeAll } from '../../api/settings';
 
+/** Mirrors the stage labels on the hat page. */
+const STAGE_LABELS: Record<string, string> = {
+  cutout: 'removing background',
+  identifying: 'identifying',
+  pricing: 'checking prices',
+  resale: 'checking resale',
+};
+
 /**
  * What the analysis worker is doing, and the button that fills it.
  *
@@ -90,6 +98,9 @@ export function AnalysisQueueCard() {
                     <Link to={`/hats/${h.id}`}>
                       {h.display_id ?? h.label ?? `Hat #${h.id}`}
                     </Link>
+                    <span className="text-secondary small">
+                      {h.stage ? (STAGE_LABELS[h.stage] ?? h.stage) : 'waiting'}
+                    </span>
                   </li>
                 ))}
               </ul>

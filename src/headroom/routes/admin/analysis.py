@@ -61,6 +61,7 @@ async def analysis_queue_status(db: AsyncSession = Depends(get_db)):
                 display_id=h.display_id,
                 label=" ".join(p for p in (h.brand, h.model_name) if p) or None,
                 photo_path=h.photo_path,
+                stage=h.analysis_stage,
             )
             for h in hats
         ],

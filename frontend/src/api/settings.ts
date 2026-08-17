@@ -154,6 +154,7 @@ export interface PendingHat {
   display_id: string | null;
   label: string | null;
   photo_path: string | null;
+  stage: string | null;
 }
 
 export interface AnalysisQueueStatus {

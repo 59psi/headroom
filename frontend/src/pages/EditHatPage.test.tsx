@@ -50,6 +50,7 @@ const HAT: HatRead = {
   resale_price_url: null,
   resale_checked_at: null,
   analysis_status: 'ok',
+  analysis_stage: null,
   analysis_error: null,
   analyzed_at: null,
   disposed_at: null,

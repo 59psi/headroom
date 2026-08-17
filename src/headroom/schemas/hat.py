@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 
 class HatCondition(StrEnum):
@@ -142,6 +142,7 @@ class HatRead(BaseModel):
     resale_price_url: str | None = None
     resale_checked_at: datetime | None = None
     analysis_status: str | None = None
+    analysis_stage: str | None = None
     analysis_error: str | None = None
     analyzed_at: datetime | None = None
 
@@ -161,6 +162,20 @@ class HatRead(BaseModel):
 
     created_at: datetime
     updated_at: datetime
+
+    @model_validator(mode="after")
+    def _stage_only_while_pending(self) -> "HatRead":
+        """A stage is meaningless once the analysis has finished.
+
+        Derived here rather than cleared at each terminal transition: eight
+        separate places set a terminal `analysis_status`, and any one of them
+        forgetting would leave the UI reporting a step that stopped running —
+        a stale spinner with a confident label, which is worse than no label.
+        Doing it once, on the way out, makes that impossible.
+        """
+        if self.analysis_status != "pending":
+            self.analysis_stage = None
+        return self
 
 
 class HatDispose(BaseModel):

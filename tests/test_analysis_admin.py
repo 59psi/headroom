@@ -94,3 +94,36 @@ async def test_queue_endpoints_require_auth(anon_client):
     assert (
         await anon_client.post("/api/admin/analysis/reanalyze-all")
     ).status_code in (401, 403)
+
+
+async def test_stage_is_hidden_once_analysis_finishes(client):
+    """A stage on a terminal status would be a confident label for work that
+    stopped — worse than no label. `HatRead` derives it away rather than
+    trusting eight separate terminal transitions to each clear it.
+    """
+    from sqlalchemy import update as sa_update
+
+    from headroom.models.hat import Hat
+    from tests.conftest import test_session_factory
+
+    hat_id = await _hat_with_photo(client)
+
+    async with test_session_factory() as db:
+        await db.execute(
+            sa_update(Hat)
+            .where(Hat.id == hat_id)
+            .values(analysis_status="pending", analysis_stage="identifying")
+        )
+        await db.commit()
+    assert (await client.get(f"/api/hats/{hat_id}")).json()["analysis_stage"] == "identifying"
+
+    # Any terminal status must hide it, even with the column still populated.
+    async with test_session_factory() as db:
+        await db.execute(
+            sa_update(Hat).where(Hat.id == hat_id).values(analysis_status="ok")
+        )
+        await db.commit()
+
+    body = (await client.get(f"/api/hats/{hat_id}")).json()
+    assert body["analysis_status"] == "ok"
+    assert body["analysis_stage"] is None, "a finished hat must not report a running step"
