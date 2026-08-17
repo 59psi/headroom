@@ -74,8 +74,25 @@ class AnalysisQueueStatus(BaseModel):
     queued: int
     pending_count: int
     pending: list[PendingHat] = []
+    # The run in flight, if any, and a short history — enough to answer "did
+    # the last one finish, and did anything fail?"
+    current_job: AnalysisJobRead | None = None
+    recent_jobs: list[AnalysisJobRead] = []
+
+
+class AnalysisJobRead(BaseModel):
+    """A bulk re-analysis run. `done`/`failed` are derived, not stored."""
+
+    id: int
+    total: int
+    done: int
+    failed: int
+    status: str
+    started_at: datetime
+    finished_at: datetime | None = None
 
 
 class ReanalyzeAllResult(BaseModel):
     queued: int
     worker_alive: bool
+    job: AnalysisJobRead | None = None

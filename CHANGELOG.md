@@ -6,6 +6,31 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.10.0] — 2026-08-16 — _watch the run_
+
+### Added
+- **Bulk re-analysis is now a tracked job.** Firing "Re-analyse every hat" used
+  to leave you watching a backlog number tick down, with no record that a run
+  had happened at all. The Analysis Queue card now shows a progress bar with
+  **X of Y**, how long ago it started, a running failure count, and a short
+  history of recent runs — enough to answer "did the last one finish, and did
+  anything fail?"
+
+  **Progress is derived, never accumulated.** The analysis worker drains hat
+  ids and knows nothing about jobs; making it bump a counter per hat would mean
+  two writes per item, and a crash between them would leave a progress bar
+  permanently disagreeing with the hats it describes. So a job stores only what
+  cannot be recomputed — its size and start time — and everything else is a
+  COUNT over `hats.analysis_job_id`. That is right by construction, including
+  after a restart mid-run.
+
+  A job closes itself once nothing tagged with it is still pending, which is
+  computed when the card asks. That keeps the worker ignorant of jobs at the
+  cost of a finished job staying "running" until something looks at it — and
+  the only thing that reads it is the thing looking.
+
+246 backend + 47 frontend tests.
+
 ## [2.9.0] — 2026-08-16 — _redo the cutout, shrink the gallery_
 
 ### Added
