@@ -56,10 +56,15 @@ def staging_dir() -> Path:
 async def create_job(
     db: AsyncSession,
     *,
-    files: list[tuple[str, bytes]],
+    files: list[tuple[str, Path]],
     defaults: dict | None = None,
 ) -> ImportJob:
-    """Stage files to disk, create a job + items, enqueue them. Returns the job."""
+    """Stage already-spooled files into the job dir, create it, enqueue. Returns the job.
+
+    `files` is (original filename, path to a temp copy). Paths rather than
+    bytes so a batch is never resident in memory — the caller spools each
+    upload to disk as it arrives and deletes its temp dir afterwards.
+    """
     if not files:
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="No files provided")
@@ -78,22 +83,26 @@ async def create_job(
     job_dir = staging_dir() / f"job-{job.id}"
     job_dir.mkdir(parents=True, exist_ok=True)
 
-    for idx, (filename, blob) in enumerate(files):
-        if len(blob) > MAX_BYTES_PER_FILE:
+    for idx, (filename, source) in enumerate(files):
+        size = source.stat().st_size
+        if size > MAX_BYTES_PER_FILE:
             db.add(ImportJobItem(
                 job_id=job.id, filename=filename, status="error",
                 error=f"File exceeds {MAX_BYTES_PER_FILE // 1024 // 1024} MB limit",
-                bytes=len(blob),
+                bytes=size,
             ))
             job.errors += 1
             continue
-        # Stage the file before commit so the worker has something to read
+        # Stage the file before commit so the worker has something to read.
+        # `copy2`, not `read_bytes`+`write_bytes`: the caller has already spooled
+        # this to disk precisely so a batch never sits in memory, and reading it
+        # back to write it out again would undo that one file at a time.
         safe_name = f"{idx:04d}-{Path(filename).name[:120]}"
         staged = job_dir / safe_name
-        staged.write_bytes(blob)
+        shutil.copy2(source, staged)
         db.add(ImportJobItem(
             job_id=job.id, filename=filename, status="queued",
-            bytes=len(blob), staged_path=str(staged),
+            bytes=size, staged_path=str(staged),
         ))
     # A job whose every file was rejected (all oversize) has no queued items to
     # drive it to completion — close it now so the SPA doesn't poll it forever.
@@ -108,7 +117,19 @@ async def create_job(
     await db.commit()
 
     # Enqueue each queued item
-    if _queue is not None:
+    if _queue is None:
+        # No worker running (disabled by env, or start_worker never ran). The
+        # items are safe — they stay 'queued' on disk and `start_worker`'s boot
+        # sweep re-enqueues them — but until then the job sits at 0% with no
+        # explanation, which reads as a hang. Bulk import cannot fall back to
+        # running inline the way `analysis_queue` does; a batch takes minutes
+        # and would hold the request open. So the honest fix is to say so.
+        logger.warning(
+            "Import job #%s queued with no worker running — items will not be "
+            "processed until restart (HEADROOM_IMPORT_WORKER_ENABLED?).",
+            job.id,
+        )
+    else:
         result = await db.execute(
             select(ImportJobItem).where(
                 ImportJobItem.job_id == job.id,

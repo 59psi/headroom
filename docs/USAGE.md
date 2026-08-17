@@ -79,7 +79,7 @@ The status pill on the hat page tells you where a hat is:
 
 | Pill | Meaning |
 |---|---|
-| **Analyzing…** (spinning) | Queued or in progress. Nothing to do — the page updates itself when it finishes |
+| **2/4 · Identifying** | Queued or in progress — the number is which of the four pipeline steps is running. Nothing to do; the page updates itself when it finishes |
 | **Analyzed** (green) | Full Claude identification: brand, model, colors, notes, estimated retail price |
 | **Basic ID (fallback)** (orange) | No Claude (or Claude errored). Colors were read from the hat cutout itself — background colors are excluded by design — and, with a Google key, the brand from its logo. Model/price stay empty |
 | **No API key** (purple) | No keys and no usable cutout; fill fields manually or add keys later |

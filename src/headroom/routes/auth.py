@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from headroom.auth import require_user
+from headroom.auth import client_ip, require_user
 from headroom.database import get_db
 from headroom.models.app_setting import AppSetting
 from headroom.models.user import PasskeyCredential, User
@@ -50,8 +50,6 @@ def _set_session_cookie(response: Response, request: Request, session_id: str) -
     )
 
 
-def _client_ip(request: Request) -> str:
-    return request.client.host if request.client else "unknown"
 
 
 @router.get("/status", response_model=AuthStatus)
@@ -101,7 +99,7 @@ async def login(
     data: Credentials, request: Request, response: Response,
     db: AsyncSession = Depends(get_db),
 ):
-    ip = _client_ip(request)
+    ip = client_ip(request)
     if auth_service.is_rate_limited(ip, data.username):
         logger.warning("Login rate-limited: '%s' from %s", data.username, ip)
         await log_activity(
@@ -325,11 +323,11 @@ async def passkey_login_verify(
     user = stored.user
     session = await auth_service.create_session(db, user)
     _set_session_cookie(response, request, session.id)
-    logger.info("Passkey login success: '%s' from %s", user.username, _client_ip(request))
+    logger.info("Passkey login success: '%s' from %s", user.username, client_ip(request))
     await log_activity(
         db, kind="auth.login", entity_type="user", entity_id=user.id,
-        summary=f"Passkey login: '{user.username}' from {_client_ip(request)}",
-        details={"ip": _client_ip(request), "method": "passkey"},
+        summary=f"Passkey login: '{user.username}' from {client_ip(request)}",
+        details={"ip": client_ip(request), "method": "passkey"},
     )
     await db.commit()
     return AuthStatus(needs_setup=False, authenticated=True, username=user.username)

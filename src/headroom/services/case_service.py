@@ -6,6 +6,7 @@ from sqlalchemy.orm import selectinload
 from headroom.models.case import Case
 from headroom.schemas.case import CaseCreate, CaseType, CaseUpdate
 from headroom.services import room_service
+from headroom.services.activity_service import log_and_commit
 
 
 async def _reload_case(db: AsyncSession, case_id: int) -> Case:
@@ -54,6 +55,10 @@ async def create_case(db: AsyncSession, data: CaseCreate) -> Case:
     )
     db.add(case)
     await db.commit()
+    await log_and_commit(
+        db, kind="case.created", entity_type="case", entity_id=case.id,
+        summary=f"Case {display_id} created in room {room_id}",
+    )
     return await _reload_case(db, case.id)
 
 
@@ -104,8 +109,14 @@ async def update_case(
 async def delete_case(db: AsyncSession, display_id: str) -> None:
     case = await get_case_by_display_id(db, display_id)
     # Unassign all hats before deleting
+    freed = len(case.hats)
     for hat in list(case.hats):
         hat.case_id = None
         hat.position_in_case = None
+    case_id = case.id
     await db.delete(case)
     await db.commit()
+    await log_and_commit(
+        db, kind="case.deleted", entity_type="case", entity_id=case_id,
+        summary=f"Case {display_id} deleted · {freed} hat(s) unassigned",
+    )

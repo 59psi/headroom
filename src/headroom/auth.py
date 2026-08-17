@@ -15,12 +15,27 @@ mandatory now; the first visit creates the owner account via /api/auth/setup.
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from headroom.models.user import User
 from headroom.services import auth_service
+
+logger = logging.getLogger(__name__)
+
+
+def client_ip(request: Request) -> str:
+    """Best-effort remote address.
+
+    One definition: the login rate limiter and the middleware's 401 log both
+    key off it, and a limiter that buckets by a different string than the log
+    reports is a debugging trap.
+    """
+    return request.client.host if request.client else "unknown"
+
 
 # Prefixes that never require auth.
 _OPEN_PREFIXES = (
@@ -67,6 +82,52 @@ async def require_user(request: Request) -> User:
 require_admin = require_user
 
 
+# Sent on every response. Values are deliberately conservative rather than
+# maximal — this app serves its own SPA from its own origin and loads nothing
+# from anywhere else, so a strict policy costs nothing and there is no CDN to
+# grandfather in.
+_SECURITY_HEADERS = {
+    # No external scripts, styles, fonts, frames or XHR targets. 'unsafe-inline'
+    # for style-src only: the SPA sets inline `style=` attributes in several
+    # components, and removing those is a much larger change than this header.
+    # No 'unsafe-inline' for script-src, which is the one that actually matters
+    # for XSS.
+    "Content-Security-Policy": (
+        "default-src 'self'; "
+        "img-src 'self' data: blob:; "
+        "style-src 'self' 'unsafe-inline'; "
+        "script-src 'self'; "
+        "connect-src 'self'; "
+        "font-src 'self'; "
+        "object-src 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'; "
+        "frame-ancestors 'none'"
+    ),
+    # Redundant with frame-ancestors for modern browsers, kept for older ones.
+    "X-Frame-Options": "DENY",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "same-origin",
+}
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Attach standard hardening headers to every response.
+
+    Deliberately does NOT set HSTS. The primary deployment is `http://` on a
+    LAN, and an HSTS header served once would pin that hostname to HTTPS in the
+    browser for its max-age — locking the owner out of their own app on a
+    hostname they cannot easily un-pin. Caddy adds HSTS on the genuinely
+    internet-facing overlay, which is where it belongs.
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        for header, value in _SECURITY_HEADERS.items():
+            response.headers.setdefault(header, value)
+        return response
+
+
 class AuthGateMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
@@ -81,6 +142,18 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
         if needs_auth:
             user = await resolve_user(request)
             if user is None:
+                # Logged because this is the only unauthenticated way to probe
+                # the API, and it was previously silent: `POST /api/auth/login`
+                # is rate-limited and audited, but sweeping bearer tokens
+                # against any other endpoint produced no record at all. At
+                # WARNING so a burst is visible in the same place every other
+                # operational problem shows up, and without the token or cookie
+                # value — logging a credential to diagnose credential abuse is
+                # its own vulnerability.
+                logger.warning(
+                    "Rejected unauthenticated %s %s from %s",
+                    request.method, path, client_ip(request),
+                )
                 return JSONResponse(
                     status_code=401, content={"detail": "Authentication required"}
                 )

@@ -6,6 +6,7 @@ from sqlalchemy.orm import selectinload
 from headroom.models.case import Case
 from headroom.models.room import Room
 from headroom.schemas.room import RoomCreate, RoomUpdate
+from headroom.services.activity_service import log_and_commit
 
 
 async def _reload_room(db: AsyncSession, room_id: int) -> Room:
@@ -58,6 +59,10 @@ async def create_room(db: AsyncSession, data: RoomCreate) -> Room:
     room = Room(name=data.name)
     db.add(room)
     await db.commit()
+    await log_and_commit(
+        db, kind="room.created", entity_type="room", entity_id=room.id,
+        summary=f"Room '{room.name}' created",
+    )
     return await _reload_room(db, room.id)
 
 
@@ -103,6 +108,10 @@ async def set_default_room(db: AsyncSession, room_id: int) -> Room:
     await db.execute(update(Room).where(Room.is_default.is_(True)).values(is_default=False))
     await db.execute(update(Room).where(Room.id == room.id).values(is_default=True))
     await db.commit()
+    await log_and_commit(
+        db, kind="room.default_changed", entity_type="room", entity_id=room.id,
+        summary=f"Room '{room.name}' is now the default",
+    )
     return await _reload_room(db, room.id)
 
 
@@ -119,7 +128,13 @@ async def delete_room(db: AsyncSession, room_id: int) -> None:
                 "first, then delete this one."
             ),
         )
+    name = room.name
     fallback_id = await get_default_room_id(db)
+    moved = (
+        await db.execute(
+            select(func.count(Case.id)).where(Case.room_id == room_id)
+        )
+    ).scalar() or 0
     # Reassign cases to the default room via bulk update to avoid cascade issues
     await db.execute(
         update(Case).where(Case.room_id == room_id).values(room_id=fallback_id)
@@ -130,3 +145,7 @@ async def delete_room(db: AsyncSession, room_id: int) -> None:
     room = await db.get(Room, room_id)
     await db.delete(room)
     await db.commit()
+    await log_and_commit(
+        db, kind="room.deleted", entity_type="room", entity_id=room_id,
+        summary=f"Room '{name}' deleted · {moved} case(s) moved to the default room",
+    )

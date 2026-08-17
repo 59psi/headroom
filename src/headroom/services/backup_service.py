@@ -11,11 +11,13 @@ import asyncio
 import io
 import logging
 import os
+import shutil
 import shlex
 import tarfile
 import tempfile
 import time
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -26,6 +28,48 @@ logger = logging.getLogger(__name__)
 BACKUP_DIR_NAME = "backups"
 BACKUP_PREFIX = "headroom-backup-"
 BACKUP_SUFFIX = ".tar.gz"
+
+
+@dataclass
+class BackupHealth:
+    """Whether the scheduler is actually working, not merely still running.
+
+    The list of files on disk cannot answer that: a scheduler that died three
+    weeks ago and one that ran ten minutes ago look identical from the
+    inventory, and the newest file is the last SUCCESS either way. So the
+    outcome of each attempt is recorded here and surfaced through the admin
+    API, which is what makes a persistent failure visible before the day it
+    matters.
+
+    Process-local by design, like every other counter in this single-process
+    app. A restart resets it, which is correct: the question it answers is
+    "is the scheduler working now".
+    """
+
+    last_attempt_at: datetime | None = None
+    last_success_at: datetime | None = None
+    last_error: str | None = None
+    consecutive_failures: int = 0
+
+    def record_success(self) -> None:
+        now = datetime.now(timezone.utc)
+        self.last_attempt_at = now
+        self.last_success_at = now
+        self.last_error = None
+        self.consecutive_failures = 0
+
+    def record_failure(self, exc: Exception) -> None:
+        self.last_attempt_at = datetime.now(timezone.utc)
+        self.last_error = f"{type(exc).__name__}: {exc}"[:500]
+        self.consecutive_failures += 1
+
+
+_health = BackupHealth()
+
+
+def health() -> BackupHealth:
+    """Current scheduler health. Read-only view for the admin API."""
+    return _health
 
 
 def _backup_dir() -> Path:
@@ -84,6 +128,9 @@ def _add_db_to_tar(tar: tarfile.TarFile, db: Path, tmp_dir: Path) -> None:
         tar.add(snapshot, arcname=f"data/{db.name}")
         return
     except Exception as exc:  # noqa: BLE001 — never let backup fail entirely
+        # Bound to an outer name on purpose: Python unbinds the `except` target
+        # when the block exits, and the reason is needed below.
+        reason = exc
         logger.warning(
             "DB snapshot failed (%s); falling back to raw file + WAL sidecars", exc
         )
@@ -92,6 +139,21 @@ def _add_db_to_tar(tar: tarfile.TarFile, db: Path, tmp_dir: Path) -> None:
         path = db.with_name(sidecar)
         if path.exists():
             tar.add(path, arcname=f"data/{sidecar}")
+    # Mark the archive itself. The fallback copies the DB file while writers may
+    # be mid-transaction, so it can restore as "database disk image is
+    # malformed" — and until now the resulting tarball was byte-indistinguishable
+    # from a clean snapshot, so the one moment you find out is the restore. A
+    # file inside the archive travels with it; a log line does not.
+    note = (
+        f"This backup was taken with the RAW-FILE fallback, not VACUUM INTO,\n"
+        f"because the snapshot failed:\n\n    {reason}\n\n"
+        f"The database file was copied while it may have been mid-write, so it\n"
+        f"may be torn. Restore it, then run `PRAGMA integrity_check;` before\n"
+        f"trusting it. A clean backup has no file like this one.\n"
+    ).encode()
+    info = tarfile.TarInfo(name="data/DEGRADED-BACKUP-README.txt")
+    info.size = len(note)
+    tar.addfile(info, io.BytesIO(note))
 
 
 def _build_tarball_sync(target_path: Path | None = None, include_uploads: bool = True) -> bytes | None:
@@ -125,17 +187,40 @@ def _build_tarball_sync(target_path: Path | None = None, include_uploads: bool =
             sink.close()
 
 
-async def stream_backup(include_uploads: bool = True) -> AsyncGenerator[bytes, None]:
-    """Build the tarball off the event loop, then yield it as one chunk.
+_STREAM_CHUNK = 1024 * 1024
 
-    Streaming-the-tar-as-it's-built would be more elegant but tarfile's
-    blocking IO model makes that significantly more complex; for the data
-    sizes we expect on a Pi (a few hundred MB at most) one buffered chunk
-    is fine.
+
+async def stream_backup(include_uploads: bool = True) -> AsyncGenerator[bytes, None]:
+    """Build the tarball to a temp FILE, then stream it back in chunks.
+
+    It previously built into an in-memory `BytesIO` and yielded the whole thing
+    as one chunk, on the reasoning that "a few hundred MB at most" is fine on a
+    Pi. It isn't: that is the entire database plus the whole uploads tree
+    resident at once, on the same box that holds a ~179MB rembg model, and it
+    is now over the container's memory limit — so the one operation whose
+    purpose is protecting the data could kill the process.
+
+    Spooling to disk trades RAM for temp space, which a Pi has far more of, and
+    caps memory at one chunk. `StreamingResponse` was already the caller; only
+    now is it streaming anything.
     """
-    payload = await asyncio.to_thread(_build_tarball_sync, None, include_uploads)
-    if payload:
-        yield payload
+    tmp_dir = tempfile.mkdtemp(prefix="headroom-stream-")
+    tmp_path = Path(tmp_dir) / "backup.tar.gz"
+    try:
+        await asyncio.to_thread(_build_tarball_sync, tmp_path, include_uploads)
+        with tmp_path.open("rb") as fh:
+            while True:
+                # Off the loop: a 1MB read from an SD card is not instant, and
+                # blocking here stalls every other request.
+                chunk = await asyncio.to_thread(fh.read, _STREAM_CHUNK)
+                if not chunk:
+                    break
+                yield chunk
+    finally:
+        # Runs even if the client disconnects mid-download, which closes the
+        # generator — without this, an abandoned download leaks a full copy of
+        # the collection into temp space until reboot.
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def _timestamped_name(suffix: str = "") -> str:
@@ -265,24 +350,53 @@ async def write_scheduled_backup(retention: int) -> Path | None:
 async def scheduled_backup_loop(interval_hours: float, retention: int) -> None:
     """Long-running task: writes a backup every `interval_hours`.
 
+    Every failure mode short of cancellation is survivable. This used to run the
+    startup age-check and first backup ABOVE the try, and to catch only
+    `CancelledError` inside it — so one unwritable `/data` at boot, or a single
+    transient `database is locked`, killed the task for the entire life of the
+    process. Nothing supervised it and nothing reported it, so the failure
+    presented as backups quietly never happening again while the UI kept listing
+    the last successful one. For the feature that IS the disaster-recovery
+    story, silent permanent death is the worst available behaviour.
+
     Cancelled cleanly when the lifespan exits.
     """
     interval_s = max(60.0, interval_hours * 3600.0)
     logger.info(
         "Backup scheduler started: every %.1f hours, keep %d days, dir=%s",
-        interval_hours, retention, _backup_dir(),
+        interval_hours, retention, settings.upload_dir.parent / BACKUP_DIR_NAME,
     )
-    # Startup backup only if the newest existing snapshot is older than one
-    # interval. A fresh deploy (no backups) gets one; a crash/restart loop does
-    # NOT spam same-hour backups — the previous unconditional startup backup was
-    # half of the history-destruction bug (with count-based pruning as the other).
-    age = await asyncio.to_thread(_seconds_since_newest_backup_sync)
-    if age is None or age >= interval_s:
-        await write_scheduled_backup(retention)
+    first_pass = True
     try:
         while True:
+            try:
+                if first_pass:
+                    # Startup backup only if the newest existing snapshot is
+                    # older than one interval. A fresh deploy (no backups) gets
+                    # one; a crash/restart loop does NOT spam same-hour backups
+                    # — the previous unconditional startup backup was half of
+                    # the history-destruction bug (count-based pruning was the
+                    # other).
+                    age = await asyncio.to_thread(_seconds_since_newest_backup_sync)
+                    due = age is None or age >= interval_s
+                else:
+                    due = True
+                if due:
+                    await write_scheduled_backup(retention)
+                    _health.record_success()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                # Keep looping. A full disk, a read-only mount or a locked DB
+                # are all transient in principle, and retrying in an hour costs
+                # nothing next to never backing up again.
+                _health.record_failure(exc)
+                logger.exception(
+                    "Scheduled backup failed (%d consecutive); retrying in %.1f h",
+                    _health.consecutive_failures, interval_s / 3600.0,
+                )
+            first_pass = False
             await asyncio.sleep(interval_s)
-            await write_scheduled_backup(retention)
     except asyncio.CancelledError:
         logger.info("Backup scheduler cancelled cleanly.")
         raise

@@ -239,7 +239,12 @@ async def reattach_orphaned_cases() -> None:
 
     Companion to `ensure_default_room` — same idea, one level down: that one
     guarantees a default room exists, this one guarantees every case actually
-    points at a room.
+    points at a room. It therefore CALLS that one rather than relying on the
+    caller to order them: the `is_default = 1` subquery below returns NULL if
+    no room is flagged, which would set every orphan's `room_id` to NULL — the
+    exact state this repairs, made permanent. The dependency is real, so it is
+    expressed in code instead of as a comment about call order. Both are
+    idempotent, so invoking it twice on the boot path costs one cheap query.
 
     Orphans were reachable because there is no `PRAGMA foreign_keys` and
     `create_case` never validated `room_id`, while the frontend sent a
@@ -263,6 +268,10 @@ async def reattach_orphaned_cases() -> None:
         ).scalar()
         if not orphans:
             return
+    # Only now that there is work to do, and outside the session above so the
+    # repair runs in its own. Guarantees the subquery below resolves.
+    await ensure_default_room()
+    async with async_session() as db:
         await db.execute(
             text(
                 "UPDATE cases SET room_id = (SELECT id FROM rooms WHERE is_default = 1)"

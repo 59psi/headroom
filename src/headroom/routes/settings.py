@@ -1,4 +1,3 @@
-import shutil
 import tempfile
 from pathlib import Path
 
@@ -20,6 +19,7 @@ from headroom.schemas.settings import (
 from headroom.services import activity_service, mdns_service, settings_service
 from headroom.services.claude_analysis import verify_api_key
 from headroom.utils.photo import validate_image_content_type
+from headroom.utils.upload import copy_upload_capped
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -61,7 +61,7 @@ async def upload_logo(photo: UploadFile):
 
     suffix = Path(photo.filename or "logo.png").suffix.lower()
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        shutil.copyfileobj(photo.file, tmp)
+        copy_upload_capped(photo, tmp, what="Logo")
         tmp_path = Path(tmp.name)
 
     try:

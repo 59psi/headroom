@@ -14,7 +14,7 @@ from headroom.schemas.hat import (
     HatUpdate,
     construction_from_flags,
 )
-from headroom.services.activity_service import log_activity
+from headroom.services.activity_service import log_and_commit
 
 MAX_REGULAR = 4
 MAX_BEANIE = 6
@@ -106,10 +106,15 @@ async def _validate_capacity(
 
     # Per-case capacity override wins over the type default.
     case = await db.get(Case, case_id)
-    case_capacity = case.capacity if case and case.capacity else None
+    # `is not None`, not truthiness: a per-case capacity of exactly 0 means
+    # "this case holds nothing" and must be honoured, where `if case.capacity`
+    # silently fell through to the type default and let 4 hats into a case
+    # deliberately set to hold none.
+    case_capacity = case.capacity if case and case.capacity is not None else None
 
-    max_beanie = case_capacity or MAX_BEANIE
-    max_regular = case_capacity or MAX_REGULAR
+    # Same reason as above — `or` would treat a capacity of 0 as unset.
+    max_beanie = MAX_BEANIE if case_capacity is None else case_capacity
+    max_regular = MAX_REGULAR if case_capacity is None else case_capacity
     if is_beanie and beanie_count >= max_beanie:
         raise HTTPException(
             status_code=409,
@@ -152,11 +157,10 @@ async def create_hat(db: AsyncSession, data: HatCreate) -> Hat:
     hat.set_construction(data.construction)
     db.add(hat)
     await db.commit()
-    await log_activity(
+    await log_and_commit(
         db, kind="hat.created", entity_type="hat", entity_id=hat.id,
         summary=f"Hat #{hat.id} created · style={data.style} size={data.size}",
     )
-    await db.commit()
     return await _reload_hat(db, hat.id)
 
 
@@ -205,6 +209,12 @@ async def update_hat(db: AsyncSession, hat_id: int, data: HatUpdate) -> Hat:
     hat = await get_hat(db, hat_id)
     update_data = data.model_dump(exclude_unset=True)
     changed_fields = list(update_data.keys())
+    # Captured BEFORE the writes below. The audit row used to record only which
+    # field names changed, which is enough to say something happened and
+    # useless for undoing it — when analysis overwrote a construction the owner
+    # had typed, nothing anywhere held the value it replaced. Previous values
+    # make the log a record you can actually reverse.
+    previous = {f: getattr(hat, f, None) for f in changed_fields}
 
     if "style" in update_data:
         new_is_beanie = update_data["style"] == HatStyle.beanie
@@ -228,19 +238,33 @@ async def update_hat(db: AsyncSession, hat_id: int, data: HatUpdate) -> Hat:
     elif legacy_sent:
         wants_lite = hat.hydrolite if hydrolite is None else hydrolite
         wants_hydro = hat.hydro if hydro is None else hydro
-        hat.set_construction(construction_from_flags(wants_lite, wants_hydro))
+        legacy_text = construction_from_flags(wants_lite, wants_hydro)
+        # Only let the booleans clear a construction they can actually express.
+        # A hat recorded as "Waxed Canvas" has both flags false already, so a
+        # legacy client sending `hydro: false` is not talking about the canvas
+        # — it is restating a default. Treating that as "clear the field" threw
+        # away a fabric the client had no way of knowing existed, which is the
+        # old two-value vocabulary silently overwriting the richer one that
+        # replaced it.
+        if legacy_text is not None or hat.hydro or hat.hydrolite:
+            hat.set_construction(legacy_text)
 
     for field, value in update_data.items():
         setattr(hat, field, value)
 
     await db.commit()
     if changed_fields:
-        await log_activity(
+        await log_and_commit(
             db, kind="hat.updated", entity_type="hat", entity_id=hat_id,
             summary=f"Hat #{hat_id} updated",
-            details={"fields": changed_fields},
+            details={
+                "fields": changed_fields,
+                # str() because these land in a JSON column and a date or
+                # Decimal would otherwise fail to serialise and lose the whole
+                # audit row — a partial record beats none.
+                "previous": {k: (None if v is None else str(v)) for k, v in previous.items()},
+            },
         )
-        await db.commit()
     return await _reload_hat(db, hat_id)
 
 
@@ -248,11 +272,10 @@ async def delete_hat(db: AsyncSession, hat_id: int) -> None:
     hat = await get_hat(db, hat_id)
     await db.delete(hat)
     await db.commit()
-    await log_activity(
+    await log_and_commit(
         db, kind="hat.deleted", entity_type="hat", entity_id=hat_id,
         summary=f"Hat #{hat_id} permanently deleted",
     )
-    await db.commit()
 
 
 async def assign_hat(db: AsyncSession, hat_id: int, case_id: int | None) -> Hat:
@@ -271,11 +294,10 @@ async def assign_hat(db: AsyncSession, hat_id: int, case_id: int | None) -> Hat:
         hat.position_in_case = None
 
     await db.commit()
-    await log_activity(
+    await log_and_commit(
         db, kind="hat.assigned", entity_type="hat", entity_id=hat_id,
         summary=f"Hat #{hat_id} {'assigned to case ' + str(case_id) if case_id else 'unassigned'}",
     )
-    await db.commit()
     return await _reload_hat(db, hat_id)
 
 
@@ -301,13 +323,12 @@ async def dispose_hat(db: AsyncSession, hat_id: int, data: HatDispose) -> Hat:
     # "previously held" hats if we want that later. Capacity check ignores
     # disposed hats already.
     await db.commit()
-    await log_activity(
+    await log_and_commit(
         db, kind="hat.disposed", entity_type="hat", entity_id=hat_id,
         summary=f"Hat #{hat_id} disposed via {via}"
                 + (f" for ${data.price:.2f}" if data.price else ""),
         details={"via": via, "price": data.price, "to": data.to},
     )
-    await db.commit()
     return await _reload_hat(db, hat_id)
 
 
@@ -325,6 +346,14 @@ async def undispose_hat(db: AsyncSession, hat_id: int) -> Hat:
     hat.disposed_notes = None
     if target_case_id is not None:
         try:
+            # The case may have been deleted while this hat was disposed —
+            # `_validate_capacity` counts hats, and a case with no hats looks
+            # exactly like an empty one whether or not the row still exists, so
+            # it cannot catch this on its own. Without the check the hat comes
+            # back pointing at a case id that resolves to nothing, and every
+            # read that walks `hat.case.room` gets None where it expects a room.
+            if await db.get(Case, target_case_id) is None:
+                raise HTTPException(status_code=404, detail="Case no longer exists")
             await _validate_capacity(db, target_case_id, hat.is_beanie, exclude_hat_id=hat.id)
             # Reassign to a fresh slot: the hat's old position may have been
             # taken by another hat added while it was disposed. Keeping the
@@ -334,11 +363,10 @@ async def undispose_hat(db: AsyncSession, hat_id: int) -> Hat:
             hat.case_id = None
             hat.position_in_case = None
     await db.commit()
-    await log_activity(
+    await log_and_commit(
         db, kind="hat.undisposed", entity_type="hat", entity_id=hat_id,
         summary=f"Hat #{hat_id} restored from disposed state",
     )
-    await db.commit()
     return await _reload_hat(db, hat_id)
 
 

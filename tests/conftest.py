@@ -54,7 +54,7 @@ def isolated_upload_dir(tmp_path, monkeypatch):
 def no_live_melin_marketplace(monkeypatch):
     """Tests never call the live Sharetribe API (house rule: no external APIs).
 
-    `_query_listings` is the single network seam in melin_recap; raising
+    `query_listings` is the single network seam in melin_recap; raising
     MelinRecapError exercises the degrade-to-link-only path. Individual tests
     re-patch it with canned data.
     """
@@ -64,7 +64,7 @@ def no_live_melin_marketplace(monkeypatch):
         raise MelinRecapError("live marketplace disabled in tests")
 
     monkeypatch.setattr(
-        "headroom.services.melin_recap._query_listings", _no_network
+        "headroom.services.melin_recap.query_listings", _no_network
     )
 
 

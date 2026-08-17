@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.database import get_db
-from headroom.schemas.admin import BackupInfo
+from headroom.schemas.admin import BackupHealthRead, BackupInfo
 from headroom.services import activity_service, backup_service
 
 router = APIRouter()
@@ -38,6 +38,28 @@ async def download_backup(
         backup_service.stream_backup(include_uploads=include_uploads),
         media_type="application/gzip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/backups/health", response_model=BackupHealthRead)
+async def scheduled_backup_health(request: Request):
+    """Is the scheduler working — not merely, is there a file on disk.
+
+    Registered before `/backups/{...}`-shaped paths would matter, and distinct
+    from the inventory endpoint on purpose: the inventory answers "what do I
+    have", this answers "will I get another one".
+    """
+    h = backup_service.health()
+    task = getattr(request.app.state, "backup_task", None)
+    return BackupHealthRead(
+        enabled=backup_service.backup_enabled(),
+        # A cancelled/finished task means no further backups will be written,
+        # whatever the last attempt's outcome was.
+        running=task is not None and not task.done(),
+        last_attempt_at=h.last_attempt_at,
+        last_success_at=h.last_success_at,
+        last_error=h.last_error,
+        consecutive_failures=h.consecutive_failures,
     )
 
 

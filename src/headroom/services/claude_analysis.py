@@ -236,8 +236,9 @@ class HatAnalysis:
     # care about logos shouldn't have to say so — and dataclass ordering forces
     # every defaulted field below the undefaulted ones regardless.
     logo_detected: str | None = None
-    # "standard" | "hydro" | "hydrolite". One value, not two booleans, so the
-    # model physically cannot return a hat that is both.
+    # Free-form since 2.11 — "HYDRO", "HYDROLite", "Thermal", or whatever the
+    # tag says. Was a three-value enum; the tool schema above is the contract.
+    # Null means "could not tell", which leaves the stored value untouched.
     construction: str | None = None
     artist_series: str | None = None
     colors: list[AnalyzedColor] = field(default_factory=list)
@@ -249,7 +250,21 @@ class ClaudeAnalysisError(Exception):
 
 
 def _read_image_b64(image_path: Path) -> tuple[str, str]:
-    raw = image_path.read_bytes()
+    """Read and encode the photo, as a typed failure rather than an OSError.
+
+    The file can legitimately vanish underneath a run: replacing a hat's photo
+    deletes the previous one, and analysis of that previous photo may still be
+    in flight. Letting a bare `FileNotFoundError` escape made that case much
+    worse than it looks — it propagated past the pipeline's `ClaudeAnalysisError`
+    handling to the queue's generic crash handler, which stamped the hat
+    `error`, and the correctly-queued run for the NEW photo then found a
+    non-pending status and returned without doing anything. The correction was
+    dropped silently and permanently.
+    """
+    try:
+        raw = image_path.read_bytes()
+    except OSError as exc:
+        raise ClaudeAnalysisError(f"Could not read {image_path.name}: {exc}") from exc
     suffix = image_path.suffix.lower()
     media_type = {
         ".jpg": "image/jpeg",
@@ -327,11 +342,19 @@ async def analyze_hat_image(
                 }
             ],
         )
+    # Logged here, not only where the caller happens to catch it. This module
+    # declared a logger and never used it, so the most expensive and most
+    # externally-dependent call in the app was the one with no voice of its
+    # own: a failing key or a rate limit was visible only as a status on a hat.
+    # The message text is safe — the key is never in it.
     except AuthenticationError as exc:
+        logger.warning("Claude auth rejected for %s: %s", image_path.name, exc)
         raise ClaudeAnalysisError("Invalid Anthropic API key.") from exc
     except APIError as exc:
+        logger.warning("Claude API error for %s: %s", image_path.name, exc)
         raise ClaudeAnalysisError(f"Anthropic API error: {exc}") from exc
     except Exception as exc:
+        logger.exception("Claude analysis failed unexpectedly for %s", image_path.name)
         raise ClaudeAnalysisError(f"Unexpected analysis failure: {exc}") from exc
 
     tool_block = next(

@@ -112,3 +112,16 @@ export function getConditions() {
 export function getConstructions() {
   return apiFetch<string[]>('/api/meta/constructions');
 }
+
+/** Log a wear for today. Idempotent server-side (one row per hat per day). */
+export function logWear(id: number) {
+  return apiFetch<unknown>(`/api/hats/${id}/wear`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+}
+
+/** Undo the most recent wear entry. */
+export function undoLatestWear(id: number) {
+  return apiFetch<unknown>(`/api/hats/${id}/wear/latest`, { method: 'DELETE' });
+}

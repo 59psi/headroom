@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+import shutil
+import tempfile
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
@@ -14,30 +18,11 @@ from headroom.utils.photo import validate_image_content_type
 
 router = APIRouter(prefix="/api/hats/import", tags=["bulk-import"])
 
-# Ceiling on the total bytes buffered in RAM for one request. Bulk ingestion
-# reads files into memory before staging; without a cap, 100×20 MB ≈ 2 GB could
-# OOM-kill the container on a small Pi. Phone photos are a few MB, so this is
+# Ceiling on the total bytes accepted for one request. Files are spooled to
+# disk as they arrive rather than buffered, so this now bounds disk and job
+# size rather than RAM. Phone photos are a few MB, so this is
 # generous for real use while blocking the pathological case (S9/R6).
 _MAX_TOTAL_UPLOAD_BYTES = 750 * 1024 * 1024
-
-
-async def _read_capped(upload: UploadFile, cap: int) -> bytes:
-    """Read an upload in chunks, stopping just past `cap` bytes.
-
-    A file larger than the per-file limit comes back at ~cap+1 rather than
-    fully resident, so create_job still flags it oversize (len > limit) without
-    a single huge file ballooning memory."""
-    chunks: list[bytes] = []
-    size = 0
-    while True:
-        chunk = await upload.read(1024 * 1024)
-        if not chunk:
-            break
-        chunks.append(chunk)
-        size += len(chunk)
-        if size > cap:
-            break
-    return b"".join(chunks)
 
 
 def _job_to_dict(job) -> dict:
@@ -84,34 +69,69 @@ async def create_import_job(
             detail=f"Max {import_service.MAX_FILES_PER_JOB} files per job",
         )
 
-    files: list[tuple[str, bytes]] = []
+    # Each file goes to disk as it arrives, and only its path is kept. This
+    # used to accumulate every blob in a list and check the total AFTER the
+    # loop, so a full batch was resident at once — up to the 750MB cap, which
+    # is well over the container's memory limit, on the box whose OOM kill this
+    # release exists to prevent. Peak is now one file (20MB), not the batch.
+    staging = Path(tempfile.mkdtemp(prefix="headroom-upload-"))
+    files: list[tuple[str, Path]] = []
     total = 0
-    for p in photos:
-        if not validate_image_content_type(p.content_type):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid content type for {p.filename}: {p.content_type}",
-            )
-        blob = await _read_capped(p, import_service.MAX_BYTES_PER_FILE)
-        total += len(blob)
-        if total > _MAX_TOTAL_UPLOAD_BYTES:
-            raise HTTPException(
-                status_code=413,
-                detail=(
-                    f"Upload batch exceeds {_MAX_TOTAL_UPLOAD_BYTES // 1024 // 1024} MB "
-                    "in total — split it into smaller batches."
-                ),
-            )
-        files.append((p.filename or "photo.jpg", blob))
+    try:
+        for index, p in enumerate(photos):
+            if not validate_image_content_type(p.content_type):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid content type for {p.filename}: {p.content_type}",
+                )
+            dest = staging / f"{index:04d}"
+            with dest.open("wb") as fh:
+                written = await asyncio.to_thread(
+                    _spool, p, fh, import_service.MAX_BYTES_PER_FILE
+                )
+            total += written
+            if total > _MAX_TOTAL_UPLOAD_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail=(
+                        f"Upload batch exceeds {_MAX_TOTAL_UPLOAD_BYTES // 1024 // 1024} MB "
+                        "in total — split it into smaller batches."
+                    ),
+                )
+            files.append((p.filename or "photo.jpg", dest))
 
-    defaults = {
-        "case_id": case_id,
-        "condition": condition,
-        "size": size,
-        "style": style,
-    }
-    job = await import_service.create_job(db, files=files, defaults=defaults)
-    return {"id": job.id, "total": job.total, "status": job.status}
+        defaults = {
+            "case_id": case_id,
+            "condition": condition,
+            "size": size,
+            "style": style,
+        }
+        job = await import_service.create_job(db, files=files, defaults=defaults)
+        return {"id": job.id, "total": job.total, "status": job.status}
+    finally:
+        # `create_job` copies what it keeps into the job's own staging dir, so
+        # this temp copy is always disposable — including on the 413/400 paths,
+        # where leaving it would strand a batch of photos until reboot.
+        shutil.rmtree(staging, ignore_errors=True)
+
+
+def _spool(upload, dest, cap: int) -> int:
+    """Copy an upload to `dest`, stopping just past `cap`. Returns bytes written.
+
+    Lenient like `read_capped`: an oversize file is truncated rather than
+    rejected, so `create_job` still records it as a skipped item and the rest of
+    the batch proceeds.
+    """
+    written = 0
+    while True:
+        chunk = upload.file.read(1024 * 1024)
+        if not chunk:
+            break
+        dest.write(chunk)
+        written += len(chunk)
+        if written > cap:
+            break
+    return written
 
 
 @router.get("/{job_id}")

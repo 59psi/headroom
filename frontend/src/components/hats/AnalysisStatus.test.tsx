@@ -15,18 +15,20 @@ function hat(over: Partial<HatRead>): HatRead {
 }
 
 describe('AnalysisStatus', () => {
-  it('renders a step counter, not the step name', () => {
+  it('shows both the step counter and what the step is', () => {
     render(<AnalysisStatus hat={hat({ analysis_status: 'pending', analysis_stage: 'identifying' })} />);
 
     expect(screen.getByText('2/4')).toBeInTheDocument();
-    // The long name is the reason the pill used to blow out the row.
+    expect(screen.getByText('Identifying')).toBeInTheDocument();
+    // One word, not the full phrase — the long form is what wrapped the pill
+    // onto a second line on a phone.
     expect(screen.queryByText(/Identifying the hat/)).not.toBeInTheDocument();
   });
 
-  it('keeps the step name available to tooltips and screen readers', () => {
+  it('keeps the full step name available to tooltips and screen readers', () => {
     render(<AnalysisStatus hat={hat({ analysis_status: 'pending', analysis_stage: 'pricing' })} />);
 
-    const badge = screen.getByText('3/4');
+    const badge = screen.getByText('3/4').closest('.hr-analysis-status')!;
     expect(badge).toHaveAttribute('title', 'Checking prices — step 3 of 4');
     expect(badge).toHaveAccessibleName('Analyzing: Checking prices, step 3 of 4');
   });
@@ -48,6 +50,7 @@ describe('AnalysisStatus', () => {
     render(<AnalysisStatus hat={hat({ analysis_status: 'pending', analysis_stage: null })} />);
 
     expect(screen.getByText('1/4')).toBeInTheDocument();
+    expect(screen.getByText('Analyzing')).toBeInTheDocument();
   });
 
   it('falls back to 1/4 rather than 0/4 on an unrecognised stage', () => {

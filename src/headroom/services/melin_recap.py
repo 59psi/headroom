@@ -40,7 +40,11 @@ class MelinRecapError(Exception):
 
 # Maps our internal style enum to melinrecap's pub_category values.
 # Verified against the marketplace's "By Shape" navigation.
-_STYLE_TO_CATEGORY: dict[str, str] = {
+# Public: `catalog_service` harvests the whole catalog and needs both the
+# category map and the query primitive. It was importing them through their
+# underscore names, which claims "private" while a second module depends on
+# them — so a future refactor would read this as safe to change freely.
+STYLE_TO_CATEGORY: dict[str, str] = {
     "a_game": "aGame",
     "coronado": "coronado",
     "odysea": "odysea",
@@ -61,7 +65,7 @@ def melin_recap_link(style: str | None) -> str | None:
     """Return a deep link to the relevant Melin Recap filter page, or None."""
     if not style:
         return f"{MELIN_BASE}/"
-    category = _STYLE_TO_CATEGORY.get(style.lower())
+    category = STYLE_TO_CATEGORY.get(style.lower())
     if not category:
         return f"{MELIN_BASE}/"
     qs = urlencode({"mode": "filter-change", "pub_category": category})
@@ -117,7 +121,7 @@ async def _get_anon_token(client: httpx.AsyncClient, *, force: bool = False) -> 
     return _token
 
 
-async def _query_listings(params: dict) -> list[dict]:
+async def query_listings(params: dict) -> list[dict]:
     """One listings query against the Flex API. Seam for tests."""
     try:
         async with httpx.AsyncClient(timeout=settings.http_timeout) as client:
@@ -151,7 +155,7 @@ async def fetch_resale_stats(
     leaves a meaningful sample. Returns
     {"median": float$, "count": int, "sample": "model" | "category"}.
     """
-    category = _STYLE_TO_CATEGORY.get(style.lower()) if style else None
+    category = STYLE_TO_CATEGORY.get(style.lower()) if style else None
     params: dict = {"per_page": 100, "fields.listing": "title,price"}
     if category:
         params["pub_category"] = category
@@ -160,7 +164,7 @@ async def fetch_resale_stats(
     else:
         return None
 
-    listings = await _query_listings(params)
+    listings = await query_listings(params)
     priced = [
         (
             (li.get("attributes") or {}).get("title", ""),

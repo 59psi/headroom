@@ -171,38 +171,38 @@ async def test_claude_error_marks_hat_status_error(client, monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_claude_corrects_construction_but_silence_changes_nothing(client):
-    """A real identification wins; a non-answer leaves the record alone.
+async def test_claude_fills_an_empty_construction_and_never_overwrites_one(client):
+    """The owner's answer wins. Analysis only fills a blank.
 
-    Corrective since 2.11, where construction became free-form text. It used to
-    be additive-only, because with two booleans and no way to say "standard"
-    there was no distinction between "this is not HYDROLite" and "I can't see
-    whether it is" — so clearing risked un-ticking a box the owner set while
-    holding the hat. Naming a fabric is a positive identification, so it now
-    overwrites; silence still does not.
+    2.11 briefly let a named fabric overwrite what was on record, reasoning
+    that a positive identification should correct a stale value. In practice
+    Claude reads HYDRO vs HYDROLite off one photo unreliably — the tells are
+    bonded seams, a gel-welded logo and a sweatband, none of which survive a
+    front-on shot — so "correcting" meant replacing a right answer from the
+    person holding the hat with a wrong one from a picture.
     """
     from headroom.models.hat import Hat
     from headroom.services.hat_analysis_pipeline import _apply_construction
 
-    hat = Hat()
-    hat.set_construction("HYDROLite")
+    # Empty: analysis is welcome to fill it in.
+    blank = Hat()
+    _apply_construction(blank, "HYDROLite")
+    assert blank.construction == "HYDROLite"
+    assert blank.hydrolite is True
 
-    # Null is "I can't tell" — absence of evidence, not evidence of absence.
-    _apply_construction(hat, None)
-    assert hat.construction == "HYDROLite"
-    assert hat.hydrolite is True
+    # Already stated: untouchable, even by a confident, differing answer.
+    owned = Hat()
+    owned.set_construction("Waxed Canvas")
+    _apply_construction(owned, "HYDRO")
+    assert owned.construction == "Waxed Canvas", "analysis overrode the owner"
+    assert owned.hydro is False
 
-    # So is the old enum's "I can't tell" member, which must never be stored as
-    # if it were a fabric.
-    _apply_construction(hat, "standard")
-    assert hat.construction == "HYDROLite", "'standard' is a non-answer, not a fabric"
-    assert hat.hydrolite is True
-
-    # A named fabric corrects the record — and the derived flags follow it,
-    # rather than being left behind describing the previous answer.
-    _apply_construction(hat, "Thermal")
-    assert hat.construction == "Thermal"
-    assert hat.hydrolite is False and hat.hydro is False
+    # Null and the old enum's "standard" are both non-answers either way.
+    empty = Hat()
+    _apply_construction(empty, None)
+    assert empty.construction is None
+    _apply_construction(empty, "standard")
+    assert empty.construction is None, "'standard' is a non-answer, not a fabric"
 
 
 @pytest.mark.anyio
