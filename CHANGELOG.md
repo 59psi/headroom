@@ -6,6 +6,43 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.8.0] — 2026-08-16 — _see the queue, fix the prices_
+
+### Fixed
+- **Estimated retail was coming in about half of actual.** The prompt asked
+  Claude to price hats "using your knowledge of the brand's typical pricing
+  tiers" and gave it nothing to anchor on, which for melin meant guesses around
+  $35 against real retail of $59–$99. The system prompt now carries verified
+  current prices — A-Game Hydro $69, Coronado Anchored Hydro $69, All Day
+  Beanie $79, Hydro Odysea Mac $89, Hydro Eagle $89 — plus rough tiers for the
+  other brands it knows, and an explicit note that sub-$50 for a melin is
+  almost certainly wrong.
+- **Rooms page cards jumped around.** "Make default" was *hidden* on the
+  default room while Delete was only *disabled*, so cards carried different
+  numbers of buttons; with `flex-wrap` some wrapped to a second line and others
+  didn't, giving the list ragged heights that re-flowed whenever the default
+  moved. Same three buttons on every card now, in a fixed two-row layout, with
+  the case count aligned right instead of stacked under the name.
+
+### Added
+- **Analysis Queue card in Settings.** The queue was invisible — a hat showed
+  "Analyzing…" with no way to tell whether twenty were ahead of it or whether
+  anything was draining the queue at all. Shows the backlog, whether the worker
+  is running, and the hats currently waiting (each linking to its page). Polls
+  only while there's something to watch. A backlog with a stopped worker is
+  called out explicitly, because that's the state where nothing will happen
+  until a restart.
+- **Re-analyse every hat**, from the same card. This is the retroactive half of
+  any change to identification or pricing: the anchors above only affect hats
+  analysed after them, so without this a collection keeps whatever the old
+  prompt produced. Background removal is skipped for stored cutouts, so it's a
+  Claude call per hat rather than the full pipeline — and your cutouts are not
+  touched. Disposed hats are excluded, and "leave hand-entered prices alone"
+  (on by default) limits it to hats Claude priced.
+- `GET /api/admin/analysis/queue` and `POST /api/admin/analysis/reanalyze-all`.
+
+235 backend + 44 frontend tests.
+
 ## [2.7.1] — 2026-08-16 — _give the bill back_
 
 ### Fixed

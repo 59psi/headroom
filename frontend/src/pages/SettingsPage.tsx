@@ -2,6 +2,7 @@ import { AnthropicKeyCard } from '../components/settings/AnthropicKeyCard';
 import { ClaudeModelCard } from '../components/settings/ClaudeModelCard';
 import { GoogleVisionKeyCard } from '../components/settings/GoogleVisionKeyCard';
 import { RecentErrorsCard } from '../components/settings/RecentErrorsCard';
+import { AnalysisQueueCard } from '../components/settings/AnalysisQueueCard';
 import { EbayCredsCard } from '../components/settings/EbayCredsCard';
 import { MdnsCard } from '../components/settings/MdnsCard';
 import { ActivityLogCard } from '../components/settings/ActivityLogCard';
@@ -27,6 +28,7 @@ export function SettingsPage() {
       <AnthropicKeyCard />
       <ClaudeModelCard />
       <GoogleVisionKeyCard />
+      <AnalysisQueueCard />
       <RecentErrorsCard />
       <EbayCredsCard />
       <MdnsCard />

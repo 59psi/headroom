@@ -12,33 +12,40 @@ function RoomCard({ room, onEdit, onDelete, onMakeDefault }: {
   onMakeDefault: (id: number) => void;
 }) {
   return (
+    // Two stacked rows rather than one wrapping row, and the SAME three buttons
+    // on every card. Previously "Make default" was hidden on the default room
+    // while Delete was only disabled, so cards carried different numbers of
+    // buttons — with `flex-wrap` some wrapped to a second line and others didn't,
+    // giving the list ragged heights that re-flowed whenever the default moved.
     <div className="card mb-2">
-      <div className="card-body d-flex justify-content-between align-items-center gap-2 flex-wrap">
-        <div>
-          <div className="fw-bold fs-5 d-flex align-items-center gap-2" style={{ color: 'var(--text)' }}>
-            {room.name}
-            {room.is_default && (
-              <span className="badge" style={{
-                background: 'rgba(0,240,255,0.15)', color: 'var(--neon-cyan)',
-                fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.06em',
-              }}>Default</span>
-            )}
-          </div>
-          <div className="text-muted small font-mono">
+      <div className="card-body">
+        <div className="d-flex align-items-baseline gap-2 mb-1">
+          <span className="fw-bold fs-5" style={{ color: 'var(--text)' }}>{room.name}</span>
+          {room.is_default && (
+            <span className="badge" style={{
+              background: 'rgba(0,240,255,0.15)', color: 'var(--neon-cyan)',
+              fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.06em',
+            }}>Default</span>
+          )}
+          <span className="text-muted small font-mono ms-auto">
             {room.case_count} case{room.case_count !== 1 ? 's' : ''}
-          </div>
+          </span>
         </div>
         <div className="d-flex gap-1">
-          {!room.is_default && (
-            <button
-              className="btn btn-sm btn-outline-primary"
-              title="Make this the room new cases go to, and where cases land when their room is deleted"
-              onClick={() => onMakeDefault(room.id)}
-            >Make default</button>
-          )}
-          <button className="btn btn-sm btn-outline-secondary" onClick={() => onEdit(room.id, room.name)}>Rename</button>
           <button
-            className="btn btn-sm btn-outline-danger"
+            className="btn btn-sm btn-outline-primary flex-fill"
+            disabled={room.is_default}
+            title={room.is_default
+              ? 'This is already the default room'
+              : 'Make this the room new cases go to, and where cases land when their room is deleted'}
+            onClick={() => onMakeDefault(room.id)}
+          >Make default</button>
+          <button
+            className="btn btn-sm btn-outline-secondary flex-fill"
+            onClick={() => onEdit(room.id, room.name)}
+          >Rename</button>
+          <button
+            className="btn btn-sm btn-outline-danger flex-fill"
             disabled={room.is_default}
             title={room.is_default
               ? 'The default room cannot be deleted — make another room the default first'

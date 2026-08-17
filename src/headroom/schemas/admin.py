@@ -48,3 +48,31 @@ class EbayCredsUpdate(BaseModel):
 
 class PurchaseImport(BaseModel):
     items: list[dict]
+
+
+class PendingHat(BaseModel):
+    """One hat waiting on analysis, enough to render a row."""
+
+    id: int
+    display_id: str | None = None
+    label: str | None = None
+    photo_path: str | None = None
+
+
+class AnalysisQueueStatus(BaseModel):
+    """`queued` is the in-memory depth, `pending_count` what the DB says.
+
+    They differ on purpose: the DB number survives a restart, so a non-empty
+    `pending_count` alongside `worker_alive: false` is the signal that nothing
+    is draining the queue.
+    """
+
+    worker_alive: bool
+    queued: int
+    pending_count: int
+    pending: list[PendingHat] = []
+
+
+class ReanalyzeAllResult(BaseModel):
+    queued: int
+    worker_alive: bool

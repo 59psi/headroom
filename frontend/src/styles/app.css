@@ -1257,6 +1257,8 @@ button.card:hover::before,
 .flex-shrink-0 { flex-shrink: 0 !important; }
 .align-items-center { align-items: center !important; }
 .align-items-start { align-items: flex-start !important; }
+.align-items-baseline { align-items: baseline !important; }
+.hr-plain-list { list-style: none; padding-left: 0; margin-bottom: 0; }
 .justify-content-between { justify-content: space-between !important; }
 .justify-content-center { justify-content: center !important; }
 .justify-content-end { justify-content: flex-end !important; }
