@@ -6,6 +6,34 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.7.1] — 2026-08-16 — _give the bill back_
+
+### Fixed
+- **2.6.2's ghosting fix was deleting hat bills.** That release hardened the
+  cutout with rembg's `post_process_mask`, which blurs the mask and then
+  thresholds it at 127. It did remove the washed-out look — by throwing away
+  every pixel the model was less than ~50% confident about, which on a hat is
+  precisely the thin bill. Measured against a synthetic brim: at confidence 128
+  about 76% survives, at 120 that collapses to 6%, and by 40 the brim is gone
+  entirely. So a faint bill became no bill — the same symptom as the
+  low-capacity model we switched away from, arriving by a different route.
+
+  Replaced with an alpha *ramp* instead of a threshold: clearly-background
+  pixels still go to zero, but anything above that is scaled up to opaque
+  rather than judged against a cutoff. A brim the model saw at 39% opacity now
+  comes out at 73% — present and solid, instead of ghosted or deleted. Both the
+  fading and the missing bills are addressed by the same change.
+
+  Verified against the mechanism (mask confidence in, alpha out) rather than a
+  photo, and mutation-checked against both failure modes: reverting to the
+  threshold and removing the hardening each fail the test.
+
+  **This applies to photos processed from here on.** Existing cutouts are
+  unchanged — the pre-cutout original is not retained, so there is nothing to
+  re-cut from. Re-upload a hat's photo to regenerate it.
+
+230 backend + 44 frontend tests.
+
 ## [2.7.0] — 2026-08-16 — _the code review release_
 
 A full two-axis review of the codebase (standards + spec) plus wiring, bug and

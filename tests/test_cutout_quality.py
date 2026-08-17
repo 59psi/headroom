@@ -22,21 +22,44 @@ from headroom.services import background_removal
 
 
 @pytest.mark.anyio
-async def test_background_removal_binarises_the_mask(monkeypatch, tmp_path):
-    """`post_process_mask=True` must reach rembg, or cutouts render ghosted.
+async def test_alpha_ramp_keeps_a_low_confidence_brim_and_still_kills_the_haze():
+    """The hat's bill is where a saliency model is least confident.
 
-    Nothing else catches this: dropping the kwarg still produces a valid PNG,
-    just a semi-transparent one, so every other test stays green while hats
-    look washed out in the browser.
+    2.6.2 hardened the mask with rembg's `post_process_mask`, which blurs then
+    thresholds at 127 — that removed the ghosting but *deleted* every pixel the
+    model was under ~50% sure about, i.e. exactly the bill. This pins the ramp
+    that replaced it: low-confidence structure survives AND becomes opaque,
+    while genuine background still goes away.
     """
-    captured: dict = {}
+    import numpy as np
 
-    def _fake_remove(src, session=None, **kwargs):
-        captured.update(kwargs)
-        return Image.new("RGBA", (8, 8), (200, 30, 90, 255))
+    from headroom.services.background_removal import _harden_alpha
+
+    def alpha_at(value: int) -> int:
+        img = Image.new("RGBA", (4, 4), (200, 30, 90, value))
+        return np.asarray(_harden_alpha(img).getchannel("A"))[0, 0]
+
+    # A brim the model was only ~39% sure about must not be thrown away, and
+    # must not render as a see-through smear either.
+    assert alpha_at(100) > 150, "a low-confidence brim was erased or left ghosted"
+    # Confident pixels are fully opaque — no haze over the hat body.
+    assert alpha_at(200) == 255
+    assert alpha_at(128) == 255
+    # Genuine background still disappears.
+    assert alpha_at(10) == 0
+    assert alpha_at(0) == 0
+
+
+@pytest.mark.anyio
+async def test_background_removal_hardens_the_alpha_it_writes(monkeypatch, tmp_path):
+    """`_remove_sync` must actually apply the ramp, not just define it."""
+    import numpy as np
 
     fake_rembg = types.ModuleType("rembg")
-    fake_rembg.remove = _fake_remove
+    # A soft mask, as a saliency model would emit around a thin edge.
+    fake_rembg.remove = lambda src, session=None, **kw: Image.new(
+        "RGBA", (8, 8), (200, 30, 90, 100)
+    )
     fake_rembg.new_session = lambda *_a, **_k: "session"
     monkeypatch.setitem(sys.modules, "rembg", fake_rembg)
     monkeypatch.setattr(background_removal, "_get_session", lambda: "session")
@@ -46,10 +69,10 @@ async def test_background_removal_binarises_the_mask(monkeypatch, tmp_path):
 
     out = background_removal._remove_sync(src, tmp_path / "hat")
 
-    assert out.exists()
-    assert captured.get("post_process_mask") is True, (
-        "post_process_mask must be enabled — without it the soft alpha band "
-        "renders as a ghosted, semi-transparent hat"
+    written = np.asarray(Image.open(out).getchannel("A"))
+    assert written[0, 0] > 150, (
+        "the saved cutout still carries the model's raw soft alpha — hats will "
+        "render washed out"
     )
 
 

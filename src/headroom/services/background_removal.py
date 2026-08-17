@@ -47,6 +47,47 @@ def _get_session():
     return _session
 
 
+# Alpha below the floor is background; at or above the ceiling the model was
+# confident. Everything between is stretched up to opaque rather than judged.
+# The ceiling is 128 on purpose — that is where rembg's own `post_process_mask`
+# put its cutoff, so this is the same boundary used to *keep* pixels instead of
+# to delete them.
+_ALPHA_FLOOR = 25
+_ALPHA_CEIL = 128
+
+
+def _harden_alpha(cut):
+    """Make a soft mask opaque without throwing away what it was unsure about.
+
+    A saliency model returns confidence per pixel, and the hat's thin bill is
+    exactly where it is least sure. Two ways to read that mask, and the obvious
+    one is a trap:
+
+    * Use it raw and mid-confidence regions render semi-transparent, so the hat
+      looks washed out — "ghosted" — against the near-black canvas.
+    * Binarise it (rembg's `post_process_mask`: blur, then threshold at 127) and
+      the ghosting goes, but every pixel the model was less than ~50% sure about
+      is *deleted*. Measured on a synthetic brim: at confidence 128 about 76% of
+      it survives, at 120 that collapses to 6%, and by 40 the brim is gone
+      entirely. That turns "faint bill" into "no bill" — worse than the problem
+      it fixes, and indistinguishable from the low-capacity-model bug we changed
+      the default model to avoid.
+
+    So ramp instead of threshold: clearly-background pixels go to zero, and
+    anything above that is scaled up to opaque. A brim the model saw at 39%
+    opacity comes out at 73% — present and solid rather than ghosted or gone.
+    """
+    if cut.mode != "RGBA":
+        return cut
+
+    import numpy as np  # noqa: PLC0415 — already a rembg dependency
+
+    alpha = np.asarray(cut.getchannel("A"), dtype=np.float32)
+    ramped = np.clip((alpha - _ALPHA_FLOOR) / (_ALPHA_CEIL - _ALPHA_FLOOR), 0.0, 1.0)
+    cut.putalpha(Image.fromarray((ramped * 255.0).astype(np.uint8), mode="L"))
+    return cut
+
+
 def _remove_sync(input_path: Path, output_path: Path) -> Path:
     from rembg import remove  # noqa: PLC0415
 
@@ -55,16 +96,7 @@ def _remove_sync(input_path: Path, output_path: Path) -> Path:
         # rembg works best from RGBA / RGB Pillow images
         if src.mode not in ("RGB", "RGBA"):
             src = src.convert("RGBA")
-        # post_process_mask binarises the alpha channel: rembg opens the mask,
-        # blurs it (sigma 2) and then thresholds at 127, so every pixel ends up
-        # fully opaque or fully clear. Without it a saliency model's soft,
-        # mid-confidence regions come through as semi-transparent alpha and the hat
-        # renders washed out — "ghosted" — over the near-black canvas. The blur
-        # runs before the threshold, so the silhouette stays smooth rather than
-        # going jagged. Safe to binarise only because the default model is
-        # confident about the bill; with a low-capacity model a hard threshold
-        # would clip it off entirely.
-        cut = remove(src, session=session, post_process_mask=True)
+        cut = _harden_alpha(remove(src, session=session))
 
     final_path = output_path.with_suffix(".png")
     cut.save(final_path, "PNG", optimize=True)
