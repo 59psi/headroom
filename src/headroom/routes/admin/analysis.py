@@ -19,10 +19,27 @@ from sqlalchemy.orm import selectinload
 
 from headroom.database import get_db
 from headroom.models.hat import Hat
-from headroom.schemas.admin import AnalysisQueueStatus, PendingHat, ReanalyzeAllResult
-from headroom.services import analysis_queue
+from headroom.schemas.admin import (
+    AnalysisJobRead,
+    AnalysisQueueStatus,
+    PendingHat,
+    ReanalyzeAllResult,
+)
+from headroom.services import analysis_job_service, analysis_queue
 
 router = APIRouter()
+
+
+def _job_read(p) -> AnalysisJobRead:
+    return AnalysisJobRead(
+        id=p.job.id,
+        total=p.job.total,
+        done=p.done,
+        failed=p.failed,
+        status=p.job.status,
+        started_at=p.job.started_at,
+        finished_at=p.job.finished_at,
+    )
 
 
 @router.get("/analysis/queue", response_model=AnalysisQueueStatus)
@@ -51,9 +68,14 @@ async def analysis_queue_status(db: AsyncSession = Depends(get_db)):
         .all()
     )
 
+    current = await analysis_job_service.current_job(db)
+    recent = await analysis_job_service.recent_jobs(db)
+
     return AnalysisQueueStatus(
         worker_alive=analysis_queue.worker_alive(),
         queued=analysis_queue.queue_depth(),
+        current_job=_job_read(current) if current else None,
+        recent_jobs=[_job_read(p) for p in recent],
         pending_count=len(hats),
         pending=[
             PendingHat(
@@ -103,15 +125,7 @@ async def reanalyze_all(
     if not hat_ids:
         return ReanalyzeAllResult(queued=0, worker_alive=analysis_queue.worker_alive())
 
-    await db.execute(
-        Hat.__table__.update()
-        .where(Hat.id.in_(hat_ids))
-        .values(
-            analysis_status=analysis_queue.PENDING,
-            analysis_error=None,
-            analyzed_at=None,
-        )
-    )
+    job = await analysis_job_service.create_job(db, hat_ids)
     await db.commit()
 
     # If no worker is draining, the rows still read 'pending' and the boot sweep
@@ -120,6 +134,9 @@ async def reanalyze_all(
     for hat_id in hat_ids:
         analysis_queue.enqueue(hat_id)
 
+    progress = await analysis_job_service.progress_for(db, job)
     return ReanalyzeAllResult(
-        queued=len(hat_ids), worker_alive=analysis_queue.worker_alive()
+        queued=len(hat_ids),
+        worker_alive=analysis_queue.worker_alive(),
+        job=_job_read(progress),
     )

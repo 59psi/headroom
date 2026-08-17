@@ -20,6 +20,19 @@ const STAGE_LABELS: Record<string, string> = {
  * in-memory depth, `pending_count` is what the database says. A backlog with a
  * dead worker is the failure worth seeing, and only the DB number reveals it.
  */
+function pct(job: { done: number; total: number }): number {
+  return job.total > 0 ? Math.round((job.done / job.total) * 100) : 0;
+}
+
+/** Coarse relative time — a job list wants "4m ago", not a timestamp. */
+function since(iso: string): string {
+  const secs = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (secs < 60) return 'just now';
+  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
+  if (secs < 86_400) return `${Math.floor(secs / 3600)}h ago`;
+  return `${Math.floor(secs / 86_400)}d ago`;
+}
+
 export function AnalysisQueueCard() {
   const qc = useQueryClient();
   const [sparePrices, setSparePrices] = useState(true);
@@ -30,7 +43,12 @@ export function AnalysisQueueCard() {
     queryFn: getAnalysisQueue,
     // Poll only while there is something to watch, so an idle Settings page
     // isn't hitting the API every few seconds forever.
-    refetchInterval: (q) => ((q.state.data?.pending_count ?? 0) > 0 ? 3000 : false),
+    refetchInterval: (q) => {
+      const d = q.state.data;
+      // Keep polling while a run is in flight even if the backlog momentarily
+      // reads zero — the last hat is still being written.
+      return (d?.pending_count ?? 0) > 0 || d?.current_job ? 3000 : false;
+    },
   });
 
   const rerun = useMutation({
@@ -57,6 +75,32 @@ export function AnalysisQueueCard() {
         </p>
 
         {queue.isLoading && <div className="text-secondary small">Loading…</div>}
+
+        {data?.current_job && (
+          <div className="mb-3">
+            <div className="d-flex justify-content-between align-items-baseline mb-1">
+              <span>Re-analysing all hats</span>
+              <span className="font-mono small">
+                {data.current_job.done} / {data.current_job.total}
+              </span>
+            </div>
+            <div className="hr-progress mb-1">
+              <div
+                className="hr-progress-fill"
+                style={{ width: `${pct(data.current_job)}%` }}
+                role="progressbar"
+                aria-label="Re-analysis progress"
+                aria-valuenow={data.current_job.done}
+                aria-valuemin={0}
+                aria-valuemax={data.current_job.total}
+              />
+            </div>
+            <div className="text-secondary small">
+              started {since(data.current_job.started_at)}
+              {data.current_job.failed > 0 && ` · ${data.current_job.failed} failed`}
+            </div>
+          </div>
+        )}
 
         {data && (
           <>
@@ -106,6 +150,21 @@ export function AnalysisQueueCard() {
               </ul>
             )}
           </>
+        )}
+
+        {data && data.recent_jobs.length > 0 && (
+          <div className="mb-3">
+            <div className="hr-metric-label mb-1">Recent runs</div>
+            <ul className="hr-plain-list">
+              {data.recent_jobs.map(j => (
+                <li key={j.id} className="text-secondary small">
+                  {j.status === 'running' ? 'running' : since(j.finished_at ?? j.started_at)}
+                  {' · '}{j.done}/{j.total}
+                  {j.failed > 0 && ` · ${j.failed} failed`}
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
 
         <hr />

@@ -145,6 +145,7 @@ class HatRead(BaseModel):
     resale_checked_at: datetime | None = None
     analysis_status: str | None = None
     analysis_stage: str | None = None
+    analysis_job_id: int | None = None
     analysis_error: str | None = None
     analyzed_at: datetime | None = None
 

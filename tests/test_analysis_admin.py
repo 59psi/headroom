@@ -127,3 +127,56 @@ async def test_stage_is_hidden_once_analysis_finishes(client):
     body = (await client.get(f"/api/hats/{hat_id}")).json()
     assert body["analysis_status"] == "ok"
     assert body["analysis_stage"] is None, "a finished hat must not report a running step"
+
+
+async def test_reanalyze_all_opens_a_job_and_derives_its_progress(client):
+    """Progress is counted from the hats, never accumulated on the job.
+
+    Accumulating would mean the worker writing twice per hat, with a crash
+    between the two leaving a progress bar that permanently disagrees with the
+    hats it claims to describe.
+    """
+    from sqlalchemy import update as sa_update
+
+    from headroom.models.hat import Hat
+    from tests.conftest import test_session_factory
+
+    a = await _hat_with_photo(client)
+    b = await _hat_with_photo(client)
+
+    started = await client.post("/api/admin/analysis/reanalyze-all")
+    job = started.json()["job"]
+    assert job is not None
+    assert job["total"] == 2
+    assert job["done"] == 0 and job["failed"] == 0
+    assert job["status"] == "running"
+
+    status = (await client.get("/api/admin/analysis/queue")).json()
+    assert status["current_job"]["id"] == job["id"]
+
+    # Finish one, fail the other — the counts must follow the hats.
+    async with test_session_factory() as db:
+        await db.execute(sa_update(Hat).where(Hat.id == a).values(analysis_status="ok"))
+        await db.execute(
+            sa_update(Hat).where(Hat.id == b).values(analysis_status="error")
+        )
+        await db.commit()
+
+    status = (await client.get("/api/admin/analysis/queue")).json()
+    finished = status["recent_jobs"][0]
+    assert finished["done"] == 2
+    assert finished["failed"] == 1
+    assert finished["status"] == "done", "a job with nothing pending must close"
+    assert finished["finished_at"] is not None
+    assert status["current_job"] is None, "a closed job is not the current one"
+
+
+async def test_recent_jobs_are_newest_first(client):
+    """The card shows a short history; the last run has to be at the top."""
+    await _hat_with_photo(client)
+
+    first = (await client.post("/api/admin/analysis/reanalyze-all")).json()["job"]
+    second = (await client.post("/api/admin/analysis/reanalyze-all")).json()["job"]
+
+    recent = (await client.get("/api/admin/analysis/queue")).json()["recent_jobs"]
+    assert [j["id"] for j in recent][:2] == [second["id"], first["id"]]

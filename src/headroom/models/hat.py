@@ -84,6 +84,11 @@ class Hat(Base):
     # 'pending'. Cleared when the run finishes — a stage on a terminal status
     # would be stale by definition.
     analysis_stage: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # Which bulk re-analysis run this hat belongs to, if any. Indexed because
+    # progress for a job is a COUNT over exactly this column.
+    analysis_job_id: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, index=True
+    )
     analysis_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     analyzed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 

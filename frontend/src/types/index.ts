@@ -76,6 +76,7 @@ export interface HatRead {
   resale_checked_at: string | null;
   analysis_status: string | null;
   analysis_stage: string | null;
+  analysis_job_id: number | null;
   analysis_error: string | null;
   analyzed_at: string | null;
 

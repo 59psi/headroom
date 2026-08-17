@@ -157,11 +157,23 @@ export interface PendingHat {
   stage: string | null;
 }
 
+export interface AnalysisJobRead {
+  id: number;
+  total: number;
+  done: number;
+  failed: number;
+  status: string;
+  started_at: string;
+  finished_at: string | null;
+}
+
 export interface AnalysisQueueStatus {
   worker_alive: boolean;
   queued: number;
   pending_count: number;
   pending: PendingHat[];
+  current_job: AnalysisJobRead | null;
+  recent_jobs: AnalysisJobRead[];
 }
 
 export function getAnalysisQueue() {
@@ -169,7 +181,7 @@ export function getAnalysisQueue() {
 }
 
 export function reanalyzeAll(onlyPricedByClaude: boolean) {
-  return apiFetch<{ queued: number; worker_alive: boolean }>(
+  return apiFetch<{ queued: number; worker_alive: boolean; job: AnalysisJobRead | null }>(
     `/api/admin/analysis/reanalyze-all?only_priced_by_claude=${onlyPricedByClaude}`,
     { method: 'POST' },
   );

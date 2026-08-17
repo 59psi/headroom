@@ -1259,6 +1259,23 @@ button.card:hover::before,
 .align-items-start { align-items: flex-start !important; }
 .align-items-baseline { align-items: baseline !important; }
 .hr-plain-list { list-style: none; padding-left: 0; margin-bottom: 0; }
+
+/* Job progress bar — neon fill on a recessed track, matching the metric tiles. */
+.hr-progress {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.hr-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--neon-cyan), var(--neon-pink));
+  transition: width 0.4s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .hr-progress-fill { transition: none; }
+}
 .justify-content-between { justify-content: space-between !important; }
 .justify-content-center { justify-content: center !important; }
 .justify-content-end { justify-content: flex-end !important; }

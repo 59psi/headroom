@@ -25,6 +25,7 @@ vi.mock('../api/settings', () => ({
   getRecentErrors: vi.fn(async () => []),
   getAnalysisQueue: vi.fn(async () => ({
     worker_alive: true, queued: 0, pending_count: 0, pending: [],
+    current_job: null, recent_jobs: [],
   })),
   reanalyzeAll: vi.fn(),
   listBackups: vi.fn(async () => []),
