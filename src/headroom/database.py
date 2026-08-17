@@ -1,3 +1,4 @@
+import logging
 from collections.abc import AsyncGenerator
 
 from sqlalchemy import event, inspect, text
@@ -5,6 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.orm import DeclarativeBase
 
 from headroom.config import settings
+
+logger = logging.getLogger(__name__)
 
 engine = create_async_engine(settings.database_url, echo=False)
 async_session = async_sessionmaker(engine, expire_on_commit=False)
@@ -202,6 +205,48 @@ async def ensure_default_room() -> None:
         await db.commit()
 
 
+async def reattach_orphaned_cases() -> None:
+    """Move cases whose room no longer exists onto the default room.
+
+    Companion to `ensure_default_room` — same idea, one level down: that one
+    guarantees a default room exists, this one guarantees every case actually
+    points at a room.
+
+    Orphans were reachable because there is no `PRAGMA foreign_keys` and
+    `create_case` never validated `room_id`, while the frontend sent a
+    hardcoded `1` regardless of what the picker showed (fixed in 2.7.0). Delete
+    the room that happened to be id 1 — which the `is_default` flag exists to
+    let you do — and every case created afterwards pointed at nothing. The
+    symptoms don't name the cause: the room reads "Unknown" on the case, and
+    the room it *should* belong to reports zero cases.
+
+    Raw SQL, matching `ensure_default_room`, to avoid cascading relationship
+    loads on the boot path.
+    """
+    async with async_session() as db:
+        orphans = (
+            await db.execute(
+                text(
+                    "SELECT COUNT(*) FROM cases WHERE room_id IS NULL OR room_id NOT IN"
+                    " (SELECT id FROM rooms)"
+                )
+            )
+        ).scalar()
+        if not orphans:
+            return
+        await db.execute(
+            text(
+                "UPDATE cases SET room_id = (SELECT id FROM rooms WHERE is_default = 1)"
+                " WHERE room_id IS NULL OR room_id NOT IN (SELECT id FROM rooms)"
+            )
+        )
+        await db.commit()
+        logger.warning(
+            "Reattached %d case(s) whose room no longer existed to the default room.",
+            orphans,
+        )
+
+
 async def init_db() -> None:
     from headroom.models import __all_models__  # noqa: F811
 
@@ -214,6 +259,7 @@ async def init_db() -> None:
         await conn.run_sync(Base.metadata.create_all)
 
     await ensure_default_room()
+    await reattach_orphaned_cases()
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

@@ -162,3 +162,54 @@ async def test_room_case_count_is_accurate(client):
     rooms2 = {r["name"]: r["case_count"] for r in (await client.get("/api/rooms")).json()}
     assert rooms2["Attic"] == 0
     assert rooms2["Bedroom"] == 6
+
+
+@pytest.mark.anyio
+async def test_creating_a_case_in_a_missing_room_is_rejected(client):
+    """Nothing at the DB level stops an orphan — no `PRAGMA foreign_keys`.
+
+    An unknown `room_id` used to be written straight through, and the symptoms
+    never named the cause: the case reported its room as "Unknown", while the
+    room it should have been in reported zero cases.
+    """
+    resp = await client.post("/api/cases", json={"case_type": "archive", "room_id": 99999})
+    assert resp.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_boot_reattaches_cases_whose_room_vanished(client, monkeypatch):
+    """Existing orphans are repaired on the next start, not left to be found.
+
+    The frontend used to send a hardcoded `room_id: 1` regardless of the picker,
+    so deleting the room that happened to be id 1 — which the `is_default` flag
+    exists to permit — orphaned every case created afterwards.
+    """
+    from sqlalchemy import text
+
+    import headroom.database as database
+    from tests.conftest import test_session_factory
+
+    # The repair runs on the boot path and uses the app's session factory;
+    # point it at the test database.
+    monkeypatch.setattr(database, "async_session", test_session_factory)
+
+    room = await client.post("/api/rooms", json={"name": "Doomed"})
+    room_id = room.json()["id"]
+    case = await client.post("/api/cases", json={"case_type": "archive", "room_id": room_id})
+    display_id = case.json()["display_id"]
+
+    # Point the case at a room that does not exist, exactly as the old client did.
+    async with test_session_factory() as db:
+        await db.execute(text(f"UPDATE cases SET room_id = 99999 WHERE display_id = '{display_id}'"))
+        await db.commit()
+
+    detail = await client.get(f"/api/cases/{display_id}")
+    assert detail.json()["room_name"] == "Unknown", "precondition: the case is orphaned"
+
+    await database.reattach_orphaned_cases()
+
+    repaired = await client.get(f"/api/cases/{display_id}")
+    assert repaired.json()["room_name"] != "Unknown"
+    # And it now counts towards the room that adopted it.
+    rooms = {r["name"]: r["case_count"] for r in (await client.get("/api/rooms")).json()}
+    assert sum(rooms.values()) >= 1

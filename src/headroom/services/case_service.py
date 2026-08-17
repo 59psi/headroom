@@ -38,6 +38,13 @@ async def create_case(db: AsyncSession, data: CaseCreate) -> Case:
     room_id = data.room_id
     if room_id is None:
         room_id = await room_service.get_default_room_id(db)
+    elif not await room_service.room_exists(db, room_id):
+        # Defence in depth behind the frontend fix. Nothing enforces this at the
+        # DB level (no `PRAGMA foreign_keys`), so an id for a room that isn't
+        # there used to be written straight through — and the symptoms never
+        # named the cause: the case reported its room as "Unknown", and the room
+        # it should have been in reported zero cases.
+        raise HTTPException(status_code=404, detail=f"Room {room_id} not found")
     case = Case(
         case_type=data.case_type,
         sequence_number=seq,

@@ -41,10 +41,17 @@ was reported from use.
 
 ### Fixed — behaviour
 
-- **New cases ignored the default room.** The frontend hardcoded `room_id: 1`,
-  bypassing the `is_default` flag entirely — and if room 1 was ever deleted
-  (which the flag exists to allow) the case landed orphaned. The room now
-  defaults to whichever room actually carries the flag.
+- **New cases ignored the default room, and could be orphaned outright.** The
+  frontend hardcoded `room_id: 1` regardless of what the picker showed,
+  bypassing the `is_default` flag entirely. Delete the room that happened to be
+  id 1 — which that flag exists to permit — and every case created afterwards
+  pointed at a room that wasn't there. The symptoms never named the cause: the
+  case reported its room as **"Unknown"**, and the room it should have been in
+  reported **zero cases**. Three fixes: the picker now defaults to whichever
+  room actually carries the flag; `POST /api/cases` rejects an unknown
+  `room_id` (nothing enforced it — there is no `PRAGMA foreign_keys`); and
+  **existing orphans are reattached to the default room on boot**, alongside
+  the `ensure_default_room` check that guarantees there is one.
 - **"Cancel" in the photo cropper uploaded the photo.** Cancel, ×, and a stray
   tap on the backdrop were all wired to "use the original", so on the hat page a
   mis-tap replaced the photo and re-ran the pipeline. Cancel now cancels;
@@ -106,7 +113,7 @@ was reported from use.
 - `nanoid` bumped to 3.3.18 (GHSA-2v37-7h3g-55p8, build-time only via
   vite → postcss).
 
-226 backend + 44 frontend tests.
+228 backend + 44 frontend tests.
 
 ## [2.6.2] — 2026-08-16 — _hats that keep their brims_
 

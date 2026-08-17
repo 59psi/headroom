@@ -71,6 +71,12 @@ async def update_room(
     return await _reload_room(db, room.id)
 
 
+async def room_exists(db: AsyncSession, room_id: int) -> bool:
+    """Cheap existence check — no relationship loads."""
+    result = await db.execute(select(Room.id).where(Room.id == room_id).limit(1))
+    return result.scalar_one_or_none() is not None
+
+
 async def get_default_room_id(db: AsyncSession) -> int:
     """Id of the room currently flagged `is_default`.
 
