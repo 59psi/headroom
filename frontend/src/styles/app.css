@@ -1408,3 +1408,70 @@ button.card:hover::before,
   font-feature-settings: 'tnum';
   opacity: 0.85;
 }
+
+/* The picker list must clear the fixed bottom nav (z-index 100). Raising this
+   alone is not sufficient on a phone — see `usePickerOpen` for why the nav is
+   also hidden while a list is open. */
+.hr-combobox-list {
+  z-index: 200;
+}
+
+/* While a dropdown-style picker is open, take the bottom nav out of the
+   layout. It is fixed at z-index 100 and, once the iOS keyboard opens, is
+   positioned against the visual viewport — so it rides up to mid-screen and
+   covers the options wherever they are drawn. `!important` because the
+   `.d-lg-none` utility also sets display on this element. */
+body.hr-picker-open .bottom-nav {
+  display: none !important;
+}
+
+/* --- Case picker rows ------------------------------------------------------
+   Denser than a plain combobox row: each carries an id, a type, occupancy and
+   sometimes a reason it can't be used. */
+.hr-case-group {
+  padding: 0.5rem 0.75rem 0.25rem;
+  font-family: var(--font-heading);
+  font-size: 0.68rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.hr-case-option {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.hr-case-id { font-weight: 600; }
+
+.hr-case-meta {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Dimmed, not hidden: "A-021 is full" is the answer you wanted, and a case
+   that silently isn't in the list is its own puzzle. */
+.hr-case-option.is-unavailable {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.hr-case-option.is-unavailable:hover { background: transparent; color: inherit; }
+
+.hr-case-why {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--neon-orange);
+}
+
+.hr-case-new { color: var(--neon-cyan); }
+
+.hr-case-empty {
+  padding: 0.75rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}

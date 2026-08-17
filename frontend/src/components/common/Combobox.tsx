@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useId } from 'react';
+import { usePickerOpen } from './usePickerOpen';
 
 /**
  * A text field with a visible, tappable list of known values.
@@ -52,6 +53,8 @@ export function Combobox({
     document.addEventListener('pointerdown', onDocDown);
     return () => document.removeEventListener('pointerdown', onDocDown);
   }, [open]);
+
+  usePickerOpen(open);
 
   function choose(option: string) {
     onChange(option);

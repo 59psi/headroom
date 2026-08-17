@@ -27,6 +27,12 @@ export interface CaseRead {
   regular_count: number;
   room_id: number;
   room_name: string;
+  /** Computed server-side from the same rule the write path enforces, so the
+   *  picker can't disagree with what a save will accept. */
+  accepts_regular: boolean;
+  accepts_beanie: boolean;
+  free_regular: number;
+  free_beanie: number;
   created_at: string;
   updated_at: string;
 }

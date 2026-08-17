@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from headroom.config import settings
 from headroom.database import get_db
 from headroom.schemas.case import CaseCreate, CaseDetail, CaseRead, CaseUpdate, HatSummary
+from headroom.services import capacity as capacity_rules
 from headroom.services import case_service
 from headroom.utils.photo import (
     generate_filename,
@@ -19,8 +20,16 @@ router = APIRouter(prefix="/api/cases", tags=["cases"])
 
 
 def _case_to_read(case) -> CaseRead:
-    hats = case.hats or []
+    # Disposed hats free their slot, so they must not count toward occupancy —
+    # `_validate_capacity` filters them, and a read model that didn't would
+    # show a case as fuller than the validator considers it.
+    hats = [h for h in (case.hats or []) if h.disposed_at is None]
     beanie_count = sum(1 for h in hats if h.is_beanie)
+    room = capacity_rules.evaluate(
+        capacity=case.capacity,
+        beanie_count=beanie_count,
+        regular_count=len(hats) - beanie_count,
+    )
     return CaseRead(
         id=case.id,
         case_type=case.case_type,
@@ -33,6 +42,10 @@ def _case_to_read(case) -> CaseRead:
         regular_count=len(hats) - beanie_count,
         room_id=case.room_id,
         room_name=case.room.name if case.room else "Unknown",
+        accepts_regular=room.accepts_regular,
+        accepts_beanie=room.accepts_beanie,
+        free_regular=room.free_regular,
+        free_beanie=room.free_beanie,
         created_at=case.created_at,
         updated_at=case.updated_at,
     )

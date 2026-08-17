@@ -14,10 +14,13 @@ from headroom.schemas.hat import (
     HatUpdate,
     construction_from_flags,
 )
+from headroom.services import capacity as capacity_rules
 from headroom.services.activity_service import log_and_commit
 
-MAX_REGULAR = 4
-MAX_BEANIE = 6
+# Re-exported for the tests and callers that referenced them here first; the
+# rule itself lives in `capacity` so the picker and the validator agree.
+MAX_REGULAR = capacity_rules.MAX_REGULAR
+MAX_BEANIE = capacity_rules.MAX_BEANIE
 
 # Disposition `via` values accepted by the API.
 DISPOSITION_VIAS = {"sold", "gifted", "lost", "trashed", "trade"}
@@ -104,26 +107,23 @@ async def _validate_capacity(
     beanie_count = sum(1 for h in hats if h.is_beanie)
     regular_count = len(hats) - beanie_count
 
-    # Per-case capacity override wins over the type default.
+    # Per-case capacity override wins over the type default. Same rule the
+    # picker renders — see `services/capacity`.
     case = await db.get(Case, case_id)
-    # `is not None`, not truthiness: a per-case capacity of exactly 0 means
-    # "this case holds nothing" and must be honoured, where `if case.capacity`
-    # silently fell through to the type default and let 4 hats into a case
-    # deliberately set to hold none.
-    case_capacity = case.capacity if case and case.capacity is not None else None
-
-    # Same reason as above — `or` would treat a capacity of 0 as unset.
-    max_beanie = MAX_BEANIE if case_capacity is None else case_capacity
-    max_regular = MAX_REGULAR if case_capacity is None else case_capacity
-    if is_beanie and beanie_count >= max_beanie:
+    room = capacity_rules.evaluate(
+        capacity=case.capacity if case else None,
+        beanie_count=beanie_count,
+        regular_count=regular_count,
+    )
+    if is_beanie and not room.accepts_beanie:
         raise HTTPException(
             status_code=409,
-            detail=f"Case has reached max beanie capacity ({max_beanie})",
+            detail=f"Case has reached max beanie capacity ({room.max_beanie})",
         )
-    if not is_beanie and regular_count >= max_regular:
+    if not is_beanie and not room.accepts_regular:
         raise HTTPException(
             status_code=409,
-            detail=f"Case has reached max regular hat capacity ({max_regular})",
+            detail=f"Case has reached max regular hat capacity ({room.max_regular})",
         )
 
 
