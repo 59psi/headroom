@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { getStyles, getSizes, getConditions, getConstructions } from '../../api/hats';
+import { getStyles, getSizes, getConditions, getConstructions, getCollections } from '../../api/hats';
 import { listCases } from '../../api/cases';
 import { PhotoCapture } from '../photos/PhotoCapture';
 import { Combobox } from '../common/Combobox';
@@ -55,10 +55,11 @@ export function useHatFormOptions() {
   const sizes = useQuery({ queryKey: ['meta', 'sizes'], queryFn: getSizes });
   const conditions = useQuery({ queryKey: ['meta', 'conditions'], queryFn: getConditions });
   const constructions = useQuery({ queryKey: ['meta', 'constructions'], queryFn: getConstructions });
+  const collections = useQuery({ queryKey: ['meta', 'collections'], queryFn: getCollections });
   const cases = useQuery({ queryKey: ['cases'], queryFn: listCases });
 
   return {
-    styles, sizes, conditions, constructions, cases,
+    styles, sizes, conditions, constructions, collections, cases,
     // `constructions` is deliberately absent from `isLoading`: it only fills
     // the suggestion list, so a slow or failed fetch costs autocomplete, not
     // the ability to type a value.
@@ -189,22 +190,22 @@ export function HatBasicsCard({
             making them save first and edit second meant either a second trip
             or hoping Claude guessed. Analysis leaves a filled-in value alone. */}
         <div className="mb-3">
-          <label className="form-label" htmlFor="hat-artist-series">
-            Collection / collab <span className="text-secondary">(optional)</span>
-          </label>
-          <input
+          <Combobox
             id="hat-artist-series"
-            aria-label="Collection or collaboration"
-            className="form-control"
-            placeholder="Piña, Skye Walker, melin x OluKai…"
+            label="Collection or collaboration"
             value={values.artistSeries}
-            onChange={e => onChange('artistSeries', e.target.value)}
+            onChange={v => onChange('artistSeries', v)}
+            options={options.collections.data ?? []}
+            placeholder="Piña, Skye Walker, melin x OluKai…"
+            help={
+              <>Signature collaborations, artist series and named collections.
+              Pick an existing one to keep them from splitting into
+              &ldquo;Neon&rdquo;, &ldquo;NEON&rdquo; and &ldquo;neon&rdquo; —
+              and if you type one anyway, it snaps to the spelling already on
+              record. Analysis fills this in when it recognises one; anything
+              you type survives a re-analysis.</>
+            }
           />
-          <div className="form-text">
-            Signature collaborations, artist series and named collections. Analysis
-            fills this in when it recognises one — anything you type survives a
-            re-analysis.
-          </div>
         </div>
 
         <div className="mb-3">
