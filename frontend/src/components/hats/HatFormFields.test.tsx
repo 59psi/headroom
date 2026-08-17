@@ -11,6 +11,7 @@ vi.mock('../../api/hats', () => ({
   ]),
   getSizes: vi.fn(async () => [{ value: 'classic', label: 'Classic' }]),
   getConditions: vi.fn(async () => [{ value: 'new', label: 'New' }]),
+  getConstructions: vi.fn(async () => ['HYDRO', 'HYDROLite', 'Thermal']),
 }));
 
 vi.mock('../../api/cases', () => ({
@@ -20,7 +21,7 @@ vi.mock('../../api/cases', () => ({
 }));
 
 const BASICS: HatBasics = {
-  style: 'a_game', size: 'classic', condition: 'new', hydrolite: false, hydro: false,
+  style: 'a_game', size: 'classic', condition: 'new', construction: '', artistSeries: '',
   caseId: '', dateLastWorn: '',
 };
 

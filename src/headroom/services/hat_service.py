@@ -7,7 +7,13 @@ from sqlalchemy.orm import selectinload
 
 from headroom.models.case import Case
 from headroom.models.hat import Hat
-from headroom.schemas.hat import HatCreate, HatDispose, HatStyle, HatUpdate
+from headroom.schemas.hat import (
+    HatCreate,
+    HatDispose,
+    HatStyle,
+    HatUpdate,
+    construction_from_flags,
+)
 from headroom.services.activity_service import log_activity
 
 MAX_REGULAR = 4
@@ -133,11 +139,17 @@ async def create_hat(db: AsyncSession, data: HatCreate) -> Hat:
         condition=data.condition,
         size=data.size,
         style=data.style,
-        hydrolite=data.hydrolite,
-        hydro=data.hydro,
         date_last_worn=data.date_last_worn,
         is_beanie=is_beanie,
+        # Empty string from an untouched form field means "not stated", same as
+        # omitting it — storing "" would make the hat look annotated when the
+        # owner never typed anything.
+        artist_series=data.artist_series or None,
+        model_name=data.model_name or None,
     )
+    # After construction so the derived flags are set from the text, not left
+    # at their column defaults.
+    hat.set_construction(data.construction)
     db.add(hat)
     await db.commit()
     await log_activity(
@@ -192,6 +204,7 @@ async def get_hat(db: AsyncSession, hat_id: int) -> Hat:
 async def update_hat(db: AsyncSession, hat_id: int, data: HatUpdate) -> Hat:
     hat = await get_hat(db, hat_id)
     update_data = data.model_dump(exclude_unset=True)
+    changed_fields = list(update_data.keys())
 
     if "style" in update_data:
         new_is_beanie = update_data["style"] == HatStyle.beanie
@@ -199,15 +212,33 @@ async def update_hat(db: AsyncSession, hat_id: int, data: HatUpdate) -> Hat:
             await _validate_capacity(db, hat.case_id, new_is_beanie, exclude_hat_id=hat.id)
         hat.is_beanie = new_is_beanie
 
+    # `construction` owns `hydro`/`hydrolite`, so it goes through the model's
+    # setter rather than the blind loop below.
+    #
+    # A pre-2.11 client sends the flags instead, and resolving those needs the
+    # hat: `{"hydrolite": false}` means "clear HYDROLite", so it must leave a
+    # hat whose construction is HYDRO alone. Each flag therefore falls back to
+    # the hat's current value rather than to False. An explicit `construction`
+    # always wins — a modern client sending both is stating the text.
+    legacy_sent = {"hydrolite", "hydro"} & set(update_data)
+    hydrolite = update_data.pop("hydrolite", None)
+    hydro = update_data.pop("hydro", None)
+    if "construction" in update_data:
+        hat.set_construction(update_data.pop("construction"))
+    elif legacy_sent:
+        wants_lite = hat.hydrolite if hydrolite is None else hydrolite
+        wants_hydro = hat.hydro if hydro is None else hydro
+        hat.set_construction(construction_from_flags(wants_lite, wants_hydro))
+
     for field, value in update_data.items():
         setattr(hat, field, value)
 
     await db.commit()
-    if update_data:
+    if changed_fields:
         await log_activity(
             db, kind="hat.updated", entity_type="hat", entity_id=hat_id,
             summary=f"Hat #{hat_id} updated",
-            details={"fields": list(update_data.keys())},
+            details={"fields": changed_fields},
         )
         await db.commit()
     return await _reload_hat(db, hat_id)

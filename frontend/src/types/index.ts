@@ -59,6 +59,9 @@ export interface HatRead {
   brand: string | null;
   logo_detected: string | null;
   artist_series: string | null;
+  /** Free-form construction ("HYDRO", "HYDROLite", "Thermal", …). */
+  construction: string | null;
+  /** Derived from `construction` server-side — read-only here. */
   hydrolite: boolean;
   hydro: boolean;
   model_name: string | null;

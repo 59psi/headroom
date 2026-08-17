@@ -53,20 +53,25 @@ class Hat(Base):
     # from `brand` because that can be inferred from shape, colourway or a hang
     # tag with no logo in frame at all. This one answers "was a mark visible,
     # and who owns it", which is the difference between a guess and evidence.
-    # HYDROLite is melin CONSTRUCTION, not a model line: featherweight build,
-    # bonded seams, gel-welded logos, antimicrobial sweatband. It is offered
-    # across A-Game, Coronado, Trenches and the rest, so ANY hat can be one --
-    # which is exactly why it is a flag here and not a HatStyle value. Making it
-    # a style would have forced a second entry per model and split one model's
-    # hats across two style buckets.
+    # What the hat is BUILT from, free-form. Construction is orthogonal to the
+    # model line -- melin offers a given build across A-Game, Coronado, Trenches
+    # and the rest, so ANY hat can be any of them, which is why this is its own
+    # field and not a HatStyle value.
+    #
+    # Free-form and not an enum because melin ships specialty fabrics whenever
+    # they feel like it (seasonal drops, collab-only materials). An enum makes
+    # every one of those unrecordable until someone ships a migration, so the
+    # owner holding the hat and reading its tag loses to a list written months
+    # earlier. `hydro` / `hydrolite` below stay as the indexed fast path for the
+    # two common values; `set_construction()` is the only writer of all three.
+    construction: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    # DERIVED from `construction` -- do not assign directly, call
+    # `set_construction()`. Kept as real columns rather than properties because
+    # search filters and the pricing prompt query them, and a @property cannot
+    # appear in a WHERE clause.
     hydrolite: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("0")
     )
-    # HYDRO is the sibling technology — melin lists HYDRO and HYDROLite as
-    # separate collections, so they get separate flags. A hat is realistically
-    # one or the other, but that is not enforced in the schema: the analyser
-    # picks at most one (see the `construction` tool field) and a human is
-    # allowed to record whatever the hat in their hand actually says.
     hydro: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("0")
     )
@@ -81,8 +86,11 @@ class Hat(Base):
 
     analysis_status: Mapped[str | None] = mapped_column(String(20), nullable=True)  # pending/ok/fallback/skipped/error
     # Which step of the pipeline is running right now, while analysis_status is
-    # 'pending'. Cleared when the run finishes — a stage on a terminal status
-    # would be stale by definition.
+    # 'pending'. Deliberately NOT cleared when the run finishes: eight separate
+    # places set a terminal status, and one of them forgetting to also null this
+    # would leave a stale stage on screen forever. `HatRead` masks it to null on
+    # any non-pending status instead, so the invariant holds in one place. The
+    # column keeping its last value is the intended cost of that.
     analysis_stage: Mapped[str | None] = mapped_column(String(20), nullable=True)
     # Which bulk re-analysis run this hat belongs to, if any. Indexed because
     # progress for a job is a COUNT over exactly this column.
@@ -122,6 +130,24 @@ class Hat(Base):
     wear_logs: Mapped[list["WearLog"]] = relationship(  # noqa: F821
         lazy="selectin", cascade="all, delete-orphan", order_by="WearLog.worn_at"
     )
+
+    def set_construction(self, value: str | None) -> None:
+        """Record the construction and re-derive the two indexed flags.
+
+        The ONLY writer of `construction`, `hydro` and `hydrolite`. Assigning
+        the flags by hand is what lets them drift out of step with the text a
+        person actually typed, so they are derived here every time instead.
+
+        Substring matching, not equality: real answers arrive as "A-Game Hydro",
+        "Hydro Thermal" or "HYDROLite" depending on whether the speaker is
+        reading a tag, a product page or a hang label. HYDROLite is checked
+        first because it contains "hydro" — order is load-bearing.
+        """
+        cleaned = (value or "").strip()
+        self.construction = cleaned or None
+        key = cleaned.lower().replace("-", "").replace(" ", "")
+        self.hydrolite = "hydrolite" in key
+        self.hydro = "hydro" in key and not self.hydrolite
 
     # Derived read-model values. They live here rather than in the route layer
     # so `HatRead.model_validate(hat)` can populate itself straight off the ORM

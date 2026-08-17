@@ -18,6 +18,7 @@ from anthropic import APIError, AsyncAnthropic
 from anthropic._exceptions import AuthenticationError
 
 from headroom.config import settings as config_settings
+from headroom.schemas.hat import KNOWN_CONSTRUCTIONS
 
 logger = logging.getLogger(__name__)
 
@@ -112,17 +113,24 @@ HAT_ANALYSIS_TOOL = {
                 ),
             },
             "construction": {
-                "type": "string",
-                "enum": ["standard", "hydro", "hydrolite"],
+                "type": ["string", "null"],
                 "description": (
-                    "melin's water-resistant construction, if any. 'hydro' —"
-                    " HYDRO, usually named in the product name ('A-Game Hydro')."
-                    " 'hydrolite' — HYDROLite: featherweight, bonded (not"
+                    "What the hat is BUILT from. Prefer one of these exact"
+                    " spellings when it matches: "
+                    + ", ".join(KNOWN_CONSTRUCTIONS)
+                    + ". 'HYDRO' is usually named in the product name ('A-Game"
+                    " Hydro'). 'HYDROLite' is featherweight, with bonded (not"
                     " stitched) seams, a gel-welded rubbery logo rather than"
-                    " embroidery, and an antimicrobial sweatband. 'standard' if"
-                    " it is neither or you cannot tell. These are offered across"
-                    " every model line, so this is independent of model_name —"
-                    " a hat is 'a Coronado in HYDROLite', not 'a HYDROLite'."
+                    " embroidery, and an antimicrobial sweatband. If the hat is"
+                    " plainly some other fabric — a seasonal or collab-only"
+                    " specialty material — name that instead, in the same short"
+                    " form; this field is not limited to the list."
+                    " Null if you cannot tell, which leaves any existing value"
+                    " untouched. A non-null answer OVERWRITES what is on record,"
+                    " so answer only from what you can actually see: these"
+                    " constructions are offered across every model line, so this"
+                    " is independent of model_name — a hat is 'a Coronado in"
+                    " HYDROLite', not 'a HYDROLite'."
                 ),
             },
             "artist_series": {

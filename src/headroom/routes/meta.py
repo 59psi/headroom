@@ -1,8 +1,15 @@
 from fastapi import APIRouter, Depends
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.database import get_db
-from headroom.schemas.hat import HatCondition, HatSize, HatStyle
+from headroom.models.hat import Hat
+from headroom.schemas.hat import (
+    KNOWN_CONSTRUCTIONS,
+    HatCondition,
+    HatSize,
+    HatStyle,
+)
 from headroom.services import room_service
 from headroom.services.catalog_service import catalog_options
 from headroom.services.color_extraction import palette
@@ -49,6 +56,32 @@ async def list_rooms(db: AsyncSession = Depends(get_db)):
 async def list_colors():
     """The curated color palette — the UI renders these as filter chips."""
     return palette()
+
+
+@router.get("/constructions")
+async def list_constructions(db: AsyncSession = Depends(get_db)):
+    """Suggestions for the construction field: the curated list, plus anything
+    already in use.
+
+    Merged rather than curated-only so a specialty fabric typed once becomes a
+    one-tap choice from then on — that is what stops the free-form half of the
+    field from filling up with five spellings of the same material. Curated
+    entries come first because they are the common answers; the rest follow
+    alphabetically. Case-insensitive de-dupe, keeping the curated casing.
+    """
+    seen = {c.casefold(): c for c in KNOWN_CONSTRUCTIONS}
+    rows = (
+        await db.execute(
+            select(Hat.construction)
+            .where(Hat.construction.is_not(None))
+            .distinct()
+        )
+    ).scalars().all()
+    extra = sorted(
+        {v.strip() for v in rows if v and v.strip().casefold() not in seen},
+        key=str.casefold,
+    )
+    return list(KNOWN_CONSTRUCTIONS) + extra
 
 
 @router.get("/colorways")

@@ -46,6 +46,9 @@ _HAT_COLUMN_DDL: dict[str, str] = {
     "logo_detected": "ALTER TABLE hats ADD COLUMN logo_detected VARCHAR(255)",
     "hydrolite": "ALTER TABLE hats ADD COLUMN hydrolite BOOLEAN NOT NULL DEFAULT 0",
     "hydro": "ALTER TABLE hats ADD COLUMN hydro BOOLEAN NOT NULL DEFAULT 0",
+    # v2.11 — free-form construction. `hydro`/`hydrolite` became derived from
+    # this; `_backfill_construction()` seeds it from them for existing rows.
+    "construction": "ALTER TABLE hats ADD COLUMN construction VARCHAR(80)",
     "artist_series": "ALTER TABLE hats ADD COLUMN artist_series VARCHAR(160)",
     "model_name": "ALTER TABLE hats ADD COLUMN model_name VARCHAR(120)",
     "model_confidence": "ALTER TABLE hats ADD COLUMN model_confidence VARCHAR(10)",
@@ -174,6 +177,28 @@ def _run_migrations(conn) -> None:
         for col_name, ddl in _HAT_COLUMN_DDL.items():
             if col_name not in existing_cols:
                 conn.execute(text(ddl))
+        _backfill_construction(conn)
+
+
+def _backfill_construction(conn) -> None:
+    """Seed free-form `construction` from the flags that used to be the truth.
+
+    Only fills rows where it is NULL, so it is idempotent and never overwrites
+    a value someone typed. HYDROLite first: a row with both flags set (the old
+    schema permitted it) is the more specific of the two.
+    """
+    conn.execute(
+        text(
+            "UPDATE hats SET construction = 'HYDROLite' "
+            "WHERE construction IS NULL AND hydrolite = 1"
+        )
+    )
+    conn.execute(
+        text(
+            "UPDATE hats SET construction = 'HYDRO' "
+            "WHERE construction IS NULL AND hydro = 1"
+        )
+    )
 
 
 async def ensure_default_room() -> None:

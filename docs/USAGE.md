@@ -135,9 +135,10 @@ model when known), and **where it lives** ("📍 Case A-012 · Office"):
 
 - **Text search** — multi-term AND across name, brand, style, condition,
   size, colors, room, and artist/collab (`navy classic melin` finds navy,
-  classic-size Melins; `hydro` finds every HYDRO and `hydrolite` every
-  HYDROLite — those are per-hat construction flags rather than model lines,
-  and each term matches its flag; `skye walker` finds that signature series). Color terms match the normalized
+  classic-size Melins; construction is matched as text, so `hydro` finds every
+  HYDRO — and HYDROLite, which is a HYDRO-family build — while `hydrolite`
+  stays precise and returns only those, and `canvas` finds a hat you recorded
+  as Waxed Canvas; `skye walker` finds that signature series). Color terms match the normalized
   palette vocabulary by default; toggle *exact colors* to match the
   analyzer's original phrasing. Disposed hats never appear — they're not
   findable on a shelf.

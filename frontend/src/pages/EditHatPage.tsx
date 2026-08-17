@@ -23,11 +23,10 @@ export function EditHatPage() {
   const options = useHatFormOptions();
 
   const [basics, setBasics] = useState<HatBasics>({
-    style: '', size: '', condition: '', hydrolite: false, hydro: false, caseId: '', dateLastWorn: '',
+    style: '', size: '', condition: '', construction: '', artistSeries: '', caseId: '', dateLastWorn: '',
   });
   const [brand, setBrand] = useState('');
   const [modelName, setModelName] = useState('');
-  const [artistSeries, setArtistSeries] = useState('');
   const [colorway, setColorway] = useState('');
   const [purchasePrice, setPurchasePrice] = useState('');
   const [estimatedPrice, setEstimatedPrice] = useState('');
@@ -60,14 +59,13 @@ export function EditHatPage() {
         style: hat.data.style,
         size: hat.data.size,
         condition: hat.data.condition,
-        hydrolite: hat.data.hydrolite,
-        hydro: hat.data.hydro,
+        construction: hat.data.construction || '',
+        artistSeries: hat.data.artist_series || '',
         caseId: hat.data.case_id?.toString() || '',
         dateLastWorn: hat.data.date_last_worn || '',
       });
       setBrand(hat.data.brand || '');
       setModelName(hat.data.model_name || '');
-      setArtistSeries(hat.data.artist_series || '');
       setColorway(hat.data.colorway || '');
       setPurchasePrice(hat.data.purchase_price != null ? String(hat.data.purchase_price) : '');
       setEstimatedPrice(hat.data.estimated_new_price != null ? String(hat.data.estimated_new_price) : '');
@@ -84,13 +82,14 @@ export function EditHatPage() {
     mutationFn: async () => {
       const data: Record<string, unknown> = {
         style: basics.style, size: basics.size, condition: basics.condition,
-        hydrolite: basics.hydrolite,
-        hydro: basics.hydro,
+        // Empty means "not stated" -> null, so clearing the field clears the
+        // value rather than storing an empty string that reads as an answer.
+        construction: basics.construction.trim() || null,
       };
       if (basics.dateLastWorn) data.date_last_worn = basics.dateLastWorn;
       data.brand = brand || null;
       data.model_name = modelName || null;
-      data.artist_series = artistSeries || null;
+      data.artist_series = basics.artistSeries.trim() || null;
       data.colorway = colorway || null;
       data.purchase_price = purchasePrice ? Number(purchasePrice) : null;
       data.design_notes = designNotes || null;
@@ -163,21 +162,10 @@ export function EditHatPage() {
               </datalist>
             </div>
 
-            <div className="mb-3">
-              <label className="form-label">Artist / Collab</label>
-              <input
-                type="text"
-                aria-label="Artist / Collab"
-                className="form-control"
-                value={artistSeries}
-                onChange={e => setArtistSeries(e.target.value)}
-                placeholder="e.g. Skye Walker, melin x OluKai"
-              />
-              <div className="form-text small">
-                Signature collaborations and artist series. Claude fills this in when it
-                recognises one — anything you type here survives a re-analysis.
-              </div>
-            </div>
+            {/* Collection / collab lives in the Basics card, beside
+                construction — both answer "what is this hat", and it has to be
+                on the Add form too, which has no Identity card. One definition
+                in `HatFormFields`, rendered by both pages. */}
 
             <div className="mb-3">
               <label className="form-label">Colorway</label>

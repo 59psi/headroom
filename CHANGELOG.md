@@ -6,6 +6,55 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.11.0] — 2026-08-17 — _what the tag says_
+
+### Added
+- **Construction is now free-form, with structured suggestions.** It was two
+  booleans, HYDRO and HYDROLite, so a hat in any other fabric could not be
+  recorded at all — melin ships specialty materials in seasonal and collab
+  drops, and every one of them was unrecordable until somebody shipped a
+  migration. The field is now text with a datalist: the common builds are one
+  tap, anything else you type is stored verbatim, and
+  `GET /api/meta/constructions` merges the curated list with every value
+  already in use, so a fabric typed once becomes a suggestion after that.
+
+  `hydro` and `hydrolite` survive as columns, because search filters query them
+  and a `@property` cannot appear in a `WHERE` clause — but they are now
+  *derived*, with `Hat.set_construction()` the only writer of all three. That
+  is what stops a hat reading "Thermal" from still matching a HYDRO filter.
+  Existing rows are backfilled from their flags on boot.
+
+- **Collection / collab can be set when adding a hat**, not only when editing
+  one. It is printed on the box and the hang tag and is frequently invisible in
+  a photo of the hat, so the owner knows something the analyser cannot see —
+  and withholding the field until the Edit form meant either a second trip or
+  hoping Claude guessed. Anything typed still survives a re-analysis.
+
+- Searching a fabric name finds it: `canvas` now returns a Waxed Canvas hat.
+
+### Changed
+- **The analysis badge is a step counter (`2/4`), not a spinner.** It used to
+  spell the step out — "Removing background…" — which wrapped onto a second
+  line on a phone and pushed the badge row down into the photo, and because the
+  wording changed every few seconds the layout moved while you were reading it.
+  The counter is fixed-width and monotonic; the step name moved to the tooltip
+  and the accessible label. The ring it replaces was also missing
+  `flex-shrink: 0`, so a squeezed flex row rendered the 10px circle as an egg.
+
+- **Claude may now correct a construction it can identify.** It was
+  additive-only, which was right when the field was two booleans and there was
+  no way to distinguish "this is not HYDROLite" from "I can't see whether it
+  is". Naming a fabric is a positive identification, so it wins; a null still
+  changes nothing, and the old enum's "standard" is treated as the non-answer
+  it was rather than written down as if it were a material.
+
+### Fixed
+- A stale comment on `Hat.analysis_stage` claimed the column is "cleared when
+  the run finishes". It never was — `HatRead` masks it instead, deliberately,
+  so that eight terminal-status call sites can't each forget to.
+
+259 backend + 54 frontend tests.
+
 ## [2.10.0] — 2026-08-16 — _watch the run_
 
 ### Added

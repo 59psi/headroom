@@ -30,6 +30,34 @@ class HatStyle(StrEnum):
     beanie = "beanie"
 
 
+# The constructions melin ships often enough to be worth offering as choices.
+#
+# Deliberately a list and NOT a StrEnum, unlike style/size/condition above:
+# those are closed sets this app defines, but construction is whatever melin
+# decided to make this season. Specialty fabrics appear in collab and seasonal
+# drops with no warning, and an enum would make each one unrecordable until
+# somebody shipped a migration — the owner holding the hat and reading its tag
+# would lose to a list written months earlier.
+#
+# So this is the structured half of a structured-plus-free-form field: the UI
+# offers these, the Claude tool schema asks for these spellings, and anything
+# else a person types is stored verbatim. `GET /api/meta/constructions` merges
+# this list with the distinct values already in the database, so a fabric typed
+# once becomes a suggestion from then on.
+KNOWN_CONSTRUCTIONS: tuple[str, ...] = (
+    "HYDRO",
+    "HYDROLite",
+    "Thermal",
+    "Brushed Cotton",
+    "Canvas",
+    "Corduroy",
+    "Linen",
+    "Mesh Trucker",
+    "Suede",
+    "Wool Blend",
+)
+
+
 # What a hat gets when the caller doesn't say. Three entry points create hats
 # without full details — the bulk-import form, its worker fallback, and the
 # Android share target — and each used to restate these literals, so changing
@@ -67,23 +95,66 @@ class ColorTag(BaseModel):
         return v or "primary"
 
 
+def construction_from_flags(hydrolite: bool | None, hydro: bool | None) -> str | None:
+    """The construction text a pre-2.11 client meant by its boolean flags.
+
+    Construction used to be two booleans. Clients built against that — the
+    documented iOS Shortcut, anything a person automated — still send them, and
+    silently dropping their input would be worse than the enum this replaced.
+
+    Callers must only apply this when `construction` was absent, and must NOT
+    assign the result when it is None: `hat_service` updates via
+    `model_dump(exclude_unset=True)`, so touching the attribute at all marks it
+    as set, and a PUT changing only the brand would blank the construction.
+    """
+    if hydrolite:
+        return "HYDROLite"
+    if hydro:
+        return "HYDRO"
+    return None
+
+
 class HatCreate(BaseModel):
     case_id: int | None = None
     condition: HatCondition
     size: HatSize
     style: HatStyle
+    # Free-form: "HYDRO", "HYDROLite", "Thermal", or whatever the tag says.
+    construction: str | None = None
+    date_last_worn: date | None = None
+    # Both accepted at creation because the owner frequently knows them while
+    # the analyser cannot: a collection name is printed on the box or the hang
+    # tag, not visible in a photo of the hat. Withholding these until the Edit
+    # form meant typing them twice, or hoping Claude guessed.
+    artist_series: str | None = None
+    model_name: str | None = None
+    # Deprecated, accepted for back-compat. Read `construction` instead.
     hydrolite: bool = False
     hydro: bool = False
-    date_last_worn: date | None = None
+
+    @model_validator(mode="after")
+    def _fold_legacy_flags(self) -> "HatCreate":
+        if self.construction is None:
+            legacy = construction_from_flags(self.hydrolite, self.hydro)
+            if legacy is not None:
+                self.construction = legacy
+        return self
 
 
 class HatUpdate(BaseModel):
     condition: HatCondition | None = None
     size: HatSize | None = None
     style: HatStyle | None = None
+    construction: str | None = None
+    date_last_worn: date | None = None
+    # Deprecated, accepted for back-compat. Read `construction` instead.
+    #
+    # NOT folded into `construction` here, unlike `HatCreate`: doing that needs
+    # the hat's current state, because a client sending only `hydrolite: false`
+    # means "clear HYDROLite", not "clear whatever construction this hat has".
+    # `hat_service.update_hat` resolves it where the hat is in hand.
     hydrolite: bool | None = None
     hydro: bool | None = None
-    date_last_worn: date | None = None
     brand: str | None = None
     logo_detected: str | None = None
     artist_series: str | None = None
@@ -119,6 +190,9 @@ class HatRead(BaseModel):
     wear_count: int
     size: HatSize
     style: HatStyle
+    construction: str | None = None
+    # Derived from `construction`; still sent because the UI badges and the
+    # search filters both key off them.
     hydrolite: bool = False
     hydro: bool = False
     is_beanie: bool
