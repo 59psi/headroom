@@ -5,10 +5,6 @@ export function listRooms() {
   return apiFetch<RoomRead[]>('/api/rooms');
 }
 
-export function getRoom(id: number) {
-  return apiFetch<RoomRead>(`/api/rooms/${id}`);
-}
-
 export function createRoom(name: string) {
   return apiFetch<RoomRead>('/api/rooms', {
     method: 'POST',

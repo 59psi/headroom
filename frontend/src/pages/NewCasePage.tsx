@@ -6,15 +6,21 @@ import { listRooms } from '../api/rooms';
 
 export function NewCasePage() {
   const [caseType, setCaseType] = useState('archive');
-  const [roomId, setRoomId] = useState(1);
+  const [roomId, setRoomId] = useState<number | ''>('');
   const [capacity, setCapacity] = useState('');
   const navigate = useNavigate();
   const qc = useQueryClient();
 
   const roomsQ = useQuery({ queryKey: ['rooms'], queryFn: listRooms });
+  const rooms = roomsQ.data ?? [];
+  // Never a hardcoded 1: any room can carry `is_default`, and the room that
+  // does can be changed or deleted. Blank until the rooms load, then whichever
+  // one is actually flagged.
+  const selectedRoom = roomId !== '' ? roomId : (rooms.find(r => r.is_default)?.id ?? '');
+
 
   const mutation = useMutation({
-    mutationFn: () => createCase(caseType, roomId, capacity ? Number(capacity) : undefined),
+    mutationFn: () => createCase(caseType, selectedRoom === '' ? null : selectedRoom, capacity ? Number(capacity) : undefined),
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ['cases'] });
       navigate(`/cases/${data.display_id}`);
@@ -37,8 +43,8 @@ export function NewCasePage() {
 
           <div className="mb-3">
             <label className="form-label">Room</label>
-            <select className="form-select" value={roomId} onChange={e => setRoomId(Number(e.target.value))}>
-              {roomsQ.data?.map(r => (
+            <select aria-label="Room" className="form-select" value={selectedRoom} onChange={e => setRoomId(Number(e.target.value))}>
+              {rooms.map(r => (
                 <option key={r.id} value={r.id}>{r.name}</option>
               ))}
             </select>

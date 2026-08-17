@@ -131,3 +131,34 @@ async def test_rooms_meta_endpoint(client):
     assert resp.status_code == 200
     data = resp.json()
     assert any(r["label"] == "Default Room" for r in data)
+
+
+@pytest.mark.anyio
+async def test_room_case_count_is_accurate(client):
+    """`case_count` comes from a SQL COUNT now, not `len(room.cases)`.
+
+    Regression guard for the swap: a wrong join or a lost GROUP BY would report
+    zero for a room that plainly has cases, which is indistinguishable from the
+    room genuinely being empty.
+    """
+    bedroom = await client.post("/api/rooms", json={"name": "Bedroom"})
+    bedroom_id = bedroom.json()["id"]
+    office = await client.post("/api/rooms", json={"name": "Office"})
+    office_id = office.json()["id"]
+
+    for _ in range(6):
+        r = await client.post(
+            "/api/cases", json={"case_type": "archive", "room_id": bedroom_id}
+        )
+        assert r.status_code == 201
+    await client.post("/api/cases", json={"case_type": "daily_wear", "room_id": office_id})
+
+    rooms = {r["name"]: r["case_count"] for r in (await client.get("/api/rooms")).json()}
+    assert rooms["Bedroom"] == 6, f"Bedroom should hold 6 cases, got {rooms['Bedroom']}"
+    assert rooms["Office"] == 1
+    # A room with no cases must still appear, at zero — that's the outer join.
+    empty = await client.post("/api/rooms", json={"name": "Attic"})
+    assert empty.json()["id"]
+    rooms2 = {r["name"]: r["case_count"] for r in (await client.get("/api/rooms")).json()}
+    assert rooms2["Attic"] == 0
+    assert rooms2["Bedroom"] == 6

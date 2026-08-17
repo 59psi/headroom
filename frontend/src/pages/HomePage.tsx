@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router';
 import { listCases } from '../api/cases';
-import { listHats } from '../api/hats';
+import { listAllHats } from '../api/hats';
 import { listRooms } from '../api/rooms';
 import { getLogo } from '../api/settings';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
@@ -18,7 +18,7 @@ function shuffleArray<T>(arr: T[]): T[] {
 
 export function HomePage() {
   const cases = useQuery({ queryKey: ['cases'], queryFn: listCases });
-  const hats = useQuery({ queryKey: ['hats'], queryFn: () => listHats() });
+  const hats = useQuery({ queryKey: ['hats'], queryFn: listAllHats });
   const rooms = useQuery({ queryKey: ['rooms'], queryFn: listRooms });
   const logo = useQuery({ queryKey: ['settings', 'logo'], queryFn: getLogo });
   const navigate = useNavigate();
@@ -26,11 +26,26 @@ export function HomePage() {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const touchStartX = useRef<number | null>(null);
 
-  const hatsWithPhotos = useMemo(
-    () => shuffleArray(hats.data?.filter(h => h.photo_path) ?? []),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [hats.dataUpdatedAt]
+  const withPhotos = useMemo(
+    () => hats.data?.filter(h => h.photo_path) ?? [],
+    [hats.data]
   );
+  // Reshuffle only when the SET of hats changes, not on every refetch.
+  // `dataUpdatedAt` ticks on each poll even when the payload is identical, so
+  // keying on it reshuffled the deck and made the visible hat jump at random.
+  const photoKey = withPhotos.map(h => h.id).join(',');
+  const hatsWithPhotos = useMemo(
+    () => shuffleArray(withPhotos),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [photoKey]
+  );
+  // Clamp rather than index blindly: the list can shrink under a running
+  // carousel (a hat disposed or deleted on another device, then a refetch),
+  // and `hatsWithPhotos[activeIndex]` would then be undefined and throw,
+  // taking the whole page down to the ErrorBoundary.
+  const activeHat = hatsWithPhotos.length
+    ? hatsWithPhotos[activeIndex % hatsWithPhotos.length]
+    : null;
 
   const goNext = useCallback(() => {
     if (hatsWithPhotos.length <= 1) return;
@@ -219,23 +234,23 @@ export function HomePage() {
         </div>
       </div>
 
-      {hatsWithPhotos.length > 0 && (
+      {activeHat && (
         <div
           className="hr-carousel mb-3"
           onTouchStart={handleTouchStart}
           onTouchEnd={handleTouchEnd}
         >
           <div
-            onClick={() => navigate(`/hats/${hatsWithPhotos[activeIndex].id}`)}
+            onClick={() => navigate(`/hats/${activeHat.id}`)}
             style={{ cursor: 'pointer' }}
           >
             <img
-              src={`/uploads/${hatsWithPhotos[activeIndex].photo_path}`}
-              alt={hatsWithPhotos[activeIndex].display_id || `Hat #${hatsWithPhotos[activeIndex].id}`}
+              src={`/uploads/${activeHat.photo_path}`}
+              alt={activeHat.display_id || `Hat #${activeHat.id}`}
             />
             <div className="carousel-caption">
-              <h6>{hatsWithPhotos[activeIndex].display_id || `Hat #${hatsWithPhotos[activeIndex].id}`}</h6>
-              <small>{hatsWithPhotos[activeIndex].style.replace(/_/g, ' ')}</small>
+              <h6>{activeHat.display_id || `Hat #${activeHat.id}`}</h6>
+              <small>{activeHat.style.replace(/_/g, ' ')}</small>
             </div>
           </div>
           {hatsWithPhotos.length > 1 && (

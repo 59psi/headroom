@@ -9,7 +9,13 @@ export function getCase(displayId: string) {
   return apiFetch<CaseDetail>(`/api/cases/${displayId}`);
 }
 
-export function createCase(caseType: string, roomId: number = 1, capacity?: number) {
+/**
+ * `roomId` defaults to null, NOT to 1: the server then resolves whichever room
+ * carries `is_default`. Any room can hold that flag and the one that does can
+ * be changed or deleted, so a hardcoded id both bypasses the default room and
+ * can write a `room_id` that no longer exists.
+ */
+export function createCase(caseType: string, roomId: number | null = null, capacity?: number) {
   return apiFetch<CaseRead>('/api/cases', {
     method: 'POST',
     body: JSON.stringify({ case_type: caseType, room_id: roomId, capacity: capacity ?? null }),

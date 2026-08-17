@@ -87,12 +87,56 @@ async def _process_hat(hat_id: int) -> None:
             await db.commit()
             return
 
+        photo_at_start = hat.photo_path
         await finalize_hat_photo(db, hat, photo_path)
+
+        # This session has been open for minutes. If the owner replaced the
+        # photo meanwhile, the upload route has already stored the new path,
+        # reset the hat to 'pending' and re-queued it — so committing now would
+        # write this run's stale photo_path and analysis over theirs, and the
+        # re-queued run would then bail on the `!= PENDING` guard above. The new
+        # photo would be orphaned on disk and never analysed. Read the committed
+        # row through a second session, because this one holds the pending write.
+        if await _photo_replaced_since(hat_id, photo_at_start):
+            logger.info(
+                "Discarding stale analysis for hat %s — its photo was replaced "
+                "while the pipeline was running; the re-queued run will handle it.",
+                hat_id,
+            )
+            await db.rollback()
+            return
+
         await db.commit()
 
 
-async def _mark_failed(hat_id: int, exc: Exception) -> None:
-    """Record a pipeline crash on the hat itself.
+async def _photo_replaced_since(hat_id: int, photo_path: str | None) -> bool:
+    """True if the hat's committed photo is no longer the one we analysed.
+
+    Also true when the hat was deleted mid-run, which wants the same handling:
+    throw the result away.
+    """
+    async with async_session() as check:
+        current = (
+            await check.execute(select(Hat.photo_path).where(Hat.id == hat_id))
+        ).scalar_one_or_none()
+    return current != photo_path
+
+
+def stamp_failure(hat: Hat, exc: Exception) -> None:
+    """Set the terminal error fields on a hat already loaded in a session.
+
+    One definition of "this analysis failed", two callers: the worker (which
+    owns a session of its own, below) and the routes' inline fallback (which
+    already has the request's session and should not open a second connection
+    just to write one row).
+    """
+    hat.analysis_status = "error"
+    hat.analysis_error = str(exc)[:1000]
+    hat.analyzed_at = datetime.now(timezone.utc)
+
+
+async def mark_failed(hat_id: int, exc: Exception) -> None:
+    """Record a pipeline crash on the hat, in a session of our own.
 
     Without this a hat that blew up mid-analysis keeps `analysis_status`
     'pending' forever, and the UI spins on it indefinitely — the exact symptom
@@ -102,9 +146,7 @@ async def _mark_failed(hat_id: int, exc: Exception) -> None:
         async with async_session() as db:
             hat = (await db.execute(select(Hat).where(Hat.id == hat_id))).scalar_one_or_none()
             if hat is not None and hat.analysis_status == PENDING:
-                hat.analysis_status = "error"
-                hat.analysis_error = str(exc)[:1000]
-                hat.analyzed_at = datetime.now(timezone.utc)
+                stamp_failure(hat, exc)
                 await db.commit()
     except Exception as inner:  # noqa: BLE001 — bookkeeping must not raise
         logger.warning("Analysis error-bookkeeping failed for hat %s: %s", hat_id, inner)
@@ -122,7 +164,7 @@ async def _worker_loop() -> None:
             except Exception as exc:  # noqa: BLE001 — one bad hat must NOT kill
                 # the worker, or every later upload hangs on 'pending' forever.
                 logger.exception("Analysis worker: unhandled error on hat %s: %s", hat_id, exc)
-                await _mark_failed(hat_id, exc)
+                await mark_failed(hat_id, exc)
             finally:
                 _queue.task_done()
     except asyncio.CancelledError:
@@ -163,7 +205,7 @@ async def stop_worker() -> None:
     _queue = None
 
 
-def _queue_depth() -> int:
+def queue_depth() -> int:
     """How many hats are waiting. Surfaced by /health/ready."""
     return _queue.qsize() if _queue is not None else 0
 
@@ -174,5 +216,7 @@ __all__ = [
     "start_worker",
     "stop_worker",
     "worker_alive",
-    "_queue_depth",
+    "mark_failed",
+    "stamp_failure",
+    "queue_depth",
 ]

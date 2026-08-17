@@ -9,6 +9,7 @@ import {
   useHatFormOptions, useHatPhoto, PhotoCard, HatBasicsCard,
   DEFAULT_HAT_BASICS, type HatBasics,
 } from '../components/hats/HatFormFields';
+import { invalidateHatViews } from '../lib/invalidate';
 
 export function AddHatPage() {
   const navigate = useNavigate();
@@ -47,8 +48,7 @@ export function AddHatPage() {
       return hat;
     },
     onSuccess: (hat) => {
-      qc.invalidateQueries({ queryKey: ['hats'] });
-      qc.invalidateQueries({ queryKey: ['cases'] });
+      invalidateHatViews(qc);
       navigate(`/hats/${hat.id}`);
     },
   });

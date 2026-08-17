@@ -25,6 +25,11 @@ export function PhotoCapture({ onCapture, previewUrl, hidePreview }: Props) {
     e.target.value = '';
   }
 
+  /** Dismissing the cropper must NOT upload — Cancel means cancel. */
+  function discard() {
+    setPending(null);
+  }
+
   function useOriginal() {
     if (!pending) return;
     onCapture(pending.file);
@@ -90,7 +95,8 @@ export function PhotoCapture({ onCapture, previewUrl, hidePreview }: Props) {
         <PhotoCropper
           imageUrl={pending.url}
           filename={pending.file.name}
-          onCancel={useOriginal /* skipping crop = use original */}
+          onCancel={discard}
+          onUseOriginal={useOriginal}
           onCropped={handleCropped}
         />
       )}

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate } from 'react-router';
 import {
@@ -11,6 +11,7 @@ import {
   useHatFormOptions, useHatPhoto, PhotoCard, HatBasicsCard, type HatBasics,
 } from '../components/hats/HatFormFields';
 import type { ColorTag } from '../types';
+import { invalidateHatViews } from '../lib/invalidate';
 
 export function EditHatPage() {
   const { hatId } = useParams<{ hatId: string }>();
@@ -46,8 +47,15 @@ export function EditHatPage() {
     enabled: modelName.length > 1,
   });
 
+  // Seed the form once per hat, not on every refetch. Since 2.6.0 analysis runs
+  // in the background, so this row changes *while you are editing it* — when the
+  // worker finished, the next refetch re-ran this effect and every field you had
+  // typed reverted to the server's values mid-sentence.
+  const seededFor = useRef<number | null>(null);
+
   useEffect(() => {
-    if (hat.data) {
+    if (hat.data && seededFor.current !== hat.data.id) {
+      seededFor.current = hat.data.id;
       setBasics({
         style: hat.data.style,
         size: hat.data.size,
@@ -104,9 +112,7 @@ export function EditHatPage() {
       await updateHatColors(id, colors);
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['hat', id] });
-      qc.invalidateQueries({ queryKey: ['hats'] });
-      qc.invalidateQueries({ queryKey: ['cases'] });
+      invalidateHatViews(qc, id);
       navigate(`/hats/${id}`);
     },
   });

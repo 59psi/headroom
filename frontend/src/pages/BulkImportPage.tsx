@@ -59,6 +59,8 @@ export function BulkImportPage() {
     queryFn: () => getImportJob(activeJobId!),
     enabled: activeJobId != null,
     refetchInterval: (q) => {
+      // Stop on error, or a bad ?job= id polls a 404 every 2s forever.
+      if (q.state.status === 'error') return false;
       const data = q.state.data;
       if (!data) return 2000;
       return data.status === 'running' || data.status === 'queued' ? 2000 : false;
@@ -116,6 +118,21 @@ export function BulkImportPage() {
         <Link to="/hats" className="btn btn-outline-secondary btn-sm">← Hats</Link>
       </div>
 
+      {activeJobId != null && job.error && (
+        <div className="card mb-3">
+          <div className="card-body">
+            <div className="alert alert-danger">
+              Couldn't load import job #{activeJobId}. It may have been removed.
+            </div>
+            <button
+              type="button"
+              className="btn btn-primary w-100"
+              onClick={() => { setActiveJobId(null); navigate('/hats/import'); }}
+            >Start a new import</button>
+          </div>
+        </div>
+      )}
+
       {!activeJobId && (
         <>
           <div className="card mb-3">
@@ -127,25 +144,25 @@ export function BulkImportPage() {
               <div className="row g-2">
                 <div className="col-6 col-md-3">
                   <label className="form-label">Style</label>
-                  <select className="form-select" value={defaultStyle} onChange={e => setDefaultStyle(e.target.value)}>
+                  <select aria-label="Default style" className="form-select" value={defaultStyle} onChange={e => setDefaultStyle(e.target.value)}>
                     {styles.data?.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
                   </select>
                 </div>
                 <div className="col-6 col-md-3">
                   <label className="form-label">Size</label>
-                  <select className="form-select" value={defaultSize} onChange={e => setDefaultSize(e.target.value)}>
+                  <select aria-label="Default size" className="form-select" value={defaultSize} onChange={e => setDefaultSize(e.target.value)}>
                     {sizes.data?.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
                   </select>
                 </div>
                 <div className="col-6 col-md-3">
                   <label className="form-label">Condition</label>
-                  <select className="form-select" value={defaultCondition} onChange={e => setDefaultCondition(e.target.value)}>
+                  <select aria-label="Default condition" className="form-select" value={defaultCondition} onChange={e => setDefaultCondition(e.target.value)}>
                     {conditions.data?.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
                   </select>
                 </div>
                 <div className="col-6 col-md-3">
                   <label className="form-label">Case</label>
-                  <select className="form-select" value={defaultCaseId} onChange={e => setDefaultCaseId(e.target.value)}>
+                  <select aria-label="Default case" className="form-select" value={defaultCaseId} onChange={e => setDefaultCaseId(e.target.value)}>
                     <option value="">Unassigned</option>
                     {cases.data?.map(c => (
                       <option key={c.id} value={c.id}>{c.display_id} ({c.hat_count} hats)</option>
@@ -278,12 +295,12 @@ export function BulkImportPage() {
                 </div>
               </div>
             ))}
-            {job.data.status === 'done' && (
+            {(job.data.status === 'done' || job.data.status === 'cancelled') && (
               <button
                 type="button"
                 className="btn btn-primary w-100 mt-3"
                 onClick={() => { setActiveJobId(null); navigate('/hats'); }}
-              >Done — go to Hats</button>
+              >{job.data.status === 'done' ? 'Done — go to Hats' : 'Cancelled — go to Hats'}</button>
             )}
           </div>
         </div>

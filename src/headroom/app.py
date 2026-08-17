@@ -169,9 +169,27 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     await task
                 except asyncio.CancelledError:
                     pass
-        await import_service.stop_worker()
-        await analysis_queue.stop_worker()
-        await mdns_service.stop_mdns()
+                except Exception as exc:  # noqa: BLE001
+                    # A task that already died holds its exception, and `await`
+                    # re-raises it here. Only CancelledError used to be caught,
+                    # so one dead loop (e.g. the backup loop's `_backup_dir()`
+                    # mkdir failing on a read-only /data — it runs outside that
+                    # loop's own try) aborted the whole shutdown: the import and
+                    # analysis workers were never stopped and mDNS never sent
+                    # its goodbye packets, leaving items stuck in 'processing'
+                    # and the hostname advertised until it timed out.
+                    logger.warning("Background task %r failed: %s", task.get_name(), exc)
+        # Deliberately individually guarded: each stop is independent cleanup,
+        # and one raising must not skip the others.
+        for stop in (
+            import_service.stop_worker,
+            analysis_queue.stop_worker,
+            mdns_service.stop_mdns,
+        ):
+            try:
+                await stop()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Shutdown step %s failed: %s", stop.__qualname__, exc)
 
 
 def _safe_spa_path(full_path: str) -> Path | None:

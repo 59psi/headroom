@@ -12,14 +12,20 @@ interface Props {
 
 export function NewCaseModal({ show, onClose, onCreated }: Props) {
   const [caseType, setCaseType] = useState('archive');
-  const [roomId, setRoomId] = useState(1);
+  const [roomId, setRoomId] = useState<number | ''>('');
   const qc = useQueryClient();
 
   const roomsQ = useQuery({ queryKey: ['rooms'], queryFn: listRooms, enabled: show });
+  const rooms = roomsQ.data ?? [];
+  // Never a hardcoded 1: any room can carry `is_default`, and the room that
+  // does can be changed or deleted. Blank until the rooms load, then whichever
+  // one is actually flagged.
+  const selectedRoom = roomId !== '' ? roomId : (rooms.find(r => r.is_default)?.id ?? '');
+
 
   const mutation = useMutation({
     mutationFn: async () => {
-      const data = await createCase(caseType, roomId);
+      const data = await createCase(caseType, selectedRoom === '' ? null : selectedRoom);
       await qc.invalidateQueries({ queryKey: ['cases'] });
       return data;
     },
@@ -46,8 +52,8 @@ export function NewCaseModal({ show, onClose, onCreated }: Props) {
               <option value="daily_wear">Daily Wear</option>
             </select>
             <label className="form-label">Room</label>
-            <select className="form-select" value={roomId} onChange={e => setRoomId(Number(e.target.value))}>
-              {roomsQ.data?.map(r => (
+            <select aria-label="Room" className="form-select" value={selectedRoom} onChange={e => setRoomId(Number(e.target.value))}>
+              {rooms.map(r => (
                 <option key={r.id} value={r.id}>{r.name}</option>
               ))}
             </select>

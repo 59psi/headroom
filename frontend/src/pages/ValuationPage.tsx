@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
-import { listHats } from '../api/hats';
+import { listAllHats } from '../api/hats';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import type { HatRead } from '../types';
 
@@ -80,7 +80,7 @@ function BucketTable({ title, buckets }: { title: string; buckets: Bucket[] }) {
 }
 
 export function ValuationPage() {
-  const hats = useQuery({ queryKey: ['hats'], queryFn: () => listHats() });
+  const hats = useQuery({ queryKey: ['hats'], queryFn: listAllHats });
 
   const analysis = useMemo(() => {
     const data = hats.data ?? [];

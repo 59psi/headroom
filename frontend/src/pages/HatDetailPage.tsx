@@ -10,6 +10,7 @@ import { DisposeModal } from '../components/common/DisposeModal';
 import { ColorEditModal } from '../components/common/ColorEditModal';
 import type { HatRead } from '../types';
 import { useState } from 'react';
+import { invalidateHatViews } from '../lib/invalidate';
 
 function AnalysisStatus({ hat }: { hat: HatRead }) {
   if (!hat.analysis_status) return null;
@@ -74,7 +75,7 @@ export function HatDetailPage() {
   const removeMutation = useMutation({
     mutationFn: () => deleteHat(id),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['hats'] });
+      invalidateHatViews(qc, id);
       navigate('/hats');
     },
   });
@@ -84,8 +85,7 @@ export function HatDetailPage() {
     onMutate: () => setReanalyzing(true),
     onSettled: () => setReanalyzing(false),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['hat', id] });
-      qc.invalidateQueries({ queryKey: ['hats'] });
+      invalidateHatViews(qc, id);
     },
   });
 
@@ -95,27 +95,25 @@ export function HatDetailPage() {
   const clearColorsMutation = useMutation({
     mutationFn: () => updateHatColors(id, []),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['hat', id] });
-      qc.invalidateQueries({ queryKey: ['hats'] });
+      invalidateHatViews(qc, id);
     },
   });
 
   const wearMut = useMutation({
     mutationFn: () => apiFetch(`/api/hats/${id}/wear`, { method: 'POST', body: JSON.stringify({}) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['hat', id] }),
+    onSuccess: () => invalidateHatViews(qc, id),
   });
 
   const undoWearMut = useMutation({
     mutationFn: () => apiFetch(`/api/hats/${id}/wear/latest`, { method: 'DELETE' }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['hat', id] }),
+    onSuccess: () => invalidateHatViews(qc, id),
   });
 
   async function handlePhotoUpload(file: File) {
     setUploading(true);
     try {
       await uploadHatPhoto(id, file);
-      qc.invalidateQueries({ queryKey: ['hat', id] });
-      qc.invalidateQueries({ queryKey: ['hats'] });
+      invalidateHatViews(qc, id);
     } finally {
       setUploading(false);
     }
@@ -260,7 +258,11 @@ export function HatDetailPage() {
           )}
           {uploading && (
             <div className="text-secondary small mt-2 font-mono" style={{ letterSpacing: '0.08em' }}>
-              ↑ Uploading · removing background · analyzing with Claude…
+              {/* Since 2.6.0 the POST only saves the photo and queues the
+                  rest, so claiming to remove backgrounds and call Claude here
+                  is a description of what the *worker* does afterwards. The
+                  Analyzing… badge covers that part. */}
+              ↑ Uploading photo…
             </div>
           )}
         </div>
@@ -371,8 +373,7 @@ export function HatDetailPage() {
                 onClick={async () => {
                   if (!confirm('Restore this hat to active inventory?')) return;
                   await undisposeHat(id);
-                  qc.invalidateQueries({ queryKey: ['hat', id] });
-                  qc.invalidateQueries({ queryKey: ['hats'] });
+                  invalidateHatViews(qc, id);
                 }}
               >
                 Undo — restore to active

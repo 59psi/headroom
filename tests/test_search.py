@@ -225,3 +225,49 @@ async def test_search_by_room_name(client):
     assert resp.status_code == 200
     results = resp.json()
     assert any(r["id"] == hat_id for r in results)
+
+
+@pytest.mark.anyio
+async def test_search_finds_hydro_and_hydrolite_flags(client):
+    """USAGE promises "`hydro` finds every Hydro".
+
+    They were `style` values until 2.6.0 made them boolean columns, at which
+    point no `ilike` in the term filter could match them and the documented
+    search silently returned nothing.
+    """
+    plain = await client.post(
+        "/api/hats", json={"condition": "new", "size": "classic", "style": "a_game"}
+    )
+    hydro = await client.post(
+        "/api/hats",
+        json={"condition": "new", "size": "classic", "style": "coronado", "hydro": True},
+    )
+    lite = await client.post(
+        "/api/hats",
+        json={"condition": "new", "size": "classic", "style": "eagle", "hydrolite": True},
+    )
+
+    found = await client.get("/api/search?q=hydro")
+    ids = {h["id"] for h in found.json()}
+    assert hydro.json()["id"] in ids
+    assert plain.json()["id"] not in ids
+
+    found_lite = await client.get("/api/search?q=hydrolite")
+    lite_ids = {h["id"] for h in found_lite.json()}
+    assert lite.json()["id"] in lite_ids
+    # "hydro" is a prefix of "hydrolite" — searching the longer word must not
+    # also return every plain HYDRO hat.
+    assert hydro.json()["id"] not in lite_ids
+
+
+@pytest.mark.anyio
+async def test_search_matches_artist_series(client):
+    """Special editions are findable by collaborator, not just by model."""
+    created = await client.post(
+        "/api/hats", json={"condition": "new", "size": "classic", "style": "collab"}
+    )
+    hat_id = created.json()["id"]
+    await client.put(f"/api/hats/{hat_id}", json={"artist_series": "Skye Walker"})
+
+    found = await client.get("/api/search?q=skye")
+    assert hat_id in {h["id"] for h in found.json()}

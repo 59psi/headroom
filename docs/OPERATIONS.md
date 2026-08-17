@@ -112,7 +112,9 @@ fleet-default, the UI is the per-install override.
   ```json
   {"ok": true, "checks": {"database": {"ok": true},
                           "uploads_writable": {"ok": true, "path": "/data/uploads"},
-                          "anthropic_key": {"ok": true, "configured": false, "source": null}}}
+                          "anthropic_key": {"ok": true, "configured": false, "source": null},
+                          "import_worker": {"ok": true},
+                          "analysis_worker": {"ok": true, "queued": 0}}}
   ```
 
   Returns **503** when database or uploads checks fail. (`anthropic_key`
@@ -120,7 +122,7 @@ fleet-default, the UI is the per-install override.
 - **That payload is the *authenticated* view.** The endpoint is unauthenticated
   so Docker's healthcheck can reach it, so for anonymous callers it returns
   booleans only — no `path`, no key `source`, no raw error text — and omits the
-  `import_worker` liveness check entirely. Authenticate (session cookie or
+  `import_worker` and `analysis_worker` liveness checks entirely. Authenticate (session cookie or
   bearer token) to see the full detail above.
 - The compose file wires `/health/ready` as the container healthcheck
   (30s interval, 30s start period).
