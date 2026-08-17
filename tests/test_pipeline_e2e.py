@@ -36,7 +36,7 @@ def stub_claude(monkeypatch):
     async def _fake_get_key(_db):
         return "sk-ant-test-fixture", "database"
 
-    async def _fake_analyze(_image_path, _api_key, model=None, selected_style=None):  # noqa: ARG001
+    async def _fake_analyze(_image_path, _api_key, model=None, selected_style=None, **_kw):  # noqa: ARG001
         return HatAnalysis(
             brand="Melin",
             logo_detected="Melin — M monogram, front panel",
@@ -142,7 +142,7 @@ async def test_claude_error_marks_hat_status_error(client, monkeypatch):
     async def _fake_get_key(_db):
         return "sk-ant-fixture", "database"
 
-    async def _boom(_path, _key, model=None, selected_style=None):  # noqa: ARG001
+    async def _boom(_path, _key, model=None, selected_style=None, **_kw):  # noqa: ARG001
         raise ClaudeAnalysisError("Invalid Anthropic API key.")
 
     monkeypatch.setattr(
@@ -315,3 +315,123 @@ async def test_patch_hat_round_trips_artist_series(client):
 
     fetched = await client.get(f"/api/hats/{hat_id}")
     assert fetched.json()["artist_series"] == "melin x Austin Gamblers"
+
+
+@pytest.mark.anyio
+async def test_the_owner_stated_construction_is_sent_to_claude(client, monkeypatch):
+    """It has to be IN the prompt, not merely protected from being overwritten.
+
+    2.12 stopped analysis writing over a stated construction, but never told it
+    what the owner had said — so a hat recorded as Thermal still came back
+    named "A-Game HYDROLite". The value being safe in the database doesn't help
+    when the wrong build is baked into `model_name`, which is the field a
+    person actually reads.
+    """
+    from headroom.services.claude_analysis import _owner_context
+
+    seen: dict = {}
+
+    async def _fake_get_key(_db):
+        return "sk-ant-fixture", "database"
+
+    async def _capture(_path, _key, model=None, selected_style=None, **kw):  # noqa: ARG001
+        seen["style"] = selected_style
+        seen["construction"] = kw.get("selected_construction")
+        # A complete value: an incomplete one raises inside the pipeline's
+        # try/except, which would leave this test passing on a swallowed error
+        # rather than on a successful run.
+        return HatAnalysis(
+            brand="Melin", model_name="Trenches Thermal", model_confidence="high",
+            style_descriptor=None, design_notes=None, estimated_new_price_usd=None,
+            colors=[], raw=None,
+        )
+
+    monkeypatch.setattr(
+        "headroom.services.settings_service.get_anthropic_key", _fake_get_key
+    )
+    monkeypatch.setattr(
+        "headroom.services.hat_analysis_pipeline.analyze_hat_image", _capture
+    )
+
+    created = await client.post("/api/hats", json={
+        "condition": "new", "size": "classic", "style": "trenches",
+        "construction": "Thermal",
+    })
+    hat_id = created.json()["id"]
+    await client.post(
+        f"/api/hats/{hat_id}/photo", files={"photo": ("h.jpg", _jpeg(), "image/jpeg")}
+    )
+
+    assert seen["construction"] == "Thermal", "the owner's construction never reached Claude"
+    assert seen["style"] == "trenches"
+
+    hat = (await client.get(f"/api/hats/{hat_id}")).json()
+    assert hat["analysis_status"] == "ok", hat["analysis_error"]
+    assert hat["construction"] == "Thermal"
+    assert hat["model_name"] == "Trenches Thermal"
+
+    # And the prompt actually states it as binding, including for model_name.
+    prompt = _owner_context("trenches", "Thermal")
+    assert "Thermal" in prompt
+    assert "Trenches" in prompt
+    assert "model_name" in prompt
+
+
+@pytest.mark.anyio
+async def test_no_owner_context_when_nothing_was_stated(client):
+    """A blank construction must not put an empty claim in the prompt."""
+    from headroom.services.claude_analysis import _owner_context
+
+    assert _owner_context(None, None) == "Analyze this hat photo using the tool."
+    # Beanie is excluded from the style claim (it is a shape, not a melin line),
+    # so on its own it produces no owner context either.
+    assert _owner_context("beanie", None) == "Analyze this hat photo using the tool."
+
+    # Construction alone is still worth stating.
+    assert "Thermal" in _owner_context(None, "Thermal")
+
+
+@pytest.mark.anyio
+async def test_a_rescan_repairs_a_model_name_that_contradicts_the_construction(client):
+    """melin names read "<line> <construction>", so a model name asserts a build.
+
+    Hats analysed before the owner's construction was sent to Claude kept names
+    like "A-Game HYDROLite" on a hat recorded as Thermal — the construction
+    field right, the name a person reads wrong. A full rescan has to repair
+    those, not preserve them.
+    """
+    from headroom.models.hat import Hat
+    from headroom.services.hat_analysis_pipeline import (
+        _apply_analysis,
+        _strip_contradicting_construction,
+    )
+
+    # Removed, not rewritten: "A-Game Thermal" would be inventing a product
+    # name, where "A-Game" is merely less specific and true.
+    assert _strip_contradicting_construction("A-Game HYDROLite", "Thermal") == "A-Game"
+    assert _strip_contradicting_construction("Trenches Icon Hydro", "Thermal") == "Trenches Icon"
+
+    # A name that agrees is left exactly as it is.
+    assert _strip_contradicting_construction("Coronado HYDROLite", "HYDROLite") == "Coronado HYDROLite"
+    assert _strip_contradicting_construction("A-Game Hydro", "HYDRO") == "A-Game Hydro"
+
+    # Word boundaries: HYDRO must not match inside HYDROLite, or a genuine
+    # HYDROLite hat would end up reading "Coronado Lite".
+    assert _strip_contradicting_construction("Coronado HYDROLite", "Waxed Canvas") == "Coronado"
+
+    # Nothing to compare against leaves the name alone.
+    assert _strip_contradicting_construction("A-Game HYDROLite", None) == "A-Game HYDROLite"
+    assert _strip_contradicting_construction(None, "Thermal") is None
+
+    # And it runs on the analysis path, so a rescan fixes stored rows even when
+    # Claude returns no model name of its own.
+    hat = Hat()
+    hat.set_construction("Thermal")
+    hat.model_name = "A-Game HYDROLite"
+    _apply_analysis(hat, HatAnalysis(
+        brand="Melin", model_name=None, model_confidence="low",
+        style_descriptor=None, design_notes=None, estimated_new_price_usd=None,
+        colors=[], raw=None,
+    ))
+
+    assert hat.model_name == "A-Game", "the rescan preserved the contradicting name"

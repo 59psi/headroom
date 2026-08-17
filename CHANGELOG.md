@@ -6,6 +6,33 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.17.0] — 2026-08-17 — _it already knows_
+
+### Fixed
+- **Your construction is now sent to Claude as ground truth.** 2.12 stopped
+  analysis *overwriting* a construction you had stated, but never told it what
+  you'd said — so a hat you recorded as Thermal still came back named
+  "A-Game HYDROLite". The construction field was right and the name you
+  actually read was wrong, which reads as the app overruling you.
+
+  The prompt now states both the model line and the construction as facts from
+  someone holding the hat, and binds `model_name` to agree with them. HYDRO vs
+  HYDROLite vs Thermal turns on bonded seams, a gel-welded logo and the
+  sweatband — none reliably legible in one photo — so a guess there is weak
+  evidence against your direct observation.
+
+- **A full rescan repairs the hats that already got this wrong.** melin names
+  read "&lt;line&gt; &lt;construction&gt;", so a model name asserts a build by itself.
+  Any name that contradicts the hat's recorded construction now has the wrong
+  build removed on every analysis — so re-running analysis over the collection
+  fixes stored rows instead of preserving them, including when Claude returns
+  no model name of its own.
+
+  Removed, not rewritten: "A-Game Thermal" would be inventing a product name,
+  where "A-Game" is merely less specific and true.
+
+299 backend + 63 frontend tests.
+
 ## [2.16.0] — 2026-08-17 — _one Piña_
 
 ### Changed

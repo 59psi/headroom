@@ -74,13 +74,21 @@ For other brands, use your own knowledge of their tiers: a New Era 59FIFTY is
 around $40–$50, '47 Brand around $30, Goorin around $40–$60, Stetson wool and
 felt well above $100.
 
-CRITICAL — owner-provided style:
-The owner may tell you the model line they've identified the hat as (e.g.
-"Melin Trenches"). When provided, treat that as ground truth. Identify the
-specific Melin **variant** within that line (sub-models / colorways /
-material like Hydro, Icon, Infinity, Thermal etc), but DO NOT pick a model
-from a different line. If the photo seems inconsistent with their stated
-line, prefer their answer and lower model_confidence to "low".
+CRITICAL — what the owner already told you:
+The owner may state the model line (e.g. "Melin Trenches") and/or the
+construction (e.g. "Thermal"). Both come from someone holding the hat and
+reading its tag, so both are GROUND TRUTH and outrank what you think you see.
+
+Identify the specific variant *within* what they stated. Do not pick a
+different model line, and do not propose a different construction — HYDRO vs
+HYDROLite vs Thermal turns on bonded seams, a gel-welded logo and the
+sweatband, none of which are reliably legible in a single photo, so your guess
+there is weak evidence against their direct observation.
+
+This binds `model_name` too. If they said Thermal, do not return a model_name
+containing "HYDROLite" — that contradicts them in the one field they will read
+and repeat. If the photo seems inconsistent with what they stated, prefer their
+answer and lower model_confidence to "low".
 
 Always respond by calling the `record_hat_analysis` tool. Never reply in plain
 text. If you genuinely cannot tell something, set the field to null and lower
@@ -125,12 +133,13 @@ HAT_ANALYSIS_TOOL = {
                     " plainly some other fabric — a seasonal or collab-only"
                     " specialty material — name that instead, in the same short"
                     " form; this field is not limited to the list."
-                    " Null if you cannot tell, which leaves any existing value"
-                    " untouched. A non-null answer OVERWRITES what is on record,"
-                    " so answer only from what you can actually see: these"
-                    " constructions are offered across every model line, so this"
-                    " is independent of model_name — a hat is 'a Coronado in"
-                    " HYDROLite', not 'a HYDROLite'."
+                    " Null if you cannot tell. If the owner has stated a"
+                    " construction it is ground truth — repeat it here verbatim"
+                    " and do not propose a different one; your answer is only"
+                    " used when they left it blank. These constructions are"
+                    " offered across every model line, so this is independent of"
+                    " model_name — a hat is 'a Coronado in HYDROLite', not 'a"
+                    " HYDROLite'."
                 ),
             },
             "artist_series": {
@@ -152,7 +161,13 @@ HAT_ANALYSIS_TOOL = {
                 "type": ["string", "null"],
                 "description": (
                     "Specific product name within the brand (e.g. 'A-Game Hydro')."
-                    " Null if unknown."
+                    " If the owner stated a model line or a construction, this"
+                    " MUST agree with them: for a Trenches in Thermal, 'Trenches"
+                    " Thermal' or 'Thermal Trenches Icon' are right and"
+                    " 'A-Game HYDROLite' is wrong on both counts. Naming a"
+                    " different build here contradicts what they recorded even"
+                    " though it is a separate field, and this is the name they"
+                    " will read and quote. Null if unknown."
                 ),
             },
             "model_confidence": {
@@ -276,18 +291,58 @@ def _read_image_b64(image_path: Path) -> tuple[str, str]:
     return base64.standard_b64encode(raw).decode("ascii"), media_type
 
 
+def _owner_context(selected_style: str | None, selected_construction: str | None) -> str:
+    """The prompt sentence carrying what the OWNER already stated.
+
+    Both are ground truth: they came from someone holding the hat and reading
+    its tag, which beats anything inferable from one photo. Construction
+    especially — HYDRO vs HYDROLite vs Thermal turns on bonded seams, a
+    gel-welded logo and a sweatband, none of which reliably survive a front-on
+    shot, so an unguided guess is close to a coin toss.
+
+    Construction was previously not sent at all. The analyser could not
+    contradict the stored value (the pipeline stopped applying it), but it
+    still folded its own guess into `model_name` — so a hat the owner recorded
+    as Thermal came back named "A-Game HYDROLite", which reads as the app
+    overruling them and is wrong in the one field they'd quote to someone.
+    """
+    facts: list[str] = []
+    if selected_style and selected_style != "beanie":
+        # Style enum values use underscores ("a_game"); render them with
+        # spaces and Title Case so the prompt reads naturally.
+        pretty = selected_style.replace("_", " ").title()
+        facts.append(f"the model line is **{pretty}**")
+    if selected_construction:
+        facts.append(f"the construction is **{selected_construction}**")
+
+    if not facts:
+        return "Analyze this hat photo using the tool."
+
+    return (
+        "The owner has the hat in hand and states that "
+        + " and ".join(facts)
+        + ". Treat that as ground truth: identify the specific variant within"
+        " it, and do NOT substitute a different model line or construction —"
+        " including inside `model_name`, which must agree with what the owner"
+        " stated rather than naming a build you think you see."
+        " Use the tool to record your analysis."
+    )
+
+
 async def analyze_hat_image(
     image_path: Path,
     api_key: str,
     model: str | None = None,
     selected_style: str | None = None,
+    selected_construction: str | None = None,
 ) -> HatAnalysis:
     """Call Claude vision and return a structured HatAnalysis.
 
-    `model` overrides the default. `selected_style` is the owner's chosen
-    style enum (e.g. "trenches", "a_game") — when provided, Claude treats
-    it as ground truth for the model line. Raises ClaudeAnalysisError on
-    any recoverable failure (auth, parse, etc.).
+    `model` overrides the default. `selected_style` and `selected_construction`
+    are what the owner already recorded — both are passed as ground truth, so
+    the analysis identifies a variant *within* them rather than proposing a
+    rival answer. Raises ClaudeAnalysisError on any recoverable failure (auth,
+    parse, etc.).
     """
     if not api_key:
         raise ClaudeAnalysisError("No Anthropic API key configured.")
@@ -297,17 +352,7 @@ async def analyze_hat_image(
     client = AsyncAnthropic(api_key=api_key, timeout=config_settings.http_timeout)
     model_id = model or config_settings.anthropic_model
 
-    user_text = "Analyze this hat photo using the tool."
-    if selected_style and selected_style != "beanie":
-        # Style enum values use underscores ("a_game"); render them with
-        # spaces and Title Case so the prompt reads naturally.
-        pretty = selected_style.replace("_", " ").title()
-        user_text = (
-            f"The owner has identified this hat as a Melin {pretty}. "
-            f"That model line is ground truth — identify the specific "
-            f"variant within the {pretty} line (do not pick a different line). "
-            f"Use the tool to record your analysis."
-        )
+    user_text = _owner_context(selected_style, selected_construction)
 
     try:
         message = await client.messages.create(

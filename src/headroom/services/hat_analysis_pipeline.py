@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,6 +31,7 @@ from headroom.config import settings
 from headroom.database import async_session
 from headroom.models.hat import Hat
 from headroom.models.hat_color import HatColor
+from headroom.schemas.hat import KNOWN_CONSTRUCTIONS
 from headroom.services import settings_service
 from headroom.services.background_removal import remove_background
 from headroom.services.claude_analysis import (
@@ -170,6 +172,7 @@ async def finalize_hat_photo(
             analysis: HatAnalysis = await analyze_hat_image(
                 canonical_path, api_key,
                 model=model_id, selected_style=hat.style,
+                selected_construction=hat.construction,
             )
         except ClaudeAnalysisError as exc:
             logger.warning(
@@ -237,7 +240,8 @@ async def reanalyze_existing_photo(
         await _publish_stage(hat.id, STAGE_IDENTIFYING)
         try:
             analysis = await analyze_hat_image(
-                photo_path, api_key, model=model_id, selected_style=hat.style
+                photo_path, api_key, model=model_id, selected_style=hat.style,
+                selected_construction=hat.construction,
             )
         except ClaudeAnalysisError as exc:
             logger.warning("Reanalysis failed for hat %s: %s", hat.id, exc)
@@ -391,6 +395,48 @@ def _apply_construction(hat: Hat, construction: str | None) -> None:
         hat.set_construction(construction)
 
 
+def _strip_contradicting_construction(
+    model_name: str | None, construction: str | None
+) -> str | None:
+    """Drop a construction from the model name that the hat isn't.
+
+    melin names read "<line> <construction>" — "A-Game Hydro", "Coronado
+    HYDROLite" — so a model name can assert a build all by itself. A hat the
+    owner recorded as Thermal, analysed before that value was sent to Claude,
+    kept a stored name like "A-Game HYDROLite": the construction field was
+    right and the name a person actually reads was wrong.
+
+    Re-analysis now sends the owner's construction as ground truth, so a fresh
+    answer arrives correct. This covers the remaining case — Claude returning
+    null, which leaves the previous, contradicting name in place — so a full
+    rescan repairs old rows instead of preserving them.
+
+    Removes rather than substitutes. Rewriting "A-Game HYDROLite" to "A-Game
+    Thermal" would be inventing a product name; "A-Game" is merely less
+    specific, and true.
+
+    Word boundaries matter: "HYDRO" must NOT match inside "HYDROLite", or a
+    genuine HYDROLite hat would be left reading "Coronado Lite".
+    """
+    if not model_name or not construction:
+        return model_name
+
+    own = construction.casefold()
+    cleaned = model_name
+    for known in KNOWN_CONSTRUCTIONS:
+        if known.casefold() == own:
+            continue
+        cleaned = re.sub(rf"\b{re.escape(known)}\b", " ", cleaned, flags=re.IGNORECASE)
+
+    cleaned = " ".join(cleaned.split())
+    if cleaned != model_name:
+        logger.info(
+            "Model name %r contradicted construction %r; corrected to %r",
+            model_name, construction, cleaned or None,
+        )
+    return cleaned or None
+
+
 def _keep_on_null(incoming: str | None, current: str | None) -> str | None:
     """A non-answer from Claude leaves what's already there alone.
 
@@ -413,7 +459,9 @@ def _apply_analysis(hat: Hat, analysis: HatAnalysis) -> None:
     hat.logo_detected = analysis.logo_detected
     hat.artist_series = _keep_on_null(analysis.artist_series, hat.artist_series)
     _apply_construction(hat, analysis.construction)
-    hat.model_name = _keep_on_null(analysis.model_name, hat.model_name)
+    hat.model_name = _strip_contradicting_construction(
+        _keep_on_null(analysis.model_name, hat.model_name), hat.construction
+    )
     hat.model_confidence = analysis.model_confidence
     hat.style_descriptor = analysis.style_descriptor
     hat.design_notes = analysis.design_notes
