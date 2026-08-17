@@ -10,13 +10,14 @@ import {
   collectGeneralColors, matchesHatFilters,
 } from '../components/hats/HatFilters';
 import type { HatRead } from '../types';
+import { tileSrc } from '../lib/photo';
 
 function HatRow({ hat }: { hat: HatRead }) {
   return (
     <Link to={`/hats/${hat.id}`} className="card mb-2 text-decoration-none">
       <div className="card-body d-flex gap-3 align-items-center">
         {hat.photo_path ? (
-          <img src={`/uploads/${hat.photo_path}`} alt="" className="hr-thumb flex-shrink-0" style={{ width: 80, height: 80 }} />
+          <img src={tileSrc(hat)} alt="" className="hr-thumb flex-shrink-0" style={{ width: 80, height: 80 }} />
         ) : (
           <div className="rounded flex-shrink-0" style={{ width: 80, height: 80, background: 'rgba(0,0,0,0.3)', border: '1px dashed var(--border)' }} />
         )}
@@ -48,7 +49,7 @@ function GalleryItem({ hat }: { hat: HatRead }) {
   return (
     <Link to={`/hats/${hat.id}`} className="card text-decoration-none h-100">
       {hat.photo_path ? (
-        <img src={`/uploads/${hat.photo_path}`} alt="" className="hr-gallery-item" />
+        <img src={tileSrc(hat)} alt="" className="hr-gallery-item" />
       ) : (
         <div className="hr-gallery-placeholder">No photo</div>
       )}

@@ -6,6 +6,41 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.9.0] — 2026-08-16 — _redo the cutout, shrink the gallery_
+
+### Added
+- **Redo cutout.** The pre-cutout JPEG is now kept instead of being deleted the
+  moment rembg succeeded, and the hat page grows a **✂ Redo cutout** button.
+  This was the gap behind "my existing hats still look wrong": the stored PNG
+  can never be re-segmented — running rembg on an already-transparent image
+  eats the alpha and trims the bill a little more each pass — so without the
+  original, a poor cutout could only be fixed by re-uploading the photo.
+
+  Implemented by pointing `photo_path` back at the original and queueing, so
+  the pipeline sees a `.jpg`, cuts it, and overwrites the old PNG in place. It
+  is the upload path run again, with nothing special-cased. Hats analysed
+  before this release have no original; the button is hidden for them and the
+  endpoint says so rather than failing obscurely.
+- **Gallery thumbnails.** A 320px WebP derivative is generated alongside every
+  cutout, and the small-tile views (Hats grid and list, Valuation, case detail)
+  use it. Measured on a representative 1200px RGBA cutout: **1728 KB → 4.5 KB**,
+  so a fifty-hat gallery drops from ~84 MB to ~0.2 MB over the wire, with far
+  less decoded bitmap in phone memory. WebP specifically because these are
+  transparent — a flattened JPEG thumbnail would put a box behind every
+  floating hat.
+
+  Existing hats are backfilled by a background task on startup, off the boot
+  path (it is image work over every photo, which would visibly delay the app
+  becoming reachable on a Pi) and idempotent, so a restart mid-run resumes.
+  Tiles fall back to the full photo until the backfill reaches them.
+
+### Fixed
+- **Replacing a hat's photo left its derivatives behind.** Only the cutout was
+  deleted, so the old original and thumbnail stayed on disk — and a stale
+  `thumb_path` would have shown the *previous* hat in the gallery.
+
+244 backend + 44 frontend tests.
+
 ## [2.8.1] — 2026-08-16 — _say what it's doing_
 
 ### Fixed

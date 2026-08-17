@@ -31,6 +31,9 @@ class HatSummary(BaseModel):
     style: str
     is_beanie: bool
     photo_path: str | None
+    # The case-detail grid renders these as small tiles, so it wants the
+    # thumbnail for the same reason the Hats gallery does.
+    thumb_path: str | None = None
 
     model_config = {"from_attributes": True}
 

@@ -40,6 +40,8 @@ class Base(DeclarativeBase):
 # Static, fully-formed DDL — column names and types are hard-coded literals,
 # so no interpolation is needed and SQL injection is structurally impossible.
 _HAT_COLUMN_DDL: dict[str, str] = {
+    "original_path": "ALTER TABLE hats ADD COLUMN original_path VARCHAR(255)",
+    "thumb_path": "ALTER TABLE hats ADD COLUMN thumb_path VARCHAR(255)",
     "brand": "ALTER TABLE hats ADD COLUMN brand VARCHAR(80)",
     "logo_detected": "ALTER TABLE hats ADD COLUMN logo_detected VARCHAR(255)",
     "hydrolite": "ALTER TABLE hats ADD COLUMN hydrolite BOOLEAN NOT NULL DEFAULT 0",

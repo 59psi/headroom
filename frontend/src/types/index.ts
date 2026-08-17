@@ -12,6 +12,7 @@ export interface HatSummary {
   style: string;
   is_beanie: boolean;
   photo_path: string | null;
+  thumb_path: string | null;
 }
 
 export interface CaseRead {
@@ -42,6 +43,8 @@ export interface HatRead {
   case_display_id: string | null;
   case_type: 'archive' | 'daily_wear' | null;
   photo_path: string | null;
+  original_path: string | null;
+  thumb_path: string | null;
   condition: string;
   date_last_worn: string | null;
   wear_count: number;

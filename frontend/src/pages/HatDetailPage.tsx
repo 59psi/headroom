@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate, Link } from 'react-router';
-import { getHat, deleteHat, uploadHatPhoto, reanalyzeHat, refreshEbayForHat, undisposeHat, updateHatColors } from '../api/hats';
+import { getHat, deleteHat, uploadHatPhoto, reanalyzeHat, recutHat, refreshEbayForHat, undisposeHat, updateHatColors } from '../api/hats';
 import { apiFetch } from '../api/client';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ConditionBadge } from '../components/common/ConditionBadge';
@@ -91,6 +91,11 @@ export function HatDetailPage() {
       invalidateHatViews(qc, id);
       navigate('/hats');
     },
+  });
+
+  const recutMut = useMutation({
+    mutationFn: () => recutHat(id),
+    onSuccess: () => invalidateHatViews(qc, id),
   });
 
   const reanalyzeMut = useMutation({
@@ -237,6 +242,21 @@ export function HatDetailPage() {
                     {reanalyzing ? '↻ Analyzing…' : '↻ Reanalyze'}
                   </button>
                 )}
+                {/* Only offered when there is an original to cut from. Hats
+                    analysed before originals were retained have none, and the
+                    stored cutout can never be re-segmented — doing so eats the
+                    alpha and trims the bill a little more each pass. */}
+                {data.original_path && (
+                  <button
+                    type="button"
+                    className="btn btn-outline-secondary"
+                    onClick={() => recutMut.mutate()}
+                    disabled={recutMut.isPending || data.analysis_status === 'pending'}
+                    title="Redo the background removal from the original photo"
+                  >
+                    {recutMut.isPending ? '✂ Re-cutting…' : '✂ Redo cutout'}
+                  </button>
+                )}
                 {!data.disposed_at && (
                   <button
                     type="button"
@@ -262,6 +282,9 @@ export function HatDetailPage() {
                     onClick={() => undoWearMut.mutate()}>undo</button>
                 )}
               </div>
+              {recutMut.error && (
+                <div className="alert alert-danger mt-2 mb-0">{String(recutMut.error)}</div>
+              )}
               {reanalyzeMut.error && (
                 <div className="alert alert-danger mt-2 mb-0">{String(reanalyzeMut.error)}</div>
               )}

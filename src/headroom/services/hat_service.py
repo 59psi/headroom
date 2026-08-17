@@ -309,3 +309,44 @@ async def undispose_hat(db: AsyncSession, hat_id: int) -> Hat:
     )
     await db.commit()
     return await _reload_hat(db, hat_id)
+
+
+async def backfill_thumbnails(db: AsyncSession, limit: int = 5000) -> int:
+    """Generate the gallery thumbnail for hats that predate them.
+
+    Runs off the boot path as a background task: it is pure image work over
+    every existing photo, which on a Pi is slow enough that doing it inline
+    would delay the app becoming reachable.
+
+    Idempotent — only touches hats with a photo and no usable thumbnail, so a
+    restart mid-run picks up where it left off rather than redoing everything.
+    """
+    from headroom.config import settings as cfg  # noqa: PLC0415
+    from headroom.utils.photo import THUMBS_DIR, make_thumbnail_async  # noqa: PLC0415
+
+    hats = (
+        (
+            await db.execute(
+                select(Hat)
+                .where(Hat.photo_path.is_not(None), Hat.thumb_path.is_(None))
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    made = 0
+    for hat in hats:
+        source = cfg.upload_dir / hat.photo_path
+        if not source.exists():
+            continue
+        thumb = await make_thumbnail_async(
+            source, cfg.upload_dir / "hats" / THUMBS_DIR / source.stem
+        )
+        if thumb is not None:
+            hat.thumb_path = f"hats/{THUMBS_DIR}/{thumb.name}"
+            made += 1
+    if made:
+        await db.commit()
+    return made
