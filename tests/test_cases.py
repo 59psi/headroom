@@ -129,3 +129,70 @@ async def test_moving_a_case_to_a_real_room_works_and_a_missing_one_is_rejected(
 
     bad = await client.put(f"/api/cases/{display_id}", json={"room_id": 99999})
     assert bad.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_case_read_reports_what_it_can_accept(client):
+    """The picker greys out cases from these fields, so they must match the
+    rule the write path enforces — a picker that disagrees produces a 409 on
+    save with no warning, which at 40-60 cases is not something you can
+    eyeball."""
+    case = (await client.post("/api/cases", json={"case_type": "daily_wear"})).json()
+
+    assert case["accepts_regular"] is True
+    assert case["accepts_beanie"] is True
+    assert case["free_regular"] == 4
+    assert case["free_beanie"] == 6
+
+    # One regular hat in: still takes regular hats, no longer takes beanies.
+    await client.post("/api/hats", json={
+        "condition": "new", "size": "classic", "style": "a_game", "case_id": case["id"],
+    })
+    after = (await client.get(f"/api/cases/{case['display_id']}")).json()
+
+    assert after["accepts_regular"] is True
+    assert after["free_regular"] == 3
+    assert after["accepts_beanie"] is False, "type exclusivity must show in the read model"
+
+
+@pytest.mark.anyio
+async def test_a_full_case_reports_itself_full(client):
+    """Four regular hats is the default ceiling."""
+    case = (await client.post("/api/cases", json={"case_type": "daily_wear"})).json()
+    for _ in range(4):
+        await client.post("/api/hats", json={
+            "condition": "new", "size": "classic", "style": "a_game", "case_id": case["id"],
+        })
+
+    full = (await client.get(f"/api/cases/{case['display_id']}")).json()
+
+    assert full["accepts_regular"] is False
+    assert full["free_regular"] == 0
+    # And the write path agrees — this is the 409 the picker now prevents.
+    rejected = await client.post("/api/hats", json={
+        "condition": "new", "size": "classic", "style": "a_game", "case_id": case["id"],
+    })
+    assert rejected.status_code == 409
+
+
+@pytest.mark.anyio
+async def test_a_disposed_hat_frees_its_slot_in_the_read_model(client):
+    """Disposed hats stay in the database but free their slot.
+
+    The occupancy shown must match: counting a disposed hat would render a
+    case as fuller than the validator considers it, so the picker would grey
+    out a case that a save would happily accept.
+    """
+    case = (await client.post("/api/cases", json={"case_type": "daily_wear"})).json()
+    hat = (await client.post("/api/hats", json={
+        "condition": "new", "size": "classic", "style": "a_game", "case_id": case["id"],
+    })).json()
+
+    before = (await client.get(f"/api/cases/{case['display_id']}")).json()
+    assert before["free_regular"] == 3
+
+    await client.post(f"/api/hats/{hat['id']}/dispose", json={"via": "sold"})
+
+    after = (await client.get(f"/api/cases/{case['display_id']}")).json()
+    assert after["free_regular"] == 4, "a disposed hat is still occupying a slot"
+    assert after["hat_count"] == 0

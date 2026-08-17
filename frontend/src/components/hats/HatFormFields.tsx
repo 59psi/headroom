@@ -4,6 +4,7 @@ import { getStyles, getSizes, getConditions, getConstructions } from '../../api/
 import { listCases } from '../../api/cases';
 import { PhotoCapture } from '../photos/PhotoCapture';
 import { Combobox } from '../common/Combobox';
+import { CasePicker } from './CasePicker';
 
 /** The fields the Add and Edit hat forms share verbatim. */
 export interface HatBasics {
@@ -24,8 +25,9 @@ export interface HatBasics {
   dateLastWorn: string;
 }
 
-/** Sentinel option value that opens the "create a case" modal instead of selecting one. */
-export const NEW_CASE_VALUE = '__new__';
+// Defined by the picker that uses it; re-exported so existing importers of
+// this module keep working.
+export { NEW_CASE_VALUE } from './CasePicker';
 
 /**
  * Pre-selection for any form that creates hats (Add Hat, Bulk Import).
@@ -121,11 +123,6 @@ export function HatBasicsCard({
   caseLabel = 'Case Assignment',
   dateLabel = 'Date Last Worn',
 }: BasicsCardProps) {
-  function handleCaseChange(value: string) {
-    if (value === NEW_CASE_VALUE) onCreateCase();
-    else onChange('caseId', value);
-  }
-
   return (
     <div className="card mb-3">
       <div className="card-body">
@@ -211,16 +208,16 @@ export function HatBasicsCard({
         </div>
 
         <div className="mb-3">
-          <label className="form-label">{caseLabel}</label>
-          <select aria-label={caseLabel} className="form-select" value={values.caseId} onChange={e => handleCaseChange(e.target.value)}>
-            <option value="">Unassigned</option>
-            <option value={NEW_CASE_VALUE}>+ Create New Case…</option>
-            {options.cases.data?.map(c => (
-              <option key={c.id} value={c.id}>
-                {c.display_id} ({c.case_type === 'archive' ? 'Archive' : 'Daily'} · {c.hat_count} hats · {c.room_name})
-              </option>
-            ))}
-          </select>
+          <CasePicker
+            label={caseLabel}
+            value={values.caseId}
+            onChange={v => onChange('caseId', v)}
+            cases={options.cases.data ?? []}
+            // Which cases can take this hat depends on what it IS — a beanie
+            // and a regular hat see different availability in the same case.
+            isBeanie={values.style === 'beanie'}
+            onCreateCase={onCreateCase}
+          />
         </div>
 
         <div className="mb-3">

@@ -6,6 +6,44 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.14.0] — 2026-08-17 — _sixty cases_
+
+### Changed
+- **The case selector is a searchable picker.** A native `<select>` is fine at
+  six cases and unusable at sixty: iOS renders it as a picker wheel with no
+  search, so finding one case means spinning past the rest. Type to filter on
+  case id, room name or type; cases are grouped under their room with
+  occupancy shown.
+
+- **It won't let you pick a case the save would reject.** Cases are
+  type-exclusive (beanies or regular hats, never both) and capacity-limited, so
+  the old dropdown happily offered a case that came back `409` — at six cases
+  you notice, at sixty you won't. Full and wrong-type cases now render dimmed
+  and unselectable with the reason ("full", "holds beanies"), rather than
+  hidden: a case you expected to see silently missing is its own puzzle, and
+  *"A-021 is full"* is the answer you actually wanted.
+
+  Availability is computed server-side in `services/capacity`, the same module
+  `_validate_capacity` now uses to enforce it, so the picker cannot disagree
+  with what a save will accept.
+
+### Fixed
+- **The bottom nav no longer covers an open picker.** It is `position: fixed`
+  at `z-index: 100`, above the list — and once the iOS keyboard opens, fixed
+  elements are positioned against the visual viewport, so the nav rode up to
+  mid-screen and covered the options wherever they were drawn. Raising the
+  list's z-index alone does not fix the second half; the nav is now hidden
+  while a picker is open, which is also what it should do when the keyboard is
+  up and it is unreachable anyway.
+
+- **Case occupancy counted disposed hats.** A disposed hat stays in the
+  database but frees its slot — `_validate_capacity` has always filtered them,
+  but the read model did not, so a case could display as fuller than the
+  validator considered it. With the picker now greying out full cases, that
+  discrepancy would have hidden a case you could actually use.
+
+283 backend + 63 frontend tests.
+
 ## [2.13.0] — 2026-08-17 — _one place for each thing_
 
 The layering and traceability findings the 2.12.0 release deliberately left,

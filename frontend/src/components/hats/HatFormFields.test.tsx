@@ -16,7 +16,11 @@ vi.mock('../../api/hats', () => ({
 
 vi.mock('../../api/cases', () => ({
   listCases: vi.fn(async () => [
-    { id: 4, display_id: 'A-001', case_type: 'archive', hat_count: 2, room_name: 'Closet' },
+    {
+      id: 4, display_id: 'A-001', case_type: 'archive', hat_count: 2, room_name: 'Closet',
+      beanie_count: 0, regular_count: 2, capacity: null,
+      accepts_regular: true, accepts_beanie: false, free_regular: 2, free_beanie: 0,
+    },
   ]),
 }));
 
@@ -57,7 +61,8 @@ describe('HatBasicsCard', () => {
     await user.selectOptions(screen.getByLabelText('Style'), 'beanie');
     expect(onChange).toHaveBeenLastCalledWith('style', 'beanie');
 
-    await user.selectOptions(screen.getByLabelText('Case Assignment'), '4');
+    await user.click(screen.getByLabelText('Case Assignment'));
+    await user.click(await screen.findByRole('option', { name: /A-001/ }));
     expect(onChange).toHaveBeenLastCalledWith('caseId', '4');
 
     await user.type(screen.getByLabelText('Date Last Worn'), '2026-08-04');
@@ -72,19 +77,61 @@ describe('HatBasicsCard', () => {
     const onCreateCase = vi.fn();
     renderWithProviders(<Harness onChange={onChange} onCreateCase={onCreateCase} />);
 
-    await user.selectOptions(screen.getByLabelText('Case Assignment'), NEW_CASE_VALUE);
+    await user.click(screen.getByLabelText('Case Assignment'));
+    await user.click(await screen.findByRole('option', { name: /Create New Case/ }));
 
     expect(onCreateCase).toHaveBeenCalledOnce();
     expect(onChange).not.toHaveBeenCalledWith('caseId', NEW_CASE_VALUE);
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it('lists real cases with their type, count and room', async () => {
+  it('lists real cases grouped by room, with occupancy', async () => {
+    const user = userEvent.setup();
     renderWithProviders(<Harness onChange={vi.fn()} onCreateCase={vi.fn()} />);
-    await waitFor(() => {
-      expect(screen.getByRole('option', { name: /A-001 \(Archive · 2 hats · Closet\)/ })).toBeInTheDocument();
-    });
+
+    await user.click(screen.getByLabelText('Case Assignment'));
+
+    const option = await screen.findByRole('option', { name: /A-001/ });
+    expect(option).toHaveTextContent('Archive');
+    expect(option).toHaveTextContent('2/4');
+    expect(screen.getByText('Closet')).toBeInTheDocument();
     expect(screen.getByRole('option', { name: 'Unassigned' })).toBeInTheDocument();
+  });
+
+  it('filters as you type — the reason a 60-case wheel had to go', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<Harness onChange={vi.fn()} onCreateCase={vi.fn()} />);
+
+    const field = screen.getByLabelText('Case Assignment');
+    await user.click(field);
+    await screen.findByRole('option', { name: /A-001/ });
+
+    // Room name, not just case id — "where is it" is how you actually think.
+    await user.type(field, 'closet');
+    expect(screen.getByRole('option', { name: /A-001/ })).toBeInTheDocument();
+
+    await user.clear(field);
+    await user.type(field, 'garage');
+    expect(screen.queryByRole('option', { name: /A-001/ })).not.toBeInTheDocument();
+  });
+
+  it('disables a case that would 409, and says why', async () => {
+    // The archive case holds 2 regular hats, so it cannot take a beanie —
+    // the old <select> let you pick it and the save came back 409.
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    renderWithProviders(
+      <Harness onChange={onChange} onCreateCase={vi.fn()} values={{ ...BASICS, style: 'beanie' }} />,
+    );
+
+    await user.click(screen.getByLabelText('Case Assignment'));
+    const option = await screen.findByRole('option', { name: /A-001/ });
+
+    expect(option).toBeDisabled();
+    expect(option).toHaveTextContent('holds regular hats');
+
+    await user.click(option);
+    expect(onChange).not.toHaveBeenCalledWith('caseId', '4');
   });
 
   it('takes the page-specific labels the Add form passes', () => {
@@ -110,7 +157,8 @@ describe('HatBasicsCard', () => {
     );
     await waitFor(() => screen.getByRole('option', { name: 'Beanie' }));
     expect(screen.getByLabelText('Style')).toHaveValue('beanie');
-    expect(screen.getByLabelText('Case Assignment')).toHaveValue('4');
+    // Closed, the field reads as the selection rather than the raw id.
+    expect(screen.getByLabelText('Case Assignment')).toHaveValue('A-001 · Closet');
     expect(screen.getByLabelText('Date Last Worn')).toHaveValue('2026-01-02');
   });
 });

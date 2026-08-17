@@ -50,6 +50,14 @@ class CaseRead(BaseModel):
     regular_count: int
     room_id: int
     room_name: str
+    # Computed server-side from `services/capacity`, the same rule the write
+    # path enforces. Sent so the case picker can grey out a case that would
+    # 409 on save rather than letting you pick it and fail — at 40-60 cases
+    # you cannot eyeball which are full or hold the wrong hat type.
+    accepts_regular: bool = True
+    accepts_beanie: bool = True
+    free_regular: int = 0
+    free_beanie: int = 0
     created_at: datetime
     updated_at: datetime
 
