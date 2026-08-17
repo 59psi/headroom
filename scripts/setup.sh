@@ -130,7 +130,41 @@ ensure_npm() {
   if npm_ok; then return 0; fi
   log "npm $(npm --version 2>/dev/null || echo 'missing') is older than ${NPM_MIN_MAJOR} (the image builds on ${NPM_INSTALL}) — upgrading..."
   npm install -g "npm@${NPM_INSTALL}" \
-    || warn "Could not upgrade npm automatically — run 'npm install -g npm@${NPM_INSTALL}' yourself if the SPA build misbehaves."
+    || warn "Could not upgrade npm automatically."
+
+  # Re-check rather than trusting the exit code. `npm install -g` can succeed
+  # while changing nothing you will actually run: a global prefix that isn't
+  # on PATH (nvm, a Homebrew node, a --prefix in ~/.npmrc) installs the new
+  # npm somewhere the next command won't find. The failure then shows up much
+  # later as the SPA being built by a different npm than the image uses, which
+  # is precisely the drift this function exists to prevent — so say it now.
+  hash -r 2>/dev/null || true
+  if npm_ok; then
+    log "npm is now $(npm --version)."
+    return 0
+  fi
+  local current npm_path
+  current="$(npm --version 2>/dev/null || echo 'missing')"
+  npm_path="$(command -v npm 2>/dev/null || echo '')"
+
+  # Homebrew's node formula OWNS /opt/homebrew/bin/npm as a symlink into its
+  # Cellar, so `npm install -g npm@X` writes into Homebrew's tree and the next
+  # `brew upgrade node` puts it back. npm therefore cannot be held above
+  # whatever the node formula ships. Saying "run it again" here would send
+  # someone round a loop that cannot terminate.
+  if [[ "$npm_path" == /opt/homebrew/* || "$npm_path" == /usr/local/Cellar/* ]] \
+     && [[ "$(readlink "$npm_path" 2>/dev/null)" == *Cellar* ]]; then
+    warn "npm is $current and Homebrew's node formula owns it — a global upgrade won't stick."
+    warn "  This is cosmetic for Docker deploys: the image installs npm ${NPM_INSTALL} in its own"
+    warn "  build stage, so the shipped SPA is built on the pinned version regardless."
+    warn "  It only matters if you build the SPA on THIS machine for a bare-metal deploy."
+    return 0
+  fi
+
+  warn "npm is STILL $current after the upgrade — the image builds on ${NPM_INSTALL}."
+  warn "  Your global npm prefix is likely not on PATH: $(npm prefix -g 2>/dev/null || echo '(unknown)')"
+  warn "  Fix it with:  npm install -g npm@${NPM_INSTALL}    (sudo, or correct the prefix)"
+  warn "  The SPA will still build; it just won't be on the npm the image uses."
 }
 
 ensure_node() {
