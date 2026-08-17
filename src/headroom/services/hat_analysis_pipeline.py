@@ -46,6 +46,7 @@ from headroom.services.melin_recap import (
     fetch_resale_stats,
     is_melin,
 )
+from headroom.utils.photo import THUMBS_DIR, make_thumbnail_async
 
 logger = logging.getLogger(__name__)
 
@@ -120,12 +121,24 @@ async def finalize_hat_photo(
         transparent_path = await remove_background(processed_jpeg_path, cutout_target)
         t_rembg = time.monotonic() - t_rembg0
         if transparent_path is not None and transparent_path.exists():
-            # Drop the JPEG, keep the PNG
+            # Keep the JPEG rather than deleting it. It is the ONLY thing a
+            # re-cut can work from: the cutout can't be re-segmented (that path
+            # is destructive — see above), so without the original a poor
+            # cutout could only ever be fixed by re-uploading the photo. It
+            # stays beside the PNG rather than moving, so a re-cut runs through
+            # exactly this code path again with nothing special-cased.
             if transparent_path.resolve() != processed_jpeg_path.resolve():
-                processed_jpeg_path.unlink(missing_ok=True)
+                hat.original_path = f"hats/{processed_jpeg_path.name}"
             canonical_path = transparent_path
 
     hat.photo_path = f"hats/{canonical_path.name}"
+
+    # Gallery derivative. Best-effort: a missing thumbnail costs bandwidth, a
+    # failed upload costs the hat.
+    thumb = await make_thumbnail_async(
+        canonical_path, photo_dir / THUMBS_DIR / canonical_path.stem
+    )
+    hat.thumb_path = f"hats/{THUMBS_DIR}/{thumb.name}" if thumb else None
 
     # Everything below interleaves DB reads (API key, model, eBay creds) with
     # slow network calls. With autoflush on, the FIRST of those reads flushes

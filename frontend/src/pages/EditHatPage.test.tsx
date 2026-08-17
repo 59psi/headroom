@@ -22,6 +22,8 @@ const HAT: HatRead = {
   case_display_id: null,
   case_type: null,
   photo_path: null,
+  original_path: null,
+  thumb_path: null,
   condition: 'new',
   date_last_worn: null,
   wear_count: 0,

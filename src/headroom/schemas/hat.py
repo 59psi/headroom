@@ -112,6 +112,8 @@ class HatRead(BaseModel):
     case_display_id: str | None
     case_type: str | None
     photo_path: str | None
+    original_path: str | None = None
+    thumb_path: str | None = None
     condition: HatCondition
     date_last_worn: date | None
     wear_count: int

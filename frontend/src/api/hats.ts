@@ -52,6 +52,11 @@ export function uploadHatPhoto(id: number, file: File) {
   });
 }
 
+/** Redo background removal from the retained original photo. */
+export function recutHat(id: number) {
+  return apiFetch<HatRead>(`/api/hats/${id}/recut`, { method: 'POST' });
+}
+
 export function reanalyzeHat(id: number) {
   return apiFetch<HatRead>(`/api/hats/${id}/reanalyze`, { method: 'POST' });
 }

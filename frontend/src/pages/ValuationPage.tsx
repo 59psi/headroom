@@ -4,6 +4,7 @@ import { Link } from 'react-router';
 import { listAllHats } from '../api/hats';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import type { HatRead } from '../types';
+import { tileSrc } from '../lib/photo';
 
 const RESALE_MULTIPLIER: Record<string, number> = {
   new_with_tags: 0.65,
@@ -195,7 +196,7 @@ export function ValuationPage() {
                 {i + 1}.
               </div>
               {h.photo_path ? (
-                <img src={`/uploads/${h.photo_path}`} alt="" className="hr-thumb flex-shrink-0" style={{ width: 40, height: 40 }} />
+                <img src={tileSrc(h)} alt="" className="hr-thumb flex-shrink-0" style={{ width: 40, height: 40 }} />
               ) : (
                 <div className="rounded flex-shrink-0" style={{ width: 40, height: 40, background: 'rgba(0,0,0,0.3)' }} />
               )}
@@ -232,7 +233,7 @@ export function ValuationPage() {
                 {i + 1}.
               </div>
               {h.photo_path ? (
-                <img src={`/uploads/${h.photo_path}`} alt="" className="hr-thumb flex-shrink-0" style={{ width: 40, height: 40 }} />
+                <img src={tileSrc(h)} alt="" className="hr-thumb flex-shrink-0" style={{ width: 40, height: 40 }} />
               ) : (
                 <div className="rounded flex-shrink-0" style={{ width: 40, height: 40, background: 'rgba(0,0,0,0.3)' }} />
               )}
@@ -263,7 +264,7 @@ export function ValuationPage() {
           {analysis.neglected.map(h => (
             <Link key={h.id} to={`/hats/${h.id}`} className="hr-color-row text-decoration-none" style={{ paddingTop: '0.5rem' }}>
               {h.photo_path ? (
-                <img src={`/uploads/${h.photo_path}`} alt="" className="hr-thumb flex-shrink-0" style={{ width: 40, height: 40 }} />
+                <img src={tileSrc(h)} alt="" className="hr-thumb flex-shrink-0" style={{ width: 40, height: 40 }} />
               ) : (
                 <div className="rounded flex-shrink-0" style={{ width: 40, height: 40, background: 'rgba(0,0,0,0.3)' }} />
               )}

@@ -50,6 +50,7 @@ def _case_to_detail(case) -> CaseDetail:
                 style=h.style,
                 is_beanie=h.is_beanie,
                 photo_path=h.photo_path,
+                thumb_path=h.thumb_path,
             )
             for h in (case.hats or [])
         ],

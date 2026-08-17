@@ -141,6 +141,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if env_flag("HEADROOM_ANALYSIS_WORKER_ENABLED"):
         await analysis_queue.start_worker()
 
+    # Gallery thumbnails for hats that predate them. Off the boot path for the
+    # same reason mDNS is: it is image work over every existing photo, which on
+    # a Pi would visibly delay the app becoming reachable. Idempotent, so a
+    # restart mid-run resumes rather than repeating.
+    async def _backfill_thumbs():
+        try:
+            async with async_session() as db:
+                made = await hat_service.backfill_thumbnails(db)
+            if made:
+                logger.info("Generated %d missing gallery thumbnail(s)", made)
+        except Exception as exc:  # noqa: BLE001 — cosmetic; never block startup
+            logger.warning("Thumbnail backfill failed: %s", exc)
+
+    thumbs_task = asyncio.create_task(_backfill_thumbs())
+
     # mDNS LAN discovery (headroom.local) — best-effort, disabled in tests.
     # zeroconf probes for ~1s before registering; keep it off the boot path.
     mdns_task = asyncio.create_task(mdns_service.start_mdns())
@@ -162,7 +177,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     try:
         yield
     finally:
-        for task in (backup_task, prune_task, mdns_task):
+        for task in (backup_task, prune_task, mdns_task, thumbs_task):
             if task is not None:
                 task.cancel()
                 try:

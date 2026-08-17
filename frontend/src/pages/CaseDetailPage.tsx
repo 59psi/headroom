@@ -5,6 +5,7 @@ import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ImageLightbox } from '../components/common/ImageLightbox';
 import { PhotoCapture } from '../components/photos/PhotoCapture';
 import { useState } from 'react';
+import { tileSrc } from '../lib/photo';
 
 export function CaseDetailPage() {
   const { displayId } = useParams<{ displayId: string }>();
@@ -123,7 +124,7 @@ export function CaseDetailPage() {
           <Link key={h.id} to={`/hats/${h.id}`} className="card mb-2 text-decoration-none">
             <div className="card-body d-flex align-items-center gap-3">
               {h.photo_path ? (
-                <img src={`/uploads/${h.photo_path}`} alt="" className="hr-thumb" style={{ width: 56, height: 56 }} />
+                <img src={tileSrc(h)} alt="" className="hr-thumb" style={{ width: 56, height: 56 }} />
               ) : (
                 <div className="rounded" style={{ width: 56, height: 56, background: 'rgba(0,0,0,0.3)', border: '1px dashed var(--border)' }} />
               )}

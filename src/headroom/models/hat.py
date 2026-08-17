@@ -15,6 +15,12 @@ class Hat(Base):
     )
     position_in_case: Mapped[int | None] = mapped_column(Integer, nullable=True)
     photo_path: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # The processed JPEG the cutout was made from, kept so the background can be
+    # redone later. Before this the JPEG was deleted the moment rembg succeeded,
+    # which meant a bad cutout could only be fixed by re-uploading the photo.
+    original_path: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Small WebP derivative for the gallery grid — see utils/photo.
+    thumb_path: Mapped[str | None] = mapped_column(String(255), nullable=True)
     condition: Mapped[str] = mapped_column(String(20))  # new_with_tags, new, worn
     date_last_worn: Mapped[date | None] = mapped_column(Date, nullable=True)
     size: Mapped[str] = mapped_column(String(10))  # small, classic, x_large

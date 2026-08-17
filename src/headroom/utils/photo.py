@@ -6,6 +6,12 @@ from PIL import Image
 
 MAX_DIMENSION = 1200
 
+# Gallery tiles render at roughly 160 CSS px, so 320 covers a 2x display and
+# nothing more. The full cutout is a 1200px RGBA PNG — a few hundred KB each,
+# which is fine for one hat page and ruinous for a grid of fifty.
+THUMB_DIMENSION = 320
+THUMBS_DIR = "thumbs"
+
 
 def generate_filename(original_filename: str) -> str:
     ext = Path(original_filename).suffix.lower()
@@ -34,6 +40,36 @@ def process_image(input_path: Path, output_path: Path) -> Path:
     final_path = output_path.with_suffix(".jpg")
     img.save(final_path, "JPEG", quality=85, optimize=True)
     return final_path
+
+
+def make_thumbnail(source_path: Path, dest_path: Path) -> Path | None:
+    """Write a small WebP copy of a hat photo. Returns the path, or None.
+
+    WebP because these are transparent PNGs: it keeps the alpha channel (the
+    hats float on the canvas, so a flattened JPEG thumbnail is not an option)
+    at a fraction of the size. Lossy at quality 80 — invisible at 160 CSS px.
+
+    Best-effort by design. A gallery falling back to full-size images is slow;
+    an upload that fails because a thumbnail could not be written is broken.
+    """
+    try:
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        with Image.open(source_path) as img:
+            # Preserve alpha; RGBA is what a cutout is, and P-mode with
+            # transparency needs converting before resize or the edges fringe.
+            if img.mode not in ("RGBA", "RGB"):
+                img = img.convert("RGBA")
+            img.thumbnail((THUMB_DIMENSION, THUMB_DIMENSION), Image.LANCZOS)
+            final = dest_path.with_suffix(".webp")
+            img.save(final, "WEBP", quality=80, method=4)
+        return final
+    except Exception:  # noqa: BLE001 — a missing thumbnail must never fail an upload
+        return None
+
+
+async def make_thumbnail_async(source_path: Path, dest_path: Path) -> Path | None:
+    """Async wrapper — Pillow encode is CPU-bound and must stay off the loop."""
+    return await asyncio.to_thread(make_thumbnail, source_path, dest_path)
 
 
 async def process_image_async(input_path: Path, output_path: Path) -> Path:

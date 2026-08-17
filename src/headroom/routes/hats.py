@@ -179,10 +179,14 @@ async def upload_hat_photo(
     finally:
         tmp_path.unlink(missing_ok=True)
 
-    # Delete old photo
-    if hat.photo_path:
-        old_path = settings.upload_dir / hat.photo_path
-        old_path.unlink(missing_ok=True)
+    # Delete the outgoing photo and everything derived from it. Missing any of
+    # these leaves orphaned files on disk and, worse, a `thumb_path` pointing at
+    # the previous hat's thumbnail — the grid would show the old picture.
+    for stale in (hat.photo_path, hat.original_path, hat.thumb_path):
+        if stale:
+            (settings.upload_dir / stale).unlink(missing_ok=True)
+    hat.original_path = None
+    hat.thumb_path = None
 
     # The photo itself is saved and shown immediately; the slow part (rembg →
     # Claude → eBay → Melin) is handed to the analysis worker so this request
@@ -206,6 +210,53 @@ async def upload_hat_photo(
             await db.commit()
         except Exception as exc:  # noqa: BLE001 — recorded on the hat instead
             logger.exception("Inline analysis failed for hat %s: %s", hat_id, exc)
+            await db.rollback()
+            hat = await hat_service.get_hat(db, hat_id)
+            analysis_queue.stamp_failure(hat, exc)
+            await db.commit()
+
+    db.expire_all()
+    return _hat_to_read(await hat_service.get_hat(db, hat_id))
+
+
+@router.post("/{hat_id}/recut", response_model=HatRead)
+async def recut_hat(hat_id: int, db: AsyncSession = Depends(get_db)):
+    """Redo background removal from the retained original photo.
+
+    The stored cutout can never be re-segmented — running rembg on an already
+    transparent image eats the alpha and trims the bill a little more each pass,
+    which is why `finalize_hat_photo` refuses to. So a re-cut has to start from
+    the original JPEG, which is exactly why it is now kept.
+
+    Implemented by pointing `photo_path` back at that original and queueing:
+    the pipeline then sees a `.jpg`, cuts it, and overwrites the old PNG in
+    place. No special-casing anywhere — it is the upload path, run again.
+    """
+    hat = await hat_service.get_hat(db, hat_id)
+    if not hat.original_path:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "No original was kept for this hat — it was analysed before"
+                " originals were retained. Re-upload the photo instead."
+            ),
+        )
+    original = settings.upload_dir / hat.original_path
+    if not original.exists():
+        raise HTTPException(status_code=404, detail="Original photo missing on disk")
+
+    hat.photo_path = hat.original_path
+    hat.analysis_status = analysis_queue.PENDING
+    hat.analysis_error = None
+    hat.analyzed_at = None
+    await db.commit()
+
+    if not analysis_queue.enqueue(hat.id):
+        try:
+            await finalize_hat_photo(db, hat, original)
+            await db.commit()
+        except Exception as exc:  # noqa: BLE001 — recorded on the hat instead
+            logger.exception("Inline re-cut failed for hat %s: %s", hat_id, exc)
             await db.rollback()
             hat = await hat_service.get_hat(db, hat_id)
             analysis_queue.stamp_failure(hat, exc)
