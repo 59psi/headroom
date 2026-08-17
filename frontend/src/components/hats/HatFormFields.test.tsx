@@ -21,6 +21,7 @@ vi.mock('../../api/cases', () => ({
       id: 4, display_id: 'A-001', case_type: 'archive', hat_count: 2, room_name: 'Closet',
       beanie_count: 0, regular_count: 2, capacity: null,
       accepts_regular: true, accepts_beanie: false, free_regular: 2, free_beanie: 0,
+      created_at: '2026-08-01T00:00:00', updated_at: '2026-08-01T00:00:00',
     },
   ]),
 }));
@@ -86,7 +87,7 @@ describe('HatBasicsCard', () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it('lists real cases grouped by room, with occupancy', async () => {
+  it('lists real cases with their type, occupancy and room', async () => {
     const user = userEvent.setup();
     renderWithProviders(<Harness onChange={vi.fn()} onCreateCase={vi.fn()} />);
 
@@ -95,8 +96,28 @@ describe('HatBasicsCard', () => {
     const option = await screen.findByRole('option', { name: /A-001/ });
     expect(option).toHaveTextContent('Archive');
     expect(option).toHaveTextContent('2/4');
-    expect(screen.getByText('Closet')).toBeInTheDocument();
+    expect(option).toHaveTextContent('Closet');
     expect(screen.getByRole('option', { name: 'Unassigned' })).toBeInTheDocument();
+  });
+
+  it('pins the newest cases above the room groups', async () => {
+    // A hat being added now usually belongs in a case made minutes ago, and
+    // hunting for it inside a room group is the long way round.
+    const user = userEvent.setup();
+    renderWithProviders(<Harness onChange={vi.fn()} onCreateCase={vi.fn()} />);
+
+    await user.click(screen.getByLabelText('Case Assignment'));
+    await screen.findByRole('option', { name: /A-001/ });
+
+    expect(screen.getByText('Recently added')).toBeInTheDocument();
+    // Not listed twice — pinned cases are removed from their room group.
+    expect(screen.getAllByRole('option', { name: /A-001/ })).toHaveLength(1);
+
+    // Once you're searching you've said what you want; the pinned block would
+    // just be noise in front of the answer.
+    await user.type(screen.getByLabelText('Case Assignment'), 'closet');
+    expect(screen.queryByText('Recently added')).not.toBeInTheDocument();
+    expect(screen.getByText('Closet')).toBeInTheDocument();
   });
 
   it('filters as you type — the reason a 60-case wheel had to go', async () => {

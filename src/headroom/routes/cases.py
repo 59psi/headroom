@@ -42,6 +42,14 @@ def _case_to_read(case) -> CaseRead:
         regular_count=len(hats) - beanie_count,
         room_id=case.room_id,
         room_name=case.room.name if case.room else "Unknown",
+        # Up to four hat thumbnails, so the Cases grid can show what is
+        # actually IN a case rather than a photo of the case's exterior —
+        # every case looks the same from outside.
+        hat_thumbs=[
+            h.thumb_path or h.photo_path
+            for h in hats
+            if (h.thumb_path or h.photo_path)
+        ][:4],
         accepts_regular=room.accepts_regular,
         accepts_beanie=room.accepts_beanie,
         free_regular=room.free_regular,

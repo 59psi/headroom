@@ -29,6 +29,8 @@ export interface CaseRead {
   room_name: string;
   /** Computed server-side from the same rule the write path enforces, so the
    *  picker can't disagree with what a save will accept. */
+  /** Up to 4 hat photos for the collage the Cases grid renders. */
+  hat_thumbs: string[];
   accepts_regular: boolean;
   accepts_beanie: boolean;
   free_regular: number;
@@ -150,6 +152,7 @@ export interface SearchResult {
   display_id: string | null;
   case_display_id: string | null;
   photo_path: string | null;
+  thumb_path: string | null;
   style: string;
   condition: string;
   size: string;
@@ -264,4 +267,15 @@ export interface BackupHealth {
   last_success_at: string | null;
   last_error: string | null;
   consecutive_failures: number;
+}
+
+/** A set of hats that look like the same hat entered more than once. */
+export interface DuplicateGroup {
+  key: string;
+  /** "exact" — every identity field agrees. "likely" — same model and size,
+   *  with the colourway missing on at least one side (usually an unanalysed
+   *  twin). Colourways that actively disagree are never grouped. */
+  confidence: 'exact' | 'likely';
+  label: string;
+  hats: SearchResult[];
 }

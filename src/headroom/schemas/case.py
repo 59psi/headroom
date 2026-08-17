@@ -54,6 +54,11 @@ class CaseRead(BaseModel):
     # path enforces. Sent so the case picker can grey out a case that would
     # 409 on save rather than letting you pick it and fail — at 40-60 cases
     # you cannot eyeball which are full or hold the wrong hat type.
+    # Photo paths of the hats inside, newest-first-ish (id order), capped at
+    # four. The Cases grid renders these as a collage: a photo of the case
+    # itself is the same grey box for every case, where the hats are the thing
+    # you are actually looking for.
+    hat_thumbs: list[str] = []
     accepts_regular: bool = True
     accepts_beanie: bool = True
     free_regular: int = 0

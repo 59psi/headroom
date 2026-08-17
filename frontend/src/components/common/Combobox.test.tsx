@@ -106,3 +106,52 @@ describe('Combobox', () => {
     expect(onSubmit).toHaveBeenCalled();
   });
 });
+
+describe('Combobox — escaping the card', () => {
+  it('renders the list outside the form, not inside the clipping card', async () => {
+    // `.card` sets `overflow: hidden`, so a list positioned inside one is cut
+    // off mid-row and the options below it are unreachable — no z-index fixes
+    // that, because the pixels are never drawn. Portalling to <body> is the
+    // only thing that escapes it (and the two other ancestor traps:
+    // `.card-body`'s stacking context, and the card hover `transform`).
+    const user = userEvent.setup();
+    const { container } = render(
+      <div className="card">
+        <div className="card-body">
+          <Combobox
+            id="c3" label="Construction" value="" onChange={() => {}} options={OPTIONS}
+          />
+        </div>
+      </div>,
+    );
+
+    await user.click(screen.getByLabelText('Construction'));
+
+    const list = document.querySelector('.hr-combobox-list');
+    expect(list).not.toBeNull();
+    expect(container.querySelector('.hr-combobox-list')).toBeNull();
+    expect(list!.closest('.card')).toBeNull();
+  });
+
+  it('still selects an option once the list lives in the body', async () => {
+    // Portalling moves the list out of the wrapper, so the click-outside
+    // handler would otherwise treat a tap on an option as "outside" and close
+    // the list before the option's own handler ran.
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(
+      <div className="card">
+        <div className="card-body">
+          <Combobox
+            id="c4" label="Construction" value="" onChange={onChange} options={OPTIONS}
+          />
+        </div>
+      </div>,
+    );
+
+    await user.click(screen.getByLabelText('Construction'));
+    await user.click(screen.getByRole('option', { name: 'Thermal' }));
+
+    expect(onChange).toHaveBeenCalledWith('Thermal');
+  });
+});

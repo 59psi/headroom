@@ -142,6 +142,16 @@ model when known), and **where it lives** ("📍 Case A-012 · Office"):
   palette vocabulary by default; toggle *exact colors* to match the
   analyzer's original phrasing. Disposed hats never appear — they're not
   findable on a shelf.
+- **Find duplicates** — the button beside the Search heading (or `/duplicates`).
+  Bulk-importing a camera roll can turn two photos of one hat into two hats,
+  and past a hundred or so you stop noticing; the collection then reports more
+  than you own and the valuation follows it. Grouped on what's *recorded* —
+  model, colourway, size — never on the photos, since two shots of one hat look
+  different and two different hats in one colourway look the same. **exact**
+  means everything matches; **likely** means same model and size with a
+  colourway missing on one side, which is what an unanalysed twin looks like.
+  Two hats naming *different* colourways are never grouped. Nothing is deleted
+  — open a hat and dispose of it, or leave it if you really do own two.
 - **Search by color** — tap a palette swatch (or pick any color with the
   color-wheel input) and every hat is ranked by *perceptual closeness* to
   it, using the actual stored hex values rather than names. A hat whose

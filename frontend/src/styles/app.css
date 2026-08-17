@@ -1357,13 +1357,12 @@ button.card:hover::before,
   position: relative;
 }
 
+/* Position, size and max-height are set inline by `AnchoredList`, which
+   measures against the input — this list is portalled into <body> to escape
+   `.card { overflow: hidden }`, which was clipping it mid-row. */
 .hr-combobox-list {
-  position: absolute;
-  z-index: 30;
-  top: 100%;
-  left: 0;
-  right: 0;
-  margin: 0.25rem 0 0;
+  z-index: 1100;
+  margin: 0;
   padding: 0.25rem;
   list-style: none;
   max-height: 15rem;
@@ -1409,21 +1408,20 @@ button.card:hover::before,
   opacity: 0.85;
 }
 
-/* The picker list must clear the fixed bottom nav (z-index 100). Raising this
-   alone is not sufficient on a phone — see `usePickerOpen` for why the nav is
-   also hidden while a list is open. */
-.hr-combobox-list {
-  z-index: 200;
-}
+
 
 /* While a dropdown-style picker is open, take the bottom nav out of the
    layout. It is fixed at z-index 100 and, once the iOS keyboard opens, is
    positioned against the visual viewport — so it rides up to mid-screen and
    covers the options wherever they are drawn. `!important` because the
    `.d-lg-none` utility also sets display on this element. */
-body.hr-picker-open .bottom-nav {
+body.hr-picker-open .bottom-nav,
+body.hr-keyboard-open .bottom-nav {
   display: none !important;
 }
+
+/* Height is measured against the VISUAL viewport in `AnchoredList`, which is
+   what keeps the list clear of the on-screen keyboard. */
 
 /* --- Case picker rows ------------------------------------------------------
    Denser than a plain combobox row: each carries an id, a type, occupancy and

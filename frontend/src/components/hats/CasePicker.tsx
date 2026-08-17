@@ -1,6 +1,10 @@
 import { useState, useRef, useEffect, useId, useMemo } from 'react';
 import type { CaseRead } from '../../types';
 import { usePickerOpen } from '../common/usePickerOpen';
+import { AnchoredList } from '../common/AnchoredList';
+
+/** How many freshly-made cases to pin above the room groups. */
+const RECENT_COUNT = 3;
 
 /** Sentinel that opens the "create a case" modal instead of selecting one. */
 export const NEW_CASE_VALUE = '__new__';
@@ -43,6 +47,9 @@ export function CasePicker({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const wrapRef = useRef<HTMLDivElement>(null);
+  // State, not a ref: the portalled list positions against this element, and a
+  // plain ref is still null on the render that first opens it.
+  const [inputEl, setInputEl] = useState<HTMLInputElement | null>(null);
   const listId = useId();
   const inputId = useId();
 
@@ -53,13 +60,16 @@ export function CasePicker({
   useEffect(() => {
     if (!open) return;
     function onDocDown(e: PointerEvent) {
-      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+      const target = e.target as HTMLElement;
+      // Portalled into <body>, so the list is not a descendant of the wrapper.
+      if (wrapRef.current?.contains(target) || target.closest('.hr-combobox-list')) return;
+      setOpen(false);
     }
     document.addEventListener('pointerdown', onDocDown);
     return () => document.removeEventListener('pointerdown', onDocDown);
   }, [open]);
 
-  const groups = useMemo(() => {
+  const { recent, groups } = useMemo(() => {
     const q = query.trim().toLowerCase();
     const matches = (c: CaseRead) =>
       !q
@@ -67,20 +77,33 @@ export function CasePicker({
       || c.room_name.toLowerCase().includes(q)
       || caseTypeLabel(c).toLowerCase().includes(q);
 
+    // The three newest, pinned to the top — a hat being added right now
+    // usually belongs in a case made minutes ago, and hunting for it in a
+    // room group is the long way round. Only when nothing is typed: once you
+    // are searching, you have said what you want and a pinned section is just
+    // noise in front of it.
+    const recent = q
+      ? []
+      : [...cases]
+          .sort((a, b) => b.created_at.localeCompare(a.created_at))
+          .slice(0, RECENT_COUNT);
+    const pinned = new Set(recent.map(c => c.id));
+
     // Grouped by room, rooms alphabetical, cases by display id within each —
     // the same order they appear on the Rooms page, so the two read the same.
     const byRoom = new Map<string, CaseRead[]>();
-    for (const c of cases.filter(matches)) {
+    for (const c of cases.filter(c => matches(c) && !pinned.has(c.id))) {
       const list = byRoom.get(c.room_name) ?? [];
       list.push(c);
       byRoom.set(c.room_name, list);
     }
-    return [...byRoom.entries()]
+    const groups = [...byRoom.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([room, list]) => ({
         room,
         list: list.sort((a, b) => a.display_id.localeCompare(b.display_id)),
       }));
+    return { recent, groups };
   }, [cases, query]);
 
   function pick(next: string) {
@@ -88,6 +111,40 @@ export function CasePicker({
     else onChange(next);
     setOpen(false);
     setQuery('');
+  }
+
+  /** One case row. Shared so the pinned recents and the room groups can't drift. */
+  function renderCase(c: CaseRead) {
+    const ok = isBeanie ? c.accepts_beanie : c.accepts_regular;
+    const used = isBeanie ? c.beanie_count : c.regular_count;
+    const free = isBeanie ? c.free_beanie : c.free_regular;
+    return (
+      <li key={c.id}>
+        <button
+          type="button"
+          role="option"
+          aria-selected={String(c.id) === value}
+          // Announced rather than shown, so a screen reader gets the reason
+          // the visual dimming conveys.
+          aria-disabled={!ok}
+          disabled={!ok}
+          className={
+            'hr-combobox-option hr-case-option'
+            + (String(c.id) === value ? ' is-selected' : '')
+            + (ok ? '' : ' is-unavailable')
+          }
+          title={ok ? undefined : unavailableReason(c, isBeanie)}
+          onMouseDown={e => { e.preventDefault(); if (ok) pick(String(c.id)); }}
+        >
+          <span className="hr-case-id font-mono">{c.display_id}</span>
+          <span className="hr-case-meta">
+            {caseTypeLabel(c)} · {used + free > 0 ? `${used}/${used + free}` : used}
+            {' · '}{c.room_name}
+          </span>
+          {!ok && <span className="hr-case-why">{unavailableReason(c, isBeanie)}</span>}
+        </button>
+      </li>
+    );
   }
 
   const summary = selected
@@ -98,6 +155,7 @@ export function CasePicker({
     <div className="hr-combobox" ref={wrapRef}>
       <label className="form-label" htmlFor={inputId}>{label}</label>
       <input
+        ref={setInputEl}
         id={inputId}
         aria-label={label}
         className="form-control"
@@ -115,8 +173,7 @@ export function CasePicker({
         onChange={e => { setQuery(e.target.value); setOpen(true); }}
         onKeyDown={e => { if (e.key === 'Escape') setOpen(false); }}
       />
-      {open && (
-        <ul className="hr-combobox-list" id={listId} role="listbox">
+      <AnchoredList anchor={inputEl} open={open} id={listId} role="listbox">
           <li>
             <button
               type="button"
@@ -140,52 +197,28 @@ export function CasePicker({
             </button>
           </li>
 
+          {recent.length > 0 && (
+            <li>
+              <div className="hr-case-group" aria-hidden="true">Recently added</div>
+              <ul className="hr-plain-list">
+                {recent.map(c => renderCase(c))}
+              </ul>
+            </li>
+          )}
+
           {groups.map(({ room, list }) => (
             <li key={room}>
               <div className="hr-case-group" aria-hidden="true">{room}</div>
               <ul className="hr-plain-list">
-                {list.map(c => {
-                  const ok = isBeanie ? c.accepts_beanie : c.accepts_regular;
-                  const used = isBeanie ? c.beanie_count : c.regular_count;
-                  const free = isBeanie ? c.free_beanie : c.free_regular;
-                  return (
-                    <li key={c.id}>
-                      <button
-                        type="button"
-                        role="option"
-                        aria-selected={String(c.id) === value}
-                        // Announced rather than shown, so a screen reader gets
-                        // the reason the visual dimming conveys.
-                        aria-disabled={!ok}
-                        disabled={!ok}
-                        className={
-                          'hr-combobox-option hr-case-option'
-                          + (String(c.id) === value ? ' is-selected' : '')
-                          + (ok ? '' : ' is-unavailable')
-                        }
-                        title={ok ? undefined : unavailableReason(c, isBeanie)}
-                        onMouseDown={e => { e.preventDefault(); if (ok) pick(String(c.id)); }}
-                      >
-                        <span className="hr-case-id font-mono">{c.display_id}</span>
-                        <span className="hr-case-meta">
-                          {caseTypeLabel(c)} · {used + free > 0 ? `${used}/${used + free}` : used}
-                        </span>
-                        {!ok && (
-                          <span className="hr-case-why">{unavailableReason(c, isBeanie)}</span>
-                        )}
-                      </button>
-                    </li>
-                  );
-                })}
+                {list.map(c => renderCase(c))}
               </ul>
             </li>
           ))}
 
-          {groups.length === 0 && (
+          {groups.length === 0 && recent.length === 0 && (
             <li className="hr-case-empty">No case matches “{query}”</li>
           )}
-        </ul>
-      )}
+      </AnchoredList>
     </div>
   );
 }
