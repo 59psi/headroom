@@ -20,6 +20,8 @@ export function AddHatPage() {
     ...DEFAULT_HAT_BASICS,
     caseId: searchParams.get('caseId') || '',
     dateLastWorn: '',
+    purchasePrice: '',
+    purchasedAt: '',
   });
   const [showNewCase, setShowNewCase] = useState(false);
 
@@ -43,6 +45,10 @@ export function AddHatPage() {
       if (basics.artistSeries.trim()) data.artist_series = basics.artistSeries.trim();
       if (basics.caseId) data.case_id = Number(basics.caseId);
       if (basics.dateLastWorn) data.date_last_worn = basics.dateLastWorn;
+      if (basics.purchasePrice) data.purchase_price = Number(basics.purchasePrice);
+      // Midnight local, matching how `date_last_worn` is sent — the column is
+      // a timestamp but only the date is ever entered or displayed.
+      if (basics.purchasedAt) data.purchased_at = `${basics.purchasedAt}T00:00:00`;
 
       const hat = await createHat(data);
       if (photo) {

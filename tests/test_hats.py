@@ -258,3 +258,32 @@ async def test_hats_list_accepts_the_whole_collection_limit(client):
 
     too_big = await client.get("/api/hats?limit=1001")
     assert too_big.status_code == 422, "the ceiling should still bound the response"
+
+
+@pytest.mark.anyio
+async def test_create_accepts_cost_basis(client):
+    """Price paid is enterable when the hat is added, not only on Edit.
+
+    The receipt is in hand at that moment. It is also the only figure in the
+    app that is a fact rather than an estimate, and nothing can derive it —
+    before this, a hat bought secondhand or on sale had no route to a cost
+    basis except an order-history import that would never have covered it.
+    """
+    resp = await client.post("/api/hats", json={
+        "condition": "new", "size": "classic", "style": "a_game",
+        "purchase_price": 64.5, "purchased_at": "2026-03-14T00:00:00",
+    })
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["purchase_price"] == 64.5
+    assert body["purchased_at"].startswith("2026-03-14")
+
+
+@pytest.mark.anyio
+async def test_create_leaves_cost_basis_null_when_not_given(client):
+    """Omitted must stay unknown — never 0, which reads as 'it was free'."""
+    resp = await client.post("/api/hats", json={
+        "condition": "new", "size": "classic", "style": "a_game",
+    })
+    assert resp.json()["purchase_price"] is None
+    assert resp.json()["purchased_at"] is None

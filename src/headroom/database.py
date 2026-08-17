@@ -39,6 +39,17 @@ class Base(DeclarativeBase):
 
 # Static, fully-formed DDL — column names and types are hard-coded literals,
 # so no interpolation is needed and SQL injection is structurally impossible.
+# Same contract as `_HAT_COLUMN_DDL` below: fully-static DDL, one entry per
+# column added after the table first shipped. `purchases` is created by
+# `Base.metadata.create_all`, which only ever CREATEs — it will not alter a
+# table that already exists, so a column added to the model without an entry
+# here is present on new installs and missing on every upgraded one.
+_PURCHASE_COLUMN_DDL: dict[str, str] = {
+    # v2.19 — the size on the order line, so matching can tell two sizes of the
+    # same model apart instead of binding to whichever hat comes back first.
+    "size": "ALTER TABLE purchases ADD COLUMN size VARCHAR(20)",
+}
+
 _HAT_COLUMN_DDL: dict[str, str] = {
     "original_path": "ALTER TABLE hats ADD COLUMN original_path VARCHAR(255)",
     "thumb_path": "ALTER TABLE hats ADD COLUMN thumb_path VARCHAR(255)",
@@ -60,6 +71,8 @@ _HAT_COLUMN_DDL: dict[str, str] = {
     "resale_price_source": "ALTER TABLE hats ADD COLUMN resale_price_source VARCHAR(80)",
     "resale_price_url": "ALTER TABLE hats ADD COLUMN resale_price_url VARCHAR(500)",
     "resale_checked_at": "ALTER TABLE hats ADD COLUMN resale_checked_at DATETIME",
+    # v2.19 — "manual" | "model" | "category": what resale_price is a price OF.
+    "resale_price_scope": "ALTER TABLE hats ADD COLUMN resale_price_scope VARCHAR(20)",
     "analysis_status": "ALTER TABLE hats ADD COLUMN analysis_status VARCHAR(20)",
     "analysis_stage": "ALTER TABLE hats ADD COLUMN analysis_stage VARCHAR(20)",
     "analysis_job_id": "ALTER TABLE hats ADD COLUMN analysis_job_id INTEGER",
@@ -178,6 +191,12 @@ def _run_migrations(conn) -> None:
             if col_name not in existing_cols:
                 conn.execute(text(ddl))
         _backfill_construction(conn)
+
+    if "purchases" in existing_tables:
+        existing_cols = {c["name"] for c in inspector.get_columns("purchases")}
+        for col_name, ddl in _PURCHASE_COLUMN_DDL.items():
+            if col_name not in existing_cols:
+                conn.execute(text(ddl))
 
 
 def _backfill_construction(conn) -> None:

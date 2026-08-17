@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import { listCases } from '../api/cases';
 import { getRoomOptions } from '../api/rooms';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
@@ -91,10 +91,31 @@ function CaseCollage({ thumbs, label }: { thumbs: string[]; label: string }) {
   );
 }
 
+type CaseTypeFilter = 'all' | 'archive' | 'daily_wear';
+
 export function CasesPage() {
   const { data, isLoading, error } = useQuery({ queryKey: ['cases'], queryFn: listCases });
   const roomsQ = useQuery({ queryKey: ['meta', 'rooms'], queryFn: getRoomOptions });
-  const [typeFilter, setTypeFilter] = useState<'all' | 'archive' | 'daily_wear'>('all');
+  // The type filter lives in the URL so the home page's Archive/Daily counts
+  // can link straight to the filtered list, and so a filtered view survives a
+  // reload or being shared. The buttons below write to the same place, which
+  // keeps one source of truth instead of a URL and a useState that can differ.
+  const [params, setParams] = useSearchParams();
+  const rawType = params.get('type');
+  const typeFilter: CaseTypeFilter =
+    rawType === 'archive' || rawType === 'daily_wear' ? rawType : 'all';
+  const setTypeFilter = (next: CaseTypeFilter) => {
+    // `replace` so tapping through the three filters doesn't build a back
+    // stack that has to be unwound one press at a time to leave the page.
+    setParams(
+      prev => {
+        const out = new URLSearchParams(prev);
+        if (next === 'all') out.delete('type'); else out.set('type', next);
+        return out;
+      },
+      { replace: true },
+    );
+  };
   const [roomFilter, setRoomFilter] = useState('');
 
   if (isLoading) return <LoadingSpinner />;

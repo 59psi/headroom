@@ -21,6 +21,17 @@ export function listAllHats() {
   return listHats({ limit: String(FULL_COLLECTION_LIMIT) });
 }
 
+/**
+ * Every disposed hat — what has left the collection.
+ *
+ * Separate from `listAllHats` because the two answer opposite questions and
+ * must never be summed into one figure: these hats are not owned, so they
+ * belong in realized proceeds and nowhere near what the collection is worth.
+ */
+export function listDisposedHats() {
+  return listHats({ limit: String(FULL_COLLECTION_LIMIT), status: 'disposed' });
+}
+
 export function getHat(id: number) {
   return apiFetch<HatRead>(`/api/hats/${id}`);
 }

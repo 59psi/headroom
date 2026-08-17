@@ -1,5 +1,21 @@
-/* ===== Headroom — Synthwave / Outrun Design Tokens ===== */
-@import url('https://fonts.googleapis.com/css2?family=Audiowide&family=Orbitron:wght@500;600;700;900&family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap');
+/* ===== Headroom — Synthwave / Outrun Design Tokens =====
+ *
+ * The four families are imported in `main.tsx` from `@fontsource*` packages
+ * and bundled, rather than pulled from Google Fonts.
+ *
+ * This used to be an `@import url('https://fonts.googleapis.com/...')` here.
+ * The security headers added in 2.12.0 set `style-src 'self'` and
+ * `font-src 'self'`, which blocks it — so from that release on, the app's own
+ * CSP silently stripped its entire typeface set and every browser fell back to
+ * system-ui. It went unnoticed because anyone who had used Headroom before
+ * 2.12.0 still had the fonts in their HTTP cache; only a new device saw it,
+ * and there is no error on screen, just slightly wrong-looking text.
+ *
+ * Self-hosting is the right answer here regardless of the CSP: this is a
+ * self-hosted app that people run on a Pi on their own LAN, and depending on
+ * a Google CDN to render its own headings meant the design broke whenever the
+ * house internet did.
+ */
 
 :root {
   /* === Canvas ====================================================== */
@@ -63,10 +79,17 @@
   --glow-purple: 0 0 20px rgba(177, 78, 255, 0.45), 0 0 40px rgba(177, 78, 255, 0.18);
 
   /* === Typography ================================================= */
-  --font-display: 'Audiowide', 'Orbitron', system-ui, sans-serif;
-  --font-heading: 'Orbitron', system-ui, sans-serif;
-  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* The `… Variable` names come first because that is what the
+   * `@fontsource-variable` packages actually register — a variable build is
+   * declared as "Inter Variable", not "Inter". Naming only the plain family
+   * bundles the font and then never uses it, which is silent: the stack just
+   * falls through to the next entry and the text renders in system-ui looking
+   * approximately right. The bare names are kept behind them so anyone who has
+   * these installed locally still gets them. */
+  --font-display: 'Audiowide', 'Orbitron Variable', 'Orbitron', system-ui, sans-serif;
+  --font-heading: 'Orbitron Variable', 'Orbitron', system-ui, sans-serif;
+  --font-body: 'Inter Variable', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 
   /* === Geometry =================================================== */
   --radius: 14px;

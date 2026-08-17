@@ -103,6 +103,24 @@ colorway and its **cost basis** — the price you actually paid, plus the
 order date. Matching links a purchase to a hat when the model names agree
 (and colorways don't conflict); re-run it any time after editing hats.
 
+For anything the import can't cover — bought secondhand, in person, or from a
+shop that doesn't email line items — enter **Price paid** and **Bought on**
+directly on the Add Hat or Edit Hat form. Valuation lists the hats still
+missing a price so the gap is visible rather than assumed.
+
+**Import order matters.** Matching sets a hat's price *and* fills its
+colourway, and a hat that hasn't been analysed yet will accept any colourway
+of the right model and size. So add and analyse your hats *first*, then
+import once — otherwise a purchase can attach to a stand-in hat and stamp the
+wrong colourway on it. Add `?dry_run=true` to the import to see every proposed
+match without writing anything.
+
+If a run does go wrong, it's reversible: **unmatch** a single purchase, or
+unmatch every one at once, which returns them all to the pool and clears the
+values they set (leaving anything you've edited since alone). The purchase
+records survive — only the links are broken — so you can re-run matching once
+the collection is in better shape.
+
 ## 5. Colors & style
 
 - Detected colors come as tiered swatches (primary / secondary / tertiary)
@@ -113,20 +131,59 @@ order date. Matching links a purchase to a hat when the model names agree
 
 ## 6. Prices & valuation
 
-Each hat can show up to three price signals:
+### What each hat records
 
-- **New retail** — Claude's estimate of original price.
-- **eBay median** — live sold-comparable stats when eBay creds are set
-  (*Test connection* on the Settings card verifies the keyset; sandbox keys
-  are flagged). Per-hat refresh button available.
-- **Resale (Melin hats)** — a **live median asking price** from
-  melinrecap.com's marketplace API, scoped to your hat's model when enough
-  listings match (the label says e.g. "median of 83 live model listings"),
-  plus a deep link to browse the actual listings. Refreshes on every
-  analysis/reanalyze. You can always override `resale_price` manually.
+- **Paid** — what it actually cost you. The only figure here that's a fact
+  rather than an estimate. Set it when adding a hat, on the edit page, or in
+  bulk by importing order history (§4½).
+- **New retail** — Claude's estimate of the original price.
+- **eBay ask** — median of *currently listed* comparable items, when eBay
+  creds are set (*Test connection* on the Settings card verifies the keyset;
+  sandbox keys are flagged). Per-hat refresh button available.
+- **Resale ask (Melin hats)** — median **asking** price across live
+  melinrecap.com listings, scoped to your hat's model when enough listings
+  match ("median of 83 live model listings") or to the whole style category
+  when they don't, plus a deep link to browse them. Refreshes on every
+  analysis.
+- **Est. sale value** — the single number the collection totals use, derived
+  from the above.
 
-The **Valuation** page rolls the whole collection up — including realized
-value from hats you've sold.
+### How "est. sale value" is worked out
+
+**Neither price feed knows what anything sold for.** eBay's Browse API returns
+items currently for sale, and the melinrecap figure is a median over live
+listings. Both are what sellers are *asking*. So each hat is valued from the
+best signal it has:
+
+1. **Your price** — if you typed a resale price, it's used exactly as given
+   and nothing is applied to it. It's also protected: analysis will never
+   overwrite it. Clear the field to hand the hat back to the live feed.
+2. **Model comps** — the median ask across listings matching that model, cut
+   15% for the gap between asking and selling, then adjusted for condition
+   (new with tags 100% · new 92% · worn 78%) because the listings it came from
+   are a mix of conditions and yours isn't.
+3. **From retail** — no comps, so a share of estimated new retail: new with
+   tags 65% · new 45% · worn 30%.
+4. **Category average** — the weak one. No listings matched the model, so it
+   borrows the median across the whole style category. That's the going rate
+   for a hat of that shape, not a valuation of yours.
+5. **Not valued** — nothing supports a number. These are counted and shown,
+   never quietly totalled as $0.
+
+The Valuation page shows how many hats sit on each basis, so you can see how
+much of the total rests on the weaker ones.
+
+> **If your totals dropped in 2.19.0:** they were overstated before. Asking
+> prices were being summed at face value, and condition was ignored entirely
+> whenever a market price existed — every copy of a model got the same number
+> whether it was tagged or beaten.
+
+The **Valuation** page rolls the whole collection up: what you've paid, retail
+value, estimated sale value, unrealized gain against cost, and realized
+proceeds from hats you've sold. **Stats** (`/stats`) is the full picture —
+charts for condition, style, size, brand, construction, colourway, colour,
+room, case fill, acquisitions and spend over time, plus leaderboards for most
+valuable, most expensive, most worn and best cost-per-wear.
 
 ## 7. Search — finding *the* hat
 

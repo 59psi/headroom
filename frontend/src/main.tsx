@@ -2,6 +2,23 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
+// Fonts first, so `tokens.css` can name them. Variable builds where they
+// exist — one file covers every weight, which matters most for Orbitron and
+// Inter, previously fetched at four and five separate weights. Audiowide has
+// no variable build and is only ever used at 400.
+//
+// `wght.css` rather than `index.css` for the display and mono faces: it drops
+// the italic axis, which neither a heading nor a monospace figure in this app
+// ever uses. Inter keeps its italics — body copy uses <em>.
+//
+// Every family still ships all its unicode subsets, and that is fine: each
+// @font-face carries a `unicode-range`, so a browser rendering Latin text
+// downloads the Latin file and nothing else. The extra subsets cost image
+// size, never bandwidth.
+import '@fontsource/audiowide/latin-400.css';
+import '@fontsource-variable/inter/index.css';
+import '@fontsource-variable/orbitron/wght.css';
+import '@fontsource-variable/jetbrains-mono/wght.css';
 import './styles/tokens.css';
 import './styles/app.css';
 

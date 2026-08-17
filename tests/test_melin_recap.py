@@ -146,3 +146,101 @@ async def test_refresh_skips_non_melin():
     await refresh_melin_resale(hat)
     assert hat.resale_price is None
     assert hat.resale_checked_at is None
+
+
+# ---------------- scope: what the price is a price OF ----------------- #
+#
+# Valuation branches on `resale_price_scope` because the three cases are
+# different measurements, not degrees of confidence in one: a category median
+# is the going rate for a whole style, and treating it as this hat's value gave
+# every hat in a category the same number.
+
+
+async def test_scope_records_model_when_listings_match_the_model(monkeypatch):
+    from headroom.models.hat import Hat
+    from headroom.services.hat_analysis_pipeline import refresh_melin_resale
+
+    _stub_query(monkeypatch, [
+        _listing("A-Game Hydro - Red", 8000),
+        _listing("A-Game Hydro - Grey", 9000),
+        _listing("A-Game Hydro - Navy", 10000),
+    ])
+    hat = Hat(condition="new", size="classic", style="a_game", brand="Melin",
+              model_name="A-Game Hydro")
+    await refresh_melin_resale(hat)
+    assert hat.resale_price_scope == "model"
+
+
+async def test_scope_records_category_when_the_model_sample_is_too_small(monkeypatch):
+    from headroom.models.hat import Hat
+    from headroom.services.hat_analysis_pipeline import refresh_melin_resale
+
+    _stub_query(monkeypatch, [
+        _listing("A-Game Hydro - Red", 8000),
+        _listing("A-Game Scout - Grey", 2000),
+        _listing("A-Game Classic - Navy", 5000),
+    ])
+    hat = Hat(condition="new", size="classic", style="a_game", brand="Melin",
+              model_name="A-Game Hydro")
+    await refresh_melin_resale(hat)
+    assert hat.resale_price_scope == "category"
+    assert "live category listings" in hat.resale_price_source
+
+
+async def test_manual_resale_price_survives_a_refresh(monkeypatch):
+    """A number a person typed outranks a scraped median.
+
+    Reanalysis runs unattended from the bulk queue, so anything it overwrites
+    is gone with no prompt and nothing to restore it from.
+    """
+    from headroom.models.hat import Hat
+    from headroom.services.hat_analysis_pipeline import refresh_melin_resale
+
+    _stub_query(monkeypatch, [
+        _listing("A-Game Hydro - Red", 8000),
+        _listing("A-Game Hydro - Grey", 9000),
+        _listing("A-Game Hydro - Navy", 10000),
+    ])
+    hat = Hat(condition="new", size="classic", style="a_game", brand="Melin",
+              model_name="A-Game Hydro", resale_price=250.0,
+              resale_price_scope="manual")
+    await refresh_melin_resale(hat)
+    assert hat.resale_price == 250.0
+    assert hat.resale_price_scope == "manual"
+
+
+async def test_manual_resale_price_survives_the_pointer_pass():
+    """`_apply_resale_pointer` assigns a None price by construction.
+
+    It ran on every analysis of a Melin hat and relied on the live refresh
+    putting a number back afterwards. When the marketplace API is unreachable
+    it doesn't — so a hand-entered price vanished on any reanalysis that
+    happened to coincide with an outage.
+    """
+    from headroom.models.hat import Hat
+    from headroom.services.hat_analysis_pipeline import _apply_resale_pointer
+
+    hat = Hat(condition="new", size="classic", style="a_game", brand="Melin",
+              resale_price=250.0, resale_price_scope="manual")
+    _apply_resale_pointer(hat)
+    assert hat.resale_price == 250.0
+    # The deep link is still refreshed — it is safe to replace and useful.
+    assert hat.resale_price_url
+
+
+async def test_editing_resale_price_marks_it_manual(client):
+    """The PUT path is the only place a person's own price enters."""
+    created = await client.post("/api/hats", json={
+        "condition": "new", "size": "classic", "style": "a_game",
+    })
+    hat_id = created.json()["id"]
+
+    resp = await client.put(f"/api/hats/{hat_id}", json={"resale_price": 175.0})
+    assert resp.status_code == 200
+    assert resp.json()["resale_price"] == 175.0
+    assert resp.json()["resale_price_scope"] == "manual"
+
+    # Clearing it must drop the marker too, or the hat keeps claiming a manual
+    # price it no longer has and blocks every future refresh.
+    cleared = await client.put(f"/api/hats/{hat_id}", json={"resale_price": None})
+    assert cleared.json()["resale_price_scope"] is None

@@ -156,6 +156,8 @@ async def create_hat(db: AsyncSession, data: HatCreate) -> Hat:
         # that never find each other in search.
         artist_series=await vocabulary.canonicalize(db, Hat.artist_series, data.artist_series),
         model_name=data.model_name or None,
+        purchase_price=data.purchase_price,
+        purchased_at=data.purchased_at,
     )
     # After construction so the derived flags are set from the text, not left
     # at their column defaults.
@@ -266,6 +268,18 @@ async def update_hat(db: AsyncSession, hat_id: int, data: HatUpdate) -> Hat:
         # replaced it.
         if legacy_text is not None or hat.hydro or hat.hydrolite:
             hat.set_construction(legacy_text)
+
+    # A resale price that arrived in a PUT came from a person, and that is the
+    # one thing valuation must not discount or let a later analysis overwrite.
+    # Recorded here rather than in the route because this is the only writer
+    # every client path funnels through.
+    if "resale_price" in update_data:
+        hat.resale_price_scope = (
+            "manual" if update_data["resale_price"] is not None else None
+        )
+        hat.resale_price_source = (
+            "Entered manually" if update_data["resale_price"] is not None else None
+        )
 
     for field, value in update_data.items():
         setattr(hat, field, value)

@@ -85,6 +85,11 @@ export interface HatRead {
   resale_price_source: string | null;
   resale_price_url: string | null;
   resale_checked_at: string | null;
+  /** What `resale_price` is a price OF — see `lib/valuation.ts`.
+   *  "manual" (a person typed it) · "model" (comparable listings for this
+   *  model) · "category" (every listing in the style category — a price level,
+   *  not this hat's value) · null (no price). */
+  resale_price_scope: 'manual' | 'model' | 'category' | null;
   analysis_status: string | null;
   analysis_stage: string | null;
   analysis_job_id: number | null;

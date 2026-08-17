@@ -23,12 +23,12 @@ export function EditHatPage() {
   const options = useHatFormOptions();
 
   const [basics, setBasics] = useState<HatBasics>({
-    style: '', size: '', condition: '', construction: '', artistSeries: '', caseId: '', dateLastWorn: '',
+    style: '', size: '', condition: '', construction: '', artistSeries: '',
+    caseId: '', dateLastWorn: '', purchasePrice: '', purchasedAt: '',
   });
   const [brand, setBrand] = useState('');
   const [modelName, setModelName] = useState('');
   const [colorway, setColorway] = useState('');
-  const [purchasePrice, setPurchasePrice] = useState('');
   const [estimatedPrice, setEstimatedPrice] = useState('');
   const [resalePrice, setResalePrice] = useState('');
   const [designNotes, setDesignNotes] = useState('');
@@ -63,11 +63,14 @@ export function EditHatPage() {
         artistSeries: hat.data.artist_series || '',
         caseId: hat.data.case_id?.toString() || '',
         dateLastWorn: hat.data.date_last_worn || '',
+        purchasePrice: hat.data.purchase_price != null ? String(hat.data.purchase_price) : '',
+        // `<input type="date">` only accepts YYYY-MM-DD; the API sends a full
+        // ISO timestamp, which the control silently rejects and renders blank.
+        purchasedAt: hat.data.purchased_at ? hat.data.purchased_at.slice(0, 10) : '',
       });
       setBrand(hat.data.brand || '');
       setModelName(hat.data.model_name || '');
       setColorway(hat.data.colorway || '');
-      setPurchasePrice(hat.data.purchase_price != null ? String(hat.data.purchase_price) : '');
       setEstimatedPrice(hat.data.estimated_new_price != null ? String(hat.data.estimated_new_price) : '');
       setResalePrice(hat.data.resale_price != null ? String(hat.data.resale_price) : '');
       setDesignNotes(hat.data.design_notes || '');
@@ -91,7 +94,8 @@ export function EditHatPage() {
       data.model_name = modelName || null;
       data.artist_series = basics.artistSeries.trim() || null;
       data.colorway = colorway || null;
-      data.purchase_price = purchasePrice ? Number(purchasePrice) : null;
+      data.purchase_price = basics.purchasePrice ? Number(basics.purchasePrice) : null;
+      data.purchased_at = basics.purchasedAt ? `${basics.purchasedAt}T00:00:00` : null;
       data.design_notes = designNotes || null;
       data.estimated_new_price = estimatedPrice ? Number(estimatedPrice) : null;
       data.resale_price = resalePrice ? Number(resalePrice) : null;
@@ -176,19 +180,22 @@ export function EditHatPage() {
               <div className="form-text small">Suggestions come from the Melin Recap catalog (refresh it in Settings)</div>
             </div>
 
-            <div className="mb-3">
-              <label className="form-label">Purchase price (what you paid)</label>
-              <input type="number" step="0.01" className="form-control" value={purchasePrice} onChange={e => setPurchasePrice(e.target.value)} placeholder="Cost basis" />
-            </div>
-
+            {/* Price paid moved up into HatBasicsCard, where the Add form has
+                it too — two inputs for one column is how they end up
+                disagreeing about which was edited last. */}
             <div className="row g-2 mb-3">
               <div className="col-6">
-                <label className="form-label">Est. New ($)</label>
-                <input type="number" step="0.01" className="form-control" value={estimatedPrice} onChange={e => setEstimatedPrice(e.target.value)} />
+                <label className="form-label" htmlFor="hat-est-new">Est. new retail ($)</label>
+                <input id="hat-est-new" type="number" step="0.01" className="form-control" value={estimatedPrice} onChange={e => setEstimatedPrice(e.target.value)} />
               </div>
               <div className="col-6">
-                <label className="form-label">Resale ($)</label>
-                <input type="number" step="0.01" className="form-control" value={resalePrice} onChange={e => setResalePrice(e.target.value)} />
+                <label className="form-label" htmlFor="hat-resale">Resale ($)</label>
+                <input id="hat-resale" type="number" step="0.01" className="form-control" value={resalePrice} onChange={e => setResalePrice(e.target.value)} />
+                <div className="form-text small">
+                  Setting this marks it as your own price: it's used as-is and
+                  a re-analysis won't overwrite it. Clear it to hand the hat
+                  back to the live market feed.
+                </div>
               </div>
             </div>
 

@@ -54,6 +54,55 @@ async def test_hat_migration_ddl_covers_every_model_column():
     )
 
 
+# The columns in the first `purchases` CREATE TABLE. Anything added later must
+# come from _PURCHASE_COLUMN_DDL, for the same reason as the hats list above:
+# `Base.metadata.create_all` only CREATEs, so it will not add a column to a
+# table an existing install already has.
+_ORIGINAL_PURCHASE_COLUMNS = (
+    "id INTEGER PRIMARY KEY AUTOINCREMENT",
+    "source VARCHAR(20)",
+    "order_ref VARCHAR(80)",
+    "order_date DATETIME",
+    "item_title VARCHAR(200)",
+    "model_name VARCHAR(120)",
+    "colorway VARCHAR(120)",
+    "price FLOAT",
+    "quantity INTEGER",
+    "raw TEXT",
+    "hat_id INTEGER",
+    "created_at DATETIME",
+)
+
+
+async def test_purchase_migration_ddl_covers_every_model_column():
+    """Same invariant as the hats one, and the same failure if it lapses.
+
+    SQLAlchemy SELECTs every mapped column, so one column in the model with no
+    DDL entry means every purchase read raises on an upgraded database — the
+    Settings purchase list and the whole cost-basis matcher, dead, on installs
+    that upgraded rather than on the machine the column was added on.
+    """
+    from headroom.models.catalog import Purchase
+
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(f"CREATE TABLE purchases ({', '.join(_ORIGINAL_PURCHASE_COLUMNS)})")
+            )
+            _run_migrations(conn)
+            migrated = {c["name"] for c in inspect(conn).get_columns("purchases")}
+    finally:
+        engine.dispose()
+
+    missing = set(Purchase.__table__.columns.keys()) - migrated
+    assert not missing, (
+        "Purchase model columns absent from _PURCHASE_COLUMN_DDL — an upgraded "
+        f"database would be missing these and every purchase read would fail: "
+        f"{sorted(missing)}"
+    )
+
+
 async def test_rooms_migration_backfills_exactly_one_default():
     """An upgraded DB must end up with exactly one room flagged is_default.
 

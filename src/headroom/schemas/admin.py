@@ -128,6 +128,7 @@ class PurchaseRead(BaseModel):
     item_title: str
     model_name: str | None = None
     colorway: str | None = None
+    size: str | None = None
     price: float | None = None
     quantity: int | None = None
     hat_id: int | None = None

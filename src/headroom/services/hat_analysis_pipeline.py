@@ -277,10 +277,17 @@ async def refresh_melin_resale(hat: Hat) -> None:
         return
     if not stats:
         return
+    # A person's own number outranks a scraped median, and a re-analysis must
+    # not quietly overwrite it -- reanalyze runs on a schedule and on demand,
+    # so anything it clobbers is gone without a prompt.
+    if hat.resale_price_scope == "manual":
+        return
     hat.resale_price = stats["median"]
-    scope = "model" if stats["sample"] == "model" else "style"
+    scope = "model" if stats["sample"] == "model" else "category"
+    hat.resale_price_scope = scope
+    label = "model" if scope == "model" else "category"
     hat.resale_price_source = (
-        f"Melin Recap · median of {stats['count']} live {scope} listings"
+        f"Melin Recap · median of {stats['count']} live {label} listings"
     )
     hat.resale_checked_at = datetime.now(timezone.utc)
 
@@ -360,9 +367,18 @@ def _apply_resale_pointer(hat: Hat) -> None:
     pointer = build_resale_pointer(hat.brand, hat.style)
     if not pointer:
         return
+    # The deep link is always safe to refresh. The PRICE is not: the pointer's
+    # is None by construction, so assigning it unconditionally erased whatever
+    # was in the column and relied on refresh_melin_resale() putting a number
+    # back. When the marketplace API is unreachable it doesn't, and a price a
+    # person had typed in was gone with nothing logged -- on a path that also
+    # runs unattended from the reanalyze-all queue.
+    hat.resale_price_url = pointer["resale_price_url"]
+    if hat.resale_price_scope == "manual":
+        return
     hat.resale_price = pointer["resale_price"]
     hat.resale_price_source = pointer["resale_price_source"]
-    hat.resale_price_url = pointer["resale_price_url"]
+    hat.resale_price_scope = None
     hat.resale_checked_at = datetime.now(timezone.utc)
 
 

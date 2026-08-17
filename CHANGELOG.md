@@ -6,6 +6,137 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.19.0] — 2026-08-17
+
+### Added
+- **Stats page (`/stats`).** Everything the collection is, as numbers and
+  charts: totals, condition/style/size/brand/construction/colourway splits,
+  colour distribution, hats and value by room, case fill levels, acquisitions
+  and spend over time, and leaderboards for most valuable, most expensive,
+  most worn and best cost-per-wear. Reachable from the home page's stat rail
+  and from Valuation. Charts are hand-rolled SVG/CSS for the same reason this
+  app has no UI framework — a charting library brings its own opinions about
+  colour and type to argue with.
+- **Price-paid tracking end to end.** `purchase_price` and `purchased_at` are
+  now settable when you *add* a hat, not only when editing one — the receipt
+  is in hand at that moment, and it was previously unreachable for anything
+  bought secondhand or in person. Valuation gained a "What you've paid" card
+  with totals, coverage, average, and a list of hats still missing a price.
+- **Home page counts are links.** Hats, Cases and Rooms go to their lists;
+  Archive and Daily deep-link into the Cases page's own type filter. The Cases
+  type filter now lives in the URL (`/cases?type=archive`), the hat filters
+  seed from query params (`/hats?style=a_game`), and Search accepts `?q=` and
+  `?color=` — so the stats charts link straight into a filtered view.
+
+### Changed
+- **The valuation maths, substantially — read this one.** Previous totals were
+  overstated. Both price feeds report *asking* prices — the eBay integration
+  reads currently-listed items and the melinrecap figure is a median of live
+  listings — and both were being summed at face value. Worse, whenever a
+  market price existed, condition was ignored entirely: every copy of a model
+  got the same number whether it was tagged or beaten. Market signals are now
+  discounted 15% for the gap between ask and sale and then adjusted for the
+  hat's actual condition, so headline figures will **drop**. They were wrong
+  before, not now.
+- **The home page caption said something the code no longer did.** It read
+  "Resale = manual override, else condition-based estimate (NWT 65% · New 45%
+  · Worn 30%)" long after `resale_price` had become an automatic feed, so
+  almost nothing was going through the multipliers it named. Valuation now
+  carries a "How the sale estimate is worked out" card that states the method
+  and shows how many hats rest on each kind of signal.
+- **One valuation rule instead of three.** It was implemented separately in
+  the home page, the valuation page and the server's inventory report, and had
+  drifted in all three. It now lives in `frontend/src/lib/valuation.ts`, with
+  `src/headroom/services/valuation.py` mirroring it for the server-rendered
+  report and `tests/test_valuation_parity.py` failing the build if the two
+  ever disagree.
+- **Home page stats are one panel, not five buttons.** Each was a bordered
+  card with a gradient bar — the same recipe this stylesheet uses for a
+  primary button — so they read as buttons containing numbers, left "Rooms"
+  alone on a fifth row at phone width, and took nearly half the first screen.
+- **The home carousel no longer glows.** It carried a pink glow and a pink
+  radial behind the photo, the only lit element on the page; it now uses the
+  same border, surface and shadow as every other card.
+- **Hat page pricing tiles** are two-up rather than three-across (a four-digit
+  price and a source line don't fit in 110px), label the feeds as *asks*
+  rather than "Resale (manual)", show what you paid, and show the estimated
+  sale value with a plain-English note on how it was reached.
+
+### Fixed
+- **The app's own CSP had been blocking its own fonts since 2.12.0.** The
+  security headers set `style-src 'self'` and `font-src 'self'` while
+  `tokens.css` still pulled Audiowide, Orbitron, Inter and JetBrains Mono from
+  Google Fonts, so the entire type system was stripped and everything rendered
+  in system-ui. It stayed invisible because anyone who had used Headroom
+  before 2.12.0 had the fonts cached — only a new device saw it, and there is
+  no visible error, just text of the wrong shape. The fonts are now bundled
+  from `@fontsource*` packages, which also means the design no longer depends
+  on a Google CDN being reachable from your LAN.
+- **A hand-entered resale price no longer survives only by luck.** Every
+  analysis of a Melin hat reset the price to null and relied on the live feed
+  putting a number back; when the marketplace API was unreachable it didn't,
+  and a price you had typed was gone with nothing to recover it from — on a
+  path that also runs unattended from the bulk re-analyse queue. Prices you
+  enter are now marked as yours, used as given, and never overwritten.
+- **Cost per wear used the retail estimate** when no purchase price was
+  recorded, so a hat bought on sale showed a cost per wear it never had. It
+  now appears only when there is a real price to divide.
+- **Unpriced hats are excluded from totals rather than counted as $0**, and
+  the count of them is shown. "Retention %" is computed only across hats
+  present in both totals, instead of dividing two differently-sized
+  populations by each other.
+- The deprecated `apple-mobile-web-app-capable` meta tag warned on every page
+  load; the standard `mobile-web-app-capable` now sits beside it.
+
+### Added — purchase import
+- **Order-history import understands size.** Order emails have always carried
+  it ("Transit / Classic") and the importer dropped it, so matching went on
+  model name alone and bound a purchase to whichever hat came back from the
+  database first. Own the same model in two sizes and a Small could be handed
+  a Classic's price, with nothing downstream looking wrong because both hats
+  ended up with *a* cost basis. Matching now scores candidates — size
+  outranks colourway, a stated field that disagrees rules a hat out, and a
+  genuine tie is reported rather than resolved by coin flip.
+- **A multi-buy line now prices every hat it bought.** "× 2" is two hats and a
+  purchase matches one hat, so one row per line meant the second hat of every
+  multi-buy silently never got a cost basis — nearly 40% of lines in a real
+  order history. Import writes one row per unit, and dedupe counts rows
+  instead of testing existence, so re-importing an order still adds nothing.
+- **`?dry_run=true` on `/api/admin/purchases/{import,match}`** reports exactly
+  what would be imported and which hat each purchase would attach to, writing
+  nothing. Importing mutates hats and there is no undo for "every price on the
+  shelf is now slightly wrong".
+- An explicit `colorway` in the payload now beats one parsed out of the title.
+  Plenty of titles have no `" - "` to split on — "Odysea Hydro Indigo Depth"
+  yields a model and no colourway, which can then disambiguate nothing.
+- **Matching can be undone.** `POST /api/admin/purchases/{id}/unmatch` breaks
+  one link and `POST /api/admin/purchases/unmatch-all` breaks every link,
+  returning those purchases to the matching pool. Previously there was no undo
+  of any kind: matching mutates hats, runs over years of order history in a
+  single call, and only ever reconsiders purchases with no hat — so a wrong
+  link was permanent *and* invisible, because the hat still came out with a
+  price and a colourway, just the wrong ones. Fixing it meant editing the
+  database by hand.
+
+  Reverting clears `purchase_price`, `purchased_at` and `colorway` only where
+  they still hold the value that match wrote. Anything edited since belongs to
+  whoever edited it — a reversal that overwrote a hand-typed price would be a
+  worse bug than the mis-match it was undoing. The purchase rows themselves
+  survive `unmatch-all`: re-importing years of orders is the expensive part,
+  and what was wrong is the matching, not the orders. Both are audited.
+
+### Added (schema)
+- `hats.resale_price_scope` — `manual` | `model` | `category`, recording what
+  `resale_price` is a price *of*. A category median is the going rate for a
+  whole style rather than a valuation of one hat, and valuation needs to tell
+  those apart without parsing a display string.
+- `purchases.size` — the size on the order line, normalised to the app's
+  vocabulary. Also now part of the import dedupe key: one real order bought
+  the same model at the same price in Classic ×2 *and* Small ×1, and a key
+  without size collapsed the Small.
+
+340 backend + 81 frontend tests.
+
 ## [2.18.2] — 2026-08-17
 
 ### Fixed

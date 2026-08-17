@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useSearchParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { getStyles, getSizes, getConditions } from '../../api/hats';
 import { getRoomOptions } from '../../api/rooms';
@@ -35,8 +36,26 @@ const EMPTY: HatFilterState = { style: '', size: '', condition: '', type: '', co
  * the API and gets a pre-filtered list back.
  */
 export function useHatFilters() {
-  const [filters, setFilters] = useState<HatFilterState>(EMPTY);
-  const [isOpen, setIsOpen] = useState(false);
+  // Seeded from the URL so other pages can link INTO a filtered view — the
+  // stats page's "23 A-Game" bar goes to /hats?style=a_game and the list is
+  // already narrowed on arrival. Read once as the initial value rather than
+  // synced continuously: after landing, the selects own the state, and a
+  // two-way binding would fight the user every time they widened a filter the
+  // link had set.
+  const [searchParams] = useSearchParams();
+  const [filters, setFilters] = useState<HatFilterState>(() => {
+    const seeded = { ...EMPTY };
+    for (const key of Object.keys(EMPTY) as Array<keyof HatFilterState>) {
+      const value = searchParams.get(key);
+      if (value) seeded[key] = value;
+    }
+    return seeded;
+  });
+  // Open the bar when a link arrived with filters applied, so the reason the
+  // list is short is on screen instead of hidden behind the toggle.
+  const [isOpen, setIsOpen] = useState(
+    () => Object.keys(EMPTY).some(key => !!searchParams.get(key)),
+  );
 
   const styles = useQuery({ queryKey: ['meta', 'styles'], queryFn: getStyles });
   const sizes = useQuery({ queryKey: ['meta', 'sizes'], queryFn: getSizes });
