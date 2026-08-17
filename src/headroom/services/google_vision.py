@@ -52,8 +52,18 @@ async def detect_brand_logo(
 
     None means "no logo confidently detected" — a normal outcome for plain
     hats, not an error.
+
+    A missing file is also None rather than an exception. This is the fallback
+    path: it exists to salvage something when the primary analyser is
+    unavailable, so it must never be the thing that takes the run down. The
+    photo can genuinely disappear mid-run when a replacement upload deletes it.
     """
-    content = base64.b64encode(image_path.read_bytes()).decode("ascii")
+    try:
+        raw = image_path.read_bytes()
+    except OSError as exc:
+        logger.warning("Vision logo detection skipped, unreadable %s: %s", image_path, exc)
+        return None
+    content = base64.b64encode(raw).decode("ascii")
     payload = {
         "requests": [
             {

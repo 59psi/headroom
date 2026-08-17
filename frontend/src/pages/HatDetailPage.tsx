@@ -1,7 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate, Link } from 'react-router';
-import { getHat, deleteHat, uploadHatPhoto, reanalyzeHat, recutHat, refreshEbayForHat, undisposeHat, updateHatColors } from '../api/hats';
-import { apiFetch } from '../api/client';
+import { getHat, deleteHat, uploadHatPhoto, reanalyzeHat, recutHat, refreshEbayForHat, undisposeHat, updateHatColors, logWear, undoLatestWear } from '../api/hats';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ConditionBadge } from '../components/common/ConditionBadge';
 import { ImageLightbox } from '../components/common/ImageLightbox';
@@ -95,12 +94,12 @@ export function HatDetailPage() {
   });
 
   const wearMut = useMutation({
-    mutationFn: () => apiFetch(`/api/hats/${id}/wear`, { method: 'POST', body: JSON.stringify({}) }),
+    mutationFn: () => logWear(id),
     onSuccess: () => invalidateHatViews(qc, id),
   });
 
   const undoWearMut = useMutation({
-    mutationFn: () => apiFetch(`/api/hats/${id}/wear/latest`, { method: 'DELETE' }),
+    mutationFn: () => undoLatestWear(id),
     onSuccess: () => invalidateHatViews(qc, id),
   });
 
@@ -209,6 +208,19 @@ export function HatDetailPage() {
               <ImageLightbox src={`/uploads/${data.photo_path}`} alt={data.display_id || 'Hat photo'} hat />
               <div className="mt-3 d-flex gap-2 flex-wrap">
                 <PhotoCapture onCapture={handlePhotoUpload} hidePreview />
+                {/* Up here with the other primary actions, not only at the foot
+                    of the page. Correcting a misidentification is the most
+                    common thing you do right after reading one, and the copy of
+                    this button below sits under the colours and disposition
+                    sections — on a phone that is most of a screen of scrolling
+                    away from the wrong answer you are looking at. */}
+                <Link
+                  to={`/hats/${data.id}/edit`}
+                  className="btn btn-outline-secondary"
+                  title="Correct the brand, model, construction, collection or colours"
+                >
+                  ✎ Edit
+                </Link>
                 {data.photo_path && (
                   <button
                     type="button"

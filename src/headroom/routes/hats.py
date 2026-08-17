@@ -1,5 +1,4 @@
 import logging
-import shutil
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,6 +30,7 @@ from headroom.utils.photo import (
     process_image_async,
     validate_image_content_type,
 )
+from headroom.utils.upload import copy_upload_capped
 
 logger = logging.getLogger(__name__)
 
@@ -170,7 +170,7 @@ async def upload_hat_photo(
 
     filename = generate_filename(photo.filename or "photo.jpg")
     with tempfile.NamedTemporaryFile(delete=False, suffix=Path(filename).suffix) as tmp:
-        shutil.copyfileobj(photo.file, tmp)
+        copy_upload_capped(photo, tmp, what="Photo")
         tmp_path = Path(tmp.name)
 
     output_path = upload_dir / filename

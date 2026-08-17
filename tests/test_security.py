@@ -115,3 +115,56 @@ async def test_share_photo_streamer_blocks_path_traversal(client, anon_client, d
     resp = await anon_client.get(f"/api/public/share/{token}/photo/{hat['id']}")
     assert "DO NOT LEAK" not in resp.text, "traversal leaked a file outside uploads"
     assert resp.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_security_headers_are_present_on_every_response(client):
+    """Hardening headers, applied once in middleware rather than per-route."""
+    resp = await client.get("/health")
+
+    csp = resp.headers.get("content-security-policy", "")
+    assert "default-src 'self'" in csp
+    # script-src must NOT allow inline — that is the directive that actually
+    # blocks reflected XSS, and the one an over-broad policy quietly loosens.
+    assert "script-src 'self'" in csp
+    assert "'unsafe-inline'" not in csp.split("script-src")[1].split(";")[0]
+    assert resp.headers.get("x-content-type-options") == "nosniff"
+    assert resp.headers.get("x-frame-options") == "DENY"
+
+
+@pytest.mark.anyio
+async def test_hsts_is_not_set_by_the_app(client):
+    """HSTS from the app would pin a LAN hostname to HTTPS in the browser.
+
+    The primary deployment is plain http:// on a LAN. A single HSTS response
+    would make that hostname HTTPS-only for its max-age and lock the owner out
+    of their own app. Caddy adds it on the internet-facing overlay instead.
+    """
+    resp = await client.get("/health")
+
+    assert "strict-transport-security" not in {k.lower() for k in resp.headers}
+
+
+@pytest.mark.anyio
+async def test_unauthenticated_api_probe_is_logged(anon_client, caplog):
+    """The only unauthenticated way to probe the API used to be silent.
+
+    Login is rate-limited and audited; sweeping tokens at any other endpoint
+    produced no record at all.
+    """
+    with caplog.at_level("WARNING"):
+        resp = await anon_client.get("/api/hats")
+
+    assert resp.status_code == 401
+    assert "Rejected unauthenticated" in caplog.text
+    assert "/api/hats" in caplog.text
+
+
+@pytest.mark.anyio
+async def test_the_401_log_never_contains_the_credential(anon_client, caplog):
+    """Logging a token to diagnose token abuse is its own vulnerability."""
+    secret = "hr_super-secret-token-value"
+    with caplog.at_level("WARNING"):
+        await anon_client.get("/api/hats", headers={"Authorization": f"Bearer {secret}"})
+
+    assert secret not in caplog.text

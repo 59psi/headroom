@@ -29,6 +29,20 @@ services:
       # arg above. Set it here only to force a model that is NOT in the image
       # (the Pi will then download it on first use).
       HEADROOM_CORS_ORIGINS: '["http://localhost:8000"]'
+    # Bound the container so a memory spike fails as a scoped, diagnosable
+    # event instead of competing for the whole machine. The peak here is the
+    # photo pipeline: a ~179MB rembg model resident alongside a full-resolution
+    # Pillow decode. Without a limit, the kernel's OOM killer picks a victim
+    # across the entire Pi — which can be sshd, or the container, killed with
+    # SIGKILL so nothing is logged and `docker inspect` is the only evidence.
+    # With a limit, Docker records OOMKilled=true against THIS container.
+    #
+    # 1G suits a 2GB Pi. Raise it on bigger hardware; a value below ~640M will
+    # kill the analysis worker mid-inference.
+    mem_limit: ${HEADROOM_MEM_LIMIT:-1g}
+    # Equal to mem_limit so the container cannot silently swap itself to a
+    # crawl on an SD card instead of failing honestly.
+    memswap_limit: ${HEADROOM_MEM_LIMIT:-1g}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health/ready', timeout=5).status==200 else 1)"]
       interval: 30s

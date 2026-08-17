@@ -7,7 +7,18 @@ import type { HatRead } from '../../types';
  */
 export const STAGES = ['cutout', 'identifying', 'pricing', 'resale'] as const;
 
-/** Long-form step names — the tooltip, and the screen-reader label. */
+/**
+ * Two lengths on purpose. The short one is rendered beside the counter and is
+ * kept to one word so the badge stays on a single line on a phone; the long one
+ * is the tooltip and the accessible name, where there is room to be clear.
+ */
+const STAGE_SHORT: Record<string, string> = {
+  cutout: 'Cutout',
+  identifying: 'Identifying',
+  pricing: 'Pricing',
+  resale: 'Resale',
+};
+
 const STAGE_LABELS: Record<string, string> = {
   cutout: 'Removing background',
   identifying: 'Identifying the hat',
@@ -18,13 +29,13 @@ const STAGE_LABELS: Record<string, string> = {
 /**
  * The badge on a hat showing where its analysis got to.
  *
- * Pending renders as a bare "2/4" rather than naming the step. The names run to
- * ~22 characters, which wrapped this pill onto a second line on a phone and
- * pushed the badge row down into the photo — and the name changes every few
- * seconds, so the layout moved while you were reading it. A counter is
- * fixed-width, monotonic, and answers the question the badge is actually there
- * to answer: is it moving, and how much is left. The full step name stays in
- * the tooltip and the accessible label.
+ * Pending renders as "2/4 · Identifying": a counter for progress, plus a name
+ * so it still says what is happening. The full phrasing ("Removing
+ * background…") is what wrapped this pill onto a second line on a phone and
+ * pushed the badge row down into the photo, and because the wording changed
+ * every few seconds the layout moved while you were reading it — so the
+ * counter is fixed-width and the name is clipped to one word rather than
+ * dropped. The long phrasing stays in the tooltip and the accessible name.
  */
 export function AnalysisStatus({ hat }: { hat: HatRead }) {
   if (!hat.analysis_status) return null;
@@ -36,13 +47,15 @@ export function AnalysisStatus({ hat }: { hat: HatRead }) {
     // reads as "queued, about to start" rather than as a missing value.
     const step = index >= 0 ? index + 1 : 1;
     const name = (hat.analysis_stage && STAGE_LABELS[hat.analysis_stage]) || 'Analyzing';
+    const short = (hat.analysis_stage && STAGE_SHORT[hat.analysis_stage]) || 'Analyzing';
     return (
       <span
         className="hr-analysis-status pending"
         title={`${name} — step ${step} of ${STAGES.length}`}
         aria-label={`Analyzing: ${name}, step ${step} of ${STAGES.length}`}
       >
-        {step}/{STAGES.length}
+        <span className="hr-analysis-step">{step}/{STAGES.length}</span>
+        {short}
       </span>
     );
   }

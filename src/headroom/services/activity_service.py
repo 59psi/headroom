@@ -49,6 +49,28 @@ async def log_activity(
         logger.warning("activity_log write failed: %s", exc)
 
 
+async def log_and_commit(db: AsyncSession, **kwargs) -> None:
+    """Append an audit row and commit it, without ever failing the caller.
+
+    For the common shape where the domain write has ALREADY been committed and
+    the audit row is a second, separate transaction. `log_activity` never
+    raises, but the commit that follows it does — and this codebase treats
+    SQLite's "database is locked" as an expected condition under worker
+    contention, which is exactly when it would fire. Propagating it turned an
+    already-durable change into a 500, so the client would report failure for a
+    write that succeeded and a person would retry it, duplicating the work.
+
+    An audit row is worth less than a correct response. Losing one is logged
+    loudly; failing the request over it is not an option.
+    """
+    await log_activity(db, **kwargs)
+    try:
+        await db.commit()
+    except Exception as exc:  # noqa: BLE001 — the domain write already landed
+        logger.warning("activity_log commit failed (change itself is saved): %s", exc)
+        await db.rollback()
+
+
 async def list_activity(
     db: AsyncSession,
     limit: int = 100,

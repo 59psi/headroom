@@ -103,6 +103,22 @@ async def test_legacy_flag_clears_only_its_own_construction(client):
     assert cleared["hydro"] is False
 
 
+async def test_a_legacy_flag_cannot_wipe_a_fabric_it_cannot_express(client):
+    """The old vocabulary must not silently overwrite the richer one.
+
+    A hat recorded as "Waxed Canvas" already has both booleans false. A
+    pre-2.11 client sending `hydro: false` is restating a default, not saying
+    anything about the canvas — so treating it as "clear the field" destroyed a
+    value that client had no way of knowing existed. Reachable from the
+    documented iOS Shortcut.
+    """
+    hat = await _add(client, construction="Waxed Canvas")
+
+    after = (await client.put(f"/api/hats/{hat['id']}", json={"hydro": False})).json()
+
+    assert after["construction"] == "Waxed Canvas"
+
+
 async def test_blank_construction_is_not_stated(client):
     """An untouched form field must not look like an answer."""
     hat = await _add(client, construction="   ")

@@ -130,6 +130,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 retention=backup_service.backup_retention(),
             )
         )
+    # Published so the admin API can report whether the scheduler is still
+    # alive. The loop survives its own failures now, but a task can still die
+    # from something outside its except clause, and "backups stopped" must be
+    # answerable without reading logs.
+    app.state.backup_task = backup_task
 
     # Bulk-import worker — single async task, drains the import queue.
     if env_flag("HEADROOM_IMPORT_WORKER_ENABLED"):
@@ -162,15 +167,27 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Activity-log retention pruner — runs once per day in the background
     async def _prune_loop():
+        """Daily retention sweep: activity log, then expired auth sessions.
+
+        Prunes FIRST and sleeps after. Sleeping first meant a host that reboots
+        more often than once a day — a Pi on a timer switch, or anything
+        following a `docker compose up -d --build` habit — never reached the
+        prune at all, so both tables grew without bound while a task sat there
+        looking like it was handling it.
+        """
         while True:
             try:
-                await asyncio.sleep(24 * 3600)
                 async with async_session() as db:
                     await activity_service.prune_activity(db)
+                    await auth_service.prune_expired_sessions(db)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001
-                logger.warning("activity_log prune loop error: %s", exc)
+                logger.warning("retention prune loop error: %s", exc)
+            try:
+                await asyncio.sleep(24 * 3600)
+            except asyncio.CancelledError:
+                raise
 
     prune_task = asyncio.create_task(_prune_loop())
 
@@ -224,7 +241,7 @@ def _safe_spa_path(full_path: str) -> Path | None:
 
 
 def create_app() -> FastAPI:
-    from headroom.auth import AuthGateMiddleware
+    from headroom.auth import AuthGateMiddleware, SecurityHeadersMiddleware
 
     app = FastAPI(title="Headroom", lifespan=lifespan)
 
@@ -232,6 +249,7 @@ def create_app() -> FastAPI:
     # their own in-memory database.
     app.state.session_factory = async_session
 
+    app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(AuthGateMiddleware)
     app.add_middleware(
         CORSMiddleware,

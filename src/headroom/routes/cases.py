@@ -1,4 +1,3 @@
-import shutil
 import tempfile
 from pathlib import Path
 
@@ -14,6 +13,7 @@ from headroom.utils.photo import (
     process_image_async,
     validate_image_content_type,
 )
+from headroom.utils.upload import copy_upload_capped
 
 router = APIRouter(prefix="/api/cases", tags=["cases"])
 
@@ -105,7 +105,7 @@ async def upload_case_photo(
 
     filename = generate_filename(photo.filename or "photo.jpg")
     with tempfile.NamedTemporaryFile(delete=False, suffix=Path(filename).suffix) as tmp:
-        shutil.copyfileobj(photo.file, tmp)
+        copy_upload_capped(photo, tmp, what="Photo")
         tmp_path = Path(tmp.name)
 
     output_path = upload_dir / filename

@@ -12,6 +12,7 @@ process, so no shared store is needed.
 from __future__ import annotations
 
 import asyncio
+import logging
 import secrets
 import time
 from datetime import datetime, timedelta, timezone
@@ -22,6 +23,8 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.models.user import AuthSession, User
+
+logger = logging.getLogger(__name__)
 
 SESSION_COOKIE = "headroom_session"
 SESSION_TTL_DAYS = 30
@@ -173,3 +176,23 @@ async def destroy_other_sessions(db: AsyncSession, user_id: int, keep: str | Non
         stmt = stmt.where(AuthSession.id != keep)
     await db.execute(stmt)
     await db.commit()
+
+
+async def prune_expired_sessions(db: AsyncSession) -> int:
+    """Delete auth_sessions whose expiry has passed. Returns rows removed.
+
+    Expiry was previously enforced only lazily, when that exact cookie was
+    presented again — so a session abandoned by closing a browser, clearing
+    cookies, or replacing a phone was never collected at all. Nothing ever
+    revisits those rows, so the table only grew. They are also credentials:
+    keeping expired ones is keeping authentication material that no longer has
+    any purpose.
+    """
+    result = await db.execute(
+        delete(AuthSession).where(AuthSession.expires_at < datetime.now(timezone.utc))
+    )
+    await db.commit()
+    removed = result.rowcount or 0
+    if removed:
+        logger.info("Pruned %d expired auth session(s)", removed)
+    return removed

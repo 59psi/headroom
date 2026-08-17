@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.models.catalog import ColorwayEntry, Purchase
 from headroom.models.hat import Hat
-from headroom.services.melin_recap import _STYLE_TO_CATEGORY, _query_listings
+from headroom.services.melin_recap import STYLE_TO_CATEGORY, query_listings
 
 logger = logging.getLogger(__name__)
 
@@ -50,9 +50,9 @@ async def harvest_catalog(db: AsyncSession) -> dict:
     seen_titles = 0
     new_entries = 0
 
-    for category in _STYLE_TO_CATEGORY.values():
+    for category in STYLE_TO_CATEGORY.values():
         for page in range(1, _MAX_PAGES_PER_CATEGORY + 1):
-            listings = await _query_listings(
+            listings = await query_listings(
                 {
                     "pub_category": category,
                     "per_page": _PER_PAGE,

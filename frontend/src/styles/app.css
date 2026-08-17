@@ -1348,3 +1348,63 @@ button.card:hover::before,
   .row-cols-lg-3 > * { flex: 0 0 33.333%; max-width: 33.333%; }
   .row-cols-lg-4 > * { flex: 0 0 25%; max-width: 25%; }
 }
+
+/* --- Combobox: a text field with a visible list of known values ------------
+   Replaces a native <datalist>, which on iOS renders as a thin strip above the
+   keyboard that is easy to miss entirely — a field with ten known values read
+   as a blank text box. These options are real tap targets. */
+.hr-combobox {
+  position: relative;
+}
+
+.hr-combobox-list {
+  position: absolute;
+  z-index: 30;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin: 0.25rem 0 0;
+  padding: 0.25rem;
+  list-style: none;
+  max-height: 15rem;
+  overflow-y: auto;
+  background: var(--surface-raised, #16121f);
+  border: 1px solid rgba(0, 240, 255, 0.35);
+  border-radius: var(--radius-md, 10px);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+}
+
+.hr-combobox-option {
+  display: block;
+  width: 100%;
+  /* 44px tap target — the phone is the primary interface here. */
+  min-height: 44px;
+  padding: 0.6rem 0.75rem;
+  border: 0;
+  border-radius: var(--radius-sm, 8px);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hr-combobox-option:hover,
+.hr-combobox-option.is-active {
+  background: rgba(0, 240, 255, 0.14);
+  color: var(--neon-cyan);
+}
+
+.hr-combobox-option.is-selected {
+  color: var(--neon-cyan);
+  font-weight: 600;
+}
+
+/* The step counter inside the analysis badge. Tabular figures and a fixed
+   min-width so "1/4" and "4/4" occupy the same space and the badge doesn't
+   twitch as the run advances. */
+.hr-analysis-step {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+  opacity: 0.85;
+}

@@ -58,7 +58,7 @@ def _stub_query(monkeypatch, listings):
         return listings
 
     monkeypatch.setattr(
-        "headroom.services.melin_recap._query_listings", _fake_query
+        "headroom.services.melin_recap.query_listings", _fake_query
     )
     return captured
 

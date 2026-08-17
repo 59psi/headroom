@@ -21,7 +21,7 @@ async def test_parse_listing_title_variants():
 
 
 def _pages(monkeypatch, pages_by_category):
-    """Stub _query_listings: serve canned title pages per category."""
+    """Stub query_listings: serve canned title pages per category."""
     async def _fake(params):
         cat = params["pub_category"]
         page = params.get("page", 1)
@@ -30,7 +30,7 @@ def _pages(monkeypatch, pages_by_category):
         chunk = titles[(page - 1) * per : page * per]
         return [{"attributes": {"title": t}} for t in chunk]
 
-    monkeypatch.setattr("headroom.services.catalog_service._query_listings", _fake)
+    monkeypatch.setattr("headroom.services.catalog_service.query_listings", _fake)
 
 
 async def test_harvest_upserts_and_counts(client, db_session, monkeypatch):

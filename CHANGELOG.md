@@ -6,6 +6,128 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.12.0] — 2026-08-17 — _the owner wins_
+
+A full-repo archaeology pass produced ~45 findings; this is all of them, plus
+the two things 2.11.0 got wrong in front of the owner.
+
+### Fixed — the crash
+
+Three independent analyses converged on why the container died mid-upload, and
+every structural precondition was confirmed in code:
+
+- **The single-hat photo upload had no size cap at all** — bulk import caps at
+  20 MB/file, the route you actually use capped nothing, and Pillow decodes at
+  native resolution before the resize. Now capped, streaming, along with the
+  case-photo and logo routes. One definition in `utils/upload.py`, used by all
+  four.
+- **No compose file set a memory limit**, so a spike competed for the whole Pi
+  and the kernel picked a victim — possibly sshd — with `SIGKILL`, which logs
+  nothing. `mem_limit`/`memswap_limit` default to 1g (`HEADROOM_MEM_LIMIT`), so
+  a recurrence is a scoped, diagnosable `OOMKilled=true` against this container.
+- **rembg ran unbounded across both workers.** The lock was removed for
+  throughput; with only two single-consumer producers that bought a factor of
+  two and cost double the peak memory, for the largest allocation the process
+  makes. Now a semaphore, default one (`HEADROOM_REMBG_CONCURRENCY`).
+- **On-demand backup download buffered the entire tarball in RAM** — the whole
+  database plus every photo — and called itself streaming. Now spooled to disk
+  and streamed in 1 MB chunks.
+
+### Fixed — the backup scheduler
+
+**It could die once and stay dead for the life of the process.** The startup
+age-check ran above its own `try`, and only `CancelledError` was caught inside
+it — so one unwritable `/data` at boot, or a single transient
+`database is locked`, ended automated backups with no warning while the UI kept
+listing the last successful one. The loop now survives everything short of
+cancellation, and `GET /api/admin/backups/health` reports last attempt, last
+success, consecutive failures and whether the task is still alive — the file
+list cannot answer that, since a scheduler dead for weeks and one that ran
+minutes ago produce an identical inventory.
+
+A backup that fell back to the raw-file copy (possibly torn) was
+byte-indistinguishable from a clean snapshot; it now carries a
+`DEGRADED-BACKUP-README.txt` inside the archive, because a file travels with
+the backup and a log line does not.
+
+### Changed — analysis no longer overrides you
+
+**Claude only fills a construction that is empty.** 2.11.0 let a named fabric
+overwrite what was on record. In practice it reads HYDRO vs HYDROLite off one
+photo unreliably — the tells are bonded seams, a gel-welded logo and a
+sweatband, none of which survive a front-on shot — so "correcting" meant
+replacing a right answer from the person holding the hat with a wrong one from
+a picture. Clearing the field makes it eligible again.
+
+`scripts/restore-construction.py` restores values from a backup for hats
+already overwritten. Hat edits now record their **previous values** in the
+activity log, so this class of change is reversible from history rather than
+only from a backup.
+
+### Fixed — 2.11.0 regressions
+
+- **Construction is a real autocomplete**, not a bare `<datalist>` — iOS
+  renders those as a thin strip above the keyboard that is easy to miss, so ten
+  known values read as a blank text box. Known builds are now visible, tappable
+  rows that filter as you type, and anything typed is still accepted.
+- **The analysis badge shows the step name again**, alongside the counter:
+  `2/4 · Identifying`, one word so it still fits a phone.
+- **Edit is in the top action row** on a hat, not only at the foot of the page
+  below the colours and disposition sections.
+- A legacy client sending `hydro: false` no longer wipes a construction the
+  booleans cannot express (a "Waxed Canvas" hat has both flags false already).
+
+### Fixed — correctness
+
+- A photo replaced mid-analysis raised an uncaught `FileNotFoundError` past the
+  pipeline's error handling; the queue then stamped the hat `error` and the
+  correctly-queued run for the NEW photo found a non-pending status and
+  silently did nothing. The correction was dropped permanently. Same shape in
+  `google_vision.py`.
+- A per-case capacity of exactly `0` fell through to the type default via
+  truthiness, letting four hats into a case set to hold none.
+- `undispose_hat` restored a hat into a case that may have been deleted.
+- `reattach_orphaned_cases` now calls `ensure_default_room` itself rather than
+  depending on boot ordering — with no default room its subquery returns NULL
+  and it would set every orphan's `room_id` to NULL, making permanent the exact
+  state it repairs.
+- The activity-log prune slept 24h **before** its first run, so a host that
+  reboots daily never pruned at all. It now prunes first, and also sweeps
+  expired auth sessions — which were only ever collected lazily, when that
+  exact cookie was presented again, so abandoned ones accumulated forever.
+- `hat_service`'s six mutating functions committed twice with no shared
+  transaction, so a lock timeout on the audit write turned an already-durable
+  change into a 500 and invited a duplicate retry.
+- Bulk import queued with no worker running now says so instead of sitting at
+  0%.
+
+### Added — security & audit
+
+- CSP, `X-Frame-Options`, `X-Content-Type-Options` and `Referrer-Policy` on
+  every response. No HSTS from the app deliberately: the primary deployment is
+  `http://` on a LAN, and one HSTS response would pin that hostname to HTTPS in
+  the browser and lock the owner out.
+- Unauthenticated API probes are logged (login was rate-limited and audited;
+  every other endpoint was silent). Never with the credential.
+- Case and room mutations are audited — previously only hats, auth, settings,
+  backups and share links were.
+
+### Fixed — documentation and naming
+
+- `HatAnalysis.construction` still described the pre-2.11 three-value enum,
+  100 lines below the schema that contradicts it.
+- `package.json` declared `engines.node >=22.12`, the exact floor `setup.sh`'s
+  own comments call insufficient; react-router 8 needs `>=22.22`.
+- `CLAUDE.md`'s search field list and `USAGE.md`'s status-pill table were both
+  behind the code.
+- `melin_recap`'s `_STYLE_TO_CATEGORY` / `_query_listings` are public — a
+  second module already depended on them, so the underscore was a lie.
+- The two `apiFetch` calls bypassing `api/hats.ts` now go through it.
+- `uploads/branding/logo.png` was git-tracked inside an otherwise-ignored tree,
+  byte-identical to `seed/branding/logo.png`.
+
+272 backend + 61 frontend tests.
+
 ## [2.11.0] — 2026-08-17 — _what the tag says_
 
 ### Added

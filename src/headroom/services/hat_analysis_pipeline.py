@@ -367,25 +367,26 @@ _NON_ANSWERS = frozenset({"standard", "none", "n/a", "na", "unknown", "regular"}
 
 
 def _apply_construction(hat: Hat, construction: str | None) -> None:
-    """Let a real answer from Claude correct the construction on record.
+    """Fill in the construction only when nobody has stated one.
 
-    Corrective rather than additive since 2.11. It used to only ever turn a
-    boolean ON, because with two flags and no way to say "standard", clearing
-    on a non-answer would silently un-tick a box the owner set while holding
-    the hat. Free-form text removes that trap: "Thermal" is a positive
-    identification, not the absence of one, so it should win — the owner asked
-    for exactly this when they said Claude should be able to correct what they
-    typed.
+    Claude never overwrites a construction that is already recorded. It was
+    briefly allowed to — the idea being that naming a fabric is a positive
+    identification and should correct a stale value — but in practice it reads
+    HYDRO and HYDROLite off a photo unreliably (the distinguishing features are
+    bonded seams, a gel-welded logo and a sweatband, none of which survive a
+    single front-on shot), so "correcting" mostly meant replacing a right answer
+    from the person holding the hat with a wrong one from a photo.
 
-    A null still changes nothing. Claude cannot see bonded seams or a
-    gel-welded logo in every photo, so silence stays absence of evidence.
+    The owner always wins. Clearing the field makes it eligible again, which is
+    the deliberate way to ask for a re-identification.
 
     `_NON_ANSWERS` exists because the old tool schema was an enum whose "I
     can't tell" member was the literal string "standard". A model still
     answering that way — a cached prompt, a fine-tune, a future edit that
-    reinstates it — must not get "standard" written down as if it were a fabric,
-    which would both read as nonsense and clear the flags.
+    reinstates it — must not get "standard" written down as if it were a fabric.
     """
+    if hat.construction:
+        return
     if construction and construction.strip().casefold() not in _NON_ANSWERS:
         hat.set_construction(construction)
 

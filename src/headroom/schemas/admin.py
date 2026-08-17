@@ -23,6 +23,21 @@ class BackupInfo(BaseModel):
     created_at: datetime
 
 
+class BackupHealthRead(BaseModel):
+    """Whether the scheduler is working — which the file list cannot answer.
+
+    A scheduler that died weeks ago and one that ran minutes ago produce an
+    identical inventory; the newest file is the last success in both cases.
+    """
+
+    enabled: bool
+    running: bool
+    last_attempt_at: datetime | None = None
+    last_success_at: datetime | None = None
+    last_error: str | None = None
+    consecutive_failures: int = 0
+
+
 class ActivityRow(BaseModel):
     id: int
     occurred_at: datetime

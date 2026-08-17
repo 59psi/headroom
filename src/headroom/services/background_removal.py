@@ -13,11 +13,22 @@ Set `HEADROOM_REMBG_MODEL` to go back ('u2netp', 'silueta') or heavier
 ('birefnet-general'); the Docker image pre-caches whatever `REMBG_MODEL` names.
 
 Concurrency: rembg sessions wrap an `onnxruntime.InferenceSession`, which is
-thread-safe for `Run()` calls when invoked through `asyncio.to_thread`. We
-intentionally do NOT serialize calls behind a process-global lock — that would
-defeat the entire reason to offload to a thread. The previous implementation
-held an `asyncio.Lock` here, which made all uploads queue one-at-a-time even
-when multiple worker threads were available.
+thread-safe for `Run()` calls when invoked through `asyncio.to_thread`. Calls
+are nonetheless bounded by a semaphore, default ONE at a time.
+
+An earlier version held an `asyncio.Lock` here; it was removed on the grounds
+that serializing "defeats the entire reason to offload to a thread". That
+argument weighed throughput and omitted memory, and it also mis-stated the
+topology: there are exactly two producers in this app — `analysis_queue` and
+`import_service` — and each is a single-consumer worker, so dropping the lock
+bought a factor of at most TWO. What it cost was a doubling of peak memory, on
+a Raspberry Pi, for the largest allocation the process makes (a ~179 MB model
+plus a full-resolution decode). Nothing waits on this work — it moved off the
+request path precisely so latency stopped mattering — so trading that
+throughput back for a bounded footprint is the right way round.
+
+`HEADROOM_REMBG_CONCURRENCY` raises the bound for anyone running this on real
+hardware.
 """
 
 from __future__ import annotations
@@ -29,6 +40,8 @@ from pathlib import Path
 
 from PIL import Image
 
+from headroom.config import env_int
+
 logger = logging.getLogger(__name__)
 
 _MODEL_NAME = os.environ.get("HEADROOM_REMBG_MODEL", "isnet-general-use")
@@ -36,6 +49,23 @@ _session = None
 # Single-shot lock used ONLY around lazy session creation, not around inference.
 # The session itself is reentrant once initialised.
 _init_lock = asyncio.Lock()
+
+# How many inferences may be in flight at once, across ALL callers. Created
+# lazily because a module-level Semaphore binds to whichever event loop happens
+# to be running at import time, which is not the app's loop under pytest.
+_inference_sem: asyncio.Semaphore | None = None
+
+
+def _concurrency() -> int:
+    """Bound on concurrent inferences. Read per-call so tests can vary it."""
+    return max(1, env_int("HEADROOM_REMBG_CONCURRENCY", 1))
+
+
+def _get_inference_sem() -> asyncio.Semaphore:
+    global _inference_sem
+    if _inference_sem is None:
+        _inference_sem = asyncio.Semaphore(_concurrency())
+    return _inference_sem
 
 
 def _get_session():
@@ -107,8 +137,10 @@ async def remove_background(input_path: Path, output_path: Path) -> Path | None:
     """Run rembg in a worker thread; return new path or None on failure.
 
     First call serializes briefly while the ONNX session loads (under
-    `_init_lock`). Subsequent calls run concurrently across whatever worker
-    threads asyncio's default executor provides.
+    `_init_lock`). Inference then runs under `_get_inference_sem()`, which
+    bounds how many of these can be resident at once across every caller —
+    both background workers reach this function, and nothing else stops them
+    arriving together.
     """
     try:
         # Init the session under a lock to avoid two concurrent first-callers
@@ -117,7 +149,8 @@ async def remove_background(input_path: Path, output_path: Path) -> Path | None:
             async with _init_lock:
                 if _session is None:
                     await asyncio.to_thread(_get_session)
-        return await asyncio.to_thread(_remove_sync, input_path, output_path)
+        async with _get_inference_sem():
+            return await asyncio.to_thread(_remove_sync, input_path, output_path)
     except Exception as exc:  # noqa: BLE001 — surface to caller, never crash upload
         logger.warning("Background removal failed for %s: %s", input_path, exc)
         return None

@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getStyles, getSizes, getConditions, getConstructions } from '../../api/hats';
 import { listCases } from '../../api/cases';
 import { PhotoCapture } from '../photos/PhotoCapture';
+import { Combobox } from '../common/Combobox';
 
 /** The fields the Add and Edit hat forms share verbatim. */
 export interface HatBasics {
@@ -10,8 +11,8 @@ export interface HatBasics {
   size: string;
   condition: string;
   /**
-   * Free-form construction ('' = not stated), orthogonal to style so any model
-   * can be any of them. Structured suggestions come from
+   * Construction ('' = not stated), orthogonal to style so any model can be
+   * any of them. Known builds are offered as autocomplete options from
    * `GET /api/meta/constructions`; anything else typed is stored verbatim.
    */
   construction: string;
@@ -56,8 +57,9 @@ export function useHatFormOptions() {
 
   return {
     styles, sizes, conditions, constructions, cases,
-    // `constructions` is deliberately absent: it only populates a datalist, so
-    // a slow or failed fetch costs suggestions, not the ability to type one.
+    // `constructions` is deliberately absent from `isLoading`: it only fills
+    // the suggestion list, so a slow or failed fetch costs autocomplete, not
+    // the ability to type a value.
     isLoading: styles.isLoading || sizes.isLoading || conditions.isLoading,
   };
 }
@@ -160,32 +162,27 @@ export function HatBasicsCard({
             offers ACROSS models, so a hat is "a Coronado, in HYDROLite", never
             "a HYDROLite instead of a Coronado".
 
-            A datalist and not a <select>: melin ships specialty fabrics in
+            A combobox and not a <select>: melin ships specialty fabrics in
             seasonal and collab drops, so any closed list is wrong by next
-            season. This offers the common answers as one tap while still
-            accepting whatever the tag in your hand actually says. The options
+            season. The known builds are visible, tappable rows that filter as
+            you type, and anything else you type is still accepted. The options
             come from the server, which merges the curated list with every
-            value already in use — so a fabric typed once is a suggestion
-            after that, and the free-form half doesn't fill up with five
-            spellings of the same material. */}
+            value already in use — so a fabric typed once is a suggestion after
+            that, and the free-form half doesn't fill up with five spellings of
+            the same material. */}
         <div className="mb-3">
-          <label className="form-label" htmlFor="hat-construction">Construction</label>
-          <input
+          <Combobox
             id="hat-construction"
-            list="hat-construction-options"
-            aria-label="Construction"
-            className="form-control"
-            placeholder="HYDRO, HYDROLite, Thermal…"
+            label="Construction"
             value={values.construction}
-            onChange={e => onChange('construction', e.target.value)}
+            onChange={v => onChange('construction', v)}
+            options={options.constructions.data ?? []}
+            placeholder="HYDRO, HYDROLite, Thermal…"
+            help={
+              <>Tap a known build or type the fabric. Leave blank if it's a
+              standard one — analysis fills it in when it can identify the hat.</>
+            }
           />
-          <datalist id="hat-construction-options">
-            {options.constructions.data?.map(c => <option key={c} value={c} />)}
-          </datalist>
-          <div className="form-text">
-            Pick one or type the fabric. Leave blank if it's a standard build —
-            analysis will fill it in if it can identify the hat.
-          </div>
         </div>
 
         {/* Editable at ADD time, not only on the Edit form. A collection or
