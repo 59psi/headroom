@@ -26,7 +26,27 @@ All notable changes are documented here. This project follows
   every normal shelf as a mistake is the fastest way to make a report like this
   get ignored. Reports only: nothing is deleted or merged.
 
+- **The three most recently created cases are pinned to the top** of the case
+  picker. A hat you're adding now usually belongs in a case you made minutes
+  ago, and hunting for it inside a room group is the long way round. Hidden
+  once you start typing — at that point you've said what you want, and a
+  pinned block is noise in front of the answer.
+
+- **Cases show a collage of the hats inside**, not a photo of the case. Every
+  case looks identical from the outside, so that picture carried no
+  information at the moment you were scanning for one. The layout follows the
+  count — one hat fills the tile, three put the first across the top — rather
+  than letterboxing a single hat into a quarter of a forced 2x2.
+
 ### Fixed
+- **Dropdown lists were being clipped by the card they sat in.** `.card` sets
+  `overflow: hidden`, so options past its edge were cut off mid-row and the
+  ones below unreachable — no z-index could fix that, because the pixels were
+  never drawn. The lists now render into `<body>` via the existing
+  `portalToBody`, whose own docstring names this trap, positioned against their
+  input. That also clears the two other ancestor traps: `.card-body`'s stacking
+  context and the card hover `transform`.
+
 - **The bottom nav no longer jumps to the middle of the screen.** iOS positions
   `fixed` elements against the *visual* viewport, so the nav is lifted with the
   keyboard and lands on top of whatever you're typing into. 2.14.0 hid it while
