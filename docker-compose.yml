@@ -5,8 +5,15 @@ services:
       dockerfile: Dockerfile
       args:
         # Stamp the footer with a build id:
+        #   ./scripts/stamp-build.sh   # writes it to .env, once, then forget it
+        # or inline:
         #   HEADROOM_BUILD_SHA=$(git rev-parse --short HEAD) docker compose up --build -d
-        HEADROOM_BUILD_SHA: ${HEADROOM_BUILD_SHA:-}
+        #
+        # BUILD_SHA is accepted as a fallback because it is the name people
+        # reach for, and a build arg that silently stays empty when you set the
+        # wrong one is a bad way to find that out — the footer just never
+        # appears, with nothing to indicate why.
+        HEADROOM_BUILD_SHA: ${HEADROOM_BUILD_SHA:-${BUILD_SHA:-}}
         # Which rembg model gets pre-downloaded INTO the image and used at
         # runtime. Change it at build time so the weights are baked in:
         #   REMBG_MODEL=u2netp docker compose up -d --build

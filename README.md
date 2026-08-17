@@ -114,6 +114,16 @@ Pick how you want to reach it — every Docker mode is the base compose file plu
 | **Bare metal** (no Docker) | `./scripts/setup.sh --no-docker` → uvicorn | `http://localhost:8000` | ✅ on `localhost` |
 | **Dev** (hot reload) | uvicorn `--reload` + `npm run dev` | `http://localhost:5173` | — |
 
+> Whichever front door you pick, **upgrade with the same `-f` flags**. Compose
+> applies only the files you name, so a bare `docker compose up -d --build` on
+> an overlay host is a switch back to the base config, not an upgrade — the
+> sidecar stops and the app returns to `:8000`.
+>
+> Run `./scripts/stamp-build.sh --install-hooks` once and the footer will show
+> the running commit (`v2.18.0 · build a1b2c3d`) after every pull. Details in
+> [OPERATIONS.md §5](docs/OPERATIONS.md#5-upgrades).
+
+
 Passkeys/Face ID need a **secure context** — HTTPS or `localhost` — so the
 plain-HTTP LAN modes are password-login only. The LAN overlays use host
 networking (Linux/Pi only); details for each mode follow.

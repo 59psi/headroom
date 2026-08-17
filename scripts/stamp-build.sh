@@ -17,6 +17,23 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# --install-hooks: wire this into git so a pull refreshes the stamp on its own.
+# Lives here rather than in setup.sh so a running deployment can get it without
+# re-running a script that installs Docker, Node and the Python toolchain.
+if [ "${1:-}" = "--install-hooks" ]; then
+  hooks="$(git rev-parse --git-path hooks 2>/dev/null || echo .git/hooks)"
+  mkdir -p "$hooks"
+  for hook in post-merge post-checkout post-rewrite; do
+    if [ -e "$hooks/$hook" ] && ! grep -q 'stamp-build.sh' "$hooks/$hook" 2>/dev/null; then
+      echo "stamp-build: leaving your existing $hook hook alone" >&2
+      continue
+    fi
+    printf '#!/bin/sh\n# Refresh HEADROOM_BUILD_SHA in .env so the footer shows this commit.\nexec "$(git rev-parse --show-toplevel)/scripts/stamp-build.sh" >/dev/null 2>&1 || true\n' > "$hooks/$hook"
+    chmod +x "$hooks/$hook"
+  done
+  echo "stamp-build: hooks installed — a pull now keeps the stamp current"
+fi
+
 if ! sha=$(git rev-parse --short HEAD 2>/dev/null); then
   echo "stamp-build: not a git checkout — leaving .env alone" >&2
   exit 0
