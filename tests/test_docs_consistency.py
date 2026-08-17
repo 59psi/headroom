@@ -55,3 +55,29 @@ async def test_settings_ui_offers_the_default_model_as_a_choice():
         f"'{settings.anthropic_model}' is the default but isn't in the picker's "
         f"model list: {sorted(ids)}"
     )
+
+
+async def test_pricing_prompt_keeps_its_anchors():
+    """The price prompt must stay anchored on real numbers.
+
+    Without anchors Claude priced melin hats at roughly half of actual — an
+    unanchored "use your knowledge of typical pricing tiers" is exactly the
+    wording that produced it. This does not check that the prices are still
+    *current* (a test cannot know that), only that the anchors are still there
+    and that HYDROLite is still described as the premium tier — the one place
+    where a flag the app already tracks should push the estimate up.
+    """
+    from headroom.services.claude_analysis import SYSTEM_PROMPT
+
+    assert "PRICING" in SYSTEM_PROMPT
+    for anchor in ("$69", "$79", "$89", "$99"):
+        assert anchor in SYSTEM_PROMPT, f"lost the {anchor} price anchor"
+
+    # Construction, not model line, is what moves the price.
+    assert "HYDROLite" in SYSTEM_PROMPT
+    assert "ABOVE a plain HYDRO" in SYSTEM_PROMPT, (
+        "HYDROLite must still be described as pricier than HYDRO — the hydrolite"
+        " flag is otherwise a signal the estimate ignores"
+    )
+    # The exact phrasing that caused the underestimate must not come back.
+    assert "using your knowledge of\n     the brand's typical pricing tiers" not in SYSTEM_PROMPT

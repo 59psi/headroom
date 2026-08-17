@@ -12,11 +12,24 @@ import type { HatRead } from '../types';
 import { useState } from 'react';
 import { invalidateHatViews } from '../lib/invalidate';
 
+/**
+ * What each pipeline step is called in the UI. The keys are the values
+ * `hat_analysis_pipeline` publishes; anything unrecognised falls back to the
+ * generic label rather than showing a raw enum.
+ */
+const STAGE_LABELS: Record<string, string> = {
+  cutout: 'Removing background…',
+  identifying: 'Identifying the hat…',
+  pricing: 'Checking prices…',
+  resale: 'Checking resale…',
+};
+
 function AnalysisStatus({ hat }: { hat: HatRead }) {
   if (!hat.analysis_status) return null;
   const status = hat.analysis_status;
   const label =
-    status === 'pending' ? 'Analyzing…'
+    status === 'pending'
+      ? (hat.analysis_stage && STAGE_LABELS[hat.analysis_stage]) || 'Analyzing…'
     : status === 'ok' ? 'Analyzed'
     : status === 'skipped' ? 'No API key'
     : status === 'fallback' ? 'Basic ID (fallback)'

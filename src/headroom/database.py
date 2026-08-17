@@ -56,6 +56,7 @@ _HAT_COLUMN_DDL: dict[str, str] = {
     "resale_price_url": "ALTER TABLE hats ADD COLUMN resale_price_url VARCHAR(500)",
     "resale_checked_at": "ALTER TABLE hats ADD COLUMN resale_checked_at DATETIME",
     "analysis_status": "ALTER TABLE hats ADD COLUMN analysis_status VARCHAR(20)",
+    "analysis_stage": "ALTER TABLE hats ADD COLUMN analysis_stage VARCHAR(20)",
     "analysis_error": "ALTER TABLE hats ADD COLUMN analysis_error TEXT",
     "analyzed_at": "ALTER TABLE hats ADD COLUMN analyzed_at DATETIME",
     # v0.3 — disposition (sold/gifted/lost/trashed/trade)

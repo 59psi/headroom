@@ -23,9 +23,11 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.config import settings
+from headroom.database import async_session
 from headroom.models.hat import Hat
 from headroom.models.hat_color import HatColor
 from headroom.services import settings_service
@@ -46,6 +48,44 @@ from headroom.services.melin_recap import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# The steps a person can be told about, in the order they run. Kept as constants
+# so the UI's labels and the writer can't drift apart.
+STAGE_CUTOUT = "cutout"
+STAGE_IDENTIFYING = "identifying"
+STAGE_PRICING = "pricing"
+STAGE_RESALE = "resale"
+
+
+async def _publish_stage(hat_id: int | None, stage: str | None) -> None:
+    """Say which step is running, so the UI can beat a bare "Analyzing…".
+
+    Deliberately a SEPARATE session doing one targeted UPDATE, rather than a
+    commit on the pipeline's own session. Two reasons, and both are load-bearing:
+
+    * The pipeline sets `photo_path` early and commits only at the end, so that
+      the queue can throw the whole run away if the photo was replaced while it
+      ran. Committing mid-pipeline would persist that stale path and defeat the
+      guard.
+    * It is not the write-lock hazard `no_autoflush` guards against — that is a
+      transaction opened by an incidental flush and then held across minutes of
+      network calls. This takes the lock and gives it straight back, before the
+      slow call begins.
+
+    Best-effort: progress reporting must never be the thing that fails an
+    analysis.
+    """
+    if hat_id is None:
+        return
+    try:
+        async with async_session() as db:
+            await db.execute(
+                update(Hat).where(Hat.id == hat_id).values(analysis_stage=stage)
+            )
+            await db.commit()
+    except Exception as exc:  # noqa: BLE001 — cosmetic; never fail a run for it
+        logger.debug("Could not publish analysis stage for hat %s: %s", hat_id, exc)
 
 
 async def finalize_hat_photo(
@@ -74,6 +114,7 @@ async def finalize_hat_photo(
     t_rembg = 0.0
     canonical_path = processed_jpeg_path
     if processed_jpeg_path.suffix.lower() != ".png":
+        await _publish_stage(hat.id, STAGE_CUTOUT)
         t_rembg0 = time.monotonic()
         cutout_target = photo_dir / processed_jpeg_path.stem
         transparent_path = await remove_background(processed_jpeg_path, cutout_target)
@@ -110,6 +151,7 @@ async def finalize_hat_photo(
 
         model_id, _model_source = await settings_service.get_anthropic_model(db)
 
+        await _publish_stage(hat.id, STAGE_IDENTIFYING)
         t_claude0 = time.monotonic()
         try:
             analysis: HatAnalysis = await analyze_hat_image(
@@ -131,8 +173,10 @@ async def finalize_hat_photo(
         t_claude = time.monotonic() - t_claude0
 
         _apply_analysis(hat, analysis)
+        await _publish_stage(hat.id, STAGE_PRICING)
         t_ebay0 = time.monotonic()
         await _refresh_ebay_comps(db, hat)
+        await _publish_stage(hat.id, STAGE_RESALE)
         await refresh_melin_resale(hat)
     logger.info(
         "hat=%s analyzed · rembg=%.2fs claude=%.2fs ebay+resale=%.2fs status=%s",
@@ -177,6 +221,7 @@ async def reanalyze_existing_photo(
             )
 
         model_id, _msrc = await settings_service.get_anthropic_model(db)
+        await _publish_stage(hat.id, STAGE_IDENTIFYING)
         try:
             analysis = await analyze_hat_image(
                 photo_path, api_key, model=model_id, selected_style=hat.style
@@ -192,7 +237,9 @@ async def reanalyze_existing_photo(
             return True
 
         _apply_analysis(hat, analysis)
+        await _publish_stage(hat.id, STAGE_PRICING)
         await _refresh_ebay_comps(db, hat)
+        await _publish_stage(hat.id, STAGE_RESALE)
         await refresh_melin_resale(hat)
         return True
 

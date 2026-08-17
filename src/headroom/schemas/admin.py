@@ -57,6 +57,9 @@ class PendingHat(BaseModel):
     display_id: str | None = None
     label: str | None = None
     photo_path: str | None = None
+    # Set only while a hat is actually being worked on, which is what separates
+    # the one in progress from the ones merely queued behind it.
+    stage: str | None = None
 
 
 class AnalysisQueueStatus(BaseModel):

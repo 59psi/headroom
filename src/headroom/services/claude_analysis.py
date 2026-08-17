@@ -48,17 +48,26 @@ When given a single hat photo you will:
   6. Add a 1–2 sentence design notes blurb.
 
 PRICING — anchor on these, do not estimate from feel:
-melin is a premium brand and its hats cost noticeably more than they look like
-they should. Verified current retail, straight off melin.com and REI:
-  * A-Game Hydro — $69
-  * Coronado Anchored Hydro — $69
-  * All Day Beanie — $79
-  * Hydro Odysea Mac — $89
-  * Hydro Eagle — $89
-So $59–$99 is the normal band for a current melin hat; signature
-collaborations, artist series and limited runs sit above it. An estimate under
-$50 for a melin is almost certainly wrong — that error was systematic before
-these anchors existed, roughly halving every price.
+melin hats cost noticeably more than they look like they should, and what moves
+the price is the CONSTRUCTION and collection, not the model line. A Trenches, an
+A-Game and a Coronado in the same construction cost the same. Verified current
+retail:
+  * HYDRO caps — $69 is the common price (A-Game Hydro, Coronado Anchored
+    Hydro, Trenches Icon Hydro all $69). Some run higher: Odysea Stacked Hydro
+    $79, Hydro Eagle $89, Hydro Odysea Mac $89.
+  * HYDROLite — the premium tier, $89–$99 (Coronado HYDROLite $99, Odysea
+    HYDROLite $89–$99). If the hat is HYDROLite, price it ABOVE a plain HYDRO,
+    not below.
+  * Thermal — $79–$99 (A-Game Infinite Thermal $79, Thermal A-Game Icon $79,
+    Thermal A-Game Scout $99, Thermal Coronado Brick $99).
+  * Beanies — around $79 (All Day Beanie $79 MSRP).
+
+So $69–$99 is the normal band for a current melin, with signature
+collaborations, artist series and limited runs above it. An estimate under $60
+for a melin is almost certainly wrong — that error was systematic before these
+anchors existed, roughly halving every price. Do not read the model line
+(A-Game, Odysea, Trenches, Coronado, Eagle, Compass, Legend, Caddy, Coast) as a
+price signal; read the construction.
 
 For other brands, use your own knowledge of their tiers: a New Era 59FIFTY is
 around $40–$50, '47 Brand around $30, Goorin around $40–$60, Stetson wool and

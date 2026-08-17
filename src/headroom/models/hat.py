@@ -74,6 +74,10 @@ class Hat(Base):
     logo_detected: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     analysis_status: Mapped[str | None] = mapped_column(String(20), nullable=True)  # pending/ok/fallback/skipped/error
+    # Which step of the pipeline is running right now, while analysis_status is
+    # 'pending'. Cleared when the run finishes — a stage on a terminal status
+    # would be stale by definition.
+    analysis_stage: Mapped[str | None] = mapped_column(String(20), nullable=True)
     analysis_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     analyzed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
