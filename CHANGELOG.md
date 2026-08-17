@@ -109,6 +109,21 @@ All notable changes are documented here. This project follows
 - An explicit `colorway` in the payload now beats one parsed out of the title.
   Plenty of titles have no `" - "` to split on — "Odysea Hydro Indigo Depth"
   yields a model and no colourway, which can then disambiguate nothing.
+- **Matching can be undone.** `POST /api/admin/purchases/{id}/unmatch` breaks
+  one link and `POST /api/admin/purchases/unmatch-all` breaks every link,
+  returning those purchases to the matching pool. Previously there was no undo
+  of any kind: matching mutates hats, runs over years of order history in a
+  single call, and only ever reconsiders purchases with no hat — so a wrong
+  link was permanent *and* invisible, because the hat still came out with a
+  price and a colourway, just the wrong ones. Fixing it meant editing the
+  database by hand.
+
+  Reverting clears `purchase_price`, `purchased_at` and `colorway` only where
+  they still hold the value that match wrote. Anything edited since belongs to
+  whoever edited it — a reversal that overwrote a hand-typed price would be a
+  worse bug than the mis-match it was undoing. The purchase rows themselves
+  survive `unmatch-all`: re-importing years of orders is the expensive part,
+  and what was wrong is the matching, not the orders. Both are audited.
 
 ### Added (schema)
 - `hats.resale_price_scope` — `manual` | `model` | `category`, recording what
@@ -120,7 +135,7 @@ All notable changes are documented here. This project follows
   the same model at the same price in Classic ×2 *and* Small ×1, and a key
   without size collapsed the Small.
 
-334 backend + 81 frontend tests.
+340 backend + 81 frontend tests.
 
 ## [2.18.2] — 2026-08-17
 

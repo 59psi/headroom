@@ -410,3 +410,112 @@ async def test_same_model_and_price_in_two_sizes_both_import(client, db_session)
     # Still idempotent with size in the key.
     again = (await client.post("/api/admin/purchases/import", json=payload)).json()
     assert again["imported"] == 0
+
+
+# ----------------------------- unmatch --------------------------------- #
+#
+# Matching had no undo at all: it mutates hats, runs over years of imported
+# order history in one call, and `match_purchases_to_hats` only ever considers
+# purchases with a NULL hat_id — so a wrong link was permanent AND invisible,
+# because the hat still ended up with *a* price and *a* colourway.
+
+
+async def _import_one(client, **over):
+    payload = {"item_title": "A-Game Hydro - Black", "price": 89.0,
+               "size": "Classic", "order_ref": "900", "quantity": 1}
+    payload.update(over)
+    return await client.post("/api/admin/purchases/import", json={"items": [payload]})
+
+
+async def test_unmatch_returns_the_purchase_to_the_pool(client, db_session):
+    hat_id = await _hat_with(client, db_session, size="classic", model="A-Game Hydro")
+    await _import_one(client)
+
+    purchase = (await client.get("/api/admin/purchases")).json()[0]
+    assert purchase["hat_id"] == hat_id
+
+    resp = await client.post(f"/api/admin/purchases/{purchase['id']}/unmatch")
+    assert resp.status_code == 200
+    assert resp.json()["unmatched"] == 1
+    assert set(resp.json()["cleared"]) == {"purchase_price", "colorway"}
+
+    hat = (await client.get(f"/api/hats/{hat_id}")).json()
+    assert hat["purchase_price"] is None
+    assert hat["colorway"] is None
+    assert (await client.get("/api/admin/purchases")).json()[0]["hat_id"] is None
+
+    # Back in the pool: re-running the matcher re-links it.
+    assert (await client.post("/api/admin/purchases/match")).json()["matched"] == 1
+    assert (await client.get(f"/api/hats/{hat_id}")).json()["purchase_price"] == 89.0
+
+
+async def test_unmatch_leaves_values_edited_since_alone(client, db_session):
+    """A reversal that clobbered a hand-typed price would be a worse bug than
+    the mis-match it was undoing."""
+    hat_id = await _hat_with(client, db_session, size="classic", model="A-Game Hydro")
+    await _import_one(client)
+    purchase = (await client.get("/api/admin/purchases")).json()[0]
+
+    # Someone corrects the price by hand after the match.
+    await client.put(f"/api/hats/{hat_id}", json={"purchase_price": 55.0})
+
+    resp = await client.post(f"/api/admin/purchases/{purchase['id']}/unmatch")
+    assert "purchase_price" not in resp.json()["cleared"]
+    assert (await client.get(f"/api/hats/{hat_id}")).json()["purchase_price"] == 55.0
+    # The colourway was untouched since the match, so it still reverts.
+    assert "colorway" in resp.json()["cleared"]
+
+
+async def test_unmatch_is_idempotent_and_404s_on_a_missing_row(client, db_session):
+    await _hat_with(client, db_session, size="classic", model="A-Game Hydro")
+    await _import_one(client)
+    pid = (await client.get("/api/admin/purchases")).json()[0]["id"]
+
+    assert (await client.post(f"/api/admin/purchases/{pid}/unmatch")).json()["unmatched"] == 1
+    second = await client.post(f"/api/admin/purchases/{pid}/unmatch")
+    assert second.status_code == 200
+    assert second.json()["unmatched"] == 0
+
+    assert (await client.post("/api/admin/purchases/999999/unmatch")).status_code == 404
+
+
+async def test_unmatch_all_resets_every_link_but_keeps_the_rows(client, db_session):
+    a = await _hat_with(client, db_session, size="classic", model="A-Game Hydro")
+    b = await _hat_with(client, db_session, size="small", model="Odysea Journey")
+    await client.post("/api/admin/purchases/import", json={"items": [
+        {"item_title": "A-Game Hydro - Black", "price": 89.0, "size": "Classic"},
+        {"item_title": "Odysea Journey - Bone", "price": 79.0, "size": "Small"},
+    ]})
+
+    resp = await client.post("/api/admin/purchases/unmatch-all")
+    assert resp.json()["unmatched"] == 2
+
+    for hat_id in (a, b):
+        assert (await client.get(f"/api/hats/{hat_id}")).json()["purchase_price"] is None
+    rows = (await client.get("/api/admin/purchases")).json()
+    # The order history survives — re-importing it is the expensive part.
+    assert len(rows) == 2 and all(r["hat_id"] is None for r in rows)
+
+    assert (await client.post("/api/admin/purchases/match")).json()["matched"] == 2
+
+
+async def test_unmatch_all_route_is_not_shadowed_by_the_id_route(client):
+    """`unmatch-all` must not be parsed as a purchase id.
+
+    A literal segment that can be read as an id is how `/api/hats/import` got
+    shadowed by `/api/hats/{hat_id}` once already.
+    """
+    resp = await client.post("/api/admin/purchases/unmatch-all")
+    assert resp.status_code == 200
+    assert "unmatched" in resp.json()
+
+
+async def test_unmatch_is_audited(client, db_session):
+    hat_id = await _hat_with(client, db_session, size="classic", model="A-Game Hydro")
+    await _import_one(client)
+    pid = (await client.get("/api/admin/purchases")).json()[0]["id"]
+    await client.post(f"/api/admin/purchases/{pid}/unmatch")
+
+    kinds = [r["kind"] for r in (await client.get("/api/admin/activity-log")).json()]
+    assert "purchase.unmatched" in kinds, f"no audit row for the undo: {kinds}"
+    assert hat_id  # referenced so the fixture's intent is clear

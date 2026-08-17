@@ -108,6 +108,19 @@ shop that doesn't email line items — enter **Price paid** and **Bought on**
 directly on the Add Hat or Edit Hat form. Valuation lists the hats still
 missing a price so the gap is visible rather than assumed.
 
+**Import order matters.** Matching sets a hat's price *and* fills its
+colourway, and a hat that hasn't been analysed yet will accept any colourway
+of the right model and size. So add and analyse your hats *first*, then
+import once — otherwise a purchase can attach to a stand-in hat and stamp the
+wrong colourway on it. Add `?dry_run=true` to the import to see every proposed
+match without writing anything.
+
+If a run does go wrong, it's reversible: **unmatch** a single purchase, or
+unmatch every one at once, which returns them all to the pool and clears the
+values they set (leaving anything you've edited since alone). The purchase
+records survive — only the links are broken — so you can re-run matching once
+the collection is in better shape.
+
 ## 5. Colors & style
 
 - Detected colors come as tiered swatches (primary / secondary / tertiary)

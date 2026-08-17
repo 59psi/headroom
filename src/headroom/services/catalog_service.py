@@ -17,11 +17,13 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
+from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.models.catalog import ColorwayEntry, Purchase
 from headroom.models.hat import Hat
+from headroom.services.activity_service import log_and_commit
 from headroom.services.melin_recap import STYLE_TO_CATEGORY, query_listings
 
 logger = logging.getLogger(__name__)
@@ -500,6 +502,91 @@ async def match_purchases_to_hats(db: AsyncSession, *, dry_run: bool = False) ->
         "unmatched": len(purchases) - matched,
         "ambiguous": sum(1 for p in proposals if p["ambiguous"]),
     }
+
+
+def _revert_hat_fields(purchase: Purchase, hat: Hat) -> list[str]:
+    """Undo what THIS purchase wrote onto the hat. Returns the fields cleared.
+
+    Each field is cleared only if it still holds the exact value the match
+    put there. Anything edited since belongs to whoever edited it, and a
+    reversal that overwrote a hand-typed price would be a worse bug than the
+    mis-match it was undoing — the same class of silent clobber that made an
+    automatic feed erase manual resale prices.
+    """
+    cleared = []
+    if purchase.price is not None and hat.purchase_price == purchase.price:
+        hat.purchase_price = None
+        cleared.append("purchase_price")
+    if purchase.order_date is not None and hat.purchased_at == purchase.order_date:
+        hat.purchased_at = None
+        cleared.append("purchased_at")
+    if purchase.colorway and hat.colorway == purchase.colorway:
+        hat.colorway = None
+        cleared.append("colorway")
+    return cleared
+
+
+async def unmatch_purchase(db: AsyncSession, purchase_id: int) -> dict:
+    """Break one purchase→hat link and put the purchase back in the pool.
+
+    Exists because matching had no undo at all. It mutates hats, it runs over
+    years of imported order history in one call, and `match_purchases_to_hats`
+    only ever considers purchases with a NULL `hat_id` — so a wrong link was
+    permanent and invisible, since the hat still ended up with *a* cost basis
+    and *a* colourway.
+    """
+    purchase = await db.get(Purchase, purchase_id)
+    if purchase is None:
+        raise HTTPException(status_code=404, detail="Purchase not found")
+    if purchase.hat_id is None:
+        return {"unmatched": 0, "hat_id": None, "cleared": []}
+
+    hat = await db.get(Hat, purchase.hat_id)
+    cleared = _revert_hat_fields(purchase, hat) if hat else []
+    hat_id = purchase.hat_id
+    purchase.hat_id = None
+    await db.commit()
+
+    await log_and_commit(
+        db, kind="purchase.unmatched", entity_type="purchase", entity_id=purchase_id,
+        summary=f"Purchase #{purchase_id} unlinked from hat #{hat_id}",
+        details={"hat_id": hat_id, "cleared": cleared},
+    )
+    return {"unmatched": 1, "hat_id": hat_id, "cleared": cleared}
+
+
+async def unmatch_all_purchases(db: AsyncSession) -> dict:
+    """Break every purchase→hat link. The 'that whole run was wrong' button.
+
+    Leaves the purchase rows themselves alone — re-importing them is the
+    expensive part, and the thing that was wrong is the matching, not the
+    order history.
+    """
+    linked = (
+        (await db.execute(select(Purchase).where(Purchase.hat_id.is_not(None))))
+        .scalars().all()
+    )
+    hats = {
+        h.id: h for h in
+        (await db.execute(
+            select(Hat).where(Hat.id.in_([p.hat_id for p in linked]))
+        )).scalars().all()
+    } if linked else {}
+
+    cleared_total = 0
+    for purchase in linked:
+        hat = hats.get(purchase.hat_id)
+        if hat is not None:
+            cleared_total += len(_revert_hat_fields(purchase, hat))
+        purchase.hat_id = None
+    await db.commit()
+
+    await log_and_commit(
+        db, kind="purchase.unmatched_all", entity_type="purchase",
+        summary=f"Unlinked {len(linked)} purchase(s) from their hats",
+        details={"unmatched": len(linked), "fields_cleared": cleared_total},
+    )
+    return {"unmatched": len(linked), "fields_cleared": cleared_total}
 
 
 def _matched_on(purchase: Purchase, hat: Hat) -> list[str]:

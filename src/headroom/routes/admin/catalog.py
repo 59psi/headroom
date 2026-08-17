@@ -87,3 +87,28 @@ async def rematch_purchases(
     `?dry_run=true` returns the proposed links without writing them.
     """
     return await catalog_service.match_purchases_to_hats(db, dry_run=dry_run)
+
+
+# `unmatch-all` rather than `/purchases/unmatch`, and it is registered BEFORE
+# the `{purchase_id}` route: a literal segment that can be read as an id is
+# how `/api/hats/import` got shadowed once already.
+@router.post("/purchases/unmatch-all")
+async def unmatch_all(db: AsyncSession = Depends(get_db)):
+    """Break every purchase→hat link, reverting the fields each one set.
+
+    The purchase rows survive — re-importing years of order history is the
+    expensive part, and what was wrong is the matching, not the orders.
+    Re-run `/purchases/match` afterwards to redo it.
+    """
+    return await catalog_service.unmatch_all_purchases(db)
+
+
+@router.post("/purchases/{purchase_id}/unmatch")
+async def unmatch_one(purchase_id: int, db: AsyncSession = Depends(get_db)):
+    """Break one purchase→hat link and return the purchase to the pool.
+
+    Reverts `purchase_price`, `purchased_at` and `colorway` on the hat, but
+    only where they still hold the value this purchase wrote — anything
+    edited since belongs to whoever edited it.
+    """
+    return await catalog_service.unmatch_purchase(db, purchase_id)
