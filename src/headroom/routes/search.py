@@ -3,8 +3,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.database import get_db
 from headroom.schemas.hat import ColorTag
-from headroom.schemas.search import ColorSearchResult, SearchResult
+from headroom.schemas.search import DuplicateGroupRead, ColorSearchResult, SearchResult
 from headroom.services.color_extraction import parse_hex
+from headroom.services import duplicate_service
 from headroom.services.search_service import search_hats, search_hats_by_color
 
 router = APIRouter(prefix="/api/search", tags=["search"])
@@ -16,6 +17,9 @@ def _result_fields(h) -> dict:
         "display_id": h.display_id,
         "case_display_id": h.case.display_id if h.case else None,
         "photo_path": h.photo_path,
+        # The grid renders thumbnails; without this every result loaded the
+        # full-size transparent PNG.
+        "thumb_path": h.thumb_path,
         "style": h.style,
         "condition": h.condition,
         "size": h.size,
@@ -62,4 +66,24 @@ async def search_by_color(
     return [
         ColorSearchResult(**_result_fields(h), matched_hex=matched, distance=distance)
         for h, matched, distance in ranked
+    ]
+
+
+@router.get("/duplicates", response_model=list[DuplicateGroupRead])
+async def find_duplicate_hats(db: AsyncSession = Depends(get_db)):
+    """Hats that look like the same hat entered twice — usually from a bulk import.
+
+    Reports only. Nothing is deleted or merged: owning the same cap twice, one
+    kept new in the box, is a perfectly normal thing and only the owner knows
+    which case this is.
+    """
+    groups = await duplicate_service.find_duplicates(db)
+    return [
+        DuplicateGroupRead(
+            key=g.key,
+            confidence=g.confidence,
+            label=g.label,
+            hats=[SearchResult(**_result_fields(h)) for h in g.hats],
+        )
+        for g in groups
     ]

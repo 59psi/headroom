@@ -6,6 +6,53 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.18.0] — 2026-08-17 — _seen it twice_
+
+### Added
+- **Find duplicates** (`/duplicates`, linked from Search). Bulk import from a
+  camera roll is how this happens: two photos of one hat become two rows that
+  both analyse plausibly, and at two hundred hats you don't notice — the
+  collection quietly reports more than you own, which flows into the valuation.
+
+  Grouped on identity fields, never pixels: two shots of one hat look different
+  enough to defeat image comparison, and two genuinely different hats in the
+  same colourway look nearly identical, so photos are the wrong signal in both
+  directions. `exact` means every identity field agrees; `likely` means same
+  model and size with the colourway missing on one side, which is the usual
+  shape of an unanalysed twin.
+
+  Colourways that actively **disagree** are never grouped — "Trenches Black"
+  and "Trenches Navy" are two hats somebody deliberately owns, and reporting
+  every normal shelf as a mistake is the fastest way to make a report like this
+  get ignored. Reports only: nothing is deleted or merged.
+
+### Fixed
+- **The bottom nav no longer jumps to the middle of the screen.** iOS positions
+  `fixed` elements against the *visual* viewport, so the nav is lifted with the
+  keyboard and lands on top of whatever you're typing into. 2.14.0 hid it while
+  a combobox was open, which missed the actual cause: it happens for every
+  focused input, including plain dropdowns. Now tracked app-wide via
+  `visualViewport` — the only API that reports a keyboard, since no `window`
+  resize event fires for one.
+
+- **Picker lists no longer run off the bottom of the screen.** They were sized
+  against the layout viewport; with the keyboard up that's roughly double the
+  visible area, so the last options were unreachable. Sized in `dvh` now.
+
+- **The footer shows the build again.** `.dockerignore` excludes `.git` and the
+  frontend build stage only receives `frontend/`, so nothing inside the image
+  could ever learn the commit — and the compose build arg defaulted to empty,
+  so `docker compose up -d --build` always produced an unstamped image.
+  `scripts/stamp-build.sh` writes it to the `.env` compose already reads, and
+  `setup.sh` installs git hooks so a `git pull` keeps it current. A working
+  tree with uncommitted changes is marked `-dirty`, so a stamp can be trusted
+  to mean exactly that commit.
+
+- Search results now carry `thumb_path`, so the results grid loads thumbnails
+  instead of full-size transparent PNGs.
+
+307 backend + 63 frontend tests.
+
 ## [2.17.0] — 2026-08-17 — _it already knows_
 
 ### Fixed

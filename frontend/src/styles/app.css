@@ -1421,8 +1421,17 @@ button.card:hover::before,
    positioned against the visual viewport — so it rides up to mid-screen and
    covers the options wherever they are drawn. `!important` because the
    `.d-lg-none` utility also sets display on this element. */
-body.hr-picker-open .bottom-nav {
+body.hr-picker-open .bottom-nav,
+body.hr-keyboard-open .bottom-nav {
   display: none !important;
+}
+
+/* Keep the picker list inside what's actually visible. With the keyboard up
+   the visual viewport is roughly half the screen, and a list sized against the
+   layout viewport runs off the bottom where it cannot be scrolled to. `dvh`
+   tracks the visible area, so the list stays reachable. */
+.hr-combobox-list {
+  max-height: min(15rem, 45dvh);
 }
 
 /* --- Case picker rows ------------------------------------------------------

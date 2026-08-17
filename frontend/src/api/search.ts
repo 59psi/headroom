@@ -1,5 +1,5 @@
 import { apiFetch } from './client';
-import type { ColorSearchResult, PaletteColor, SearchResult } from '../types';
+import type { ColorSearchResult, PaletteColor, SearchResult, DuplicateGroup } from '../types';
 
 export function searchHats(query: string, exactColors = false, roomId?: number) {
   const params = new URLSearchParams({ q: query });
@@ -16,4 +16,9 @@ export function searchHatsByColor(hex: string, roomId?: number, limit = 30) {
 
 export function getColorPalette() {
   return apiFetch<PaletteColor[]>('/api/meta/colors');
+}
+
+/** Hats that look like the same hat entered twice. Report only — never mutates. */
+export function findDuplicates() {
+  return apiFetch<DuplicateGroup[]>('/api/search/duplicates');
 }

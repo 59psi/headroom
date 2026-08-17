@@ -65,7 +65,15 @@ export function SearchPage() {
 
   return (
     <>
-      <h1 className="mb-3">Search</h1>
+      <div className="d-flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
+        <h1>Search</h1>
+        {/* Lives here rather than in the nav: it is an occasional
+            housekeeping task, and searching is the frame of mind you're
+            already in when you go looking for a hat you think you saw twice. */}
+        <Link to="/duplicates" className="btn btn-outline-secondary btn-sm">
+          Find duplicates
+        </Link>
+      </div>
 
       <form onSubmit={handleSubmit} className="mb-3">
         <div className="input-group">
