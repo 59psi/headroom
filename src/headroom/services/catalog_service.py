@@ -130,53 +130,292 @@ async def catalog_options(
 # --------------------------- purchases -------------------------------- #
 
 
+def _line_fields(item: dict) -> tuple[str, str | None, str | None, int]:
+    """(title, model, colorway, quantity) for one incoming line."""
+    title = (item.get("item_title") or "").strip()
+    model, colorway = parse_listing_title(title)
+    # An explicit colorway beats one recovered from the title. Order lines
+    # carry it separately ("Indigo Depth / Classic") and plenty of titles have
+    # no " - " to split on at all -- "Odysea Hydro Indigo Depth" parses to a
+    # model with no colourway, which then can't disambiguate anything.
+    colorway = (item.get("colorway") or colorway) or None
+    try:
+        quantity = max(int(item.get("quantity", 1) or 1), 1)
+    except (TypeError, ValueError):
+        quantity = 1
+    return title, model, colorway, quantity
+
+
 async def import_purchases(db: AsyncSession, items: list[dict]) -> dict:
-    """Store purchase line items; dedupe on (order_ref, item_title, price)."""
+    """Store purchase line items, one row per unit bought.
+
+    A line reading "x 2" is two hats, and a hat is what a purchase gets
+    matched to -- one row per line meant the second hat of every multi-buy
+    silently never got a cost basis. In this collection's own order history
+    that is nearly 40% of lines, so it is the common case rather than an edge
+    one.
+
+    Dedupe is therefore by COUNT rather than existence: re-importing the same
+    order finds the two rows already there and adds nothing, while an order
+    that genuinely contains two of the same hat still gets both.
+    """
     imported = 0
     skipped = 0
+    # Rows this batch has already decided to add, keyed the same way as the
+    # dedupe. One order can list the same hat on two separate lines, and
+    # without this the second line's count would depend on whether a flush
+    # happened to have run — which is how the preview and the import came to
+    # disagree by a row on the same input.
+    staged: dict[tuple, int] = {}
     for item in items:
-        title = (item.get("item_title") or "").strip()
+        title, model, colorway, quantity = _line_fields(item)
         if not title:
             skipped += 1
             continue
-        dupe = await db.execute(
+
+        price = item.get("price")
+        size = normalize_size(item.get("size"))
+        key = (item.get("order_ref"), title, price, size)
+        existing = len((await db.execute(
             select(Purchase).where(
                 Purchase.item_title == title,
                 Purchase.order_ref == item.get("order_ref"),
-                Purchase.price == item.get("price"),
+                Purchase.price == price,
+                Purchase.size.is_(None) if size is None else Purchase.size == size,
             )
-        )
-        if dupe.scalar_one_or_none() is not None:
-            skipped += 1
-            continue
-        model, colorway = parse_listing_title(title)
+        )).scalars().all())
+        wanted = max(quantity - existing - staged.get(key, 0), 0)
+        staged[key] = staged.get(key, 0) + wanted
+        skipped += quantity - wanted
+
         order_date = None
         if item.get("order_date"):
             try:
                 order_date = datetime.fromisoformat(str(item["order_date"]))
             except ValueError:
                 pass
-        db.add(
-            Purchase(
-                source=item.get("source", "email"),
-                order_ref=item.get("order_ref"),
-                order_date=order_date,
-                item_title=title,
-                model_name=model,
-                colorway=colorway,
-                price=item.get("price"),
-                quantity=int(item.get("quantity", 1) or 1),
-                raw=item.get("raw"),
+
+        for _ in range(wanted):
+            db.add(
+                Purchase(
+                    source=item.get("source", "email"),
+                    order_ref=item.get("order_ref"),
+                    order_date=order_date,
+                    item_title=title,
+                    model_name=model,
+                    colorway=colorway,
+                    size=normalize_size(item.get("size")),
+                    price=price,
+                    # Always 1: the row IS one unit. The original line quantity
+                    # is recoverable by counting rows in the order.
+                    quantity=1,
+                    raw=item.get("raw"),
+                )
             )
-        )
-        imported += 1
+            imported += 1
     await db.commit()
     return {"imported": imported, "skipped": skipped}
 
 
-async def match_purchases_to_hats(db: AsyncSession) -> dict:
-    """Link unmatched purchases to hats by model (+colorway when both have
-    one) and set the hat's cost basis + colorway from the purchase."""
+# How order lines spell sizes, mapped to the app's vocabulary. Order emails
+# render the variant as the customer sees it ("Transit / Classic"), which is
+# title-cased and occasionally abbreviated; `Hat.size` stores the enum value.
+_SIZE_ALIASES: dict[str, str] = {
+    "classic": "classic",
+    "c": "classic",
+    "standard": "classic",   # the pre-2.0 name for the same size
+    "small": "small",
+    "s": "small",
+    "sm": "small",
+    "xlarge": "x_large",
+    "x_large": "x_large",
+    "xl": "x_large",
+    "extralarge": "x_large",
+    "onesize": None,         # travel cases and accessories, not a hat size
+}
+
+
+def normalize_size(raw: str | None) -> str | None:
+    """"Classic" / "X-Large" / "C" -> the `Hat.size` value, or None.
+
+    None means "no usable size on this line" and is not a failure: matching
+    treats it as a wildcard, which is the pre-2.19 behaviour. Returning a
+    made-up value instead would be worse than returning nothing, because a
+    wrong size actively prevents the correct match rather than merely failing
+    to sharpen it.
+    """
+    if not raw:
+        return None
+    key = raw.strip().lower().replace("-", "").replace(" ", "").replace("_", "")
+    return _SIZE_ALIASES.get(key)
+
+
+async def preview_import(db: AsyncSession, items: list[dict]) -> dict:
+    """What `import_purchases` + matching WOULD do. Writes nothing.
+
+    Deliberately does not go through `import_purchases` and roll back: this
+    runs against a live database, and a transaction that inserts a hundred rows
+    and then reverses them is one stray commit — anywhere down the call stack —
+    away from being a real import nobody asked for. Everything here is built in
+    memory and never added to the session.
+    """
+    hats = (
+        (await db.execute(select(Hat).where(Hat.disposed_at.is_(None))))
+        .scalars().all()
+    )
+    claimed = {
+        p.hat_id for p in
+        (await db.execute(select(Purchase).where(Purchase.hat_id.is_not(None)))).scalars().all()
+    }
+
+    would_import: list[Purchase] = []
+    duplicates = 0
+    unusable = 0
+    accessories = 0
+    staged: dict[tuple, int] = {}   # mirrors `import_purchases`; see there
+
+    for item in items:
+        title, model, colorway, quantity = _line_fields(item)
+        if not title:
+            unusable += 1
+            continue
+
+        price = item.get("price")
+        size = normalize_size(item.get("size"))
+        key = (item.get("order_ref"), title, price, size)
+        existing = len((await db.execute(
+            select(Purchase).where(
+                Purchase.item_title == title,
+                Purchase.order_ref == item.get("order_ref"),
+                Purchase.price == price,
+                Purchase.size.is_(None) if size is None else Purchase.size == size,
+            )
+        )).scalars().all())
+        wanted = max(quantity - existing - staged.get(key, 0), 0)
+        staged[key] = staged.get(key, 0) + wanted
+        duplicates += quantity - wanted
+
+        for _ in range(wanted):
+            # Mirrors the row expansion in `import_purchases`. A preview that
+            # counted lines while the import counts units would under-report
+            # exactly the multi-buys this is meant to surface.
+            transient = Purchase(
+                source=item.get("source", "email"),
+                order_ref=item.get("order_ref"),
+                item_title=title,
+                model_name=model,
+                colorway=colorway,
+                size=normalize_size(item.get("size")),
+                price=price,
+                quantity=1,
+            )
+            if not _looks_like_headwear(transient, hats):
+                accessories += 1
+            would_import.append(transient)
+
+    proposals: list[dict] = []
+    for purchase in would_import:
+        candidates = [
+            (score, hat)
+            for hat in hats
+            if hat.id not in claimed
+            and (score := _match_score(purchase, hat)) is not None
+        ]
+        if not candidates:
+            continue
+        best_score = max(score for score, _ in candidates)
+        best = [hat for score, hat in candidates if score == best_score]
+        hat = best[0]
+        claimed.add(hat.id)
+        proposals.append({
+            "item_title": purchase.item_title,
+            "order_ref": purchase.order_ref,
+            "price": purchase.price,
+            "size": purchase.size,
+            "hat_id": hat.id,
+            "hat_display_id": hat.display_id,
+            "score": best_score,
+            "matched_on": _matched_on(purchase, hat),
+            "ambiguous": len(best) > 1,
+            "tied_hat_ids": [h.id for h in best] if len(best) > 1 else [],
+            "sets_price": purchase.price is not None and hat.purchase_price is None,
+        })
+
+    return {
+        "dry_run": True,
+        "would_import": len(would_import),
+        "duplicates": duplicates,
+        "unusable": unusable,
+        "likely_accessories": accessories,
+        "would_match": len(proposals),
+        "would_not_match": len(would_import) - len(proposals),
+        "ambiguous": sum(1 for p in proposals if p["ambiguous"]),
+        "proposals": proposals,
+    }
+
+
+def _looks_like_headwear(purchase: Purchase, hats: list[Hat]) -> bool:
+    """Rough flag for lines that are not hats — travel cases, gift cards.
+
+    Advisory only, and reported rather than acted on: an order line this does
+    not recognise is still imported, because a heuristic that silently drops
+    purchases would hide a real hat behind a wording nobody anticipated. It
+    exists so the preview can say "12 of these look like accessories" instead
+    of leaving them to be noticed as odd rows months later.
+    """
+    title = (purchase.item_title or "").lower()
+    if any(word in title for word in (
+        "travel case", "gift card", "shipping protection", "sticker",
+        "lanyard", "keychain", "tote",
+    )):
+        return False
+    # A model name already on the shelf is strong evidence it is headwear.
+    known_models = {(h.model_name or "").lower() for h in hats if h.model_name}
+    return (purchase.model_name or "").lower() in known_models or bool(purchase.size)
+
+
+def _match_score(purchase: Purchase, hat: Hat) -> int | None:
+    """How well one hat fits one purchase. Higher is better; None = no match.
+
+    Model name is mandatory. Colourway and size each *rule a hat out* when both
+    sides state one and they disagree, and otherwise add to the score when they
+    agree — so a stated-and-matching field beats a silent one, and neither is
+    required. Scoring rather than first-hit is the point: the old matcher took
+    whichever hat came back first, so with two sizes of one model on the shelf
+    a Small could be handed the price of a Classic and nothing downstream ever
+    looked wrong, because both hats ended up with *a* cost basis.
+    """
+    if not purchase.model_name:
+        return None
+    if (hat.model_name or "").lower() != purchase.model_name.lower():
+        return None
+
+    score = 1
+
+    pc = (purchase.colorway or "").lower()
+    hc = (hat.colorway or "").lower()
+    if pc and hc:
+        if pc != hc:
+            return None
+        score += 2
+
+    ps, hs = purchase.size, hat.size
+    if ps and hs:
+        if ps != hs:
+            return None
+        score += 4  # outranks colourway: two sizes of one colourway is common
+
+    return score
+
+
+async def match_purchases_to_hats(db: AsyncSession, *, dry_run: bool = False) -> dict:
+    """Link unmatched purchases to hats and set the hat's cost basis.
+
+    `dry_run` reports exactly what would happen and writes nothing — worth
+    having before a bulk import of years of order history, because matching
+    mutates hats and there is no undo for "every price on the shelf is now
+    slightly wrong".
+    """
     purchases = (
         (await db.execute(select(Purchase).where(Purchase.hat_id.is_(None))))
         .scalars().all()
@@ -191,32 +430,83 @@ async def match_purchases_to_hats(db: AsyncSession) -> dict:
     }
 
     matched = 0
+    proposals: list[dict] = []
     for purchase in purchases:
-        if not purchase.model_name:
+        candidates = [
+            (score, hat)
+            for hat in hats
+            if hat.id not in linked_hat_ids
+            and (score := _match_score(purchase, hat)) is not None
+        ]
+        if not candidates:
             continue
-        pm = purchase.model_name.lower()
-        pc = (purchase.colorway or "").lower()
-        for hat in hats:
-            if hat.id in linked_hat_ids:
-                continue
-            hm = (hat.model_name or "").lower()
-            hc = (hat.colorway or "").lower()
-            if hm != pm:
-                continue
-            # If both sides know a colorway they must agree; a hat without
-            # one accepts the purchase's.
-            if hc and pc and hc != pc:
-                continue
-            purchase.hat_id = hat.id
+        best_score = max(score for score, _ in candidates)
+        best = [hat for score, hat in candidates if score == best_score]
+        # A tie means the records genuinely cannot tell these hats apart (same
+        # model, same colourway, same size). Taking one at random would be a
+        # coin flip presented as a fact; the tie is reported instead so it can
+        # be resolved by hand.
+        ambiguous = len(best) > 1
+        hat = best[0]
+
+        proposals.append({
+            "purchase_id": purchase.id,
+            "item_title": purchase.item_title,
+            "order_ref": purchase.order_ref,
+            "price": purchase.price,
+            "hat_id": hat.id,
+            "hat_display_id": hat.display_id,
+            "score": best_score,
+            "matched_on": _matched_on(purchase, hat),
+            "ambiguous": ambiguous,
+            "tied_hat_ids": [h.id for h in best] if ambiguous else [],
+            "sets_price": purchase.price is not None and hat.purchase_price is None,
+            "sets_colorway": bool(purchase.colorway) and not hat.colorway,
+        })
+
+        if dry_run:
+            # Claim the hat locally so the preview doesn't show one hat being
+            # matched by three different purchases.
             linked_hat_ids.add(hat.id)
-            if purchase.colorway and not hat.colorway:
-                hat.colorway = purchase.colorway
-            if purchase.price is not None and hat.purchase_price is None:
-                hat.purchase_price = purchase.price
-            if purchase.order_date is not None and hat.purchased_at is None:
-                hat.purchased_at = purchase.order_date
             matched += 1
-            break
+            continue
+
+        purchase.hat_id = hat.id
+        linked_hat_ids.add(hat.id)
+        if purchase.colorway and not hat.colorway:
+            hat.colorway = purchase.colorway
+        if purchase.price is not None and hat.purchase_price is None:
+            hat.purchase_price = purchase.price
+        if purchase.order_date is not None and hat.purchased_at is None:
+            hat.purchased_at = purchase.order_date
+        matched += 1
+
+    if dry_run:
+        # Nothing was written, but the identity map now holds mutated objects
+        # if a future edit to this function forgets that. Expire so the next
+        # read comes from the database rather than from this preview.
+        db.expire_all()
+        return {
+            "dry_run": True,
+            "matched": matched,
+            "unmatched": len(purchases) - matched,
+            "ambiguous": sum(1 for p in proposals if p["ambiguous"]),
+            "proposals": proposals,
+        }
 
     await db.commit()
-    return {"matched": matched, "unmatched": len(purchases) - matched}
+    return {
+        "matched": matched,
+        "unmatched": len(purchases) - matched,
+        "ambiguous": sum(1 for p in proposals if p["ambiguous"]),
+    }
+
+
+def _matched_on(purchase: Purchase, hat: Hat) -> list[str]:
+    """Which fields actually agreed, for the preview to show its working."""
+    fields = ["model"]
+    if purchase.colorway and hat.colorway:
+        fields.append("colorway")
+    if purchase.size and hat.size:
+        fields.append("size")
+    return fields

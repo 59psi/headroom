@@ -49,9 +49,22 @@ async def _harvest_in_background() -> None:
 
 
 @router.post("/purchases/import")
-async def import_purchases(data: PurchaseImport, db: AsyncSession = Depends(get_db)):
+async def import_purchases(
+    data: PurchaseImport,
+    dry_run: bool = False,
+    db: AsyncSession = Depends(get_db),
+):
     """Store purchase line items (from order emails). Fields per item:
-    item_title (required), order_ref, order_date (ISO), price, quantity, raw."""
+    item_title (required), order_ref, order_date (ISO), price, quantity, size,
+    raw.
+
+    `?dry_run=true` reports what WOULD be imported and matched and writes
+    nothing. Importing runs the matcher, which mutates hats, and a bulk import
+    of years of order history is exactly the case where seeing the proposed
+    matches first is worth the extra round trip — there is no undo for it.
+    """
+    if dry_run:
+        return await catalog_service.preview_import(db, data.items)
     result = await catalog_service.import_purchases(db, data.items)
     match = await catalog_service.match_purchases_to_hats(db)
     return {**result, **match}
@@ -66,6 +79,11 @@ async def list_purchases(db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/purchases/match")
-async def rematch_purchases(db: AsyncSession = Depends(get_db)):
-    """Re-run purchase→hat matching (e.g. after adding hats or colorways)."""
-    return await catalog_service.match_purchases_to_hats(db)
+async def rematch_purchases(
+    dry_run: bool = False, db: AsyncSession = Depends(get_db)
+):
+    """Re-run purchase→hat matching (e.g. after adding hats or colorways).
+
+    `?dry_run=true` returns the proposed links without writing them.
+    """
+    return await catalog_service.match_purchases_to_hats(db, dry_run=dry_run)

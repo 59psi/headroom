@@ -88,13 +88,39 @@ All notable changes are documented here. This project follows
 - The deprecated `apple-mobile-web-app-capable` meta tag warned on every page
   load; the standard `mobile-web-app-capable` now sits beside it.
 
+### Added — purchase import
+- **Order-history import understands size.** Order emails have always carried
+  it ("Transit / Classic") and the importer dropped it, so matching went on
+  model name alone and bound a purchase to whichever hat came back from the
+  database first. Own the same model in two sizes and a Small could be handed
+  a Classic's price, with nothing downstream looking wrong because both hats
+  ended up with *a* cost basis. Matching now scores candidates — size
+  outranks colourway, a stated field that disagrees rules a hat out, and a
+  genuine tie is reported rather than resolved by coin flip.
+- **A multi-buy line now prices every hat it bought.** "× 2" is two hats and a
+  purchase matches one hat, so one row per line meant the second hat of every
+  multi-buy silently never got a cost basis — nearly 40% of lines in a real
+  order history. Import writes one row per unit, and dedupe counts rows
+  instead of testing existence, so re-importing an order still adds nothing.
+- **`?dry_run=true` on `/api/admin/purchases/{import,match}`** reports exactly
+  what would be imported and which hat each purchase would attach to, writing
+  nothing. Importing mutates hats and there is no undo for "every price on the
+  shelf is now slightly wrong".
+- An explicit `colorway` in the payload now beats one parsed out of the title.
+  Plenty of titles have no `" - "` to split on — "Odysea Hydro Indigo Depth"
+  yields a model and no colourway, which can then disambiguate nothing.
+
 ### Added (schema)
 - `hats.resale_price_scope` — `manual` | `model` | `category`, recording what
   `resale_price` is a price *of*. A category median is the going rate for a
   whole style rather than a valuation of one hat, and valuation needs to tell
   those apart without parsing a display string.
+- `purchases.size` — the size on the order line, normalised to the app's
+  vocabulary. Also now part of the import dedupe key: one real order bought
+  the same model at the same price in Classic ×2 *and* Small ×1, and a key
+  without size collapsed the Small.
 
-319 backend + 81 frontend tests.
+334 backend + 81 frontend tests.
 
 ## [2.18.2] — 2026-08-17
 

@@ -37,6 +37,17 @@ class Purchase(Base):
     item_title: Mapped[str] = mapped_column(String(200))
     model_name: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
     colorway: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    # The size on the order line, normalised to the app's vocabulary
+    # ("classic" / "small" / "x_large"), or None when the line didn't state one.
+    #
+    # Order emails have always carried this ("Transit / Classic") and the
+    # importer dropped it. That was fine until you owned the same model in two
+    # sizes: matching on model name alone then binds a purchase to whichever
+    # hat is first out of the database, so a Small can end up wearing the price
+    # of a Classic. Nothing about the result looks wrong afterwards — both hats
+    # get *a* cost basis — which is what makes it worth storing rather than
+    # inferring later.
+    size: Mapped[str | None] = mapped_column(String(20), nullable=True)
     price: Mapped[float | None] = mapped_column(Float, nullable=True)
     quantity: Mapped[int] = mapped_column(Integer, default=1)
     raw: Mapped[str | None] = mapped_column(Text, nullable=True)

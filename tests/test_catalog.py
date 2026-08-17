@@ -124,3 +124,289 @@ async def test_match_respects_colorway_disagreement(client, db_session):
     updated = (await client.get(f"/api/hats/{hat_id}")).json()
     assert updated["colorway"] == "Red"
     assert updated["purchase_price"] is None
+
+
+# ------------------- size-aware matching (v2.19) ---------------------- #
+#
+# Order emails have always carried the size ("Transit / Classic") and the
+# importer dropped it. Matching on model name alone binds a purchase to
+# whichever hat the database returns first, so with two sizes of one model on
+# the shelf a Small can be handed a Classic's price — and nothing downstream
+# ever looks wrong, because both hats end up with *a* cost basis.
+
+
+async def test_normalize_size_maps_order_line_spellings():
+    from headroom.services.catalog_service import normalize_size
+
+    assert normalize_size("Classic") == "classic"
+    assert normalize_size("X-Large") == "x_large"
+    assert normalize_size("XL") == "x_large"
+    assert normalize_size(" small ") == "small"
+    assert normalize_size("Standard") == "classic"  # pre-2.0 name, same size
+    # Not a hat size — travel cases ship as "One Size".
+    assert normalize_size("One Size") is None
+    assert normalize_size(None) is None
+    # An unrecognised spelling must return None, not a guess: a wrong size
+    # actively BLOCKS the correct match, where None merely fails to sharpen it.
+    assert normalize_size("Toddler") is None
+
+
+async def _hat_with(client, db_session, *, size, model, colorway=None):
+    from headroom.models.hat import Hat
+
+    resp = await client.post(
+        "/api/hats", json={"condition": "new", "size": size, "style": "a_game"}
+    )
+    hat_id = resp.json()["id"]
+    row = await db_session.get(Hat, hat_id)
+    row.model_name = model
+    row.colorway = colorway
+    await db_session.commit()
+    return hat_id
+
+
+async def test_size_decides_between_two_hats_of_the_same_model(client, db_session):
+    small = await _hat_with(client, db_session, size="small", model="A-Game Hydro")
+    classic = await _hat_with(client, db_session, size="classic", model="A-Game Hydro")
+
+    resp = await client.post(
+        "/api/admin/purchases/import",
+        json={"items": [{
+            "item_title": "A-Game Hydro - Black",
+            "price": 89.0,
+            "size": "Classic",
+        }]},
+    )
+    assert resp.json()["matched"] == 1
+
+    assert (await client.get(f"/api/hats/{classic}")).json()["purchase_price"] == 89.0
+    # The whole point: the Small must be untouched, not merely "also matched".
+    assert (await client.get(f"/api/hats/{small}")).json()["purchase_price"] is None
+
+
+async def test_size_disagreement_blocks_a_match_outright(client, db_session):
+    await _hat_with(client, db_session, size="small", model="A-Game Hydro")
+
+    resp = await client.post(
+        "/api/admin/purchases/import",
+        json={"items": [{
+            "item_title": "A-Game Hydro - Black",
+            "price": 89.0,
+            "size": "X-Large",
+        }]},
+    )
+    # Better to leave a purchase unmatched than to attach it to a hat we can
+    # see is the wrong one.
+    assert resp.json()["matched"] == 0
+
+
+async def test_a_sizeless_purchase_still_matches(client, db_session):
+    """Back-compat: pre-2.19 rows and hand-entered items carry no size."""
+    hat_id = await _hat_with(client, db_session, size="classic", model="A-Game Hydro")
+
+    resp = await client.post(
+        "/api/admin/purchases/import",
+        json={"items": [{"item_title": "A-Game Hydro - Black", "price": 89.0}]},
+    )
+    assert resp.json()["matched"] == 1
+    assert (await client.get(f"/api/hats/{hat_id}")).json()["purchase_price"] == 89.0
+
+
+async def test_identical_hats_are_reported_as_ambiguous(client, db_session):
+    """Two hats the records genuinely cannot separate.
+
+    One still gets the price — leaving both unpriced would be worse — but the
+    coin flip is counted and surfaced rather than presented as a fact.
+    """
+    await _hat_with(client, db_session, size="classic", model="A-Game Hydro", colorway="Black")
+    await _hat_with(client, db_session, size="classic", model="A-Game Hydro", colorway="Black")
+
+    resp = await client.post(
+        "/api/admin/purchases/import",
+        json={"items": [{
+            "item_title": "A-Game Hydro - Black", "price": 89.0, "size": "Classic",
+        }]},
+    )
+    assert resp.json()["ambiguous"] == 1
+
+
+# ----------------------------- dry run -------------------------------- #
+
+
+async def test_dry_run_import_writes_nothing(client, db_session):
+    hat_id = await _hat_with(client, db_session, size="classic", model="A-Game Hydro")
+
+    payload = {"items": [{
+        "item_title": "A-Game Hydro - Black", "price": 89.0, "size": "Classic",
+    }]}
+    resp = await client.post("/api/admin/purchases/import?dry_run=true", json=payload)
+    body = resp.json()
+
+    assert body["dry_run"] is True
+    assert body["would_import"] == 1
+    assert body["would_match"] == 1
+    assert body["proposals"][0]["hat_id"] == hat_id
+    assert "size" in body["proposals"][0]["matched_on"]
+
+    # Nothing persisted: no purchase rows, no cost basis on the hat.
+    assert (await client.get("/api/admin/purchases")).json() == []
+    assert (await client.get(f"/api/hats/{hat_id}")).json()["purchase_price"] is None
+
+    # And the real import still works afterwards — the preview left no state
+    # behind that makes the row look already-imported.
+    real = await client.post("/api/admin/purchases/import", json=payload)
+    assert real.json()["imported"] == 1
+    assert (await client.get(f"/api/hats/{hat_id}")).json()["purchase_price"] == 89.0
+
+
+async def test_dry_run_counts_duplicates_against_what_is_already_there(client, db_session):
+    await _hat_with(client, db_session, size="classic", model="A-Game Hydro")
+    payload = {"items": [{
+        "item_title": "A-Game Hydro - Black", "price": 89.0,
+        "size": "Classic", "order_ref": "123",
+    }]}
+    await client.post("/api/admin/purchases/import", json=payload)
+
+    resp = await client.post("/api/admin/purchases/import?dry_run=true", json=payload)
+    body = resp.json()
+    assert body["would_import"] == 0
+    assert body["duplicates"] == 1
+
+
+async def test_dry_run_flags_accessories(client, db_session):
+    await _hat_with(client, db_session, size="classic", model="A-Game Hydro")
+
+    resp = await client.post("/api/admin/purchases/import?dry_run=true", json={"items": [
+        {"item_title": "3 Hat Travel Case - Black", "price": 49.0, "size": "One Size"},
+        {"item_title": "Shipping Protection - Rest easy", "price": 4.76},
+        {"item_title": "A-Game Hydro - Black", "price": 89.0, "size": "Classic"},
+    ]})
+    body = resp.json()
+    # Flagged, but still imported — a heuristic that silently dropped lines
+    # would hide a real hat behind wording nobody anticipated.
+    assert body["likely_accessories"] == 2
+    assert body["would_import"] == 3
+    assert body["would_match"] == 1
+
+
+async def test_dry_run_match_endpoint_leaves_links_alone(client, db_session):
+    hat_id = await _hat_with(client, db_session, size="classic", model="A-Game Hydro")
+    # Import with a model the hat doesn't have yet, so nothing matches...
+    await client.post("/api/admin/purchases/import", json={"items": [
+        {"item_title": "Odysea Journey - Black", "price": 79.0},
+    ]})
+    # ...then rename the hat so it WOULD match, and preview it.
+    from headroom.models.hat import Hat
+    row = await db_session.get(Hat, hat_id)
+    row.model_name = "Odysea Journey"
+    await db_session.commit()
+
+    preview = await client.post("/api/admin/purchases/match?dry_run=true")
+    assert preview.json()["matched"] == 1
+    assert (await client.get(f"/api/hats/{hat_id}")).json()["purchase_price"] is None
+
+    real = await client.post("/api/admin/purchases/match")
+    assert real.json()["matched"] == 1
+    assert (await client.get(f"/api/hats/{hat_id}")).json()["purchase_price"] == 79.0
+
+
+# --------------- multi-buy lines become one row per hat ---------------- #
+#
+# A line reading "x 2" is two hats, and a purchase matches ONE hat — so one
+# row per line meant the second hat of every multi-buy silently never got a
+# cost basis. In this collection's real order history that's ~40% of lines.
+
+
+async def test_a_quantity_two_line_prices_two_hats(client, db_session):
+    a = await _hat_with(client, db_session, size="classic", model="A-Game Hydro")
+    b = await _hat_with(client, db_session, size="classic", model="A-Game Hydro")
+
+    resp = await client.post("/api/admin/purchases/import", json={"items": [{
+        "item_title": "A-Game Hydro - Black", "price": 89.0,
+        "size": "Classic", "quantity": 2, "order_ref": "555",
+    }]})
+    assert resp.json()["imported"] == 2
+    assert resp.json()["matched"] == 2
+
+    for hat_id in (a, b):
+        assert (await client.get(f"/api/hats/{hat_id}")).json()["purchase_price"] == 89.0
+
+
+async def test_reimporting_a_multi_buy_adds_nothing(client, db_session):
+    await _hat_with(client, db_session, size="classic", model="A-Game Hydro")
+    payload = {"items": [{
+        "item_title": "A-Game Hydro - Black", "price": 89.0,
+        "size": "Classic", "quantity": 2, "order_ref": "555",
+    }]}
+    first = await client.post("/api/admin/purchases/import", json=payload)
+    assert first.json()["imported"] == 2
+
+    # Count-based dedupe: the two rows are already there, so nothing is added.
+    again = await client.post("/api/admin/purchases/import", json=payload)
+    assert again.json()["imported"] == 0
+    assert again.json()["skipped"] == 2
+    assert len((await client.get("/api/admin/purchases")).json()) == 2
+
+
+async def test_an_explicit_colorway_beats_one_parsed_from_the_title(client, db_session):
+    """Order lines carry the colourway separately, and plenty of titles have
+    no " - " to split on — "Odysea Hydro Indigo Depth" parses to a model with
+    no colourway at all, which can then disambiguate nothing."""
+    hat_id = await _hat_with(
+        client, db_session, size="classic", model="Odysea Hydro Indigo Depth",
+        colorway="Indigo Depth",
+    )
+    resp = await client.post("/api/admin/purchases/import", json={"items": [{
+        "item_title": "Odysea Hydro Indigo Depth", "colorway": "Indigo Depth",
+        "price": 89.0, "size": "Classic",
+    }]})
+    assert resp.json()["matched"] == 1
+    stored = (await client.get("/api/admin/purchases")).json()[0]
+    assert stored["colorway"] == "Indigo Depth"
+    assert (await client.get(f"/api/hats/{hat_id}")).json()["purchase_price"] == 89.0
+
+
+async def test_dry_run_counts_units_not_lines(client, db_session):
+    await _hat_with(client, db_session, size="classic", model="A-Game Hydro")
+    await _hat_with(client, db_session, size="classic", model="A-Game Hydro")
+
+    resp = await client.post("/api/admin/purchases/import?dry_run=true", json={"items": [{
+        "item_title": "A-Game Hydro - Black", "price": 89.0,
+        "size": "Classic", "quantity": 2,
+    }]})
+    body = resp.json()
+    # A preview that counted lines while the import counts units would
+    # under-report exactly the multi-buys it exists to surface.
+    assert body["would_import"] == 2
+    assert body["would_match"] == 2
+
+
+async def test_same_model_and_price_in_two_sizes_both_import(client, db_session):
+    """One order, one model, one price, two sizes — two different hats.
+
+    Taken from the real order history: order 1626812 bought a Richard Ham
+    Hydro in Classic x2 AND Small x1 at the same $89. A dedupe key of
+    (order, title, price) collapses the Small into the Classic line and the
+    hat silently never gets a cost basis — the precise failure the size
+    column was added to prevent.
+    """
+    await _hat_with(client, db_session, size="classic", model="A-Game Hydro")
+    payload = {"items": [
+        {"item_title": "A-Game Hydro - Black", "price": 89.0,
+         "size": "Classic", "order_ref": "777", "quantity": 2},
+        {"item_title": "A-Game Hydro - Black", "price": 89.0,
+         "size": "Small", "order_ref": "777", "quantity": 1},
+    ]}
+
+    preview = (await client.post("/api/admin/purchases/import?dry_run=true",
+                                 json=payload)).json()
+    real = (await client.post("/api/admin/purchases/import", json=payload)).json()
+
+    # The preview must predict the import exactly, or it isn't a preview.
+    assert preview["would_import"] == real["imported"] == 3
+    rows = (await client.get("/api/admin/purchases")).json()
+    assert sorted(r["size"] for r in rows) == ["classic", "classic", "small"]
+
+    # Still idempotent with size in the key.
+    again = (await client.post("/api/admin/purchases/import", json=payload)).json()
+    assert again["imported"] == 0
