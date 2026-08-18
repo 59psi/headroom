@@ -34,6 +34,20 @@ All notable changes are documented here. This project follows
   must keep matching. What makes grey different isn't the size of the gap but
   that it has no hue to be a darker version *of*.
 
+  The test is a **ratio** rather than an absolute chroma floor, because how
+  much colour counts as *some* colour depends on the colour. Teal is itself
+  only C=27 where red is C=73, so a slate teal at C=10.5 holds **39%** of
+  teal's chroma and is a teal, while the blue-grey that must not match purple
+  holds **20%** of its C=59 and is a grey. An absolute floor cannot tell those
+  apart — set low enough to keep the teal findable it lets blue-grey match
+  purple, set high enough to stop that it discards every dark teal and forest
+  green in a collection full of them.
+
+  Worth knowing: the guard is strong for emphatic targets like purple and
+  inherently weaker for muted ones. Tapping **teal** still returns some slate
+  and blue-grey hats — which is fair, because teal genuinely is a desaturated
+  blue-green and those are its neighbours. Tapping purple no longer does.
+
   Purple now returns **3** hats instead of 22: the purple one, the navy one
   and the pink one.
 

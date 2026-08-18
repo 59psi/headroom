@@ -292,12 +292,20 @@ def color_distance(hex_a: str, hex_b: str) -> float | None:
 # swatch than two genuinely different purples sit to each other, and every
 # colour search returned the whole shelf of black/charcoal/navy/grey caps.
 #
-# The gap between the two constants is deliberate and is where muted colours
-# live — cream (13), dark brown (15), beige (17), navy (20). Those read as
-# either a colour or a neutral depending on the light, so nothing is claimed
-# about them: they are simply judged on distance like everything else.
-NEUTRAL_CHROMA = 12.0
+# The test is a RATIO, not an absolute floor, because "how much colour counts
+# as some colour" depends on the colour. Teal is itself only C=27 where red is
+# C=73, so a muted teal at C=10 has a real share of teal's chroma while a
+# blue-grey at C=12 has almost none of purple's C=59. An absolute floor cannot
+# see that difference: set low enough to keep the muted teal findable, it lets
+# blue-grey match purple; set high enough to stop that, it throws away every
+# dark teal and forest green in the collection. The ratio separates them —
+# 0.39 for the teal, 0.20 for the blue-grey.
+#
+# CHROMATIC_CHROMA gates the whole rule: below it the target is itself muted
+# enough that nothing is claimed, so white/cream and navy/charcoal are judged
+# on distance like everything else.
 CHROMATIC_CHROMA = 20.0
+MIN_CHROMA_RATIO = 0.25
 
 
 def chroma_of(lab: tuple[float, float, float]) -> float:
@@ -309,17 +317,21 @@ def chroma_of(lab: tuple[float, float, float]) -> float:
 def is_neutral_mismatch(
     lab_a: tuple[float, float, float], lab_b: tuple[float, float, float]
 ) -> bool:
-    """True when one colour has no hue and the other has plenty.
+    """True when one colour has essentially none of the other's colour.
 
     Deliberately NOT a penalty on the chroma difference in general. Navy and
     blue differ by 41 units of chroma, red and maroon by 36, and those pairs
     must keep matching — they are the dark and bright versions of one hue.
     What makes grey-vs-purple different is not the size of the gap but that
     one side has no hue at all, so there is nothing for the other to be a
-    darker version OF.
+    darker version OF. Hence a ratio: a muted teal keeps 39% of teal's chroma
+    and stays a teal, while a blue-grey holds 20% of purple's and is a grey.
     """
     c_a, c_b = chroma_of(lab_a), chroma_of(lab_b)
-    return min(c_a, c_b) < NEUTRAL_CHROMA and max(c_a, c_b) >= CHROMATIC_CHROMA
+    paler, bolder = min(c_a, c_b), max(c_a, c_b)
+    if bolder < CHROMATIC_CHROMA:
+        return False  # neither is emphatic enough to rule anything out
+    return (paler / bolder) < MIN_CHROMA_RATIO
 
 
 def extract_hat_colors(image_path: Path, max_colors: int = 3) -> list[ExtractedColor]:

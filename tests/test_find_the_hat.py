@@ -206,11 +206,19 @@ async def test_a_grey_hat_is_never_a_purple_hat(client, db_session):
 
     So no cutoff can fix this, which is why lowering it twice didn't. These
     are the actual swatches off the reported hats.
+
+    Note which chips this asserts over. Emphatically chromatic ones must come
+    back empty. TEAL is deliberately absent: it is itself only C=27, barely
+    over `CHROMATIC_CHROMA`, and a slate at C=9 holds a third of that. A
+    blue-grey hat surfacing for teal is a fair answer — teal IS a desaturated
+    blue-green and those are its real neighbours — where a charcoal hat
+    surfacing for purple never was. Claiming otherwise here would be asserting
+    a behaviour the rule does not have and should not.
     """
     for hexv in ("#6b7078", "#4a4f55", "#3a3f45", "#5a6472", "#6b7a8c"):
         await _set_colors(db_session, await _hat(client), [("grey", "gray", hexv)])
 
-    for chip in ("7341a0", "e682aa", "c82828", "238080", "eb7d23"):
+    for chip in ("7341a0", "e682aa", "c82828", "eb7d23", "325abe", "378746"):
         hits = (await client.get("/api/search/color", params={"hex": chip})).json()
         assert hits == [], f"a grey hat came back for #{chip}"
 
@@ -237,6 +245,30 @@ async def test_the_guard_is_about_hue_not_the_size_of_the_chroma_gap(
 
     red_hits = (await client.get("/api/search/color", params={"hex": "c82828"})).json()
     assert maroon in [r["id"] for r in red_hits], "a maroon hat is a red hat"
+
+
+async def test_a_muted_colour_is_still_that_colour(client, db_session):
+    """The false negative an absolute chroma floor would have shipped.
+
+    "How much colour counts as some colour" depends on the colour. Teal is
+    itself only C=27 where red is C=73, so a slate teal at C=10.5 holds a real
+    share of teal's chroma — 39% — while the blue-grey that must NOT match
+    purple holds 20% of its C=59. An absolute floor cannot tell those apart:
+    set low enough to keep this hat findable it lets blue-grey match purple,
+    set high enough to stop that it throws away every dark teal and forest
+    green in a collection full of them. Hence the ratio.
+    """
+    for hexv, chip in (
+        ("#3f5a5a", "238080"),   # slate teal   -> teal
+        ("#1c3838", "238080"),   # dark teal    -> teal
+        ("#1e3528", "1e5532"),   # deep forest  -> forest green
+        ("#4a2b30", "6e202a"),   # dusty maroon -> maroon
+        ("#4a4c33", "6e6e32"),   # muted olive  -> olive
+    ):
+        hat_id = await _hat(client)
+        await _set_colors(db_session, hat_id, [("muted", "x", hexv)])
+        hits = (await client.get("/api/search/color", params={"hex": chip})).json()
+        assert hat_id in [r["id"] for r in hits], f"{hexv} should match #{chip}"
 
 
 async def test_neutral_searches_still_work_in_both_directions(client, db_session):
