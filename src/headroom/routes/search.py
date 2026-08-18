@@ -64,8 +64,13 @@ async def search_by_color(
         raise HTTPException(status_code=422, detail="hex must be a 6-digit hex color")
     ranked = await search_hats_by_color(db, hex, room_id=room_id, limit=limit)
     return [
-        ColorSearchResult(**_result_fields(h), matched_hex=matched, distance=distance)
-        for h, matched, distance in ranked
+        ColorSearchResult(
+            **_result_fields(m.hat),
+            matched_hex=m.hex_value,
+            distance=m.distance,
+            matched_rank=m.rank,
+        )
+        for m in ranked
     ]
 
 

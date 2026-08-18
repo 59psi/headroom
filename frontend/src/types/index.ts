@@ -175,7 +175,10 @@ export interface SearchResult {
 
 export interface ColorSearchResult extends SearchResult {
   matched_hex: string;
+  /** Raw CIEDE2000 to the matched swatch — NOT the sort key. See matched_rank. */
   distance: number;
+  /** dominance_rank of the matched swatch. 1 is the hat's main colour. */
+  matched_rank: number;
 }
 
 export interface PaletteColor {
