@@ -6,6 +6,57 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.22.0] — 2026-08-18
+
+### Fixed
+- **Colour search stops returning the whole collection.** Searching a colour
+  came back with everything, bunched at near-identical distances — four hats
+  all reading "Δ15", the top three matched on grey and the fourth, a green
+  hat, matched on its pink logo. Two causes, both mine:
+
+  **A hat was scored on the closest of ALL its swatches, with nothing
+  weighting them.** A logo counted exactly as much as the crown, and a hat
+  with four colours got four chances to match anything. Every melin hat is a
+  dark neutral crown with a bright accent, so searching pink ranked a green
+  hat with a pink logo **equal first** — 0.00, identical to a hat that is
+  actually pink — with nothing on screen explaining why.
+
+  A hat now scores on `distance + penalty(dominance_rank)`: +0 for its main
+  colour, +8 for its secondary, +14 for anything deeper. Additive, because a
+  multiplier leaves an exact accent match at 0.00 and breaks no tie. Accent
+  matches still surface — "find the hat with the pink brim" is the point of
+  the feature — but they never outrank a hat that IS the colour, and the
+  penalty doubles as a budget: a secondary must land within 14 of the target,
+  an accent within 8.
+
+  **The Δ30 cutoff was calibrated against the wrong distribution.** It was
+  measured on the 26-colour palette, whose entries are deliberately spread
+  around the wheel. A hat collection is not: these are overwhelmingly black,
+  charcoal, navy and grey, and CIEDE2000 places a low-chroma neutral
+  moderately near *everything*. At 30, grey was a "match" for **17 of the
+  other 25 palette colours** — red, orange, purple and pink included. Every
+  hat owns a grey swatch, so every search returned every hat.
+
+  Re-calibrated on the neutrals, where the problem lives, to **22**:
+
+  | target   | within 30 | within 22 |
+  |----------|-----------|-----------|
+  | gray     | 17        | 4         |
+  | charcoal | 11        | 5         |
+  | pink     | 4         | 1         |
+  | red      | 6         | 1         |
+
+  Saturated searches barely notice — they were never the complaint. Shades of
+  one colour still match comfortably: a real grey crown is 8.0 from the grey
+  chip, well inside.
+
+### Added
+- **Results say which swatch they matched.** A hat matched on its accent is
+  labelled as such, so a row reading "Δ0 · accent" sitting below a row reading
+  "Δ5" is legible rather than looking broken. `ColorSearchResult` gains
+  `matched_rank`; `distance` keeps its meaning — the raw CIEDE2000 to the
+  matched swatch — and is deliberately **not** the sort key.
+
 ## [2.21.0] — 2026-08-18
 
 ### Changed

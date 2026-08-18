@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -80,38 +82,72 @@ async def search_hats(
     return list(result.scalars().all())
 
 
-# How far a swatch may sit from the target and still be called a match.
+# How much worse a match counts for being on a less dominant swatch.
 #
-# There was no ceiling before, only `limit`. Every active hat was ranked and
-# the nearest N returned however far away they were, so searching a specific
-# teal in a collection of a hundred returned thirty hats — six teal, and
-# twenty-four presented identically beside them. A list that always fills to
-# the same length carries no information about whether anything matched.
+# Added in ΔE units and keyed on `dominance_rank`, not `tier`: rank is
+# assigned positionally by every writer (`enumerate(..., start=1)` in the
+# analysis pipeline, the fallback path and `PUT /api/hats/{id}/colors`),
+# whereas `tier` arrives from the client on the manual-edit path and can
+# disagree with the position it is stored at.
 #
-# 30 is calibrated against the curated palette in `color_extraction`, whose
-# 26 entries are deliberately distinct colours, so the distance between any
-# two of them is a lower bound on "different enough to have its own name":
+# Without this, a hat matched on the MINIMUM distance across all its swatches,
+# so every swatch counted the same and a hat with four of them got four
+# chances to match anything. On this collection that is not a corner case: a
+# melin hat is a dark neutral crown with a bright logo, so searching pink
+# ranked a green hat with a pink logo EQUAL FIRST with a hat that is actually
+# pink — both scored 0.0, and nothing in the result list explained why.
 #
-#     charcoal / navy       13.3   must match
-#     green / teal          21.0   must match
-#     blue / navy           23.3   must match
-#     charcoal / gray       25.3   must match  <- sets the floor
-#     light blue / blue     31.1   nice to have, just misses
-#     navy / green          58.6   must not match
+# Additive rather than multiplicative, because a multiplier leaves an exact
+# accent match at 0.0 and changes nothing about the tie it needs to break.
+# The penalty doubles as a per-rank distance budget once the cutoff is
+# applied: a secondary must land within 14 of the target to appear at all, an
+# accent within 8. "Find the hat with the pink brim" still works, but it has
+# to be that pink and it never outranks a hat that IS pink.
+_RANK_PENALTY: dict[int, float] = {1: 0.0, 2: 8.0, 3: 14.0}
+_DEEPER_RANK_PENALTY = 18.0
+
+# How bad a match score may be and still be called a match.
 #
-# Below ~26 the cutoff starts excluding shades of one colour from each other,
-# which is the feature. Median distance across all 325 palette pairs is 38.8,
-# so 30 admits roughly the nearest third.
+# There was no ceiling at all before 2.20, only `limit`: every active hat was
+# ranked and the nearest N returned however far away they were, so searching a
+# specific teal in a collection of a hundred returned thirty hats — six teal,
+# and twenty-four presented identically beside them.
 #
-# The honest limitation: a single global threshold suits saturated targets
-# better than neutral ones. Grey has little chroma, so CIEDE2000 places it
-# moderately near everything — gray/red is 29.3 and sneaks in, while the
-# genuinely-related light blue/blue is 31.1 and doesn't. Fixing that properly
-# means weighting by chroma or by the swatch's dominance rank, which trades
-# away the secondary-colour matching that makes this feature useful. Ranking
-# keeps it tolerable in practice: the odd cross-family hit sorts last.
-# Tune here if it still reads loose.
-MAX_COLOR_DISTANCE = 30.0
+# 2.20 set it to 30, calibrated against the curated palette in
+# `color_extraction` on the reasoning that its 26 entries are deliberately
+# distinct, so the gap between any two is a lower bound on "different enough
+# to have its own name". That was the wrong distribution to calibrate on. The
+# palette is spread evenly around the wheel; a hat collection is not. These
+# hats are overwhelmingly black, charcoal, navy and grey, and CIEDE2000 places
+# a low-chroma neutral moderately near EVERYTHING — at 30, grey is a "match"
+# for 17 of the other 25 palette colours, red, orange, purple and pink
+# included. Every hat owns a grey swatch, so every search returned every hat,
+# all bunched at a distance that made them look equally relevant.
+#
+# 22 is calibrated on the neutrals instead, where the problem lives:
+#
+#                     within 30      within 22
+#     gray               17            4  (silver, tan, teal, olive)
+#     charcoal           11            5
+#     pink                4            1
+#     red                 6            1
+#
+# Saturated targets barely notice the change — they were never the complaint —
+# while the neutral blowout that made the feature useless is gone. Distinct
+# shades of one colour still match each other comfortably: a real grey crown
+# (#6b7078) is 8.0 from the grey chip, well inside.
+MAX_MATCH_SCORE = 22.0
+
+
+@dataclass(frozen=True)
+class ColorMatch:
+    """One hat's best swatch against a search colour."""
+
+    hat: Hat
+    hex_value: str  # the swatch that matched
+    distance: float  # raw CIEDE2000 from the target to that swatch
+    rank: int  # its dominance_rank — 1 is the hat's main colour
+    score: float  # distance + rank penalty; what the ordering uses
 
 
 async def search_hats_by_color(
@@ -120,15 +156,16 @@ async def search_hats_by_color(
     *,
     room_id: int | None = None,
     limit: int = 30,
-    max_distance: float = MAX_COLOR_DISTANCE,
-) -> list[tuple[Hat, str, float]]:
-    """Rank active hats by perceptual closeness to `hex_value`.
+    max_score: float = MAX_MATCH_SCORE,
+) -> list[ColorMatch]:
+    """Rank active hats by perceptual closeness to `hex_value`, nearest first.
 
-    Distance is the minimum CIEDE2000 over a hat's stored swatches, so a hat
-    whose *secondary* color matches still surfaces — exactly the "find
-    something light blue" job. Anything beyond `max_distance` is dropped
-    rather than padding the list out to `limit`. Returns
-    (hat, matched_hex, distance), nearest first.
+    A hat is scored on its best swatch, where "best" weighs perceptual
+    distance against how much of the hat wears that colour: a hat whose
+    SECONDARY colour matches still surfaces — that is the "find something
+    light blue" job — but it ranks below a hat whose main colour does, which
+    is what min-across-swatches got wrong. Anything scoring beyond `max_score`
+    is dropped rather than padding the list out to `limit`.
 
     Hat counts are hundreds, not millions: loading candidates and ranking in
     Python beats teaching SQLite color science.
@@ -151,23 +188,31 @@ async def search_hats_by_color(
     if target_lab is None:
         return []
 
-    ranked: list[tuple[Hat, str, float]] = []
+    ranked: list[ColorMatch] = []
     for hat in result.scalars().all():
-        best: tuple[str, float] | None = None
+        best: ColorMatch | None = None
         for color in hat.colors or []:
             if not color.hex_value:
                 continue
             swatch_lab = lab_of(color.hex_value)
             if swatch_lab is None:
                 continue
-            d = lab_distance(target_lab, swatch_lab)
-            if best is None or d < best[1]:
-                best = (color.hex_value, d)
-        # Compared before rounding: a swatch at 30.004 is not meaningfully
-        # different from one at 29.996, but rounding first would let the
-        # displayed number and the cutoff disagree at the boundary.
-        if best is not None and best[1] <= max_distance:
-            ranked.append((hat, best[0], round(best[1], 2)))
+            rank = color.dominance_rank
+            distance = lab_distance(target_lab, swatch_lab)
+            score = distance + _RANK_PENALTY.get(rank, _DEEPER_RANK_PENALTY)
+            if best is None or score < best.score:
+                best = ColorMatch(
+                    hat=hat,
+                    hex_value=color.hex_value,
+                    distance=round(distance, 2),
+                    rank=rank,
+                    score=score,
+                )
+        # Thresholded on the unrounded score: a match at 22.004 is not
+        # meaningfully different from one at 21.996, but rounding first would
+        # let the displayed number and the cutoff disagree at the boundary.
+        if best is not None and best.score <= max_score:
+            ranked.append(best)
 
-    ranked.sort(key=lambda item: item[2])
+    ranked.sort(key=lambda match: match.score)
     return ranked[:limit]

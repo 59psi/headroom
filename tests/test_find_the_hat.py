@@ -35,7 +35,7 @@ async def test_color_distance_orders_perceptually():
     sky blue and a near-black navy are 58 points apart in lightness while the
     red is only 29. That is the correct answer to "are these the same colour",
     and it is the whole reason a light-blue search stopped returning navies.
-    Both sit far beyond MAX_COLOR_DISTANCE, so their relative order decides
+    Both sit far beyond MAX_MATCH_SCORE, so their relative order decides
     nothing a user ever sees.
     """
     light_blue = "#8cb9e1"
@@ -94,7 +94,7 @@ async def _set_colors(db_session, hat_id, colors):
 async def test_color_search_ranks_by_closeness(client, db_session):
     """Nearest first, among hats that are actually near.
 
-    The three seeds are all inside MAX_COLOR_DISTANCE on purpose. This used to
+    The three seeds are all inside MAX_MATCH_SCORE on purpose. This used to
     seed a navy and a red as the second and third results, which only worked
     because there was no cutoff and the list was padded out with whatever was
     least-far. Ranking is still the assertion; "returns three rows" no longer
@@ -127,6 +127,94 @@ async def test_color_search_matches_secondary_colors(client, db_session):
     results = resp.json()
     assert results[0]["id"] == two_tone
     assert results[0]["matched_hex"] == "#8fbde4"  # matched on the secondary
+    assert results[0]["matched_rank"] == 2
+
+
+async def test_a_hat_that_IS_the_colour_outranks_one_that_merely_accents_it(
+    client, db_session
+):
+    """The bug this whole weighting exists for.
+
+    A melin hat is a dark neutral crown with a bright logo, so a search colour
+    that appears as somebody's logo appears on half the collection. Scoring a
+    hat on the MINIMUM distance across its swatches made a green hat with a
+    pink logo score 0.00 — identical to a hat that is actually pink, listed
+    indistinguishably beside it, with nothing on screen explaining why.
+
+    Both still come back. The order is the point.
+    """
+    pink = await _hat(client)
+    green_with_pink_logo = await _hat(client)
+    await _set_colors(db_session, pink, [("pink", "pink", "#c86fa8")])
+    await _set_colors(
+        db_session,
+        green_with_pink_logo,
+        [
+            ("forest", "forest green", "#2f4739"),
+            ("grey", "gray", "#6b6f70"),
+            ("pink logo", "pink", "#c86fa8"),  # exactly the search colour
+        ],
+    )
+
+    results = (await client.get("/api/search/color", params={"hex": "c86fa8"})).json()
+    assert [r["id"] for r in results] == [pink, green_with_pink_logo]
+    # Both matched a swatch identical to the target, so raw distance cannot be
+    # what separates them — only the rank can.
+    assert results[0]["distance"] == results[1]["distance"] == 0.0
+    assert results[0]["matched_rank"] == 1
+    assert results[1]["matched_rank"] == 3
+
+
+async def test_the_rank_penalty_is_a_distance_budget_not_just_a_tiebreak(
+    client, db_session
+):
+    """The same swatch is a match as a hat's main colour and not as its accent.
+
+    #a04a80 is 14.3 from the target — a recognisably different pink. On the
+    hat that IS that colour, that is close enough to answer "show me the pink
+    ones". As a logo on an otherwise green hat it is neither the colour asked
+    for nor even a match for it, and returning it is how the list filled up
+    with things the eye rejects instantly.
+    """
+    its_main_colour = await _hat(client)
+    only_its_logo = await _hat(client)
+    await _set_colors(db_session, its_main_colour, [("dusky", "pink", "#a04a80")])
+    await _set_colors(
+        db_session,
+        only_its_logo,
+        [
+            ("forest", "forest green", "#2f4739"),
+            ("grey", "gray", "#6b6f70"),
+            ("dusky logo", "pink", "#a04a80"),
+        ],
+    )
+
+    results = (await client.get("/api/search/color", params={"hex": "c86fa8"})).json()
+    assert [r["id"] for r in results] == [its_main_colour]
+
+
+async def test_a_neutral_search_no_longer_matches_the_entire_collection(
+    client, db_session
+):
+    """CIEDE2000 puts a low-chroma neutral moderately near everything.
+
+    Every hat here owns a grey swatch, so at the old cutoff of 30 a grey was
+    within range of 17 of the 25 other palette colours — red, orange, purple
+    and pink included — and every colour search returned every hat, bunched at
+    distances that made them all look equally relevant.
+
+    Searching pink must not return grey hats. Searching grey still must.
+    """
+    grey = await _hat(client)
+    charcoal = await _hat(client)
+    await _set_colors(db_session, grey, [("grey", "gray", "#6b7078")])
+    await _set_colors(db_session, charcoal, [("charcoal", "charcoal", "#3a3f45")])
+
+    pink_hits = (await client.get("/api/search/color", params={"hex": "c86fa8"})).json()
+    assert pink_hits == [], "a grey hat is not a pink hat"
+
+    grey_hits = (await client.get("/api/search/color", params={"hex": "808080"})).json()
+    assert [r["id"] for r in grey_hits] == [grey]
 
 
 async def test_color_search_excludes_disposed_and_validates_hex(client, db_session):
@@ -378,4 +466,4 @@ async def test_cutoff_is_applied_before_the_limit(client, db_session):
     await _hat_with_color(client, db_session, "#c82828")
 
     ranked = await search_hats_by_color(db_session, "#8cb9e1", limit=1)
-    assert [h.id for h, _m, _d in ranked] == [near]
+    assert [m.hat.id for m in ranked] == [near]

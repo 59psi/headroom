@@ -23,10 +23,18 @@ class SearchResult(BaseModel):
 
 
 class ColorSearchResult(SearchResult):
-    """A SearchResult ranked by perceptual color closeness."""
+    """A SearchResult ranked by perceptual color closeness.
+
+    `distance` is the raw CIEDE2000 between the search colour and the swatch
+    that matched — it is NOT the value the list is sorted by, because a match
+    on a hat's accent counts for less than one on its main colour. Ordering
+    comes from the server; `matched_rank` is what lets the UI say why a nearer
+    number sits below a further one.
+    """
 
     matched_hex: str
     distance: float
+    matched_rank: int
 
 
 class DuplicateGroupRead(BaseModel):

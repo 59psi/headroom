@@ -11,6 +11,22 @@ import {
 } from '../components/hats/HatFilters';
 import type { ColorSearchResult, SearchResult } from '../types';
 
+/**
+ * How to describe the swatch a colour search matched on, or '' for the hat's
+ * main colour (which needs no explanation).
+ *
+ * Derived from `matched_rank` rather than from the swatch's own `tier` string:
+ * rank is assigned positionally by every writer on the server, while `tier`
+ * comes from the client on the manual-edit path and can disagree with the
+ * position it is stored at. Since rank is also what the server's ordering
+ * penalty uses, deriving the label from it keeps the words and the order
+ * telling the same story.
+ */
+export function matchedRankLabel(rank: number): string {
+  if (rank <= 1) return '';
+  return rank === 2 ? 'secondary' : 'accent';
+}
+
 export function SearchPage() {
   // `?q=` and `?color=` let other pages hand off a search — the stats page's
   // colour bars link straight to the ranked results for that shade. Initial
@@ -239,6 +255,14 @@ export function SearchPage() {
                           border: '1px solid rgba(255,255,255,0.4)',
                         }} />
                         <span className="font-mono">Δ{(hat as ColorSearchResult).distance.toFixed(0)}</span>
+                        {/* Without this, the ordering looks broken: a hat whose
+                            ACCENT is exactly your colour shows Δ0 and still sits
+                            below a hat whose main colour is Δ5, because the
+                            server weighs a match by how much of the hat wears
+                            it. The label is what makes that legible. */}
+                        {matchedRankLabel((hat as ColorSearchResult).matched_rank) && (
+                          <span>· {matchedRankLabel((hat as ColorSearchResult).matched_rank)}</span>
+                        )}
                       </div>
                     )}
                   </div>
