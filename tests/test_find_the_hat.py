@@ -193,6 +193,104 @@ async def test_the_rank_penalty_is_a_distance_budget_not_just_a_tiebreak(
     assert [r["id"] for r in results] == [its_main_colour]
 
 
+async def test_a_grey_hat_is_never_a_purple_hat(client, db_session):
+    """The bug that survived two cutoff tunings.
+
+    Searching purple returned 22 of 22 hats, every one matched on a grey
+    swatch at Δ13–19. CIEDE2000 divides the chroma difference by
+    S_C = 1 + 0.045·C̄, which is right for judging two samples of a dye and
+    wrong for "is this hat purple": a mid grey and a saturated purple differ
+    by 55 units of chroma, that divisor compresses the gap to ~22, and when
+    the lightness agrees the pair scores ~17 — NEARER than two genuinely
+    different purples sit to each other.
+
+    So no cutoff can fix this, which is why lowering it twice didn't. These
+    are the actual swatches off the reported hats.
+
+    Note which chips this asserts over. Emphatically chromatic ones must come
+    back empty. TEAL is deliberately absent: it is itself only C=27, barely
+    over `CHROMATIC_CHROMA`, and a slate at C=9 holds a third of that. A
+    blue-grey hat surfacing for teal is a fair answer — teal IS a desaturated
+    blue-green and those are its real neighbours — where a charcoal hat
+    surfacing for purple never was. Claiming otherwise here would be asserting
+    a behaviour the rule does not have and should not.
+    """
+    for hexv in ("#6b7078", "#4a4f55", "#3a3f45", "#5a6472", "#6b7a8c"):
+        await _set_colors(db_session, await _hat(client), [("grey", "gray", hexv)])
+
+    for chip in ("7341a0", "e682aa", "c82828", "eb7d23", "325abe", "378746"):
+        hits = (await client.get("/api/search/color", params={"hex": chip})).json()
+        assert hits == [], f"a grey hat came back for #{chip}"
+
+
+async def test_the_guard_is_about_hue_not_the_size_of_the_chroma_gap(
+    client, db_session
+):
+    """Navy and blue differ by MORE chroma than grey and teal, and must match.
+
+    The first fix attempted here was a penalty on the chroma difference, which
+    killed grey-vs-purple correctly and killed navy-vs-blue and red-vs-maroon
+    along with it — those are the dark and bright versions of one hue, exactly
+    what a colour search should find. What makes grey different is not the
+    size of the gap but that it has no hue at all to be a darker version of.
+    """
+    navy = await _hat(client)
+    maroon = await _hat(client)
+    await _set_colors(db_session, navy, [("navy", "navy", "#1c2541")])
+    await _set_colors(db_session, maroon, [("maroon", "maroon", "#6e202a")])
+
+    # Chroma gap navy->blue is 41; grey->teal is only 27 and is rejected.
+    blue_hits = (await client.get("/api/search/color", params={"hex": "325abe"})).json()
+    assert navy in [r["id"] for r in blue_hits], "a navy hat is a blue hat"
+
+    red_hits = (await client.get("/api/search/color", params={"hex": "c82828"})).json()
+    assert maroon in [r["id"] for r in red_hits], "a maroon hat is a red hat"
+
+
+async def test_a_muted_colour_is_still_that_colour(client, db_session):
+    """The false negative an absolute chroma floor would have shipped.
+
+    "How much colour counts as some colour" depends on the colour. Teal is
+    itself only C=27 where red is C=73, so a slate teal at C=10.5 holds a real
+    share of teal's chroma — 39% — while the blue-grey that must NOT match
+    purple holds 20% of its C=59. An absolute floor cannot tell those apart:
+    set low enough to keep this hat findable it lets blue-grey match purple,
+    set high enough to stop that it throws away every dark teal and forest
+    green in a collection full of them. Hence the ratio.
+    """
+    for hexv, chip in (
+        ("#3f5a5a", "238080"),   # slate teal   -> teal
+        ("#1c3838", "238080"),   # dark teal    -> teal
+        ("#1e3528", "1e5532"),   # deep forest  -> forest green
+        ("#4a2b30", "6e202a"),   # dusty maroon -> maroon
+        ("#4a4c33", "6e6e32"),   # muted olive  -> olive
+    ):
+        hat_id = await _hat(client)
+        await _set_colors(db_session, hat_id, [("muted", "x", hexv)])
+        hits = (await client.get("/api/search/color", params={"hex": chip})).json()
+        assert hat_id in [r["id"] for r in hits], f"{hexv} should match #{chip}"
+
+
+async def test_neutral_searches_still_work_in_both_directions(client, db_session):
+    """The guard must not cut the neutrals off from each other.
+
+    Black, charcoal, grey, silver and white are all near-achromatic, so a rule
+    phrased carelessly ("reject low-chroma swatches") would refuse to match
+    any of them against any other — breaking search for most of this
+    collection, which is overwhelmingly exactly these colours.
+    """
+    charcoal = await _hat(client)
+    white = await _hat(client)
+    await _set_colors(db_session, charcoal, [("charcoal", "charcoal", "#3a3f45")])
+    await _set_colors(db_session, white, [("white", "white", "#f0f0f0")])
+
+    dark = (await client.get("/api/search/color", params={"hex": "363c42"})).json()
+    assert [r["id"] for r in dark] == [charcoal]
+
+    pale = (await client.get("/api/search/color", params={"hex": "f5f5f5"})).json()
+    assert [r["id"] for r in pale] == [white]
+
+
 async def test_a_neutral_search_no_longer_matches_the_entire_collection(
     client, db_session
 ):
@@ -213,8 +311,11 @@ async def test_a_neutral_search_no_longer_matches_the_entire_collection(
     pink_hits = (await client.get("/api/search/color", params={"hex": "c86fa8"})).json()
     assert pink_hits == [], "a grey hat is not a pink hat"
 
+    # Both come back, nearest first: a charcoal hat IS a dark grey hat, and
+    # keeping that pair together is why the cutoff went back up to 26 once
+    # `is_neutral_mismatch` took over the job it had been mis-tuned to do.
     grey_hits = (await client.get("/api/search/color", params={"hex": "808080"})).json()
-    assert [r["id"] for r in grey_hits] == [grey]
+    assert [r["id"] for r in grey_hits] == [grey, charcoal]
 
 
 async def test_color_search_excludes_disposed_and_validates_hex(client, db_session):

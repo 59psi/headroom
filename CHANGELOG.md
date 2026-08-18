@@ -6,6 +6,59 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.23.0] — 2026-08-18
+
+### Fixed
+- **Colour search: a grey hat is no longer a purple hat.** Searching purple
+  returned **22 of 22** hats, every one matched on a grey swatch at Δ13–19.
+  2.22.0 did not fix this and neither would a third attempt at the same
+  approach, because the approach was wrong.
+
+  **A distance threshold cannot answer "is this hat purple?"** CIEDE2000
+  divides the chroma difference by `S_C = 1 + 0.045·C̄` — correct for the job
+  it was designed for, judging whether two nearly-identical samples of a dye
+  match, and wrong for this one. A mid grey and a saturated purple differ by
+  **55 units of chroma**; that divisor compresses the gap to ~22, and when
+  their lightness happens to agree the pair scores **~17**. Two genuinely
+  different purples score ~33. There is no cutoff that admits the second and
+  rejects the first, which is exactly why lowering it from 30 to 22 in 2.22.0
+  changed nothing that mattered.
+
+  The hue question is now answered **before** distance, not with it. A swatch
+  with essentially no hue is never matched against a colour with plenty of
+  one, at any distance.
+
+  Deliberately **not** a general penalty on the chroma gap — that was tried
+  first and it killed `navy`/`blue` (41 units apart) and `red`/`maroon` (36)
+  along with the bug. Those are the dark and bright versions of one hue and
+  must keep matching. What makes grey different isn't the size of the gap but
+  that it has no hue to be a darker version *of*.
+
+  The test is a **ratio** rather than an absolute chroma floor, because how
+  much colour counts as *some* colour depends on the colour. Teal is itself
+  only C=27 where red is C=73, so a slate teal at C=10.5 holds **39%** of
+  teal's chroma and is a teal, while the blue-grey that must not match purple
+  holds **20%** of its C=59 and is a grey. An absolute floor cannot tell those
+  apart — set low enough to keep the teal findable it lets blue-grey match
+  purple, set high enough to stop that it discards every dark teal and forest
+  green in a collection full of them.
+
+  Worth knowing: the guard is strong for emphatic targets like purple and
+  inherently weaker for muted ones. Tapping **teal** still returns some slate
+  and blue-grey hats — which is fair, because teal genuinely is a desaturated
+  blue-green and those are its neighbours. Tapping purple no longer does.
+
+  Purple now returns **3** hats instead of 22: the purple one, the navy one
+  and the pink one.
+
+### Changed
+- **The cutoff relaxes back to 26**, because it no longer has a second job.
+  It had been tightened to 22 to suppress the neutral blowout, which cost
+  real matches — `navy`/`blue` (Δ23.3) and `charcoal`/`gray` (Δ25.3) were both
+  casualties. With the hue guard doing that work properly, 26 is the first
+  value that keeps all 17 same-family palette pairs; 28 would start admitting
+  `navy`/`maroon`. A charcoal hat is a dark grey hat again.
+
 ## [2.22.0] — 2026-08-18
 
 ### Fixed
