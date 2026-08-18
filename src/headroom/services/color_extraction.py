@@ -277,6 +277,51 @@ def color_distance(hex_a: str, hex_b: str) -> float | None:
     return lab_distance(a, b)
 
 
+# ------------------------ grey is not a dark colour -------------------- #
+# Chroma is how much colour a colour has: 0 is a pure grey, ~60 a vivid
+# purple. Below NEUTRAL there is no hue worth speaking of; at or above
+# CHROMATIC there plainly is.
+#
+# These exist because distance alone cannot answer "is this hat purple?", and
+# no amount of tuning a single threshold will make it. CIEDE2000 divides the
+# chroma difference by S_C = 1 + 0.045 * C_bar, which is correct for the job
+# it was designed for — judging whether two nearly-identical samples of a dye
+# match — and wrong here. A mid grey and a saturated purple differ by 55 units
+# of chroma; that divisor compresses the gap to ~22, and when their lightness
+# happens to agree the pair scores ~17. So a grey hat sat NEARER the purple
+# swatch than two genuinely different purples sit to each other, and every
+# colour search returned the whole shelf of black/charcoal/navy/grey caps.
+#
+# The gap between the two constants is deliberate and is where muted colours
+# live — cream (13), dark brown (15), beige (17), navy (20). Those read as
+# either a colour or a neutral depending on the light, so nothing is claimed
+# about them: they are simply judged on distance like everything else.
+NEUTRAL_CHROMA = 12.0
+CHROMATIC_CHROMA = 20.0
+
+
+def chroma_of(lab: tuple[float, float, float]) -> float:
+    """C* — distance from the neutral axis. 0 is grey, ~73 is a vivid red."""
+    _l, a, b = lab
+    return math.hypot(a, b)
+
+
+def is_neutral_mismatch(
+    lab_a: tuple[float, float, float], lab_b: tuple[float, float, float]
+) -> bool:
+    """True when one colour has no hue and the other has plenty.
+
+    Deliberately NOT a penalty on the chroma difference in general. Navy and
+    blue differ by 41 units of chroma, red and maroon by 36, and those pairs
+    must keep matching — they are the dark and bright versions of one hue.
+    What makes grey-vs-purple different is not the size of the gap but that
+    one side has no hue at all, so there is nothing for the other to be a
+    darker version OF.
+    """
+    c_a, c_b = chroma_of(lab_a), chroma_of(lab_b)
+    return min(c_a, c_b) < NEUTRAL_CHROMA and max(c_a, c_b) >= CHROMATIC_CHROMA
+
+
 def extract_hat_colors(image_path: Path, max_colors: int = 3) -> list[ExtractedColor]:
     """Return up to `max_colors` dominant hat colors, ranked, background-free.
 

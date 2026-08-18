@@ -8,7 +8,11 @@ from headroom.models.case import Case
 from headroom.models.hat import Hat
 from headroom.models.hat_color import HatColor
 from headroom.models.room import Room
-from headroom.services.color_extraction import lab_distance, lab_of
+from headroom.services.color_extraction import (
+    is_neutral_mismatch,
+    lab_distance,
+    lab_of,
+)
 
 
 async def search_hats(
@@ -113,30 +117,30 @@ _DEEPER_RANK_PENALTY = 18.0
 # specific teal in a collection of a hundred returned thirty hats — six teal,
 # and twenty-four presented identically beside them.
 #
-# 2.20 set it to 30, calibrated against the curated palette in
-# `color_extraction` on the reasoning that its 26 entries are deliberately
-# distinct, so the gap between any two is a lower bound on "different enough
-# to have its own name". That was the wrong distribution to calibrate on. The
-# palette is spread evenly around the wheel; a hat collection is not. These
-# hats are overwhelmingly black, charcoal, navy and grey, and CIEDE2000 places
-# a low-chroma neutral moderately near EVERYTHING — at 30, grey is a "match"
-# for 17 of the other 25 palette colours, red, orange, purple and pink
-# included. Every hat owns a grey swatch, so every search returned every hat,
-# all bunched at a distance that made them look equally relevant.
+# This number was then tuned twice, downward, chasing a problem it could never
+# have fixed. 2.20 set it to 30 against the curated palette; 2.22 cut it to 22
+# against the neutrals. Both were the same mistake — trying to separate "grey"
+# from "purple" with a distance threshold, when CIEDE2000 places a mid grey
+# ~17 from a saturated purple and two genuinely different purples ~33 apart.
+# No single cutoff exists that admits the second and rejects the first. That
+# is now `is_neutral_mismatch`'s job, and it does it on the right axis.
 #
-# 22 is calibrated on the neutrals instead, where the problem lives:
+# With the guard carrying that load the cutoff goes back to being about what
+# it should always have measured — is this the same colour — and can relax to
+# 26, which is where the palette says two named colours stop being versions of
+# each other. Against 17 same-family pairs that must match and 12 cross-family
+# pairs that must not:
 #
-#                     within 30      within 22
-#     gray               17            4  (silver, tan, teal, olive)
-#     charcoal           11            5
-#     pink                4            1
-#     red                 6            1
+#     cutoff   same-family kept   cross-family leaked
+#       22          15/17             gold/lime, brown/olive
+#       26          17/17             gold/lime, brown/olive     <- here
+#       28          17/17             + navy/maroon
 #
-# Saturated targets barely notice the change — they were never the complaint —
-# while the neutral blowout that made the feature useless is gone. Distinct
-# shades of one colour still match each other comfortably: a real grey crown
-# (#6b7078) is 8.0 from the grey chip, well inside.
-MAX_MATCH_SCORE = 22.0
+# 26 is the first value that keeps every same-family pair (navy/blue at 23.3
+# and charcoal/gray at 25.3 were both casualties of 22). The two survivors are
+# arguable rather than wrong — gold and lime are both yellows, brown and olive
+# both dark earth tones. 28 admits navy/maroon, which is not arguable.
+MAX_MATCH_SCORE = 26.0
 
 
 @dataclass(frozen=True)
@@ -167,6 +171,11 @@ async def search_hats_by_color(
     is what min-across-swatches got wrong. Anything scoring beyond `max_score`
     is dropped rather than padding the list out to `limit`.
 
+    Swatches failing `is_neutral_mismatch` are not scored at all. Distance
+    cannot decide whether a grey hat is purple, so nothing here tries: the
+    hue question is answered first, and only then does distance rank what is
+    left.
+
     Hat counts are hundreds, not millions: loading candidates and ranking in
     Python beats teaching SQLite color science.
     """
@@ -196,6 +205,13 @@ async def search_hats_by_color(
                 continue
             swatch_lab = lab_of(color.hex_value)
             if swatch_lab is None:
+                continue
+            # A grey hat is not a dark purple, at any distance. Checked
+            # before scoring rather than folded into it, because there is no
+            # penalty large enough to be principled here — the two colours
+            # are not near each other by a lot or a little, they are simply
+            # not the same kind of thing.
+            if is_neutral_mismatch(target_lab, swatch_lab):
                 continue
             rank = color.dominance_rank
             distance = lab_distance(target_lab, swatch_lab)
