@@ -44,6 +44,15 @@ All notable changes are documented here. This project follows
   pale sky blue is 58 lightness points from a near-black navy, and hue family
   alone was never a good reason to call them a match.
 
+### Fixed
+- **The hat spec sheet showed the wrong things.** "Type" reported Beanie or
+  Regular, which is derived entirely from Style directly above it — a quarter
+  of the sheet printing one fact twice. Meanwhile **construction** appeared
+  only as a badge beside the title, and **colourway** appeared nowhere on the
+  hat page at all, despite a colourway catalog and a purchase matcher whose
+  job is filling it in. Specs now lists Style, Size, Construction, Colorway,
+  Collection and Last Worn — the fields that actually tell two hats apart.
+
 384 backend + 81 frontend tests.
 
 ## [2.19.0] — 2026-08-17
