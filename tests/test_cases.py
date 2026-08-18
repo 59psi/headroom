@@ -141,7 +141,7 @@ async def test_case_read_reports_what_it_can_accept(client):
 
     assert case["accepts_regular"] is True
     assert case["accepts_beanie"] is True
-    assert case["free_regular"] == 4
+    assert case["free_regular"] == 3, "a three-hat case; melin's own order lines call it that"
     assert case["free_beanie"] == 6
 
     # One regular hat in: still takes regular hats, no longer takes beanies.
@@ -151,28 +151,48 @@ async def test_case_read_reports_what_it_can_accept(client):
     after = (await client.get(f"/api/cases/{case['display_id']}")).json()
 
     assert after["accepts_regular"] is True
-    assert after["free_regular"] == 3
+    assert after["free_regular"] == 2
     assert after["accepts_beanie"] is False, "type exclusivity must show in the read model"
 
 
 @pytest.mark.anyio
-async def test_a_full_case_reports_itself_full(client):
-    """Four regular hats is the default ceiling."""
+async def test_a_full_case_reports_itself_full_but_still_takes_one_more(client):
+    """Three is full. A fourth goes in — the case is then OVERFULL, not broken.
+
+    Two distinct states that used to be one. "Full" is the number the case is
+    designed around; the extra hat physically fits and people do it, so the
+    save is allowed and the UI reports it rather than pretending 4 is normal
+    or refusing something that works.
+    """
     case = (await client.post("/api/cases", json={"case_type": "daily_wear"})).json()
-    for _ in range(4):
-        await client.post("/api/hats", json={
+
+    async def add():
+        return await client.post("/api/hats", json={
             "condition": "new", "size": "classic", "style": "a_game", "case_id": case["id"],
         })
 
-    full = (await client.get(f"/api/cases/{case['display_id']}")).json()
+    for _ in range(3):
+        assert (await add()).status_code == 201
 
-    assert full["accepts_regular"] is False
-    assert full["free_regular"] == 0
-    # And the write path agrees — this is the 409 the picker now prevents.
-    rejected = await client.post("/api/hats", json={
-        "condition": "new", "size": "classic", "style": "a_game", "case_id": case["id"],
-    })
+    full = (await client.get(f"/api/cases/{case['display_id']}")).json()
+    assert full["free_regular"] == 0, "no room left before it is overfull"
+    assert full["overfull"] is False
+    assert full["nominal_capacity"] == 3
+    assert full["accepts_regular"] is True, "the fourth still fits"
+
+    assert (await add()).status_code == 201
+
+    over = (await client.get(f"/api/cases/{case['display_id']}")).json()
+    assert over["hat_count"] == 4
+    assert over["overfull"] is True
+    assert over["free_regular"] == 0
+    assert over["accepts_regular"] is False, "one over is the whole allowance"
+
+    # The fifth is refused, and the message quotes the ceiling actually
+    # enforced rather than the nominal 3 it would already have exceeded.
+    rejected = await add()
     assert rejected.status_code == 409
+    assert "(4)" in rejected.json()["detail"]
 
 
 @pytest.mark.anyio
@@ -189,10 +209,10 @@ async def test_a_disposed_hat_frees_its_slot_in_the_read_model(client):
     })).json()
 
     before = (await client.get(f"/api/cases/{case['display_id']}")).json()
-    assert before["free_regular"] == 3
+    assert before["free_regular"] == 2
 
     await client.post(f"/api/hats/{hat['id']}/dispose", json={"via": "sold"})
 
     after = (await client.get(f"/api/cases/{case['display_id']}")).json()
-    assert after["free_regular"] == 4, "a disposed hat is still occupying a slot"
+    assert after["free_regular"] == 3, "a disposed hat is still occupying a slot"
     assert after["hat_count"] == 0

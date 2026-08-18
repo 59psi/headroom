@@ -32,7 +32,14 @@ async def test_beanie_capacity_limit(client):
         resp = await _create_hat(client, case_id=case["id"], style="beanie")
         assert resp.status_code == 201
 
-    # 7th beanie should fail
+    # The 7th is the overfill allowance — accepted, and the case reports
+    # itself overfull.
+    resp = await _create_hat(client, case_id=case["id"], style="beanie")
+    assert resp.status_code == 201
+    over = (await client.get(f"/api/cases/{case['display_id']}")).json()
+    assert over["overfull"] is True
+
+    # The 8th is refused.
     resp = await _create_hat(client, case_id=case["id"], style="beanie")
     assert resp.status_code == 409
     assert "beanie capacity" in resp.json()["detail"]
@@ -97,3 +104,82 @@ async def test_delete_case_unassigns_hats(client):
     assert resp.status_code == 200
     assert resp.json()["case_id"] is None
     assert resp.json()["display_id"] is None
+
+
+# ------------------ full vs overfull (v2.20) --------------------------- #
+#
+# Three is full — the physical article is a three-hat case, and melin's own
+# order lines call it a "3 Hat Travel Case". A fourth does fit, so it is
+# allowed and reported as overfull rather than refused or passed off as normal.
+
+
+@pytest.mark.anyio
+async def test_default_case_is_full_at_three_and_overfull_at_four(client):
+    case = await _create_case(client)
+
+    for _ in range(3):
+        assert (await _create_hat(client, case_id=case["id"])).status_code == 201
+
+    full = (await client.get(f"/api/cases/{case['display_id']}")).json()
+    assert full["nominal_capacity"] == 3
+    assert full["free_regular"] == 0
+    assert full["overfull"] is False
+    assert full["accepts_regular"] is True, "the fourth is allowed"
+
+    assert (await _create_hat(client, case_id=case["id"])).status_code == 201
+
+    over = (await client.get(f"/api/cases/{case['display_id']}")).json()
+    assert over["overfull"] is True
+    assert over["hat_count"] == 4
+    assert over["accepts_regular"] is False, "one over is the whole allowance"
+
+    fifth = await _create_hat(client, case_id=case["id"])
+    assert fifth.status_code == 409
+    # The message quotes the ceiling enforced, not the nominal already passed.
+    assert "(4)" in fifth.json()["detail"]
+
+
+@pytest.mark.anyio
+async def test_a_stated_capacity_gets_no_overfill_allowance(client):
+    """`capacity` exists for "a case you don't want to cram" (USAGE §2).
+
+    Quietly allowing one more than the stated number would defeat the only
+    reason to set the field, so the allowance applies to the default only.
+    """
+    case = (await client.post(
+        "/api/cases", json={"case_type": "archive", "capacity": 2}
+    )).json()
+
+    for _ in range(2):
+        assert (await _create_hat(client, case_id=case["id"])).status_code == 201
+
+    read = (await client.get(f"/api/cases/{case['display_id']}")).json()
+    assert read["nominal_capacity"] == 2
+    assert read["accepts_regular"] is False, "stated means stated"
+    assert read["overfull"] is False
+
+    refused = await _create_hat(client, case_id=case["id"])
+    assert refused.status_code == 409
+    assert "(2)" in refused.json()["detail"]
+
+
+@pytest.mark.anyio
+async def test_a_zero_capacity_case_accepts_nothing():
+    """The allowance is slack on a real capacity, not a way into an empty one.
+
+    Tested against the rule directly: the API pins `capacity` at ge=1, so a 0
+    can only arrive from a direct DB edit or a future caller. The branch is
+    defensive, which is exactly the kind that rots unwatched.
+    """
+    from headroom.services.capacity import evaluate
+
+    room = evaluate(capacity=0, beanie_count=0, regular_count=0)
+    assert room.accepts_regular is False
+    assert room.accepts_beanie is False
+    assert room.limit_regular == 0
+
+
+@pytest.mark.anyio
+async def test_the_api_refuses_a_zero_capacity(client):
+    resp = await client.post("/api/cases", json={"case_type": "archive", "capacity": 0})
+    assert resp.status_code == 422

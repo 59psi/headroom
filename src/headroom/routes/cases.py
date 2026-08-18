@@ -54,6 +54,11 @@ def _case_to_read(case) -> CaseRead:
         accepts_beanie=room.accepts_beanie,
         free_regular=room.free_regular,
         free_beanie=room.free_beanie,
+        # One flag rather than per-type: a case is type-exclusive, so at most
+        # one of these can be true and two booleans would only invite a UI
+        # that checks the wrong one.
+        overfull=room.overfull_beanie if beanie_count else room.overfull_regular,
+        nominal_capacity=room.max_beanie if beanie_count else room.max_regular,
         created_at=case.created_at,
         updated_at=case.updated_at,
     )

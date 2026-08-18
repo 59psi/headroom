@@ -1737,3 +1737,24 @@ body.hr-keyboard-open .bottom-nav {
   font-size: 0.85rem;
   color: var(--text-muted);
 }
+
+/* Full / overfull tag on a case card. Overfull is deliberately warm rather
+   than red: a fourth hat in a three-hat case is a thing people do on purpose,
+   not an error to be alarmed by. */
+.hr-fill-tag {
+  font-family: var(--font-heading);
+  font-size: 0.55rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-muted);
+  margin-top: 0.2rem;
+}
+
+.hr-fill-tag.is-overfull { color: var(--neon-orange); }
+
+.hr-case-overfull {
+  color: var(--neon-orange);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}

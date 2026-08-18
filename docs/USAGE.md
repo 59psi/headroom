@@ -42,8 +42,13 @@ still removed, and fallback color swatches still appear.
   there. That makes it the only room you can't delete — hit **Make default**
   on another room first, then the original is deletable like any other.
 - **Cases** hold hats and are type-exclusive (regular hats or beanies,
-  never mixed). Default capacity is **4 regular / 6 beanies**, and each
-  case can override it (e.g. 3 for a Melin case you don't want to cram).
+  never mixed). A case is **full at 3 hats** (or 6 beanies) — that's what the
+  physical case is built for. A 4th still fits, so Headroom accepts it and
+  marks the case **overfull** rather than refusing something that works or
+  pretending it's normal. One over is the whole allowance; the 5th is
+  refused. Each case can override the number (e.g. 2 for one you don't want
+  to cram) — **a capacity you set is exact and gets no overfill latitude**,
+  since avoiding the cram is the reason to set it.
   Cases get display IDs like `A-001` (archive) or `D-001` (daily wear),
   auto-sequenced.
 - **Hats** can also live unassigned (no case). Sizes: small / classic /
