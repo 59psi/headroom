@@ -12,6 +12,7 @@ Pillow-only, no network, no new dependencies.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -127,8 +128,21 @@ def normalize_color_name(name: str) -> str:
 
 
 # --------------------- perceptual color distance ---------------------- #
-# sRGB → CIELAB, pure Python (D65). Euclidean distance in LAB (ΔE*76) is
-# a good-enough perceptual metric for "show me hats close to this color".
+# sRGB → CIELAB, pure Python (D65), then CIEDE2000 for the distance.
+#
+# LAB was designed so that plain Euclidean distance (ΔE*76) would be
+# perceptually uniform, and it isn't — the error is worst in exactly the
+# region this collection lives in. Saturated blues and navies are pushed far
+# apart in a*b* while looking near-identical, so a navy search returned a
+# spread of blues ranked in an order that didn't match what you see, and
+# two navies a person would call the same shade scored further apart than a
+# navy and a slate grey.
+#
+# CIEDE2000 is the current CIE standard and fixes that with weighting terms
+# for lightness, chroma and hue plus a rotation term for the blue region.
+# It's more arithmetic but it is all local — no dependency, no lookup tables
+# — and it runs (hats x swatches) times over a collection of hundreds, which
+# is nothing.
 
 
 def _srgb_to_lab(rgb: tuple[int, int, int]) -> tuple[float, float, float]:
@@ -161,12 +175,102 @@ def lab_of(hex_value: str) -> tuple[float, float, float] | None:
 
 
 def lab_distance(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
-    """ΔE*76 between two already-converted LAB triples."""
-    return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2) ** 0.5
+    """CIEDE2000 between two already-converted LAB triples.
+
+    Transcribed from the CIE standard as restated in Sharma, Wu & Dalal
+    (2005), whose paper also supplies the 34-pair test set this is checked
+    against in `tests/test_find_the_hat.py` — the formula has several places
+    (the hue-average discontinuity, the `atan2` quadrant, degrees vs radians)
+    where a plausible-looking mistake still returns plausible-looking numbers,
+    so it is pinned to reference values rather than eyeballed.
+
+    Named `lab_distance` still, because every caller wants "the perceptual
+    distance" and none of them should have to care which formula that is.
+    """
+    l1, a1, b1 = a
+    l2, a2, b2 = b
+
+    c1 = math.hypot(a1, b1)
+    c2 = math.hypot(a2, b2)
+    c_bar = (c1 + c2) / 2.0
+
+    # G expands a* in low-chroma colours so near-greys don't get a hue that
+    # swamps the comparison.
+    c_bar7 = c_bar ** 7
+    g = 0.5 * (1.0 - math.sqrt(c_bar7 / (c_bar7 + 25.0 ** 7)))
+    a1p = (1.0 + g) * a1
+    a2p = (1.0 + g) * a2
+
+    c1p = math.hypot(a1p, b1)
+    c2p = math.hypot(a2p, b2)
+
+    def _hue(ap: float, bp: float) -> float:
+        if ap == 0.0 and bp == 0.0:
+            return 0.0
+        return math.degrees(math.atan2(bp, ap)) % 360.0
+
+    h1p = _hue(a1p, b1)
+    h2p = _hue(a2p, b2)
+
+    dlp = l2 - l1
+    dcp = c2p - c1p
+
+    # Hue difference takes the short way round the circle; undefined (and so
+    # zero) when either colour is achromatic.
+    if c1p * c2p == 0.0:
+        dhp = 0.0
+    elif abs(h2p - h1p) <= 180.0:
+        dhp = h2p - h1p
+    elif h2p - h1p > 180.0:
+        dhp = h2p - h1p - 360.0
+    else:
+        dhp = h2p - h1p + 360.0
+    dHp = 2.0 * math.sqrt(c1p * c2p) * math.sin(math.radians(dhp) / 2.0)
+
+    l_bar_p = (l1 + l2) / 2.0
+    c_bar_p = (c1p + c2p) / 2.0
+
+    # Mean hue has a discontinuity at the 0/360 wrap that a naive average
+    # gets wrong by 180 degrees.
+    if c1p * c2p == 0.0:
+        h_bar_p = h1p + h2p
+    elif abs(h1p - h2p) <= 180.0:
+        h_bar_p = (h1p + h2p) / 2.0
+    elif h1p + h2p < 360.0:
+        h_bar_p = (h1p + h2p + 360.0) / 2.0
+    else:
+        h_bar_p = (h1p + h2p - 360.0) / 2.0
+
+    t = (
+        1.0
+        - 0.17 * math.cos(math.radians(h_bar_p - 30.0))
+        + 0.24 * math.cos(math.radians(2.0 * h_bar_p))
+        + 0.32 * math.cos(math.radians(3.0 * h_bar_p + 6.0))
+        - 0.20 * math.cos(math.radians(4.0 * h_bar_p - 63.0))
+    )
+
+    d_theta = 30.0 * math.exp(-(((h_bar_p - 275.0) / 25.0) ** 2))
+    c_bar_p7 = c_bar_p ** 7
+    r_c = 2.0 * math.sqrt(c_bar_p7 / (c_bar_p7 + 25.0 ** 7))
+    # The blue-region rotation — the term that makes navies behave.
+    r_t = -math.sin(math.radians(2.0 * d_theta)) * r_c
+
+    s_l = 1.0 + (0.015 * (l_bar_p - 50.0) ** 2) / math.sqrt(20.0 + (l_bar_p - 50.0) ** 2)
+    s_c = 1.0 + 0.045 * c_bar_p
+    s_h = 1.0 + 0.015 * c_bar_p * t
+
+    # kL = kC = kH = 1: the reference conditions, and there is nothing about
+    # a phone screen showing hat photos that justifies a graphic-arts tweak.
+    term_l = dlp / s_l
+    term_c = dcp / s_c
+    term_h = dHp / s_h
+    return math.sqrt(
+        term_l ** 2 + term_c ** 2 + term_h ** 2 + r_t * term_c * term_h
+    )
 
 
 def color_distance(hex_a: str, hex_b: str) -> float | None:
-    """Perceptual distance (ΔE*76) between two hex colors; None if unparsable."""
+    """Perceptual distance (CIEDE2000) between two hex colors; None if unparsable."""
     a, b = lab_of(hex_a), lab_of(hex_b)
     if a is None or b is None:
         return None
