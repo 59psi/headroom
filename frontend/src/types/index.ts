@@ -31,6 +31,10 @@ export interface CaseRead {
    *  picker can't disagree with what a save will accept. */
   /** Up to 4 hat photos for the collage the Cases grid renders. */
   hat_thumbs: string[];
+  /** Past nominal capacity — a 4th hat in a 3-hat case. Allowed, but shown. */
+  overfull: boolean;
+  /** The count at which this case reads as FULL (per-case override aware). */
+  nominal_capacity: number;
   accepts_regular: boolean;
   accepts_beanie: boolean;
   free_regular: number;

@@ -15,7 +15,8 @@ class CaseCreate(BaseModel):
     # case_service.create_case. Was a hardcoded 1, which pinned new cases to a
     # room that can now be deleted.
     room_id: int | None = None
-    # Per-case hat capacity; None → type default (4 regular / 6 beanie)
+    # Per-case hat capacity; None → type default (3 regular / 6 beanie,
+    # each with one hat of overfill latitude). A stated number is exact.
     capacity: int | None = Field(None, ge=1, le=50)
 
 
@@ -61,8 +62,16 @@ class CaseRead(BaseModel):
     hat_thumbs: list[str] = []
     accepts_regular: bool = True
     accepts_beanie: bool = True
+    #: Slots left before FULL — zero at nominal, even though one more will
+    #: still be accepted. "3 of 3" has to read as full.
     free_regular: int = 0
     free_beanie: int = 0
+    #: Past nominal: a fourth hat is in a three-hat case. Allowed, but the
+    #: grids and the picker say so rather than presenting it as normal.
+    overfull: bool = False
+    #: Nominal capacity for this case, so the UI can render "3 of 3" without
+    #: re-deriving the default it would then get wrong for an override.
+    nominal_capacity: int = 0
     created_at: datetime
     updated_at: datetime
 

@@ -27,9 +27,20 @@ async def test_parse_hex_variants():
 
 
 async def test_color_distance_orders_perceptually():
+    """Nearer shades score lower. Identity is 0, garbage is None.
+
+    Note what is deliberately NOT asserted any more. This test used to claim
+    light blue was nearer to navy than to red — hue-family reasoning, and true
+    under ΔE*76. Under CIEDE2000 it is false (55.8 vs 52.0), because a pale
+    sky blue and a near-black navy are 58 points apart in lightness while the
+    red is only 29. That is the correct answer to "are these the same colour",
+    and it is the whole reason a light-blue search stopped returning navies.
+    Both sit far beyond MAX_COLOR_DISTANCE, so their relative order decides
+    nothing a user ever sees.
+    """
     light_blue = "#8cb9e1"
-    assert color_distance(light_blue, "#9dc4e8") < color_distance(light_blue, "#1c2541")
-    assert color_distance(light_blue, "#1c2541") < color_distance(light_blue, "#c82828")
+    assert color_distance(light_blue, "#9dc4e8") < color_distance(light_blue, "#4a5a78")
+    assert color_distance(light_blue, "#4a5a78") < color_distance(light_blue, "#1c2541")
     assert color_distance(light_blue, light_blue) == 0
     assert color_distance("bad", light_blue) is None
 
@@ -81,17 +92,25 @@ async def _set_colors(db_session, hat_id, colors):
 
 
 async def test_color_search_ranks_by_closeness(client, db_session):
+    """Nearest first, among hats that are actually near.
+
+    The three seeds are all inside MAX_COLOR_DISTANCE on purpose. This used to
+    seed a navy and a red as the second and third results, which only worked
+    because there was no cutoff and the list was padded out with whatever was
+    least-far. Ranking is still the assertion; "returns three rows" no longer
+    is, and `test_color_search_drops_hats_beyond_the_cutoff` covers why.
+    """
     sky = await _hat(client)
-    navy = await _hat(client)
-    red = await _hat(client)
+    paler = await _hat(client)
+    slate = await _hat(client)
     await _set_colors(db_session, sky, [("sky blue", "light blue", "#9dc4e8")])
-    await _set_colors(db_session, navy, [("navy", "navy", "#1c2541")])
-    await _set_colors(db_session, red, [("crimson", "red", "#c82828")])
+    await _set_colors(db_session, paler, [("pale blue", "light blue", "#b8d4ef")])
+    await _set_colors(db_session, slate, [("slate", "blue", "#6d93bd")])
 
     resp = await client.get("/api/search/color", params={"hex": "8cb9e1"})
     assert resp.status_code == 200
     results = resp.json()
-    assert [r["id"] for r in results][:1] == [sky]
+    assert [r["id"] for r in results] == [sky, paler, slate]
     assert results[0]["distance"] < results[1]["distance"] < results[2]["distance"]
     assert results[0]["matched_hex"] == "#9dc4e8"
 
@@ -224,3 +243,139 @@ async def test_case_capacity_update(client):
     resp = await client.put(f"/api/cases/{display_id}", json={"capacity": 4})
     assert resp.status_code == 200
     assert resp.json()["capacity"] == 4
+
+
+# ----------------------- CIEDE2000 conformance ------------------------- #
+#
+# The distance function is CIEDE2000, not the ΔE*76 it used to be. The formula
+# has several places — the hue-average discontinuity at the 0/360 wrap, the
+# atan2 quadrant, degrees vs radians — where a plausible-looking mistake still
+# returns plausible-looking numbers, so it is pinned to the published test set
+# rather than eyeballed. Source: Sharma, Wu & Dalal (2005), the standard
+# verification data for the CIE formula.
+#
+# Pairs 9-15 exist specifically to catch the hue-wrap bug: a naive mean-hue
+# average is out by 180 degrees there and every other pair still passes.
+_SHARMA_PAIRS = [
+    ((50, 2.6772, -79.7751), (50, 0, -82.7485), 2.0425),
+    ((50, 3.1571, -77.2803), (50, 0, -82.7485), 2.8615),
+    ((50, 2.8361, -74.0200), (50, 0, -82.7485), 3.4412),
+    ((50, -1.3802, -84.2814), (50, 0, -82.7485), 1.0000),
+    ((50, -1.1848, -84.8006), (50, 0, -82.7485), 1.0000),
+    ((50, -0.9009, -85.5211), (50, 0, -82.7485), 1.0000),
+    ((50, 0, 0), (50, -1, 2), 2.3669),
+    ((50, -1, 2), (50, 0, 0), 2.3669),
+    ((50, 2.4900, -0.0010), (50, -2.4900, 0.0009), 7.1792),
+    ((50, 2.4900, -0.0010), (50, -2.4900, 0.0010), 7.1792),
+    ((50, 2.4900, -0.0010), (50, -2.4900, 0.0011), 7.2195),
+    ((50, 2.4900, -0.0010), (50, -2.4900, 0.0012), 7.2195),
+    ((50, -0.0010, 2.4900), (50, 0.0009, -2.4900), 4.8045),
+    ((50, -0.0010, 2.4900), (50, 0.0010, -2.4900), 4.8045),
+    ((50, -0.0010, 2.4900), (50, 0.0011, -2.4900), 4.7461),
+    ((50, 2.5, 0), (50, 0, -2.5), 4.3065),
+    ((50, 2.5, 0), (73, 25, -18), 27.1492),
+    ((50, 2.5, 0), (61, -5, 29), 22.8977),
+    ((50, 2.5, 0), (56, -27, -3), 31.9030),
+    ((50, 2.5, 0), (58, 24, 15), 19.4535),
+    ((50, 2.5, 0), (50, 3.1736, 0.5854), 1.0000),
+    ((50, 2.5, 0), (50, 3.2972, 0), 1.0000),
+    ((50, 2.5, 0), (50, 1.8634, 0.5757), 1.0000),
+    ((50, 2.5, 0), (50, 3.2592, 0.3350), 1.0000),
+    ((60.2574, -34.0099, 36.2677), (60.4626, -34.1751, 39.4387), 1.2644),
+    ((63.0109, -31.0961, -5.8663), (62.8187, -29.7946, -4.0864), 1.2630),
+    ((61.2901, 3.7196, -5.3901), (61.4292, 2.2480, -4.9620), 1.8731),
+    ((35.0831, -44.1164, 3.7933), (35.0232, -40.0716, 1.5901), 1.8645),
+    ((22.7233, 20.0904, -46.6940), (23.0331, 14.9730, -42.5619), 2.0373),
+    ((36.4612, 47.8580, 18.3852), (36.2715, 50.5065, 21.2231), 1.4146),
+    ((90.8027, -2.0831, 1.4410), (91.1528, -1.6435, 0.0447), 1.4441),
+    ((90.9257, -0.5406, -0.9208), (88.6381, -0.8985, -0.7239), 1.5381),
+    ((6.7747, -0.2908, -2.4247), (5.8714, -0.0985, -2.2286), 0.6377),
+    ((2.0776, 0.0795, -1.1350), (0.9033, -0.0636, -0.5514), 0.9082),
+]
+
+
+@pytest.mark.parametrize("lab1,lab2,expected", _SHARMA_PAIRS)
+async def test_ciede2000_matches_the_published_reference_data(lab1, lab2, expected):
+    from headroom.services.color_extraction import lab_distance
+
+    assert lab_distance(lab1, lab2) == pytest.approx(expected, abs=1e-4)
+
+
+async def test_ciede2000_is_symmetric():
+    from headroom.services.color_extraction import lab_distance
+
+    for lab1, lab2, _ in _SHARMA_PAIRS:
+        assert lab_distance(lab1, lab2) == pytest.approx(lab_distance(lab2, lab1), abs=1e-9)
+
+
+async def test_navy_shades_read_as_closer_than_navy_to_slate():
+    """The reason for the change.
+
+    ΔE*76 over-weights differences among saturated blues, which is most of
+    this collection. Two navies a person would call the same shade scored
+    further apart than a navy and a grey-blue; CIEDE2000's chroma and
+    hue-rotation terms are what fix it.
+    """
+    navy, other_navy, slate = "#1c2541", "#1d2947", "#4a5a78"
+    assert color_distance(navy, other_navy) < color_distance(navy, slate)
+
+
+# ------------------------ colour-search cutoff ------------------------- #
+
+
+async def _hat_with_color(client, db_session, hex_value: str):
+    from headroom.models.hat import Hat
+    from headroom.models.hat_color import HatColor
+
+    resp = await client.post(
+        "/api/hats", json={"condition": "new", "size": "classic", "style": "a_game"}
+    )
+    hat_id = resp.json()["id"]
+    row = await db_session.get(Hat, hat_id)
+    row.colors.append(
+        HatColor(color_name="x", general_color="x", hex_value=hex_value, dominance_rank=1)
+    )
+    await db_session.commit()
+    return hat_id
+
+
+async def test_color_search_drops_hats_beyond_the_cutoff(client, db_session):
+    """A result list that always fills to `limit` says nothing about whether
+    anything matched. Before the cutoff, searching a teal in a collection of
+    a hundred returned thirty hats however far away they were."""
+    near_hat = await _hat_with_color(client, db_session, "#8cb9e1")   # light blue
+    await _hat_with_color(client, db_session, "#c82828")            # red
+    await _hat_with_color(client, db_session, "#2f7a2f")            # green
+
+    resp = await client.get("/api/search/color?hex=%238cb9e1")
+    assert resp.status_code == 200
+    ids = [r["id"] for r in resp.json()]
+    assert ids == [near_hat], "only the light blue is close to light blue"
+
+
+async def test_color_search_still_returns_near_misses(client, db_session):
+    """The cutoff must not be so tight that it only matches near-exactly —
+    "show me the light blue ones" is the whole point of the feature."""
+    exact = await _hat_with_color(client, db_session, "#8cb9e1")
+    nearby = await _hat_with_color(client, db_session, "#9dc4e8")
+
+    ids = [r["id"] for r in (await client.get("/api/search/color?hex=%238cb9e1")).json()]
+    assert set(ids) == {exact, nearby}
+
+
+async def test_color_search_can_return_nothing(client, db_session):
+    """Empty is now a real answer, and the UI says so rather than 'No hats'."""
+    await _hat_with_color(client, db_session, "#c82828")
+    assert (await client.get("/api/search/color?hex=%238cb9e1")).json() == []
+
+
+async def test_cutoff_is_applied_before_the_limit(client, db_session):
+    """Order matters: filtering after truncation would let far-away hats
+    occupy slots and push nearer ones out."""
+    from headroom.services.search_service import search_hats_by_color
+
+    near = await _hat_with_color(client, db_session, "#8cb9e1")
+    await _hat_with_color(client, db_session, "#c82828")
+
+    ranked = await search_hats_by_color(db_session, "#8cb9e1", limit=1)
+    assert [h.id for h, _m, _d in ranked] == [near]

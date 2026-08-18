@@ -236,15 +236,18 @@ export function StatsPage() {
   }, [hats]);
 
   const caseFill = useMemo(() => {
-    const capacityOf = (c: CaseRead) =>
-      c.capacity ?? (c.beanie_count > 0 ? 6 : 4);
+    // Server-supplied, not re-derived: the defaults live in `services/capacity`
+    // and a second copy here went stale the moment regular capacity became 3.
+    const capacityOf = (c: CaseRead) => c.nominal_capacity;
     return [...cases]
       .map(c => ({
         label: `${c.display_id} · ${c.room_name}`,
         value: c.hat_count,
         display: `${c.hat_count}/${capacityOf(c)}`,
         href: `/cases/${c.display_id}`,
-        color: c.hat_count >= capacityOf(c) ? 'var(--neon-pink)' : 'var(--neon-cyan)',
+        color: c.overfull
+          ? 'var(--neon-orange)'
+          : c.hat_count >= capacityOf(c) ? 'var(--neon-pink)' : 'var(--neon-cyan)',
       }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 12);
@@ -394,7 +397,7 @@ export function StatsPage() {
         <BarList data={valueBy(hats, h => h.room_name)} colorize />
       </ChartCard>
 
-      <ChartCard title="Fullest cases" subtitle="Filled cases in pink.">
+      <ChartCard title="Fullest cases" subtitle="Full in pink, overfull in orange.">
         <BarList data={caseFill} emptyText="No cases yet." />
       </ChartCard>
 

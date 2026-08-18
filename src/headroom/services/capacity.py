@@ -12,10 +12,23 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-# Defaults when a case carries no explicit `capacity`. Beanies pack smaller, so
-# more fit in the same physical case.
-MAX_REGULAR = 4
+# Nominal capacity when a case carries no explicit `capacity` — what "full"
+# means. The physical article is a three-hat case; melin's own order lines
+# call it a "3 Hat Travel Case". Beanies pack smaller, so more fit in the same
+# shell.
+MAX_REGULAR = 3
 MAX_BEANIE = 6
+
+# How far past nominal a DEFAULT case may be crammed. A fourth hat does go in,
+# it just isn't how the case is meant to be loaded — so it's allowed on write
+# and reported as *overfull* rather than silently accepted as normal.
+#
+# Deliberately not applied to a per-case `capacity` override. That field exists
+# for "a Melin case you don't want to cram" (docs/USAGE.md §2), so a stated
+# number is the number: quietly allowing one more would defeat the only reason
+# to set it. Unset means "a standard case, with the usual latitude"; set means
+# "I am telling you the limit".
+OVERFILL_ALLOWANCE = 1
 
 
 @dataclass(frozen=True)
@@ -24,10 +37,19 @@ class Acceptance:
 
     accepts_regular: bool
     accepts_beanie: bool
+    #: Slots left before the case is FULL. Zero once at nominal, even though
+    #: one more may still be crammed in — "3 of 3" should read as full.
     free_regular: int
     free_beanie: int
+    #: Nominal capacity: the number at which the case is full.
     max_regular: int
     max_beanie: int
+    #: Already past nominal. Not an error, but the UI says so.
+    overfull_regular: bool
+    overfull_beanie: bool
+    #: The hard ceiling a write is refused above (nominal + allowance).
+    limit_regular: int
+    limit_beanie: int
 
 
 def evaluate(
@@ -43,21 +65,30 @@ def evaluate(
     means "this case holds nothing", where `capacity or MAX_*` would silently
     read it as unset.
     """
-    max_regular = MAX_REGULAR if capacity is None else capacity
-    max_beanie = MAX_BEANIE if capacity is None else capacity
+    stated = capacity is not None
+    max_regular = capacity if stated else MAX_REGULAR
+    max_beanie = capacity if stated else MAX_BEANIE
+
+    # Latitude only on the default. A stated capacity is exact — see the
+    # note on OVERFILL_ALLOWANCE. A zero capacity holds nothing either way:
+    # the allowance is slack on a real capacity, not a way in.
+    allowance = 0 if stated else OVERFILL_ALLOWANCE
+    limit_regular = max_regular + allowance if max_regular > 0 else 0
+    limit_beanie = max_beanie + allowance if max_beanie > 0 else 0
 
     # Type exclusivity: a case holds beanies OR regular hats, never both.
     has_beanies = beanie_count > 0
     has_regular = regular_count > 0
 
-    free_regular = max(0, max_regular - regular_count)
-    free_beanie = max(0, max_beanie - beanie_count)
-
     return Acceptance(
-        accepts_regular=not has_beanies and free_regular > 0,
-        accepts_beanie=not has_regular and free_beanie > 0,
-        free_regular=free_regular,
-        free_beanie=free_beanie,
+        accepts_regular=not has_beanies and regular_count < limit_regular,
+        accepts_beanie=not has_regular and beanie_count < limit_beanie,
+        free_regular=max(0, max_regular - regular_count),
+        free_beanie=max(0, max_beanie - beanie_count),
         max_regular=max_regular,
         max_beanie=max_beanie,
+        overfull_regular=regular_count > max_regular,
+        overfull_beanie=beanie_count > max_beanie,
+        limit_regular=limit_regular,
+        limit_beanie=limit_beanie,
     )

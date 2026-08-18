@@ -186,7 +186,23 @@ export function SearchPage() {
 
           {filteredData.length === 0 ? (
             <div className="text-center py-5 text-secondary">
-              <p>{activeFilterCount > 0 ? 'No results match your filters' : 'No hats found'}</p>
+              {/* A colour search returning nothing now means "nothing close
+                  enough", not "no hats" — before the distance cutoff it
+                  always filled to the limit, so empty was impossible and
+                  "No hats found" was never wrong. It would be now. */}
+              <p>
+                {activeFilterCount > 0
+                  ? 'No results match your filters'
+                  : colorHex
+                    ? 'No hats are close to that colour'
+                    : 'No hats found'}
+              </p>
+              {colorHex && activeFilterCount === 0 && (
+                <p className="small text-muted mb-0">
+                  Only genuinely similar shades are shown. Try a nearby colour,
+                  or a palette swatch above.
+                </p>
+              )}
             </div>
           ) : (
             filteredData.map(hat => (

@@ -117,15 +117,19 @@ async def _validate_capacity(
         beanie_count=beanie_count,
         regular_count=regular_count,
     )
+    # The refusal quotes the HARD limit, not the nominal one. A case at 3 of 3
+    # still accepts a fourth — it just becomes overfull — so reporting "max 3"
+    # while accepting the save would be the picker and the server disagreeing
+    # again, in the message rather than the behaviour.
     if is_beanie and not room.accepts_beanie:
         raise HTTPException(
             status_code=409,
-            detail=f"Case has reached max beanie capacity ({room.max_beanie})",
+            detail=f"Case has reached max beanie capacity ({room.limit_beanie})",
         )
     if not is_beanie and not room.accepts_regular:
         raise HTTPException(
             status_code=409,
-            detail=f"Case has reached max regular hat capacity ({room.max_regular})",
+            detail=f"Case has reached max regular hat capacity ({room.limit_regular})",
         )
 
 

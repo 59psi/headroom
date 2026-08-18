@@ -20,7 +20,11 @@ vi.mock('../../api/cases', () => ({
     {
       id: 4, display_id: 'A-001', case_type: 'archive', hat_count: 2, room_name: 'Closet',
       beanie_count: 0, regular_count: 2, capacity: null,
-      accepts_regular: true, accepts_beanie: false, free_regular: 2, free_beanie: 0,
+      accepts_regular: true, accepts_beanie: false, free_regular: 1, free_beanie: 0,
+      // Real payload shape: the picker renders occupancy from
+      // `nominal_capacity`, not `used + free`, so omitting it here would
+      // silently render "2" instead of "2/3".
+      overfull: false, nominal_capacity: 3,
       created_at: '2026-08-01T00:00:00', updated_at: '2026-08-01T00:00:00',
     },
   ]),
@@ -95,7 +99,7 @@ describe('HatBasicsCard', () => {
 
     const option = await screen.findByRole('option', { name: /A-001/ });
     expect(option).toHaveTextContent('Archive');
-    expect(option).toHaveTextContent('2/4');
+    expect(option).toHaveTextContent('2/3');
     expect(option).toHaveTextContent('Closet');
     expect(screen.getByRole('option', { name: 'Unassigned' })).toBeInTheDocument();
   });

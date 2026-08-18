@@ -6,6 +6,55 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.20.0] — 2026-08-18
+
+### Changed
+- **A case is full at 3 hats, not 4.** The physical article is a three-hat
+  case — melin's own order lines call it a "3 Hat Travel Case" — so 3 is now
+  what "full" means. A 4th still fits, so it is accepted and the case is
+  reported **overfull** rather than refused or passed off as normal. One over
+  is the whole allowance; the 5th is refused, and the 409 quotes the ceiling
+  actually enforced instead of the nominal you had already passed.
+
+  Cases hold their hats either way — nothing moves and nothing is rejected on
+  upgrade. Any case you already have with 4 hats simply starts saying
+  *overfull*, in the Cases grid, the case picker and the Fullest-cases chart.
+
+  A per-case `capacity` you set yourself gets **no** overfill latitude. That
+  field exists for a case you don't want to cram, so quietly allowing one more
+  than the number you stated would defeat the only reason to set it.
+
+- **Colour search is much tighter.** Two separate problems:
+
+  *No cutoff.* Only the result limit bounded it, so every hat was ranked and
+  the nearest 30 came back however far away they were — searching a specific
+  teal in a collection of a hundred returned thirty hats, six teal and
+  twenty-four presented identically beside them. A list that always fills to
+  the same length says nothing about whether anything matched. Now capped,
+  calibrated against the curated palette so shades of one colour still find
+  each other while unrelated ones drop out. An empty result is now possible
+  and the page says "no hats are close to that colour" rather than "no hats".
+
+  *Crude metric.* Distance was ΔE\*76 — plain Euclidean in LAB, which is
+  least uniform among saturated blues, i.e. most of this collection. Two
+  navies you'd call the same shade scored further apart than a navy and a
+  slate. Now CIEDE2000, verified against all 34 published reference pairs.
+
+  Expect a light-blue search to stop returning navies. That is the fix: a
+  pale sky blue is 58 lightness points from a near-black navy, and hue family
+  alone was never a good reason to call them a match.
+
+### Fixed
+- **The hat spec sheet showed the wrong things.** "Type" reported Beanie or
+  Regular, which is derived entirely from Style directly above it — a quarter
+  of the sheet printing one fact twice. Meanwhile **construction** appeared
+  only as a badge beside the title, and **colourway** appeared nowhere on the
+  hat page at all, despite a colourway catalog and a purchase matcher whose
+  job is filling it in. Specs now lists Style, Size, Construction, Colorway,
+  Collection and Last Worn — the fields that actually tell two hats apart.
+
+384 backend + 81 frontend tests.
+
 ## [2.19.0] — 2026-08-17
 
 ### Added

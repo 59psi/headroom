@@ -117,7 +117,6 @@ export function CasePicker({
   function renderCase(c: CaseRead) {
     const ok = isBeanie ? c.accepts_beanie : c.accepts_regular;
     const used = isBeanie ? c.beanie_count : c.regular_count;
-    const free = isBeanie ? c.free_beanie : c.free_regular;
     return (
       <li key={c.id}>
         <button
@@ -138,7 +137,11 @@ export function CasePicker({
         >
           <span className="hr-case-id font-mono">{c.display_id}</span>
           <span className="hr-case-meta">
-            {caseTypeLabel(c)} · {used + free > 0 ? `${used}/${used + free}` : used}
+            {/* `nominal_capacity`, not `used + free`: free hits 0 at full AND
+                stays 0 when overfull, so the old sum rendered a 4th hat in a
+                3-hat case as "4/4" — the one case where the number matters. */}
+            {caseTypeLabel(c)} · {c.nominal_capacity > 0 ? `${used}/${c.nominal_capacity}` : used}
+            {c.overfull && <span className="hr-case-overfull"> overfull</span>}
             {' · '}{c.room_name}
           </span>
           {!ok && <span className="hr-case-why">{unavailableReason(c, isBeanie)}</span>}

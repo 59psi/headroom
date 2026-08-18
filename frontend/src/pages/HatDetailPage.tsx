@@ -463,11 +463,37 @@ export function HatDetailPage() {
       <div className="card mb-3">
         <div className="card-body">
           <div className="card-title">Specs</div>
+          {/* "Type" used to sit here showing Beanie or Regular — which is
+              derived entirely from Style directly above it (`is_beanie` is
+              set from the style on every write), so the sheet spent a quarter
+              of itself printing one fact twice.
+
+              Construction and colourway are what actually separate two hats
+              of the same style, and neither was here: construction appeared
+              only as a badge by the title, and colourway appeared nowhere on
+              this page at all, despite a catalog and a purchase matcher whose
+              whole job is filling it in. */}
           <div className="row g-2">
-            <div className="col-6"><div className="hr-metric"><div className="hr-metric-label">Style</div><div className="hr-metric-value">{data.style.replace(/_/g, ' ')}</div></div></div>
-            <div className="col-6"><div className="hr-metric"><div className="hr-metric-label">Size</div><div className="hr-metric-value">{data.size.replace(/_/g, ' ')}</div></div></div>
-            <div className="col-6"><div className="hr-metric"><div className="hr-metric-label">Last Worn</div><div className="hr-metric-value" style={{ fontSize: '0.95rem' }}>{data.date_last_worn || '—'}</div></div></div>
-            <div className="col-6"><div className="hr-metric"><div className="hr-metric-label">Type</div><div className="hr-metric-value" style={{ fontSize: '0.95rem' }}>{data.is_beanie ? 'Beanie' : 'Regular'}</div></div></div>
+            {([
+              ['Style', data.style.replace(/_/g, ' ')],
+              ['Size', data.size.replace(/_/g, ' ')],
+              ['Construction', data.construction],
+              ['Colorway', data.colorway],
+              ['Collection', data.artist_series],
+              ['Last Worn', data.date_last_worn],
+            ] as const).map(([label, value]) => (
+              <div className="col-6" key={label}>
+                <div className="hr-metric">
+                  <div className="hr-metric-label">{label}</div>
+                  <div
+                    className="hr-metric-value"
+                    style={{ fontSize: '0.95rem', overflowWrap: 'anywhere' }}
+                  >
+                    {value || '—'}
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       </div>

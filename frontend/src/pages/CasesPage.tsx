@@ -17,6 +17,10 @@ function CaseCard({ c }: { c: CaseRead }) {
   } else {
     countLabel = `${c.regular_count} hat${c.regular_count !== 1 ? 's' : ''}`;
   }
+  // Full and overfull are different states and the grid is where you'd notice
+  // either. A bare count can't say which: "4 hats" looks identical whether the
+  // case holds four comfortably or has one crammed in.
+  const fillLabel = c.overfull ? 'overfull' : (c.hat_count > 0 && c.free_regular + c.free_beanie === 0 ? 'full' : null);
 
   return (
     <Link to={`/cases/${c.display_id}`} className="card text-decoration-none h-100">
@@ -28,6 +32,9 @@ function CaseCard({ c }: { c: CaseRead }) {
         </div>
         <div className="text-end">
           <div className="font-mono fw-semibold" style={{ color: 'var(--neon-pink)' }}>{countLabel}</div>
+          {fillLabel && (
+            <div className={`hr-fill-tag${c.overfull ? ' is-overfull' : ''}`}>{fillLabel}</div>
+          )}
         </div>
       </div>
     </Link>

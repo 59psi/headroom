@@ -80,18 +80,55 @@ async def search_hats(
     return list(result.scalars().all())
 
 
+# How far a swatch may sit from the target and still be called a match.
+#
+# There was no ceiling before, only `limit`. Every active hat was ranked and
+# the nearest N returned however far away they were, so searching a specific
+# teal in a collection of a hundred returned thirty hats — six teal, and
+# twenty-four presented identically beside them. A list that always fills to
+# the same length carries no information about whether anything matched.
+#
+# 30 is calibrated against the curated palette in `color_extraction`, whose
+# 26 entries are deliberately distinct colours, so the distance between any
+# two of them is a lower bound on "different enough to have its own name":
+#
+#     charcoal / navy       13.3   must match
+#     green / teal          21.0   must match
+#     blue / navy           23.3   must match
+#     charcoal / gray       25.3   must match  <- sets the floor
+#     light blue / blue     31.1   nice to have, just misses
+#     navy / green          58.6   must not match
+#
+# Below ~26 the cutoff starts excluding shades of one colour from each other,
+# which is the feature. Median distance across all 325 palette pairs is 38.8,
+# so 30 admits roughly the nearest third.
+#
+# The honest limitation: a single global threshold suits saturated targets
+# better than neutral ones. Grey has little chroma, so CIEDE2000 places it
+# moderately near everything — gray/red is 29.3 and sneaks in, while the
+# genuinely-related light blue/blue is 31.1 and doesn't. Fixing that properly
+# means weighting by chroma or by the swatch's dominance rank, which trades
+# away the secondary-colour matching that makes this feature useful. Ranking
+# keeps it tolerable in practice: the odd cross-family hit sorts last.
+# Tune here if it still reads loose.
+MAX_COLOR_DISTANCE = 30.0
+
+
 async def search_hats_by_color(
     db: AsyncSession,
     hex_value: str,
     *,
     room_id: int | None = None,
     limit: int = 30,
+    max_distance: float = MAX_COLOR_DISTANCE,
 ) -> list[tuple[Hat, str, float]]:
     """Rank active hats by perceptual closeness to `hex_value`.
 
-    Distance is the minimum ΔE over a hat's stored swatches, so a hat whose
-    *secondary* color matches still surfaces — exactly the "find something
-    light blue" job. Returns (hat, matched_hex, distance), nearest first.
+    Distance is the minimum CIEDE2000 over a hat's stored swatches, so a hat
+    whose *secondary* color matches still surfaces — exactly the "find
+    something light blue" job. Anything beyond `max_distance` is dropped
+    rather than padding the list out to `limit`. Returns
+    (hat, matched_hex, distance), nearest first.
 
     Hat counts are hundreds, not millions: loading candidates and ranking in
     Python beats teaching SQLite color science.
@@ -126,7 +163,10 @@ async def search_hats_by_color(
             d = lab_distance(target_lab, swatch_lab)
             if best is None or d < best[1]:
                 best = (color.hex_value, d)
-        if best is not None:
+        # Compared before rounding: a swatch at 30.004 is not meaningfully
+        # different from one at 29.996, but rounding first would let the
+        # displayed number and the cutoff disagree at the boundary.
+        if best is not None and best[1] <= max_distance:
             ranked.append((hat, best[0], round(best[1], 2)))
 
     ranked.sort(key=lambda item: item[2])
