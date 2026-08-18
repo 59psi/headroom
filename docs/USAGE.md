@@ -155,25 +155,34 @@ the collection is in better shape.
 
 ### How "est. sale value" is worked out
 
-**Neither price feed knows what anything sold for.** eBay's Browse API returns
-items currently for sale, and the melinrecap figure is a median over live
-listings. Both are what sellers are *asking*. So each hat is valued from the
-best signal it has:
+**On melinrecap the listed price is the sale price.** It's a fixed-price
+marketplace with automatic 10% drops — a buyer clicks buy at the number shown
+— so nothing is discounted off it. What makes a median meaningful is
+*filtering*, and each hat is priced against listings matching its own model,
+**condition** and **size**, widening only when the market has too few of the
+exact thing. The source line under the price tells you which: *"median of 11
+live classic worn model listings"*.
 
-1. **Your price** — if you typed a resale price, it's used exactly as given
-   and nothing is applied to it. It's also protected: analysis will never
-   overwrite it. Clear the field to hand the hat back to the live feed.
-2. **Model comps** — the median ask across listings matching that model, cut
-   15% for the gap between asking and selling, then adjusted for condition
-   (new with tags 100% · new 92% · worn 78%) because the listings it came from
-   are a mix of conditions and yours isn't.
-3. **From retail** — no comps, so a share of estimated new retail: new with
-   tags 65% · new 45% · worn 30%.
+Each hat uses the best signal it has:
+
+1. **Your price** — a resale price you typed is used exactly as given, and
+   analysis will never overwrite it. Clear the field to hand the hat back to
+   the live feed.
+2. **Model comps** — the median of live listings for that model in your hat's
+   condition and size.
+3. **From retail** — no comparable listings, so a share of estimated new
+   retail: new with tags 65% · new 45% · worn 30%.
 4. **Category average** — the weak one. No listings matched the model, so it
-   borrows the median across the whole style category. That's the going rate
-   for a hat of that shape, not a valuation of yours.
-5. **Not valued** — nothing supports a number. These are counted and shown,
-   never quietly totalled as $0.
+   borrows the median across the whole style category: the going rate for a
+   hat of that shape, not a valuation of yours.
+5. **Not valued** — nothing supports a number. Counted and shown, never
+   quietly totalled as $0.
+
+### What you'd actually get
+
+Market value is what a *buyer* pays. melinrecap pays a **seller** 80% in cash
+or 110% in brand credit, so a $77 hat means $61.60 in your pocket or $84.70 to
+spend at melin. The Valuation page shows all three.
 
 The Valuation page shows how many hats sit on each basis, so you can see how
 much of the total rests on the weaker ones.

@@ -6,6 +6,43 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.21.0] — 2026-08-18
+
+### Changed
+- **Resale values are now real comparables, and they go UP.** Two invented
+  numbers are gone: a 15% "ask-to-sold" haircut and a guessed condition
+  multiplier.
+
+  The haircut was modelling a negotiation that doesn't happen. melinrecap is a
+  fixed-price Treet marketplace with automatic 10% drops — a buyer clicks buy
+  at the number shown — so **the listed price is the sale price**, and
+  discounting it was simply wrong.
+
+  The multiplier was unnecessary. Every listing carries its own `condition`
+  and `size` in the feed, and the code ignored both: it took one median across
+  all conditions and multiplied by a guess. Measured against 706 live
+  listings those guesses were also wrong — new-without-tags sells at 95% of
+  new-with-tags (not 92%), worn at 82% (not 78%).
+
+  Comparability now comes from **filtering, not arithmetic**. A hat is priced
+  against listings matching its own model, condition and size, widening only
+  when the market has too few of the exact thing, and the source line says
+  which — "median of 11 live classic worn model listings" rather than "median
+  of 8 live listings".
+
+  Effect on a real hat, a Classic Trenches Icon Hydro, against live data:
+  new-with-tags $59.50 → **$77.00**, new $54.74 → **$75.00**, worn $46.41 →
+  **$63.00**. Roughly +30%, and each from 5–11 genuinely comparable listings.
+
+### Added
+- **What you'd actually receive.** Every listing carries `payoutInfo`: the
+  marketplace pays a seller **80% in cash or 110% in brand credit**. Valuation
+  reported only the gross figure — the one number that never reaches you.
+  There's now a card showing market value, cash, credit, and what choosing
+  credit is worth over cash.
+
+389 backend + 82 frontend tests.
+
 ## [2.20.0] — 2026-08-18
 
 ### Changed

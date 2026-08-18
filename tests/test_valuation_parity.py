@@ -55,12 +55,12 @@ def _ts_table(name: str) -> dict[str, float]:
     }
 
 
-async def test_ask_to_sold_discount_matches():
-    assert valuation.ASK_TO_SOLD == _ts_number("ASK_TO_SOLD")
-
-
-async def test_condition_vs_market_table_matches():
-    assert valuation.CONDITION_VS_MARKET == _ts_table("CONDITION_VS_MARKET")
+async def test_payout_rates_match():
+    """What a seller actually receives. Both sides print these to a person, so
+    a change on one side alone would have the app and its own inventory report
+    disagreeing about how much money is involved."""
+    assert valuation.CASH_PAYOUT == _ts_number("CASH_PAYOUT")
+    assert valuation.CREDIT_PAYOUT == _ts_number("CREDIT_PAYOUT")
 
 
 async def test_retail_retention_table_matches():
@@ -98,11 +98,14 @@ async def test_the_python_rule_ranks_signals_the_same_way():
     assert manual.basis == "manual"
     assert manual.value == 250.0  # never discounted
 
+    # The listed price IS the sale price on a fixed-price marketplace, and
+    # the median was already filtered to this hat's condition upstream. Any
+    # haircut here would be discounting a real transaction price by a guess.
     comp = valuation.value_hat(
         hat(resale_price=100.0, resale_price_scope="model", condition="worn")
     )
     assert comp.basis == "comp"
-    assert comp.value < 100.0  # an ask is not a sale price
+    assert comp.value == 100.0
 
     # Retail beats a category median, because retail is about THIS hat while a
     # category median is the going rate for every hat of that shape.
