@@ -13,10 +13,13 @@ TypeScript file and asserts they match the ones below. A change to either side
 alone fails the suite.
 
 The short version of the reasoning, so this file is readable on its own:
-neither price feed knows what anything sold for. eBay's Browse API returns
-currently-listed items and the melinrecap figure is a median of live listings —
-both are ASKING prices, so they get discounted, then adjusted for the condition
-of the specific hat rather than the mixed pool the median came from.
+melinrecap is a FIXED-PRICE marketplace with automatic drops — a buyer clicks
+buy at the number shown — so the listed price is the sale price and nothing is
+discounted off it. What makes a median comparable is filtering, done upstream
+in `melin_recap.fetch_resale_stats`: it matches listings on the hat's own
+condition and size rather than averaging the category and multiplying by a
+guess. The guesses it replaced were measurably wrong against 706 live
+listings, and unnecessary when the real number is in the feed.
 """
 
 from __future__ import annotations
@@ -25,15 +28,9 @@ from dataclasses import dataclass
 
 from headroom.models.hat import Hat
 
-#: Asking price -> realistic sale price.
-ASK_TO_SOLD = 0.85
-
-#: This hat versus the mixed-condition pool a market median is drawn from.
-CONDITION_VS_MARKET: dict[str, float] = {
-    "new_with_tags": 1.0,
-    "new": 0.92,
-    "worn": 0.78,
-}
+#: What the marketplace pays a seller, as a fraction of the sale price.
+CASH_PAYOUT = 0.80
+CREDIT_PAYOUT = 1.10
 
 #: Fraction of new retail retained, when there is no market signal at all.
 RETAIL_RETENTION: dict[str, float] = {
@@ -43,7 +40,6 @@ RETAIL_RETENTION: dict[str, float] = {
 }
 
 _FALLBACK_RETENTION = 0.4
-_FALLBACK_CONDITION_VS_MARKET = 0.9
 
 #: Display names for each basis, matching the UI's `BASIS_LABEL`.
 BASIS_LABEL: dict[str, str] = {
@@ -78,18 +74,13 @@ def value_hat(hat: Hat) -> HatValue:
         return HatValue(ask, "manual")
 
     if hat.resale_price_scope == "model" and ask > 0:
-        return HatValue(_market_adjusted(ask, condition), "comp")
+        return HatValue(ask, "comp")
 
     if retail > 0:
         retention = RETAIL_RETENTION.get(condition, _FALLBACK_RETENTION)
         return HatValue(retail * retention, "retail")
 
     if ask > 0:
-        return HatValue(_market_adjusted(ask, condition), "category")
+        return HatValue(ask, "category")
 
     return HatValue(None, "none")
-
-
-def _market_adjusted(ask: float, condition: str) -> float:
-    factor = CONDITION_VS_MARKET.get(condition, _FALLBACK_CONDITION_VS_MARKET)
-    return ask * ASK_TO_SOLD * factor

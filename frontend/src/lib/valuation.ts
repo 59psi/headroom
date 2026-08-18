@@ -42,28 +42,15 @@
 import type { HatRead } from '../types';
 
 /**
- * Asking price → realistic sale price.
+ * What the marketplace pays a seller, as a fraction of the sale price.
  *
- * Covers the negotiation spread and the survivorship in a live-listings
- * median. A round, deliberately conservative haircut — it is a judgement call,
- * not a measurement, which is exactly why it lives here as one named number
- * instead of being folded invisibly into a formula.
+ * Carried on every listing in `publicData.payoutInfo`, identical across all
+ * 706 live listings sampled when this was written. A hat's market value and
+ * what you end up holding are different numbers, and only the first was ever
+ * shown: sell a $79 hat and $63 arrives, or $87 of brand credit.
  */
-export const ASK_TO_SOLD = 0.85;
-
-/**
- * This hat versus the mixed-condition pool a market median is drawn from.
- *
- * Resale listings skew toward "worn once" — that is what people photograph and
- * post. A tagged hat beats that pool slightly; a genuinely worn one sits under
- * it. Without this the feed returned one number per model and every copy of
- * that model was valued identically no matter what shape it was in.
- */
-export const CONDITION_VS_MARKET: Record<string, number> = {
-  new_with_tags: 1.0,
-  new: 0.92,
-  worn: 0.78,
-};
+export const CASH_PAYOUT = 0.80;
+export const CREDIT_PAYOUT = 1.10;
 
 /**
  * Fraction of new retail retained, when there is no market signal at all.
@@ -79,7 +66,6 @@ export const RETAIL_RETENTION: Record<string, number> = {
 
 /** Applied when a hat's condition isn't one of the three known values. */
 const FALLBACK_RETENTION = 0.4;
-const FALLBACK_CONDITION_VS_MARKET = 0.9;
 
 export type ValueBasis = 'manual' | 'comp' | 'retail' | 'category' | 'none';
 
@@ -106,11 +92,6 @@ const CONDITION_LABEL: Record<string, string> = {
   worn: 'worn',
 };
 
-function marketAdjusted(ask: number, condition: string): number {
-  const cond = CONDITION_VS_MARKET[condition] ?? FALLBACK_CONDITION_VS_MARKET;
-  return ask * ASK_TO_SOLD * cond;
-}
-
 function pct(n: number): string {
   return `${Math.round(n * 100)}%`;
 }
@@ -127,12 +108,11 @@ export function valueHat(h: HatRead): HatValuation {
 
   if (h.resale_price_scope === 'model' && ask > 0) {
     return {
-      value: marketAdjusted(ask, h.condition),
+      value: ask,
       basis: 'comp',
       explanation:
-        `Median ask of comparable listings for this model, ` +
-        `less ${pct(1 - ASK_TO_SOLD)} for ask-vs-sale, ` +
-        `adjusted for ${condLabel} condition.`,
+        h.resale_price_source
+        ?? `Median price of comparable ${condLabel} listings for this model.`,
     };
   }
 
@@ -147,11 +127,11 @@ export function valueHat(h: HatRead): HatValuation {
 
   if (ask > 0) {
     return {
-      value: marketAdjusted(ask, h.condition),
+      value: ask,
       basis: 'category',
       explanation:
         'No comps for this model and no retail estimate — falls back to the ' +
-        'median ask across the whole style category, which is a price level ' +
+        'median across the whole style category, which is a price level ' +
         'rather than a valuation of this hat.',
     };
   }

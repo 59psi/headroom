@@ -145,18 +145,88 @@ async def query_listings(params: dict) -> list[dict]:
     return resp.json().get("data", [])
 
 
-async def fetch_resale_stats(
-    style: str | None, model_name: str | None = None
-) -> dict | None:
-    """Live asking-price stats for comparable listings, or None.
+# What the marketplace pays a seller, as a fraction of the listed price.
+# Both are carried on every listing in `publicData.payoutInfo` and were the
+# same across all 706 live listings sampled when this was written. Constants
+# rather than per-hat columns because they are a property of the marketplace,
+# not of any hat; re-check them by reading `payoutInfo` off any listing.
+CASH_PAYOUT = 0.80
+CREDIT_PAYOUT = 1.10
 
-    Queries the hat's style category (up to 100 listings), then narrows to
-    listings whose title contains every token of `model_name` when that
-    leaves a meaningful sample. Returns
-    {"median": float$, "count": int, "sample": "model" | "category"}.
+# Marketplace condition vocabulary -> the app's three conditions.
+# Anything not listed (good, fair, and whatever gets added later) is worn:
+# an unrecognised condition is certainly not new, and guessing "new" would
+# quietly inflate every valuation that used it.
+_CONDITION_MAP: dict[str, str] = {
+    "new_with_tags": "new_with_tags",
+    "new_without_tags": "new",
+    "excellent": "worn",
+    "good": "worn",
+    "fair": "worn",
+}
+
+# Marketplace size vocabulary -> `Hat.size`. Both spellings appear in live
+# data. One-size entries map to nothing: they are visors and accessories,
+# not a size a fitted hat can be compared against.
+_SIZE_MAP: dict[str, str] = {
+    "c": "classic", "classic": "classic",
+    "s": "small", "small": "small",
+    "xl": "x_large", "x-large": "x_large", "xlarge": "x_large",
+}
+
+
+def _listing_facts(li: dict) -> tuple[str, float, str | None, str | None] | None:
+    """(title, dollars, condition, size) for one listing, or None if unusable."""
+    attrs = li.get("attributes") or {}
+    amount = (attrs.get("price") or {}).get("amount")
+    if not amount:
+        return None
+    pub = attrs.get("publicData") or {}
+    raw_size = (pub.get("size") or "").strip().lower()
+    raw_condition = (pub.get("condition") or "").strip().lower()
+    return (
+        attrs.get("title", ""),
+        amount / 100,
+        # A condition that is STATED but unrecognised falls to "worn": the
+        # marketplace's two "new" grades are the ones enumerated above, so a
+        # value outside that set is some flavour of used. Defaulting the other
+        # way would let a vocabulary addition quietly inflate valuations.
+        # A condition that is ABSENT stays None — unknown, not worn.
+        _CONDITION_MAP.get(raw_condition, "worn" if raw_condition else None),
+        _SIZE_MAP.get(raw_size),
+    )
+
+
+async def fetch_resale_stats(
+    style: str | None,
+    model_name: str | None = None,
+    condition: str | None = None,
+    size: str | None = None,
+) -> dict | None:
+    """Median live price for genuinely comparable listings, or None.
+
+    **The listed price is the sale price here.** This is a fixed-price Treet
+    marketplace with automatic 10% drops, not an auction and not a
+    negotiation — a buyer clicks buy at the number shown. So no ask-to-sold
+    haircut is applied anywhere downstream, and the figure this returns is
+    what the hat actually changes hands for.
+
+    What makes it comparable is filtering, not arithmetic. Every listing
+    carries its own `condition` and `size` in `publicData`, and this used to
+    ignore both: it took one median across all conditions and left the caller
+    to multiply by a guessed condition factor. Measured against 706 live
+    listings those guesses were wrong (new-without-tags is 0.95 of
+    new-with-tags, not 0.92; worn is 0.82, not 0.78) and, more to the point,
+    guessing was never necessary when the real number is right there.
+
+    Narrows most-specific-first and stops at the first tier with a real
+    sample, so a hat is priced against its own model, condition and size when
+    the market supports it and against something honestly broader when it
+    doesn't. Returns {"median", "count", "sample", "condition_matched",
+    "size_matched"} — `sample` is "model" or "category" for the display label.
     """
     category = STYLE_TO_CATEGORY.get(style.lower()) if style else None
-    params: dict = {"per_page": 100, "fields.listing": "title,price"}
+    params: dict = {"per_page": 100}
     if category:
         params["pub_category"] = category
     elif model_name:
@@ -164,29 +234,37 @@ async def fetch_resale_stats(
     else:
         return None
 
-    listings = await query_listings(params)
-    priced = [
-        (
-            (li.get("attributes") or {}).get("title", ""),
-            ((li.get("attributes") or {}).get("price") or {}).get("amount"),
-        )
-        for li in listings
-    ]
-    priced = [(title, amount) for title, amount in priced if amount]
-    if not priced:
+    facts = [f for f in (_listing_facts(li) for li in await query_listings(params)) if f]
+    if not facts:
         return None
 
-    sample = "category"
-    if model_name:
-        tokens = [t for t in model_name.lower().split() if t]
-        matched = [
-            (title, amount)
-            for title, amount in priced
-            if all(t in title.lower() for t in tokens)
-        ]
-        if len(matched) >= _MIN_MODEL_SAMPLE:
-            priced = matched
-            sample = "model"
+    tokens = [t for t in (model_name or "").lower().split() if t]
 
-    amounts = [amount / 100 for _title, amount in priced]
-    return {"median": round(median(amounts), 2), "count": len(amounts), "sample": sample}
+    def narrow(by_model: bool, by_condition: bool, by_size: bool):
+        rows = facts
+        if by_model and tokens:
+            rows = [f for f in rows if all(t in f[0].lower() for t in tokens)]
+        if by_condition and condition:
+            rows = [f for f in rows if f[2] == condition]
+        if by_size and size:
+            rows = [f for f in rows if f[3] == size]
+        return rows
+
+    # Most specific first. Model+condition beats model alone, because a
+    # tagged and a beaten example of one hat are different products; size
+    # comes last because it moves price least.
+    tiers = [
+        (True, True, True), (True, True, False), (True, False, False),
+        (False, True, True), (False, True, False), (False, False, False),
+    ]
+    for by_model, by_condition, by_size in tiers:
+        rows = narrow(by_model, by_condition, by_size)
+        if len(rows) >= _MIN_MODEL_SAMPLE:
+            return {
+                "median": round(median([f[1] for f in rows]), 2),
+                "count": len(rows),
+                "sample": "model" if (by_model and tokens) else "category",
+                "condition_matched": bool(by_condition and condition),
+                "size_matched": bool(by_size and size),
+            }
+    return None

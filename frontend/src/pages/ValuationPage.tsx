@@ -14,7 +14,7 @@ import { listAllHats, listDisposedHats } from '../api/hats';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { BarList, ChartCard, StatTiles } from '../components/charts/Charts';
 import {
-  ASK_TO_SOLD, BASIS_LABEL, CONDITION_VS_MARKET, RETAIL_RETENTION,
+  BASIS_LABEL, CASH_PAYOUT, CREDIT_PAYOUT, RETAIL_RETENTION,
   costOf, money, realizedTotals, valueCollection, valueHat, type ValueBasis,
 } from '../lib/valuation';
 import type { HatRead } from '../types';
@@ -246,34 +246,71 @@ export function ValuationPage() {
         <BarList data={basisRows} colorize />
         <div className="text-secondary small mt-3" style={{ fontSize: '0.78rem', lineHeight: 1.6 }}>
           <p className="mb-2">
-            <strong>Neither price feed knows what anything sold for.</strong> The
-            eBay integration reads currently-listed items and the melinrecap
-            figure is a median of live listings — both are <em>asking</em>{' '}
-            prices. Taking them at face value overstated the collection, which
-            is why every market number here is cut by{' '}
-            {Math.round((1 - ASK_TO_SOLD) * 100)}% for the gap between what a
-            seller asks and what a hat goes for.
+            <strong>On melinrecap the listed price is the sale price.</strong>{' '}
+            It's a fixed-price marketplace with automatic drops — a buyer clicks
+            buy at the number shown — so nothing is discounted off it. What
+            makes a median comparable is <em>filtering</em>: each hat is priced
+            against live listings matching its own model, condition and size,
+            narrowing to something broader only when the market has too few of
+            the exact thing.
           </p>
           <p className="mb-2">
-            A market median also covers hats in every condition, so it's then
-            adjusted for the condition of yours — {Object.entries(CONDITION_VS_MARKET)
-              .map(([k, v]) => `${CONDITION_LABELS[k] ?? k} ${Math.round(v * 100)}%`)
-              .join(' · ')}.
+            This replaced a pair of invented factors — a 15% ask-to-sale
+            haircut and a guessed condition multiplier. Measured against 706
+            live listings the guesses were wrong (new-without-tags sells at 95%
+            of new-with-tags, not 92%; worn at 82%, not 78%), and they were
+            never needed when the real number is in the feed.
           </p>
           <p className="mb-2">
-            With no comparable listings, the estimate falls back to a share of
-            new retail: {Object.entries(RETAIL_RETENTION)
+            With no listings to compare against, the estimate falls back to a
+            share of new retail: {Object.entries(RETAIL_RETENTION)
               .map(([k, v]) => `${CONDITION_LABELS[k] ?? k} ${Math.round(v * 100)}%`)
               .join(' · ')}.
           </p>
           <p className="mb-0">
             <strong>{BASIS_LABEL.category}</strong> is the weak one: no listings
             matched the model, so it borrows the median across the whole style
-            category. That's the going rate for a hat of that shape, not a
-            valuation of this hat — worth knowing if a lot of the total rests
-            on it.
+            category — the going rate for a hat of that shape, not a valuation
+            of this hat.
           </p>
         </div>
+      </ChartCard>
+
+      <ChartCard
+        title="If you sold it all on melinrecap"
+        subtitle="The market value above is gross. This is what would actually reach you."
+      >
+        <StatTiles tiles={[
+          {
+            label: 'Market value',
+            value: money(totals.marketTotal),
+            tone: 'muted',
+            sub: 'what buyers pay',
+          },
+          {
+            label: 'Cash to you',
+            value: money(totals.marketTotal * CASH_PAYOUT),
+            tone: 'pink',
+            sub: `${Math.round(CASH_PAYOUT * 100)}% payout`,
+          },
+          {
+            label: 'As brand credit',
+            value: money(totals.marketTotal * CREDIT_PAYOUT),
+            tone: 'cyan',
+            sub: `${Math.round(CREDIT_PAYOUT * 100)}% payout`,
+          },
+          {
+            label: 'Credit vs cash',
+            value: `+${money(totals.marketTotal * (CREDIT_PAYOUT - CASH_PAYOUT))}`,
+            tone: 'purple',
+            sub: 'spendable at melin only',
+          },
+        ]} />
+        <p className="text-muted small mb-0 mt-3" style={{ fontSize: '0.72rem' }}>
+          Rates come from the marketplace itself — every listing carries them.
+          Selling the whole collection at once is not a realistic event; this is
+          a scale, not a plan.
+        </p>
       </ChartCard>
 
       {/* ===== Price paid ===== */}

@@ -9,7 +9,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
-  ASK_TO_SOLD, CONDITION_VS_MARKET, RETAIL_RETENTION,
+  CASH_PAYOUT, CREDIT_PAYOUT, RETAIL_RETENTION,
   costOf, realizedTotals, valueCollection, valueHat,
 } from './valuation';
 import type { HatRead } from '../types';
@@ -86,20 +86,25 @@ describe('valueHat — signal priority', () => {
     expect(v.value).toBe(120);
   });
 
-  it('discounts a model-scoped market median for ask-vs-sale and condition', () => {
+  it('uses a model-scoped market median as-is', () => {
+    // melinrecap is fixed-price with automatic drops: a buyer clicks buy at
+    // the number shown, so the listed price IS the sale price. The median also
+    // arrives already filtered to this hat's condition and size upstream, so
+    // adjusting here would be discounting real data by a guess — which is
+    // exactly what the 15% haircut and the condition multiplier were doing.
     const v = valueHat(hat({ resale_price: 100, resale_price_scope: 'model', condition: 'worn' }));
     expect(v.basis).toBe('comp');
-    expect(v.value).toBeCloseTo(100 * ASK_TO_SOLD * CONDITION_VS_MARKET.worn, 6);
-    // The whole point of the rework: this must land well under the raw ask.
-    expect(v.value!).toBeLessThan(100);
+    expect(v.value).toBe(100);
   });
 
-  it('values the same ask higher for a better-condition hat', () => {
-    const worn = valueHat(hat({ resale_price: 100, resale_price_scope: 'model', condition: 'worn' }));
-    const tagged = valueHat(hat({ resale_price: 100, resale_price_scope: 'model', condition: 'new_with_tags' }));
-    // Before the rework both were 100 — the feed's median went straight in and
-    // condition was ignored entirely whenever a market price existed.
-    expect(tagged.value!).toBeGreaterThan(worn.value!);
+  it("carries the feed's own description of what was matched", () => {
+    // "median of 8 live worn model listings" is the honest provenance, and
+    // beats anything this module could reconstruct after the fact.
+    const v = valueHat(hat({
+      resale_price: 100, resale_price_scope: 'model',
+      resale_price_source: 'Melin Recap · median of 8 live worn model listings',
+    }));
+    expect(v.explanation).toContain('8 live worn model listings');
   });
 
   it('falls back to a share of retail when no model comps exist', () => {
@@ -124,7 +129,14 @@ describe('valueHat — signal priority', () => {
   it('uses a category median only as a last resort, and says so', () => {
     const v = valueHat(hat({ resale_price: 90, resale_price_scope: 'category' }));
     expect(v.basis).toBe('category');
-    expect(v.value).toBeCloseTo(90 * ASK_TO_SOLD * CONDITION_VS_MARKET.new_with_tags, 6);
+    expect(v.value).toBe(90);
+  });
+
+  it('payout rates describe what a seller receives, not what a buyer pays', () => {
+    // Sell a $79 hat and $63 arrives, or $87 of credit. Only the gross number
+    // was ever shown — the one figure that never actually reaches you.
+    expect(100 * CASH_PAYOUT).toBeCloseTo(80, 6);
+    expect(100 * CREDIT_PAYOUT).toBeCloseTo(110, 6);
   });
 
   it('returns null — not zero — when nothing supports a number', () => {

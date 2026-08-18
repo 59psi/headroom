@@ -43,8 +43,12 @@ async def test_build_pointer_only_for_melin():
 # ---------------------- live marketplace stats ------------------------ #
 
 
-def _listing(title: str, cents: int | None) -> dict:
-    attrs: dict = {"title": title}
+def _listing(
+    title: str, cents: int | None, condition: str = "new_with_tags", size: str = "C"
+) -> dict:
+    """One marketplace listing. `condition` and `size` live in publicData and
+    are what make a median comparable — see `fetch_resale_stats`."""
+    attrs: dict = {"title": title, "publicData": {"condition": condition, "size": size}}
     if cents is not None:
         attrs["price"] = {"amount": cents, "currency": "USD"}
     return {"id": "x", "type": "listing", "attributes": attrs}
@@ -74,7 +78,11 @@ async def test_stats_median_over_category(monkeypatch):
     ])
     stats = await fetch_resale_stats("a_game", None)
     assert params["pub_category"] == "aGame"
-    assert stats == {"median": 70.0, "count": 3, "sample": "category"}
+    # Field-wise, not whole-dict: the payload gains keys as the matcher learns
+    # to scope, and an == here fails on additions that break nothing.
+    assert stats["median"] == 70.0
+    assert stats["count"] == 3
+    assert stats["sample"] == "category"
 
 
 async def test_stats_narrows_to_model_when_sample_big_enough(monkeypatch):
@@ -87,7 +95,9 @@ async def test_stats_narrows_to_model_when_sample_big_enough(monkeypatch):
         _listing("A-Game Scout - Grey", 1000),
     ])
     stats = await fetch_resale_stats("a_game", "A-Game Hydro")
-    assert stats == {"median": 90.0, "count": 3, "sample": "model"}
+    assert stats["median"] == 90.0
+    assert stats["count"] == 3
+    assert stats["sample"] == "model"
 
 
 async def test_stats_widens_when_model_sample_too_small(monkeypatch):
@@ -244,3 +254,119 @@ async def test_editing_resale_price_marks_it_manual(client):
     # price it no longer has and blocks every future refresh.
     cleared = await client.put(f"/api/hats/{hat_id}", json={"resale_price": None})
     assert cleared.json()["resale_price_scope"] is None
+
+
+# ------------- condition- and size-matched comparables (v2.21) --------- #
+#
+# The listed price IS the sale price here: fixed-price marketplace, automatic
+# drops, no negotiation. So comparability comes from FILTERING, not from
+# discounting. This used to median across every condition and leave the caller
+# to multiply by a guessed factor — guesses that measured wrong against 706
+# live listings (new-without-tags is 0.95 of new-with-tags, not 0.92; worn is
+# 0.82, not 0.78) and were never needed with the real number in the feed.
+
+
+async def test_median_is_scoped_to_the_hats_condition(monkeypatch):
+    from headroom.services.melin_recap import fetch_resale_stats
+
+    _stub_query(monkeypatch, [
+        _listing("A-Game Hydro - Red", 10000, condition="new_with_tags"),
+        _listing("A-Game Hydro - Grey", 10000, condition="new_with_tags"),
+        _listing("A-Game Hydro - Navy", 10000, condition="new_with_tags"),
+        _listing("A-Game Hydro - Bone", 5000, condition="excellent"),
+        _listing("A-Game Hydro - Tan", 5000, condition="excellent"),
+        _listing("A-Game Hydro - Sand", 5000, condition="excellent"),
+    ])
+    worn = await fetch_resale_stats("a_game", "A-Game Hydro", condition="worn")
+    assert worn["median"] == 50.0, "a worn hat is priced against worn listings"
+    assert worn["condition_matched"] is True
+
+    tagged = await fetch_resale_stats("a_game", "A-Game Hydro", condition="new_with_tags")
+    assert tagged["median"] == 100.0
+    # Before this, both got one median across everything — 75 apiece.
+
+
+async def test_size_narrows_further_when_the_sample_allows(monkeypatch):
+    from headroom.services.melin_recap import fetch_resale_stats
+
+    _stub_query(monkeypatch, [
+        _listing("A-Game Hydro - A", 12000, size="XL"),
+        _listing("A-Game Hydro - B", 12000, size="XL"),
+        _listing("A-Game Hydro - C", 12000, size="XL"),
+        _listing("A-Game Hydro - D", 6000, size="C"),
+        _listing("A-Game Hydro - E", 6000, size="C"),
+        _listing("A-Game Hydro - F", 6000, size="C"),
+    ])
+    stats = await fetch_resale_stats(
+        "a_game", "A-Game Hydro", condition="new_with_tags", size="x_large"
+    )
+    assert stats["median"] == 120.0
+    assert stats["size_matched"] is True
+
+
+async def test_it_widens_rather_than_answering_from_one_listing(monkeypatch):
+    """Falling back beats answering from a sample too small to mean anything."""
+    from headroom.services.melin_recap import fetch_resale_stats
+
+    _stub_query(monkeypatch, [
+        _listing("A-Game Hydro - A", 9000, condition="new_with_tags", size="XL"),
+        _listing("A-Game Hydro - B", 6000, condition="new_with_tags", size="C"),
+        _listing("A-Game Hydro - C", 6000, condition="new_with_tags", size="C"),
+        _listing("A-Game Hydro - D", 6000, condition="new_with_tags", size="C"),
+    ])
+    # Only ONE x_large — too few, so size is dropped and condition is kept.
+    stats = await fetch_resale_stats(
+        "a_game", "A-Game Hydro", condition="new_with_tags", size="x_large"
+    )
+    assert stats["size_matched"] is False
+    assert stats["condition_matched"] is True
+    assert stats["count"] == 4
+
+
+async def test_an_unknown_marketplace_condition_counts_as_worn(monkeypatch):
+    """An unrecognised condition is certainly not new. Guessing "new" would
+    quietly inflate every valuation that used it."""
+    from headroom.services.melin_recap import fetch_resale_stats
+
+    _stub_query(monkeypatch, [
+        _listing("A-Game Hydro - A", 4000, condition="beat_to_hell"),
+        _listing("A-Game Hydro - B", 4000, condition="good"),
+        _listing("A-Game Hydro - C", 4000, condition="fair"),
+    ])
+    stats = await fetch_resale_stats("a_game", "A-Game Hydro", condition="worn")
+    assert stats["condition_matched"] is True
+    assert stats["median"] == 40.0
+
+
+async def test_no_condition_given_still_works(monkeypatch):
+    """Back-compat: a caller that states no condition gets the old behaviour."""
+    from headroom.services.melin_recap import fetch_resale_stats
+
+    _stub_query(monkeypatch, [
+        _listing("A-Game Hydro - A", 8000),
+        _listing("A-Game Hydro - B", 9000),
+        _listing("A-Game Hydro - C", 10000),
+    ])
+    stats = await fetch_resale_stats("a_game", "A-Game Hydro")
+    assert stats["median"] == 90.0
+    assert stats["condition_matched"] is False
+
+
+async def test_the_source_label_names_what_was_matched(monkeypatch):
+    """"median of 8 live listings" gives no way to tell a figure drawn from
+    this exact hat in this condition from one drawn from the whole category."""
+    from headroom.models.hat import Hat
+    from headroom.services.hat_analysis_pipeline import refresh_melin_resale
+
+    _stub_query(monkeypatch, [
+        _listing("A-Game Hydro - A", 8000, condition="excellent", size="C"),
+        _listing("A-Game Hydro - B", 9000, condition="excellent", size="C"),
+        _listing("A-Game Hydro - C", 10000, condition="excellent", size="C"),
+    ])
+    hat = Hat(condition="worn", size="classic", style="a_game", brand="Melin",
+              model_name="A-Game Hydro")
+    await refresh_melin_resale(hat)
+    assert hat.resale_price == 90.0
+    assert "classic" in hat.resale_price_source
+    assert "worn" in hat.resale_price_source
+    assert "model listings" in hat.resale_price_source

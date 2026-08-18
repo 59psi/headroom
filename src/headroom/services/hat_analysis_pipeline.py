@@ -261,6 +261,15 @@ async def reanalyze_existing_photo(
         return True
 
 
+# For the resale source label. The stored values are snake_case enum names;
+# these read as English in the middle of a sentence.
+_CONDITION_WORDS: dict[str, str] = {
+    "new_with_tags": "new-with-tags",
+    "new": "new-without-tags",
+    "worn": "worn",
+}
+
+
 async def refresh_melin_resale(hat: Hat) -> None:
     """Fill resale_price with a live Melin Recap median. Best-effort.
 
@@ -271,7 +280,12 @@ async def refresh_melin_resale(hat: Hat) -> None:
     if not is_melin(hat.brand):
         return
     try:
-        stats = await fetch_resale_stats(hat.style, hat.model_name)
+        # Condition and size are the hat's own, so the median comes back from
+        # listings of the same thing in the same shape rather than from the
+        # whole category averaged together and adjusted by a guess.
+        stats = await fetch_resale_stats(
+            hat.style, hat.model_name, condition=hat.condition, size=hat.size
+        )
     except MelinRecapError as exc:
         logger.info("Melin Recap stats skipped for hat %s: %s", hat.id, exc)
         return
@@ -285,9 +299,18 @@ async def refresh_melin_resale(hat: Hat) -> None:
     hat.resale_price = stats["median"]
     scope = "model" if stats["sample"] == "model" else "category"
     hat.resale_price_scope = scope
-    label = "model" if scope == "model" else "category"
+    # Name what was actually matched. "median of 8 live listings" gives no way
+    # to tell a figure drawn from this exact hat in this exact condition from
+    # one drawn from the whole category — and those deserve different trust.
+    qualifiers = " ".join(
+        part for part in (
+            hat.size.replace("_", "-") if stats["size_matched"] and hat.size else "",
+            _CONDITION_WORDS.get(hat.condition, "") if stats["condition_matched"] else "",
+        ) if part
+    )
     hat.resale_price_source = (
-        f"Melin Recap · median of {stats['count']} live {label} listings"
+        f"Melin Recap · median of {stats['count']} live "
+        f"{qualifiers + ' ' if qualifiers else ''}{scope} listings"
     )
     hat.resale_checked_at = datetime.now(timezone.utc)
 
