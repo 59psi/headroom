@@ -553,7 +553,7 @@ requires-dist = [
     { name = "pydantic-settings" },
     { name = "python-multipart" },
     { name = "qrcode", specifier = ">=8.2" },
-    { name = "rembg", extras = ["cpu"], specifier = ">=2.0.77" },
+    { name = "rembg", extras = ["cpu"], specifier = ">=2.0.78" },
     { name = "sqlalchemy", extras = ["asyncio"] },
     { name = "uvicorn", extras = ["standard"] },
     { name = "webauthn", specifier = ">=3.0.0" },
@@ -1420,7 +1420,7 @@ wheels = [
 
 [[package]]
 name = "rembg"
-version = "2.0.77"
+version = "2.0.78"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jsonschema" },
@@ -1432,9 +1432,9 @@ dependencies = [
     { name = "scipy" },
     { name = "tqdm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/0f/30/5681ca38c5ccf77c807d7d3302ef334fc426ef6a68fa2f6b222bc48000bc/rembg-2.0.77.tar.gz", hash = "sha256:848cb55027cbd5116105dcb86003a6a4ba66812237ec869c70d2960227256b01", size = 31373, upload-time = "2026-07-18T12:51:09.005Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4a/2a/992b5d431099052210657821dffdf86f06f6bb4b83d3835d95445d3381a2/rembg-2.0.78.tar.gz", hash = "sha256:9433a3e9236acf188993ef9de179f4205752803bf654ec4d1218e3811be64fd6", size = 34697, upload-time = "2026-08-06T23:29:01.281Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e5/8b/b6b6a7281b3125c25e1977cca6dcee1084caef51f1606089bd5084bc3cdd/rembg-2.0.77-py3-none-any.whl", hash = "sha256:27d5499214385a9255578a44d2db8bd0241d80ebf67aadb4109547ec49bfe71f", size = 46133, upload-time = "2026-07-18T12:51:09.992Z" },
+    { url = "https://files.pythonhosted.org/packages/6f/d4/45b40053f2c55264b3cb7dce9e1dd2296e66d4b98865eed3ed8a405b0bfc/rembg-2.0.78-py3-none-any.whl", hash = "sha256:57dde57215d0cd407947753bd9928c927c363c7381139ae87dcd6160cc13c89a", size = 50070, upload-time = "2026-08-06T23:29:02.258Z" },
 ]
 
 [package.optional-dependencies]
