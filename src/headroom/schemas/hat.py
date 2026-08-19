@@ -172,6 +172,10 @@ class HatUpdate(BaseModel):
     purchased_at: datetime | None = None
     style_descriptor: str | None = None
     design_notes: str | None = None
+    # `story` is deliberately absent: it is derived, and a PUT that set it
+    # would be overwritten by the next refresh without warning. Notes are
+    # the field that survives.
+    owner_notes: str | None = None
     estimated_new_price: float | None = None
     resale_price: float | None = None
 
@@ -219,6 +223,12 @@ class HatRead(BaseModel):
     model_confidence: str | None = None
     style_descriptor: str | None = None
     design_notes: str | None = None
+    # Derived: rewritten by every analysis and by a collection change.
+    story: str | None = None
+    story_generated_at: datetime | None = None
+    story_pending: bool = False
+    # Yours. No analysis path ever writes it.
+    owner_notes: str | None = None
     estimated_new_price: float | None = None
     estimated_new_price_source: str | None = None
     resale_price: float | None = None

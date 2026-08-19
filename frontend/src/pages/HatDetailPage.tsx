@@ -8,6 +8,7 @@ import { PhotoCapture } from '../components/photos/PhotoCapture';
 import { DisposeModal } from '../components/common/DisposeModal';
 import { ColorEditModal } from '../components/common/ColorEditModal';
 import { AnalysisStatus } from '../components/hats/AnalysisStatus';
+import { HatStoryCard } from '../components/hats/HatStoryCard';
 import { useState } from 'react';
 import { invalidateHatViews } from '../lib/invalidate';
 import { money, valueHat } from '../lib/valuation';
@@ -240,6 +241,10 @@ export function HatDetailPage() {
           </div>
         </div>
       )}
+
+      {/* Directly under Identification: the write-up is the long-form version
+          of what that card states in fields. */}
+      <HatStoryCard hat={data} />
 
       <div className="card mb-3">
         <div className="card-body">

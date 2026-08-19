@@ -22,6 +22,7 @@ function hat(over: Partial<HatRead> = {}): HatRead {
     hydrolite: false, hydro: true, model_name: 'Compass Hydro', colorway: null,
     purchase_price: null, purchased_at: null, model_confidence: null,
     style_descriptor: null, design_notes: null, estimated_new_price: null,
+    story: null, story_generated_at: null, story_pending: false, owner_notes: null,
     estimated_new_price_source: null, resale_price: null,
     resale_price_source: null, resale_price_url: null, resale_checked_at: null,
     resale_price_scope: null, analysis_status: 'ok', analysis_stage: null,

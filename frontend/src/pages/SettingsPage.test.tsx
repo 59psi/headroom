@@ -34,6 +34,7 @@ vi.mock('../api/settings', () => ({
   getEbayCreds: vi.fn(async () => ({ configured: false, marketplace: 'EBAY_US' })),
   setEbayCreds: vi.fn(), deleteEbayCreds: vi.fn(), testEbayCreds: vi.fn(),
   inventoryReportUrl: vi.fn(() => '/api/admin/inventory-report'),
+  collectionExportUrl: vi.fn(() => '/api/admin/collection-export'),
 }));
 
 vi.mock('../api/auth', () => ({
@@ -62,6 +63,7 @@ const CARD_TITLES = [
   'Recent Activity',
   'Share Photos to Headroom',
   'Inventory Report',
+  'Share the collection',
   'Backups',
   'Site Logo',
   'Colorway Catalog',

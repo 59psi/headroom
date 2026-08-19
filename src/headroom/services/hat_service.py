@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
@@ -16,8 +17,10 @@ from headroom.schemas.hat import (
     construction_from_flags,
 )
 from headroom.services import capacity as capacity_rules
-from headroom.services import vocabulary
+from headroom.services import hat_story, vocabulary
 from headroom.services.activity_service import log_and_commit
+
+logger = logging.getLogger(__name__)
 
 # Re-exported for the tests and callers that referenced them here first; the
 # rule itself lives in `capacity` so the picker and the validator agree.
@@ -285,10 +288,31 @@ async def update_hat(db: AsyncSession, hat_id: int, data: HatUpdate) -> Hat:
             "Entered manually" if update_data["resale_price"] is not None else None
         )
 
+    # Telling the app which collection a hat belongs to is the single fact the
+    # write-up is most about, so a change to it invalidates the prose. Flagged
+    # here (the one writer every client PUT funnels through) and handed to the
+    # story worker, because rewriting it inline would make this request wait on
+    # Claude. Compared AFTER canonicalisation so that re-saving "piña" over
+    # "Piña" — the same collection, spelled differently — doesn't queue a
+    # rewrite that would produce identical prose.
+    story_stale = (
+        "artist_series" in update_data
+        and update_data["artist_series"] != hat.artist_series
+    )
+
     for field, value in update_data.items():
         setattr(hat, field, value)
 
+    if story_stale:
+        hat.story_pending = True
+
     await db.commit()
+    if story_stale and not hat_story.enqueue(hat_id):
+        # Nothing draining the queue (worker disabled, or dead). Leave the flag
+        # set: the boot sweep re-queues it. Deliberately NOT run inline — this
+        # is a PUT, and blocking it on a Claude call is the thing the queue
+        # exists to avoid.
+        logger.info("Story worker unavailable; hat %s queued for boot sweep", hat_id)
     if changed_fields:
         await log_and_commit(
             db, kind="hat.updated", entity_type="hat", entity_id=hat_id,

@@ -83,6 +83,12 @@ export interface HatRead {
   model_confidence: string | null;
   style_descriptor: string | null;
   design_notes: string | null;
+  /** Long-form write-up. Derived — rewritten on refresh or a collection change. */
+  story: string | null;
+  story_generated_at: string | null;
+  story_pending: boolean;
+  /** Yours. Never written by analysis. */
+  owner_notes: string | null;
   estimated_new_price: number | null;
   estimated_new_price_source: string | null;
   resale_price: number | null;

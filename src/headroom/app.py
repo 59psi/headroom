@@ -19,6 +19,7 @@ from headroom.services import (
     activity_service,
     analysis_queue,
     backup_service,
+    hat_story,
     import_service,
     mdns_service,
 )
@@ -164,6 +165,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if env_flag("HEADROOM_ANALYSIS_WORKER_ENABLED"):
         await analysis_queue.start_worker()
 
+    # Write-up worker — drains hats whose collection changed, so a PUT that
+    # renames a collab returns immediately instead of waiting on Claude.
+    # Separate from the analysis worker on purpose: rewriting one paragraph
+    # must not re-run rembg, the vision call and three price lookups.
+    if env_flag("HEADROOM_STORY_WORKER_ENABLED"):
+        await hat_story.start_worker()
+
     # Gallery thumbnails for hats that predate them. Off the boot path for the
     # same reason mDNS is: it is image work over every existing photo, which on
     # a Pi would visibly delay the app becoming reachable. Idempotent, so a
@@ -234,6 +242,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         for stop in (
             import_service.stop_worker,
             analysis_queue.stop_worker,
+            hat_story.stop_worker,
             mdns_service.stop_mdns,
         ):
             try:

@@ -10,6 +10,11 @@ os.environ.setdefault("HEADROOM_IMPORT_WORKER_ENABLED", "false")
 # inline — the same code, synchronously. tests/test_analysis_queue.py drives
 # the queued path explicitly.
 os.environ.setdefault("HEADROOM_ANALYSIS_WORKER_ENABLED", "false")
+# Off for the same reason, plus one of its own: with it running, changing a
+# hat's collection would queue a live Claude call. Off, `update_hat` leaves
+# `story_pending` set for the boot sweep — which is exactly the state tests
+# assert on, no network involved.
+os.environ.setdefault("HEADROOM_STORY_WORKER_ENABLED", "false")
 os.environ.setdefault("HEADROOM_MDNS_ENABLED", "false")
 
 import pytest
@@ -66,6 +71,28 @@ def no_live_melin_marketplace(monkeypatch):
     monkeypatch.setattr(
         "headroom.services.melin_recap.query_listings", _no_network
     )
+
+
+@pytest.fixture(autouse=True)
+def no_live_story_writer(monkeypatch):
+    """Tests never call Anthropic to write a hat's story (same house rule).
+
+    Autouse rather than opt-in because the analysis pipeline rewrites the story
+    on EVERY successful analysis, and `analyze_hat_image` is already stubbed —
+    so without this, every pipeline test would sail past the fake vision call
+    and then make a real HTTP request with the fake key. It did exactly that
+    when this was first written: a 401 per test, and an event loop left holding
+    an unclosed client.
+
+    Raising is the honest default: it exercises the "write-up failed, keep the
+    old one, never fail the analysis" path. Tests that care patch it with text.
+    """
+    from headroom.services.claude_analysis import ClaudeAnalysisError
+
+    async def _no_network(*_args, **_kwargs):
+        raise ClaudeAnalysisError("story writer disabled in tests")
+
+    monkeypatch.setattr("headroom.services.hat_story.write_story", _no_network)
 
 
 @pytest.fixture(autouse=True)
