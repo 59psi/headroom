@@ -19,6 +19,18 @@ All notable changes are documented here. This project follows
   navigation is visible rather than guessed. A hat with no case still renders
   `Hat #12` as plain text rather than dressing it up as something tappable.
 
+### Documentation
+- **A diagram of what happens when you add a hat.** The README now carries a
+  Mermaid flowchart of the upload → queue → cutout → Claude → price-lookup
+  path, including the branches that matter: the upload returning before any of
+  it runs, the inline fallback when no worker is draining the queue, and the
+  fact that **eBay and melinrecap only run after Claude succeeds** — both
+  fallback paths return early, because without a model name there is nothing
+  to look comparables up *for*.
+- **The colour-search description was two releases stale**, still describing
+  plain "ΔE in LAB space" after 2.20 moved to CIEDE2000 and 2.22/2.23 added
+  dominance weighting and the hue guard.
+
 ## [2.23.0] — 2026-08-18
 
 ### Fixed

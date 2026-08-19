@@ -47,9 +47,12 @@ result, and three independent price signals per hat.
 
 **🔎 Find**
 - **Search by color** — tap a swatch (or pick any color) and hats rank by
-  *perceptual* closeness (ΔE in LAB space) over their stored hex values. A hat
-  whose secondary color matches still surfaces. "Light blue" works no matter
-  what the analyzer called it.
+  *perceptual* closeness (CIEDE2000) over their stored hex values, weighted by
+  how much of the hat wears that color. A hat whose secondary color matches
+  still surfaces, but never above a hat that *is* that color. Grey hats stay
+  out of a purple search: the hue question is settled before distance is
+  measured, because a distance metric alone will happily call charcoal
+  "nearly purple". "Light blue" works no matter what the analyzer called it.
 - **Text search** — multi-term AND over name, brand, model, style, condition,
   size, colors, and room.
 - **Find-it cards** — every result shows the photo, the name, and where it
@@ -95,6 +98,61 @@ result, and three independent price signals per hat.
 - **One-command HTTPS** — a Caddy overlay with automatic Let's Encrypt certs.
 - **Backups** — scheduled rolling tarballs + one-click download; documented
   restore.
+
+---
+
+## How a hat gets added
+
+Taking a photo is the only step you do. Everything below happens on its own,
+and every enrichment step is allowed to fail without costing you the hat.
+
+The upload returns **immediately** — it does not wait for any of this. The
+photo goes on a queue and a single in-process worker drains it, because
+`rembg` plus a full-resolution decode is the largest allocation this app
+makes and a Pi will not survive several at once. The hat shows up in the grid
+straight away wearing `analysis_status = pending`.
+
+```mermaid
+flowchart TD
+    U["POST /api/hats/:id/photo<br/>streamed · size-capped"] --> N["Pillow · HEIC→JPEG · resize<br/>kept as original_path"]
+    N --> Q{"queue accepted it?"}
+    Q -->|yes| RET["return now · pending"]
+    Q -->|"no worker"| INL["run inline<br/>work is never dropped"]
+    RET --> W[["analysis worker · one at a time"]]
+    W --> BG
+    INL --> BG
+
+    BG["rembg ONNX · transparent PNG<br/>now the canonical photo"] --> TH["320px WebP thumb<br/>what grids render"]
+    TH --> K{"Anthropic key set?"}
+
+    K -->|no| FB
+    K -->|yes| CL["Claude Vision · 1 tool-use call<br/>brand · model · colorway<br/>colors · construction · retail"]
+    CL -->|"API error"| FB["Fallback · mask colors<br/>+ Google Vision logo brand"]
+    CL -->|ok| AP["apply to the hat record"]
+
+    subgraph LOOKUPS ["price lookups · best-effort · Claude-gated"]
+        EB["eBay Browse API<br/>comparable listing stats"]
+        ME["melinrecap · Sharetribe<br/>median matched to this hat's<br/>model + condition + size"]
+    end
+
+    AP --> EB --> ME --> DONE[("commit · ok")]
+    FB --> SKIP[("commit · fallback<br/>skipped or error")]
+```
+
+Things worth knowing from that picture:
+
+- **The original photo is never thrown away.** `rembg` output becomes the
+  canonical image, but the flattened JPEG is retained as `original_path` — it
+  is the only thing a re-cut can work from.
+- **The price lookups are gated on Claude succeeding.** Both fallback branches
+  return early. Without a model name there is nothing to look up comparables
+  *for*, and guessing from the style alone would price every hat in a shape
+  identically.
+- **Failure is recorded, not hidden.** `analysis_status` ends up `ok`,
+  `fallback`, `skipped` or `error`, with the reason in `analysis_error`, and
+  Settings surfaces the recent ones.
+- **eBay and Melin failures are logged and ignored.** A resale API being down
+  is not a reason to lose a hat you just photographed.
 
 ---
 
