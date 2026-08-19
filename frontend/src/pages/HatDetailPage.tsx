@@ -11,6 +11,7 @@ import { AnalysisStatus } from '../components/hats/AnalysisStatus';
 import { useState } from 'react';
 import { invalidateHatViews } from '../lib/invalidate';
 import { money, valueHat } from '../lib/valuation';
+import type { HatRead } from '../types';
 
 /**
  * Hover text for the constructions worth explaining. Anything not listed —
@@ -21,6 +22,41 @@ const CONSTRUCTION_TITLES: Record<string, string> = {
   HYDROLite: 'melin HYDROLite: featherweight, bonded seams, gel-welded logo, antimicrobial sweatband',
   HYDRO: 'melin HYDRO water-resistant construction',
 };
+
+/**
+ * The hat's ID heading, with the case part of it linking to that case.
+ *
+ * `A-029-01` reads as "hat 01 of case A-029" and people tap the case part
+ * expecting to land there — it looks like a breadcrumb because it is one. The
+ * "View Case" button further down the page did already exist, but it is below
+ * the identification card, the photo and the specs, which is a lot of
+ * scrolling to get back to where you came from.
+ *
+ * The suffix is sliced off `display_id` rather than rebuilt from
+ * `position_in_case`, so the server stays the only place that decides how an
+ * ID is formatted. Padding the number here would be a second copy of that
+ * rule, free to drift.
+ */
+export function HatHeadingId({ hat }: { hat: HatRead }) {
+  const caseId = hat.case_display_id;
+  // An unassigned hat has no display_id at all — nothing to link to, and
+  // `Hat #12` must not be dressed up as navigation.
+  if (!caseId || !hat.display_id?.startsWith(caseId)) {
+    return <>{hat.display_id || `Hat #${hat.id}`}</>;
+  }
+  return (
+    <>
+      <Link
+        to={`/cases/${caseId}`}
+        style={{ color: 'inherit', textDecoration: 'underline', textUnderlineOffset: '0.2em' }}
+        title={`Back to case ${caseId}`}
+      >
+        {caseId}
+      </Link>
+      {hat.display_id.slice(caseId.length)}
+    </>
+  );
+}
 
 function PriceTile({ label, value, source }: { label: string; value: number | null; source?: string | null }) {
   return (
@@ -132,7 +168,7 @@ export function HatDetailPage() {
     <>
       <div className="d-flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
         <h1 className="font-mono" style={{ color: 'var(--neon-cyan)' }}>
-          {data.display_id || `Hat #${data.id}`}
+          <HatHeadingId hat={data} />
         </h1>
         {/* `flex-wrap` so the row breaks onto a second line instead of
             overflowing the viewport on a phone — this is the row that a

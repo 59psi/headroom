@@ -6,6 +6,19 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.23.1] — 2026-08-18
+
+### Fixed
+- **The case part of a hat's ID is now a link back to that case.** `A-029-01`
+  reads as "hat 01 of case A-029" and sits at the very top of the page, so it
+  looks like a breadcrumb and gets tapped like one. It wasn't one. The
+  "View Case" button did already exist, but below the identification card, the
+  photo and the specs — a long scroll back to the page you just came from.
+
+  Only the case portion links; the `-01` stays plain text, so which part is
+  navigation is visible rather than guessed. A hat with no case still renders
+  `Hat #12` as plain text rather than dressing it up as something tappable.
+
 ## [2.23.0] — 2026-08-18
 
 ### Fixed
