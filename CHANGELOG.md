@@ -6,6 +6,60 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.25.0] — 2026-08-19
+
+### Fixed
+- **"25 models known" was never the catalogue's size.** The Settings card read
+  `len(GET /api/meta/colorways)` — the *autocomplete* feed, which caps at its
+  own default `limit=25`. The figure would have said 25 with 1,000 models
+  harvested, which is indistinguishable from a harvest that found 25.
+  `GET /api/admin/colorways/status` now reports the real totals, and the card
+  shows models, colorways and listings.
+
+- **One transient marketplace error abandoned the whole colorway harvest.**
+  `query_listings` raises on any non-200 — a 429, a 502, a dropped connection —
+  and the only handler was at the very top. The sweep is sequential and commits
+  per page, and the endpoint had already returned `202 started`, so a single
+  blip left a silently partial catalogue that looked exactly like a complete
+  one. Pages now retry with backoff, each category is isolated, and any that
+  still fails is reported in `failed_categories` instead of vanishing into a
+  log line. For scale: a full sweep is **988 listings across 146 models**.
+
+- **Replacing a hat's photo leaked its export image.** The cleanup loop deletes
+  everything named by a Hat column — `photo_path`, `original_path`,
+  `thumb_path` — but 2.24.0's export derivative is named after the canonical
+  photo's *filename* and lives under `uploads/hats/export/`, so it was
+  invisible to that loop. Every re-shot hat left one 800px WebP behind.
+  `utils/photo.export_derivative_path` is now the single definition of where
+  that file lives, so the code that writes it and the code that deletes it
+  cannot drift apart.
+
+- **Two query invalidations bypassed `invalidateHatViews`.** Bulk import
+  refreshed only `['hats']` and `['cases']` despite creating hats *into* a
+  case, and deleting a case refreshed only `['cases']` despite unassigning
+  every hat in it. Both left the case's own contents and the per-room counts
+  stale for the 30s `staleTime`.
+
+### Changed
+- **`hat.case.room` is no longer walked outside the model.** Five call sites
+  rebuilt what `Hat.room_name` / `Hat.case_display_id` / `Hat.display_id`
+  already provide.
+- **Three unlabelled `<select>`s got their `aria-label`** — Case Type,
+  Disposition Type, and colour Tier. The visible labels carry no `htmlFor`, so
+  nothing else associated them.
+- **The purchase-import dedupe is defined once.** Import and preview each had a
+  byte-identical copy, so "the preview predicts the import exactly" was a claim
+  maintained by hand — in the one place it had already gone wrong once.
+- **`CONDITION_LABEL` is no longer declared three times.** Two of the copies
+  were identical and differed only by a trailing `s` in the name; the third is
+  genuinely different (lowercase, for use inside a sentence) and is now named
+  `CONDITION_IN_SENTENCE` so the distinction is deliberate.
+- **The payout constants have one home again.** `melin_recap.py` defined
+  `CASH_PAYOUT`/`CREDIT_PAYOUT` a third time, unused by anything and outside
+  the reach of `tests/test_valuation_parity.py`.
+- **README and USAGE now document the zip export and per-hat notes**, which
+  2.24.0 shipped into CLAUDE.md and the CHANGELOG only.
+
 ## [2.24.0] — 2026-08-19
 
 ### Added

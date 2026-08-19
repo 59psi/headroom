@@ -139,6 +139,32 @@ async def test_replacing_a_photo_clears_the_previous_derivatives(client, fake_cu
     assert not old_original.exists(), "the previous original was left on disk"
 
 
+async def test_replacing_a_photo_clears_the_export_derivative(client, fake_cutout):
+    """The fourth derivative, which is not named by any column.
+
+    `photo_path`, `original_path` and `thumb_path` are all on the hat, so a
+    loop over them catches three of the four. The export image is derived from
+    the canonical photo's FILENAME and lives under `hats/export/`, so it was
+    invisible to that loop and every re-shot hat leaked one 800px WebP.
+    """
+    from headroom.utils.photo import export_derivative_path
+
+    body = await _hat_with_photo(client)
+    hat_id = body["id"]
+
+    # Build the derivative the way the export does, so this fails if the two
+    # ever disagree about where it lives.
+    await client.get("/api/admin/collection-export")
+    stale = export_derivative_path(settings.upload_dir, body["photo_path"])
+    assert stale.exists(), "export did not produce a derivative to begin with"
+
+    await client.post(
+        f"/api/hats/{hat_id}/photo",
+        files={"photo": ("new.jpg", _jpeg((10, 200, 10)), "image/jpeg")},
+    )
+    assert not stale.exists(), "the previous export image was left on disk"
+
+
 async def test_backfill_only_touches_hats_without_a_thumbnail(client, db_session, fake_cutout):
     """Idempotent, so a restart mid-backfill resumes instead of redoing."""
     from sqlalchemy import update as sa_update

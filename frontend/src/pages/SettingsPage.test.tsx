@@ -35,6 +35,9 @@ vi.mock('../api/settings', () => ({
   setEbayCreds: vi.fn(), deleteEbayCreds: vi.fn(), testEbayCreds: vi.fn(),
   inventoryReportUrl: vi.fn(() => '/api/admin/inventory-report'),
   collectionExportUrl: vi.fn(() => '/api/admin/collection-export'),
+  getColorwayStatus: vi.fn(async () => ({
+    entries: 988, models: 146, colorways: 402, last_harvest: null,
+  })),
 }));
 
 vi.mock('../api/auth', () => ({

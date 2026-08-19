@@ -145,13 +145,13 @@ async def query_listings(params: dict) -> list[dict]:
     return resp.json().get("data", [])
 
 
-# What the marketplace pays a seller, as a fraction of the listed price.
-# Both are carried on every listing in `publicData.payoutInfo` and were the
-# same across all 706 live listings sampled when this was written. Constants
-# rather than per-hat columns because they are a property of the marketplace,
-# not of any hat; re-check them by reading `payoutInfo` off any listing.
-CASH_PAYOUT = 0.80
-CREDIT_PAYOUT = 1.10
+# Payout rates (what a seller receives: 80% cash / 110% credit) deliberately
+# do NOT live here. They were defined in this module too, unused by anything,
+# and outside the reach of `tests/test_valuation_parity.py` — a third copy of a
+# number the app prints to a person, free to drift from the two the parity test
+# actually guards. They belong to valuation: see `frontend/src/lib/valuation.ts`
+# and its mirror `services/valuation.py`. Re-check them by reading
+# `publicData.payoutInfo` off any listing.
 
 # Marketplace condition vocabulary -> the app's three conditions.
 # Anything not listed (good, fair, and whatever gets added later) is worn:

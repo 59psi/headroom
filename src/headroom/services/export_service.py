@@ -38,7 +38,7 @@ from sqlalchemy.orm import selectinload
 from headroom.config import settings
 from headroom.models.case import Case
 from headroom.models.hat import Hat
-from headroom.utils.photo import EXPORT_DIR, make_export_image
+from headroom.utils.photo import export_derivative_path, make_export_image
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +73,7 @@ def _export_image_path(hat: Hat) -> Path | None:
     if not source.exists():
         return None
 
-    cache = (settings.upload_dir / "hats" / EXPORT_DIR / Path(source_rel).stem).with_suffix(".webp")
+    cache = export_derivative_path(settings.upload_dir, source_rel)
     try:
         if cache.exists() and cache.stat().st_mtime >= source.stat().st_mtime:
             return cache
@@ -115,8 +115,8 @@ def _hat_card(hat: Hat, image_name: str | None, include_values: bool) -> str:
 
     where = " · ".join(
         p for p in (
-            f"Case {escape(hat.case.display_id)}" if hat.case else None,
-            escape(hat.case.room.name) if hat.case and hat.case.room else None,
+            f"Case {escape(hat.case_display_id)}" if hat.case_display_id else None,
+            escape(hat.room_name) if hat.room_name else None,
         ) if p
     )
 

@@ -16,15 +16,10 @@ import { BarList, ChartCard, StatTiles } from '../components/charts/Charts';
 import {
   BASIS_LABEL, CASH_PAYOUT, CREDIT_PAYOUT, RETAIL_RETENTION,
   costOf, money, realizedTotals, valueCollection, valueHat, type ValueBasis,
+  CONDITION_LABEL,
 } from '../lib/valuation';
 import type { HatRead } from '../types';
 import { tileSrc } from '../lib/photo';
-
-const CONDITION_LABELS: Record<string, string> = {
-  new_with_tags: 'New with tags',
-  new: 'New',
-  worn: 'Worn',
-};
 
 interface Bucket {
   key: string;
@@ -160,7 +155,7 @@ export function ValuationPage() {
   );
 
   const buckets = useMemo(() => ({
-    condition: bucketize(hats, h => h.condition, k => CONDITION_LABELS[k] ?? k),
+    condition: bucketize(hats, h => h.condition, k => CONDITION_LABEL[k] ?? k),
     brand: bucketize(hats, h => h.brand),
     style: bucketize(hats, h => h.style, k => k.replace(/_/g, ' ')),
     room: bucketize(hats, h => h.room_name),
@@ -264,7 +259,7 @@ export function ValuationPage() {
           <p className="mb-2">
             With no listings to compare against, the estimate falls back to a
             share of new retail: {Object.entries(RETAIL_RETENTION)
-              .map(([k, v]) => `${CONDITION_LABELS[k] ?? k} ${Math.round(v * 100)}%`)
+              .map(([k, v]) => `${CONDITION_LABEL[k] ?? k} ${Math.round(v * 100)}%`)
               .join(' · ')}.
           </p>
           <p className="mb-0">

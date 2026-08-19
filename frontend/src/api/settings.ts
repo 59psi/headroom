@@ -188,6 +188,15 @@ export function reanalyzeAll(onlyPricedByClaude: boolean) {
   );
 }
 
+/** What is actually in the colorway catalog — NOT the autocomplete feed.
+ *  `/api/meta/colorways` caps at its own default limit, so reading its length
+ *  as "models known" reported 25 regardless of the real total. */
+export function getColorwayStatus() {
+  return apiFetch<{ entries: number; models: number; colorways: number; last_harvest: string | null }>(
+    '/api/admin/colorways/status',
+  );
+}
+
 /** Kick off the colorway harvest. 202 — the work continues in the background. */
 export function refreshColorwayCatalog() {
   return apiFetch<{ started: boolean; detail: string }>(

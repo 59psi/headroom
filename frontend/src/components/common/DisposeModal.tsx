@@ -50,7 +50,7 @@ export function DisposeModal({ hatId, show, onClose }: Props) {
           </div>
           <div className="modal-body">
             <label className="form-label">Disposition Type</label>
-            <select className="form-select mb-3" value={via} onChange={e => setVia(e.target.value)}>
+            <select aria-label="Disposition Type" className="form-select mb-3" value={via} onChange={e => setVia(e.target.value)}>
               {VIAS.map(v => <option key={v.id} value={v.id}>{v.label}</option>)}
             </select>
             {(via === 'sold' || via === 'trade') && (

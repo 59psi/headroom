@@ -86,10 +86,26 @@ export const BASIS_LABEL: Record<ValueBasis, string> = {
   none: 'Not valued',
 };
 
-const CONDITION_LABEL: Record<string, string> = {
+/** Lowercase — this one goes INSIDE a sentence ("…8 live worn model listings"). */
+const CONDITION_IN_SENTENCE: Record<string, string> = {
   new_with_tags: 'new with tags',
   new: 'new',
   worn: 'worn',
+};
+
+/**
+ * Title case — this one is a LABEL (chart legends, table rows).
+ *
+ * Exported because Stats and Valuation each had their own copy, one of them
+ * named `CONDITION_LABELS`, differing from the other by a single trailing `s`.
+ * Two identical maps under near-identical names is the drift this module was
+ * created to stop; keeping both casings side by side here makes the difference
+ * between them a deliberate choice rather than an accident.
+ */
+export const CONDITION_LABEL: Record<string, string> = {
+  new_with_tags: 'New with tags',
+  new: 'New',
+  worn: 'Worn',
 };
 
 function pct(n: number): string {
@@ -100,7 +116,7 @@ function pct(n: number): string {
 export function valueHat(h: HatRead): HatValuation {
   const ask = h.resale_price ?? 0;
   const retail = h.estimated_new_price ?? 0;
-  const condLabel = CONDITION_LABEL[h.condition] ?? h.condition.replace(/_/g, ' ');
+  const condLabel = CONDITION_IN_SENTENCE[h.condition] ?? h.condition.replace(/_/g, ' ');
 
   if (h.resale_price_scope === 'manual' && ask > 0) {
     return { value: ask, basis: 'manual', explanation: 'Price you entered — used as given.' };

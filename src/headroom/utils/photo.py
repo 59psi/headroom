@@ -93,6 +93,17 @@ def make_thumbnail(source_path: Path, dest_path: Path) -> Path | None:
         return None
 
 
+def export_derivative_path(upload_dir: Path, photo_rel: str) -> Path:
+    """Where the export image for `photo_rel` lives (whether or not it exists).
+
+    One definition, because two callers need it and they need to AGREE: the
+    export builds it, and the photo-replacement path deletes it. Computing the
+    same path in both places is how the delete quietly stops matching the build
+    and every re-shot hat starts leaking a file.
+    """
+    return (upload_dir / "hats" / EXPORT_DIR / Path(photo_rel).stem).with_suffix(".webp")
+
+
 def make_export_image(source_path: Path, dest_path: Path) -> Path | None:
     """Write an export-sized WebP copy of a hat photo. Returns the path, or None.
 

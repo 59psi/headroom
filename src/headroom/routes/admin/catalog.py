@@ -10,13 +10,30 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.database import get_db
 from headroom.models.catalog import Purchase
-from headroom.schemas.admin import CatalogRefreshStarted, PurchaseImport, PurchaseRead
+from headroom.schemas.admin import (
+    CatalogRefreshStarted,
+    CatalogStatus,
+    PurchaseImport,
+    PurchaseRead,
+)
 from headroom.services import catalog_service
 from headroom.services.melin_recap import MelinRecapError
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+@router.get("/colorways/status", response_model=CatalogStatus)
+async def colorway_catalog_status(db: AsyncSession = Depends(get_db)):
+    """What is actually in the catalog.
+
+    Separate from `/api/meta/colorways`, which is an autocomplete feed and caps
+    at its own default limit — reading `len()` of that as "models known" made
+    the card report 25 forever, which is indistinguishable from a harvest that
+    genuinely found 25.
+    """
+    return CatalogStatus(**await catalog_service.catalog_stats(db))
 
 
 @router.post("/colorways/refresh", status_code=202, response_model=CatalogRefreshStarted)

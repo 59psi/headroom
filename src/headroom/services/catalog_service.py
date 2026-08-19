@@ -14,6 +14,8 @@ cost basis (`purchase_price`, `purchased_at`) and fill `colorway`.
 
 from __future__ import annotations
 
+import asyncio
+
 import logging
 from datetime import datetime, timezone
 
@@ -24,7 +26,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from headroom.models.catalog import ColorwayEntry, Purchase
 from headroom.models.hat import Hat
 from headroom.services.activity_service import log_and_commit
-from headroom.services.melin_recap import STYLE_TO_CATEGORY, query_listings
+from headroom.services.melin_recap import (
+    STYLE_TO_CATEGORY,
+    MelinRecapError,
+    query_listings,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,57 +52,137 @@ def parse_listing_title(title: str) -> tuple[str, str | None]:
     return model, colorway
 
 
+async def _fetch_page(params: dict, attempts: int = 3) -> list[dict]:
+    """One page, retried on a transient marketplace failure.
+
+    `query_listings` raises on ANY non-200 — a 429, a 502, a timed-out
+    connection. Those are the normal weather of a public API swept a thousand
+    listings at a time, and before this a single one of them ended the whole
+    harvest.
+    """
+    delay = 1.0
+    for attempt in range(1, attempts + 1):
+        try:
+            return await query_listings(params)
+        except MelinRecapError:
+            if attempt == attempts:
+                raise
+            await asyncio.sleep(delay)
+            delay *= 2
+    return []  # unreachable; keeps the type checker honest
+
+
+async def _sweep_category(db: AsyncSession, category: str, now) -> tuple[int, int]:
+    """Harvest one category. Returns (titles_seen, new_entries)."""
+    seen = new = 0
+    for page in range(1, _MAX_PAGES_PER_CATEGORY + 1):
+        listings = await _fetch_page(
+            {
+                "pub_category": category,
+                "per_page": _PER_PAGE,
+                "page": page,
+                "fields.listing": "title",
+            }
+        )
+        for li in listings:
+            title = ((li.get("attributes") or {}).get("title") or "").strip()
+            if not title:
+                continue
+            seen += 1
+            row = (await db.execute(
+                select(ColorwayEntry).where(ColorwayEntry.title == title)
+            )).scalar_one_or_none()
+            if row is None:
+                model, colorway = parse_listing_title(title)
+                db.add(
+                    ColorwayEntry(
+                        title=title,
+                        model_name=model,
+                        colorway=colorway,
+                        category=category,
+                        listing_count=1,
+                        last_seen=now,
+                    )
+                )
+                new += 1
+            else:
+                row.listing_count += 1
+                row.last_seen = now
+        await db.commit()
+        if len(listings) < _PER_PAGE:
+            break
+    return seen, new
+
+
 async def harvest_catalog(db: AsyncSession) -> dict:
-    """Sweep every category; upsert unique titles. Returns counts."""
+    """Sweep every category; upsert unique titles. Returns counts.
+
+    Each category is isolated. One failing category used to abandon every
+    category after it — the sweep is sequential and commits as it goes, so the
+    result was a SILENTLY partial catalogue: the endpoint had already returned
+    202, and nothing recorded that the run stopped early. A collection missing
+    two thirds of its models looked exactly like a complete one.
+    """
     now = datetime.now(timezone.utc)
     seen_titles = 0
     new_entries = 0
+    failed: list[str] = []
 
     for category in STYLE_TO_CATEGORY.values():
-        for page in range(1, _MAX_PAGES_PER_CATEGORY + 1):
-            listings = await query_listings(
-                {
-                    "pub_category": category,
-                    "per_page": _PER_PAGE,
-                    "page": page,
-                    "fields.listing": "title",
-                }
-            )
-            for li in listings:
-                title = ((li.get("attributes") or {}).get("title") or "").strip()
-                if not title:
-                    continue
-                seen_titles += 1
-                result = await db.execute(
-                    select(ColorwayEntry).where(ColorwayEntry.title == title)
-                )
-                row = result.scalar_one_or_none()
-                if row is None:
-                    model, colorway = parse_listing_title(title)
-                    db.add(
-                        ColorwayEntry(
-                            title=title,
-                            model_name=model,
-                            colorway=colorway,
-                            category=category,
-                            listing_count=1,
-                            last_seen=now,
-                        )
-                    )
-                    new_entries += 1
-                else:
-                    row.listing_count += 1
-                    row.last_seen = now
-            await db.commit()
-            if len(listings) < _PER_PAGE:
-                break
+        try:
+            seen, new = await _sweep_category(db, category, now)
+        except MelinRecapError as exc:
+            # Keep going. The next category is independent, and a partial
+            # harvest that KNOWS it is partial beats one that doesn't.
+            logger.warning("Colorway harvest: category %s failed: %s", category, exc)
+            failed.append(category)
+            await db.rollback()
+            continue
+        seen_titles += seen
+        new_entries += new
 
     total = (await db.execute(select(func.count(ColorwayEntry.id)))).scalar_one()
+    models = (await db.execute(
+        select(func.count(func.distinct(ColorwayEntry.model_name)))
+    )).scalar_one()
+    result = {
+        "titles_seen": seen_titles,
+        "new_entries": new_entries,
+        "catalog_total": total,
+        "distinct_models": models,
+        "failed_categories": failed,
+        "finished_at": now.isoformat(),
+    }
     logger.info(
-        "Colorway harvest: %d titles seen, %d new, %d total in catalog",
-        seen_titles, new_entries, total,
+        "Colorway harvest: %d titles seen, %d new, %d total (%d models), %d categor(y/ies) failed",
+        seen_titles, new_entries, total, models, len(failed),
     )
-    return {"titles_seen": seen_titles, "new_entries": new_entries, "catalog_total": total}
+    return result
+
+
+async def catalog_stats(db: AsyncSession) -> dict:
+    """What is actually IN the catalog — not a page of autocomplete options.
+
+    The Settings card used to report `len(GET /api/meta/colorways)` as "models
+    known". That endpoint is autocomplete and caps at `catalog_options`'s
+    default limit, so the figure read 25 no matter how many models had been
+    harvested — indistinguishable from a harvest that had found 25.
+    """
+    entries = (await db.execute(select(func.count(ColorwayEntry.id)))).scalar_one()
+    models = (await db.execute(
+        select(func.count(func.distinct(ColorwayEntry.model_name)))
+    )).scalar_one()
+    colorways = (await db.execute(
+        select(func.count(func.distinct(ColorwayEntry.colorway)))
+        .where(ColorwayEntry.colorway.is_not(None))
+    )).scalar_one()
+    last_seen = (await db.execute(select(func.max(ColorwayEntry.last_seen)))).scalar_one()
+    return {
+        "entries": entries,
+        "models": models,
+        "colorways": colorways,
+        "last_harvest": last_seen.isoformat() if last_seen else None,
+    }
 
 
 async def catalog_options(
@@ -148,6 +234,37 @@ def _line_fields(item: dict) -> tuple[str, str | None, str | None, int]:
     return title, model, colorway, quantity
 
 
+async def _units_to_add(
+    db: AsyncSession, item: dict, title: str, quantity: int, staged: dict[tuple, int]
+) -> tuple[int, float | None, str | None]:
+    """How many rows this order line still needs. Returns (wanted, price, size).
+
+    Extracted because `import_purchases` and `preview_import` each had a
+    byte-identical copy. CLAUDE.md promises "the preview predicts the import
+    exactly"; with two copies that was a claim maintained by hand, and the
+    dedupe key is exactly where it had already gone wrong once (a key without
+    `size` collapsed a real order that bought one model in two sizes).
+
+    `staged` is mutated: one order can list the same hat on two lines, and
+    without carrying the batch's own decisions the second line's count would
+    depend on whether a flush happened to have run.
+    """
+    price = item.get("price")
+    size = normalize_size(item.get("size"))
+    key = (item.get("order_ref"), title, price, size)
+    existing = len((await db.execute(
+        select(Purchase).where(
+            Purchase.item_title == title,
+            Purchase.order_ref == item.get("order_ref"),
+            Purchase.price == price,
+            Purchase.size.is_(None) if size is None else Purchase.size == size,
+        )
+    )).scalars().all())
+    wanted = max(quantity - existing - staged.get(key, 0), 0)
+    staged[key] = staged.get(key, 0) + wanted
+    return wanted, price, size
+
+
 async def import_purchases(db: AsyncSession, items: list[dict]) -> dict:
     """Store purchase line items, one row per unit bought.
 
@@ -175,19 +292,7 @@ async def import_purchases(db: AsyncSession, items: list[dict]) -> dict:
             skipped += 1
             continue
 
-        price = item.get("price")
-        size = normalize_size(item.get("size"))
-        key = (item.get("order_ref"), title, price, size)
-        existing = len((await db.execute(
-            select(Purchase).where(
-                Purchase.item_title == title,
-                Purchase.order_ref == item.get("order_ref"),
-                Purchase.price == price,
-                Purchase.size.is_(None) if size is None else Purchase.size == size,
-            )
-        )).scalars().all())
-        wanted = max(quantity - existing - staged.get(key, 0), 0)
-        staged[key] = staged.get(key, 0) + wanted
+        wanted, price, size = await _units_to_add(db, item, title, quantity, staged)
         skipped += quantity - wanted
 
         order_date = None
@@ -282,19 +387,7 @@ async def preview_import(db: AsyncSession, items: list[dict]) -> dict:
             unusable += 1
             continue
 
-        price = item.get("price")
-        size = normalize_size(item.get("size"))
-        key = (item.get("order_ref"), title, price, size)
-        existing = len((await db.execute(
-            select(Purchase).where(
-                Purchase.item_title == title,
-                Purchase.order_ref == item.get("order_ref"),
-                Purchase.price == price,
-                Purchase.size.is_(None) if size is None else Purchase.size == size,
-            )
-        )).scalars().all())
-        wanted = max(quantity - existing - staged.get(key, 0), 0)
-        staged[key] = staged.get(key, 0) + wanted
+        wanted, price, size = await _units_to_add(db, item, title, quantity, staged)
         duplicates += quantity - wanted
 
         for _ in range(wanted):

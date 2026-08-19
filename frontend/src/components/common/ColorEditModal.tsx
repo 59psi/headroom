@@ -164,7 +164,7 @@ export function ColorEditModal({ hatId, colors, editingRank, onClose }: Props) {
             />
 
             <label className="form-label">Tier</label>
-            <select className="form-select" value={tier} onChange={e => setTier(e.target.value)}>
+            <select aria-label="Tier" className="form-select" value={tier} onChange={e => setTier(e.target.value)}>
               {TIERS.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
             </select>
 

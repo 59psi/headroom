@@ -6,6 +6,7 @@ import { ImageLightbox } from '../components/common/ImageLightbox';
 import { PhotoCapture } from '../components/photos/PhotoCapture';
 import { useState } from 'react';
 import { tileSrc } from '../lib/photo';
+import { invalidateHatViews } from '../lib/invalidate';
 
 export function CaseDetailPage() {
   const { displayId } = useParams<{ displayId: string }>();
@@ -21,8 +22,11 @@ export function CaseDetailPage() {
 
   const removeMutation = useMutation({
     mutationFn: () => deleteCase(displayId!),
+    // Deleting a case UNASSIGNS every hat in it (case_service.delete_case sets
+    // case_id = None), so this changes hats, not just cases — `['hats']` and
+    // `['rooms']` were both left stale by invalidating `['cases']` alone.
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['cases'] });
+      invalidateHatViews(qc);
       navigate('/cases');
     },
   });

@@ -276,6 +276,42 @@ each hat lives) without logging in, and can't change anything. Revoke a
 link any time; optionally give it an expiry when creating. Great for the
 group chat.
 
+## 11½. Handing someone a copy
+
+A share link is the better answer when the person can reach the app — it stays
+current and you can revoke it. But the app lives on your own network, so that
+link resolves for nobody outside the house.
+
+**Settings → Share the collection** downloads a **`.zip`**. Unpack it and open
+`index.html` in any browser: every hat with its photo, colours, where it lives,
+and your notes. It works offline forever and needs no login, no server and no
+internet.
+
+- **Title** — whatever you want on the front of it.
+- **Include estimated values** — **off by default.** This is the version you
+  send a friend; the Inventory Report above it is the one with the money in it.
+- **Include hats you no longer own** — off by default.
+
+Images are re-encoded to 800px for the export, so it looks right on a laptop
+rather than a phone-sized thumbnail. The first download does that encoding and
+takes a moment on a Pi; later ones reuse it and are quick.
+
+It's a **snapshot** — it does not update after you send it. Re-download when
+the collection has moved on.
+
+---
+
+## 11¾. Your own notes
+
+Every hat has a **Your notes** box on its page: where you got it, who you wore
+it with, why you kept it.
+
+It is the one free-text field on a hat that **nothing automatic ever writes**.
+Re-analysing a hat rewrites its colours, model name and design notes; it never
+touches this. Notes travel with the hat into the zip export above.
+
+---
+
 ## 12. Audit trail
 
 Every significant change (creates, edits, dispositions, imports, setting

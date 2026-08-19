@@ -95,6 +95,10 @@ result, and three independent price signals per hat.
   keys never leave the server (masked reads only).
 - **Read-only share links** — show off the collection without handing out a
   login; revocable, optionally expiring.
+- **Download the collection as a zip** — `index.html` plus an images folder.
+  Opens in any browser, works offline, nothing to host, no login. For when the
+  person you're showing it to can't reach the app: a share link only resolves
+  on your own network. Prices are opt-in and off by default.
 - **One-command HTTPS** — a Caddy overlay with automatic Let's Encrypt certs.
 - **Backups** — scheduled rolling tarballs + one-click download; documented
   restore.
