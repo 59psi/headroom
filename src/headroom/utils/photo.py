@@ -17,10 +17,23 @@ THUMBS_DIR = "thumbs"
 # roughly 3x the bytes of a thumbnail and still small enough that a few hundred
 # hats stay comfortably emailable.
 #
-# WebP rather than AVIF, which would be ~30% smaller at the same quality: this
-# file goes to arbitrary people on arbitrary devices, Safari only gained AVIF
-# in 16.4, and a broken image is worse than a bigger download. Revisit if that
-# stops being true.
+# WebP, and the reasoning is worth recording because "use the universal
+# format" is the right instinct and lands somewhere else here.
+#
+# WebP is not proprietary: open spec, royalty-free, BSD-licensed reference
+# implementation, and supported everywhere since Safari 14 in 2020 (~97%).
+# The genuinely older options both cost something real, because these photos
+# are transparent cutouts and alpha is the point:
+#
+#     format                per image   x300 hats   alpha
+#     PNG lossless            137 KB      40 MB      yes
+#     PNG 256-colour           26 KB     7.7 MB      yes, edges soften
+#     JPEG q85                 31 KB     8.9 MB      NO — hats stop floating
+#     WebP q82                  9 KB     2.6 MB      yes
+#
+# AVIF measures 13.5 KB against WebP's 13.9 on photographic content — a few
+# percent, not the ~30% it manages on flat synthetic images — so it buys
+# nothing here worth the Safari 16.4 floor.
 EXPORT_DIMENSION = 800
 EXPORT_QUALITY = 82
 EXPORT_DIR = "export"

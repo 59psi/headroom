@@ -25,9 +25,14 @@ All notable changes are documented here. This project follows
 
   Images are **re-encoded to 800px WebP** from the canonical photo rather than
   copied from the 320px grid thumbnail, which looked soft the moment anyone
-  opened the zip on a laptop. WebP and not AVIF despite AVIF being ~30%
-  smaller: this file gets handed to arbitrary people on arbitrary devices, and
-  Safari only gained AVIF in 16.4 — a broken image costs more than the bytes.
+  opened the zip on a laptop. WebP, which is open and royalty-free rather
+  than proprietary, and has worked everywhere since Safari 14 in 2020. The
+  alternatives were measured, not assumed: lossless PNG is 137 KB an image
+  (40 MB for 300 hats), 256-colour PNG is 26 KB but softens the cutout's
+  anti-aliased edge, and JPEG is 31 KB with **no alpha at all** — the hats
+  would stop floating. AVIF came in at 13.5 KB against WebP's 13.9 on
+  photographic content, a few percent rather than the ~30% it manages on flat
+  synthetic images, so it buys nothing worth a Safari 16.4 floor.
   Derivatives are cached on disk and invalidated by modification time, so the
   first export pays for the encoding and later ones don't, and a re-cut photo
   regenerates without anything having to remember to clear a cache. The whole
