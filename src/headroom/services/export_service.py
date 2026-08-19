@@ -6,6 +6,10 @@ can't: the app lives on a Pi at `headroom.local`, which resolves for nobody
 off that LAN, so "show someone the collection" otherwise means being in the
 house.
 
+Images are re-encoded to 800px WebP at export time from the canonical photo
+— not the 320px grid thumbnail, which looks soft the moment anyone opens
+the zip on a laptop — and cached on disk so a second export is instant.
+
 A zip of `index.html` + an `images/` folder rather than one HTML file with
 base64 images: a self-contained file is neat until it is 8 MB of base64 that
 no mail client will preview and every editor chokes on. A zip unpacks to a
@@ -19,6 +23,7 @@ send a friend, so prices are opt-in (`include_values`) and off by default.
 
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 import zipfile
@@ -33,6 +38,7 @@ from sqlalchemy.orm import selectinload
 from headroom.config import settings
 from headroom.models.case import Case
 from headroom.models.hat import Hat
+from headroom.utils.photo import EXPORT_DIR, make_export_image
 
 logger = logging.getLogger(__name__)
 
@@ -42,11 +48,38 @@ def _image_name(hat: Hat) -> str | None:
 
     Keyed on the hat id, not the display id: an unassigned hat has no display
     id at all, and two hats can briefly share one during a case reshuffle.
+    Always `.webp` — every image in the zip is re-encoded to one format, so the
+    source extension is irrelevant.
     """
-    source = hat.thumb_path or hat.photo_path
-    if not source:
+    if not (hat.photo_path or hat.thumb_path):
         return None
-    return f"{hat.id}{Path(source).suffix or '.webp'}"
+    return f"{hat.id}.webp"
+
+
+def _export_image_path(hat: Hat) -> Path | None:
+    """The 800px WebP for this hat, generating and caching it if needed.
+
+    Cached on disk beside the thumbnails rather than rebuilt every time: a
+    few hundred full-resolution PNG decodes is a minute of Pi CPU, which is a
+    long time to hold an HTTP request open and an absurd cost to pay twice for
+    an unchanged photo. Keyed on the canonical photo's own filename and
+    invalidated by mtime, so a re-cut regenerates without anything having to
+    remember to clear it.
+    """
+    source_rel = hat.photo_path or hat.thumb_path
+    if not source_rel:
+        return None
+    source = settings.upload_dir / source_rel
+    if not source.exists():
+        return None
+
+    cache = (settings.upload_dir / "hats" / EXPORT_DIR / Path(source_rel).stem).with_suffix(".webp")
+    try:
+        if cache.exists() and cache.stat().st_mtime >= source.stat().st_mtime:
+            return cache
+    except OSError:
+        pass
+    return make_export_image(source, cache.with_suffix(""))
 
 
 def _hat_card(hat: Hat, image_name: str | None, include_values: bool) -> str:
@@ -74,17 +107,6 @@ def _hat_card(hat: Hat, image_name: str | None, include_values: bool) -> str:
     if include_values and hat.resale_price:
         price = f'<p class="price">${hat.resale_price:,.0f}</p>'
 
-    # `story` is the whole reason this export is worth reading rather than
-    # scrolling. Rendered as paragraphs because it is written as prose.
-    story = ""
-    if hat.story:
-        paras = "".join(
-            f"<p>{escape(p.strip())}</p>"
-            for p in hat.story.split("\n")
-            if p.strip()
-        )
-        story = f'<div class="story">{paras}</div>'
-
     notes = (
         f'<div class="notes"><h4>Notes</h4><p>{escape(hat.owner_notes)}</p></div>'
         if hat.owner_notes
@@ -108,7 +130,6 @@ def _hat_card(hat: Hat, image_name: str | None, include_values: bool) -> str:
     <div class="sw">{swatches}</div>
     {price}
     {f'<p class="where">{where}</p>' if where else ""}
-    {story}
     {notes}
   </div>
 </article>"""
@@ -147,10 +168,6 @@ _PAGE = """<!doctype html>
   .sw i {{ width:14px; height:14px; border-radius:50%; border:1px solid #0006; }}
   .price {{ margin:.5rem 0 0; font-weight:600; }}
   .where {{ margin:.5rem 0 0; color:var(--dim); font-size:.8rem; }}
-  .story {{ margin-top:.9rem; padding-top:.9rem; border-top:1px solid var(--line);
-            font-size:.9rem; }}
-  .story p {{ margin:0 0 .7rem; }}
-  .story p:last-child {{ margin-bottom:0; }}
   .notes {{ margin-top:.9rem; padding:.7rem .8rem; border-left:2px solid var(--cyan);
             background:#ffffff08; font-size:.88rem; }}
   .notes h4 {{ margin:0 0 .3rem; font-size:.75rem; text-transform:uppercase;
@@ -182,10 +199,14 @@ async def build_export(
 ) -> tuple[bytes, str]:
     """Return (zip_bytes, filename).
 
-    Built in memory: the images are the gallery thumbnails (320px WebP, tens of
-    KB each), so a few hundred hats is single-digit MB — small enough that
-    streaming from a temp file would add moving parts for no benefit, and the
-    Pi has the headroom. Revisit if a collection ever reaches thousands.
+    Built in memory: 800px WebP images are tens of KB each, so a few hundred
+    hats lands in the low tens of MB — small enough that streaming from a temp
+    file would add moving parts for no benefit. Revisit at thousands of hats.
+
+    The image work runs in a thread. Re-encoding N full-resolution photos is
+    genuinely CPU-bound, and on a Pi it is the difference between a responsive
+    app and one that stops answering for a minute while somebody downloads
+    their collection.
     """
     stmt = (
         select(Hat)
@@ -196,29 +217,42 @@ async def build_export(
         stmt = stmt.where(Hat.disposed_at.is_(None))
     hats = list((await db.execute(stmt)).scalars().all())
 
+    # Rendered here, on the loop, while the ORM objects are still attached and
+    # their relationships loaded. Only plain strings and paths cross into the
+    # thread — touching a SQLAlchemy object from another thread is how you
+    # discover a lazy load at the worst possible moment.
+    cards: list[tuple[str, Path | None, str]] = []
+    for hat in hats:
+        name = _image_name(hat)
+        path = _export_image_path(hat) if name else None
+        if name and path is None:
+            logger.info("Export: no usable photo for hat %s", hat.id)
+            name = None
+        cards.append((_hat_card(hat, name, include_values), path, name or ""))
+
+    generated = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    page = _PAGE.format(
+        title=escape(title),
+        count=len(hats),
+        generated=generated,
+        cards="\n".join(c for c, _p, _n in cards),
+    )
+    blob = await asyncio.to_thread(_zip_it, cards, page)
+    return blob, f"headroom-collection-{generated}.zip"
+
+
+def _zip_it(cards: list[tuple[str, Path | None, str]], page: str) -> bytes:
+    """Pack the rendered page and the images. Pure CPU + disk — no ORM here."""
     buf = io.BytesIO()
-    cards: list[str] = []
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for hat in hats:
-            name = _image_name(hat)
-            if name:
-                source = settings.upload_dir / (hat.thumb_path or hat.photo_path)
-                try:
-                    zf.write(source, f"images/{name}")
-                except OSError:
-                    # A missing file must not cost the whole export — the card
-                    # simply renders without a photo.
-                    logger.info("Export: photo missing for hat %s (%s)", hat.id, source)
-                    name = None
-            cards.append(_hat_card(hat, name, include_values))
-
-        generated = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        zf.writestr("index.html", _PAGE.format(
-            title=escape(title),
-            count=len(hats),
-            generated=generated,
-            cards="\n".join(cards),
-        ))
-
-    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    return buf.getvalue(), f"headroom-collection-{stamp}.zip"
+        for _card, path, name in cards:
+            if path is None or not name:
+                continue
+            try:
+                zf.write(path, f"images/{name}")
+            except OSError:
+                # One unreadable file must not cost the whole download; the
+                # card already rendered and simply shows no photo.
+                logger.info("Export: could not add %s", path)
+        zf.writestr("index.html", page)
+    return buf.getvalue()

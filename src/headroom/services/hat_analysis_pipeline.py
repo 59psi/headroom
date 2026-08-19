@@ -32,7 +32,7 @@ from headroom.database import async_session
 from headroom.models.hat import Hat
 from headroom.models.hat_color import HatColor
 from headroom.schemas.hat import KNOWN_CONSTRUCTIONS
-from headroom.services import hat_story, settings_service
+from headroom.services import settings_service
 from headroom.services.background_removal import remove_background
 from headroom.services.claude_analysis import (
     ClaudeAnalysisError,
@@ -194,32 +194,11 @@ async def finalize_hat_photo(
         await _refresh_ebay_comps(db, hat)
         await _publish_stage(hat.id, STAGE_RESALE)
         await refresh_melin_resale(hat)
-        await _rewrite_story(hat, canonical_path, api_key, model_id)
     logger.info(
         "hat=%s analyzed · rembg=%.2fs claude=%.2fs ebay+resale=%.2fs status=%s",
         hat.id, t_rembg, t_claude, time.monotonic() - t_ebay0, hat.analysis_status,
     )
     return hat
-
-
-async def _rewrite_story(
-    hat: Hat, image_path: Path | None, api_key: str, model_id: str | None
-) -> None:
-    """Rewrite the long-form write-up. Best-effort, exactly like eBay/Melin.
-
-    Runs last because it is the only step that wants the *finished* record: the
-    analysis has just filled in model, colourway and construction, and the
-    write-up is largely about those. A failure here leaves the previous
-    write-up in place — stale prose is better than a hat that lost its entry
-    because an API blipped, and it must never cost the analysis that succeeded.
-    """
-    try:
-        text = await hat_story.write_story(hat, image_path, api_key, model=model_id)
-    except ClaudeAnalysisError as exc:
-        logger.info("Story rewrite skipped for hat %s: %s", hat.id, exc)
-        hat.story_pending = False
-        return
-    hat_story.apply_story(hat, text)
 
 
 async def _refresh_ebay_comps(db: AsyncSession, hat: Hat) -> None:
@@ -279,7 +258,6 @@ async def reanalyze_existing_photo(
         await _refresh_ebay_comps(db, hat)
         await _publish_stage(hat.id, STAGE_RESALE)
         await refresh_melin_resale(hat)
-        await _rewrite_story(hat, photo_path, api_key, model_id)
         return True
 
 

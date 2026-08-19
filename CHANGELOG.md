@@ -9,53 +9,36 @@ All notable changes are documented here. This project follows
 ## [2.24.0] — 2026-08-19
 
 ### Added
-- **Every hat gets a write-up.** Several paragraphs on what the hat *is* — the
-  collection or collab it belongs to, what that drop was, where this colourway
-  sits in it — as opposed to `design_notes`, which is one sentence on what it
-  looks like. Written from the photo plus every fact already on record, and
-  rewritten whenever the hat is refreshed, re-analysed, **or has its collection
-  changed**, since the collection is most of what the write-up is about.
-
-  **Said plainly, because it matters:** this app gives Claude no web access, so
-  "look up the collection" means its own knowledge plus what we hand it. A
-  niche melin artist-series drop is exactly the subject a model will invent a
-  release date and an athlete biography for. The prompt is built around one
-  rule — say what you don't know — and the card on screen states that the text
-  was written by Claude from the photo and the recorded details, so it is read
-  with the right weight.
-
-  Changing a collection queues the rewrite on a **second, separate worker**
-  rather than re-running the analysis: re-running would repeat rembg, the
-  vision call and three price lookups to change one paragraph, and would
-  overwrite fields corrected by hand since. The PUT returns immediately;
-  `story_pending` is a column, so a restart mid-queue re-queues rather than
-  stranding a hat.
-
-- **Notes of your own, on every hat.** The only field no automated path ever
-  writes — not analysis, not a refresh, not a re-analyse. It sits directly
-  under the write-up because the two look alike on screen and behave
-  oppositely, and that difference is worth being obvious.
-
 - **Download the collection as a zip.** `index.html` plus an `images/` folder:
   open it in any browser, works offline, nothing to host, no login. Every hat
-  gets its photo, colours and write-up.
+  gets its photo, colours, where it lives, and your notes.
 
   A zip rather than one self-contained HTML file with base64 images — that is
-  neat until it is 8 MB of base64 no mail client will preview. Deliberately a
-  **showcase**, not the inventory report: prices are opt-in and off by default,
-  matching what share links already withhold.
+  neat until it is several MB of base64 no mail client will preview.
+  Deliberately a **showcase**, not the inventory report: prices are opt-in and
+  off by default, matching what share links already withhold.
 
   This exists because share links, which are the better answer, only work if
   the recipient can reach the app — and `headroom.local` resolves for nobody
   off your LAN. That is why sharing never worked, and it was never a bug in
   the share-link code.
 
-### Fixed
-- **Tests were making live Anthropic calls.** Adding the write-up to the
-  analysis pipeline meant every pipeline test sailed past the stubbed vision
-  call and then made a real HTTP request with the fake key — a 401 apiece and
-  an unclosed client. `write_story` is now stubbed by an autouse fixture, the
-  same house rule the Sharetribe, eBay and Google seams already follow.
+  Images are **re-encoded to 800px WebP** from the canonical photo rather than
+  copied from the 320px grid thumbnail, which looked soft the moment anyone
+  opened the zip on a laptop. WebP and not AVIF despite AVIF being ~30%
+  smaller: this file gets handed to arbitrary people on arbitrary devices, and
+  Safari only gained AVIF in 16.4 — a broken image costs more than the bytes.
+  Derivatives are cached on disk and invalidated by modification time, so the
+  first export pays for the encoding and later ones don't, and a re-cut photo
+  regenerates without anything having to remember to clear a cache. The whole
+  zip build runs off the event loop, because re-encoding a few hundred
+  full-resolution photos is a minute of Pi CPU and the app has to stay
+  answerable while someone downloads.
+
+- **Notes of your own, on every hat.** The only free-text field no automated
+  path ever writes — not analysis, not a refresh, not a bulk re-analyse. Every
+  other prose field on a hat is derived and gets rewritten, so the card says
+  outright that this one survives.
 
 ## [2.23.1] — 2026-08-18
 

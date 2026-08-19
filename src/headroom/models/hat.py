@@ -37,20 +37,8 @@ class Hat(Base):
     style_descriptor: Mapped[str | None] = mapped_column(String(120), nullable=True)
     design_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # The long-form write-up. Distinct from `design_notes`, which is one
-    # sentence about what the hat looks like: this is several paragraphs about
-    # what it IS — the collection or collab it belongs to, what that drop was,
-    # and where this colourway sits in it. Written by Claude and rewritten
-    # whenever the hat is re-analysed or its collection changes, so it is
-    # derived data and never the place to keep something you typed. That is
-    # what `owner_notes` is for, which nothing but you ever writes.
-    story: Mapped[str | None] = mapped_column(Text, nullable=True)
-    story_generated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    # Queued for (re)writing. A column rather than in-memory state so a restart
-    # mid-queue doesn't strand a hat without its write-up — same reason
-    # `analysis_status='pending'` is persisted.
-    story_pending: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    # Yours. Never written by any analysis path, never cleared by a refresh.
+    # Yours. Never written by any analysis path, never cleared by a refresh —
+    # the only free-text field on a hat that a re-analysis cannot touch.
     owner_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Pricing

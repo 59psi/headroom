@@ -65,12 +65,7 @@ _HAT_COLUMN_DDL: dict[str, str] = {
     "model_confidence": "ALTER TABLE hats ADD COLUMN model_confidence VARCHAR(10)",
     "style_descriptor": "ALTER TABLE hats ADD COLUMN style_descriptor VARCHAR(120)",
     "design_notes": "ALTER TABLE hats ADD COLUMN design_notes TEXT",
-    # v2.24 — the long-form collection write-up, and the notes only you write.
-    # `story_pending` needs a DEFAULT: it is NOT NULL on the model, and an
-    # existing row has to get a value when the column is added.
-    "story": "ALTER TABLE hats ADD COLUMN story TEXT",
-    "story_generated_at": "ALTER TABLE hats ADD COLUMN story_generated_at DATETIME",
-    "story_pending": "ALTER TABLE hats ADD COLUMN story_pending BOOLEAN NOT NULL DEFAULT 0",
+    # v2.24 — the notes only you write.
     "owner_notes": "ALTER TABLE hats ADD COLUMN owner_notes TEXT",
     "estimated_new_price": "ALTER TABLE hats ADD COLUMN estimated_new_price FLOAT",
     "estimated_new_price_source": "ALTER TABLE hats ADD COLUMN estimated_new_price_source VARCHAR(80)",

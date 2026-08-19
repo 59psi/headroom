@@ -12,6 +12,19 @@ MAX_DIMENSION = 1200
 THUMB_DIMENSION = 320
 THUMBS_DIR = "thumbs"
 
+# The export derivative: bigger than the grid thumbnail, because a zip you hand
+# someone gets opened on a laptop and 320px looks soft there. 800px at q82 is
+# roughly 3x the bytes of a thumbnail and still small enough that a few hundred
+# hats stay comfortably emailable.
+#
+# WebP rather than AVIF, which would be ~30% smaller at the same quality: this
+# file goes to arbitrary people on arbitrary devices, Safari only gained AVIF
+# in 16.4, and a broken image is worse than a bigger download. Revisit if that
+# stops being true.
+EXPORT_DIMENSION = 800
+EXPORT_QUALITY = 82
+EXPORT_DIR = "export"
+
 
 def generate_filename(original_filename: str) -> str:
     ext = Path(original_filename).suffix.lower()
@@ -64,6 +77,32 @@ def make_thumbnail(source_path: Path, dest_path: Path) -> Path | None:
             img.save(final, "WEBP", quality=80, method=4)
         return final
     except Exception:  # noqa: BLE001 — a missing thumbnail must never fail an upload
+        return None
+
+
+def make_export_image(source_path: Path, dest_path: Path) -> Path | None:
+    """Write an export-sized WebP copy of a hat photo. Returns the path, or None.
+
+    Same contract and same best-effort rule as `make_thumbnail`: a missing
+    export image costs one photo in the zip, never the whole download.
+
+    Generated from the CANONICAL photo, not from the thumbnail — upscaling a
+    320px thumbnail to 800 would produce a larger file that looks worse than
+    the thumbnail it came from.
+    """
+    try:
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        with Image.open(source_path) as img:
+            if img.mode not in ("RGBA", "RGB"):
+                img = img.convert("RGBA")
+            img.thumbnail((EXPORT_DIMENSION, EXPORT_DIMENSION), Image.LANCZOS)
+            final = dest_path.with_suffix(".webp")
+            # method=6 is the slowest/smallest WebP effort. Worth it here and
+            # not for thumbnails: this runs once per hat per export, and the
+            # bytes are what someone downloads.
+            img.save(final, "WEBP", quality=EXPORT_QUALITY, method=6)
+        return final
+    except Exception:  # noqa: BLE001 — one bad photo must not fail an export
         return None
 
 
