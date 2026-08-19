@@ -83,6 +83,8 @@ export interface HatRead {
   model_confidence: string | null;
   style_descriptor: string | null;
   design_notes: string | null;
+  /** Yours. Never written by analysis. */
+  owner_notes: string | null;
   estimated_new_price: number | null;
   estimated_new_price_source: string | null;
   resale_price: number | null;

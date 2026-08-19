@@ -26,6 +26,7 @@ from headroom.services.hat_analysis_pipeline import (
     reanalyze_existing_photo,
 )
 from headroom.utils.photo import (
+    export_derivative_path,
     generate_filename,
     process_image_async,
     validate_image_content_type,
@@ -182,6 +183,14 @@ async def upload_hat_photo(
     # Delete the outgoing photo and everything derived from it. Missing any of
     # these leaves orphaned files on disk and, worse, a `thumb_path` pointing at
     # the previous hat's thumbnail — the grid would show the old picture.
+    #
+    # The export derivative is NOT named by a column, so it cannot be picked up
+    # by iterating the paths on the hat: it is derived from the canonical
+    # photo's filename. 2.24.0 added it and this loop kept deleting three
+    # things, so every re-shot hat leaked an 800px WebP. No stale-image risk
+    # (the cache is mtime-checked against its source) — just a slow leak on a Pi.
+    if hat.photo_path:
+        export_derivative_path(settings.upload_dir, hat.photo_path).unlink(missing_ok=True)
     for stale in (hat.photo_path, hat.original_path, hat.thumb_path):
         if stale:
             (settings.upload_dir / stale).unlink(missing_ok=True)

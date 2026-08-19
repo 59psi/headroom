@@ -86,8 +86,8 @@ def _version_label() -> str:
 
 def _row_html(h: Hat, include_photos: bool) -> str:
     value, source = _best_value(h)
-    case_label = h.case.display_id if h.case else "—"
-    room_label = h.case.room.name if h.case and h.case.room else "—"
+    case_label = h.case_display_id or "—"
+    room_label = h.room_name or "—"
     photo_cell = ""
     if include_photos and h.photo_path:
         # Server-relative URL; works when the report is opened from the
@@ -111,7 +111,7 @@ def _row_html(h: Hat, include_photos: bool) -> str:
     return f"""
 <tr>
   <td>{photo_cell}</td>
-  <td><strong>{escape(h.case.display_id + '-' + f'{h.position_in_case:02d}') if h.case and h.position_in_case else '#' + str(h.id)}</strong>{disposed_label}</td>
+  <td><strong>{escape(h.display_id or '#' + str(h.id))}</strong>{disposed_label}</td>
   <td>{escape(brand_model)}</td>
   <td>{escape(h.condition.replace('_', ' '))}</td>
   <td>{escape(h.size.replace('_', ' '))}</td>

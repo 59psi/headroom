@@ -135,6 +135,15 @@ class PurchaseRead(BaseModel):
     source: str | None = None
 
 
+class CatalogStatus(BaseModel):
+    """The catalog's real size, for the Settings card."""
+
+    entries: int
+    models: int
+    colorways: int
+    last_harvest: str | None
+
+
 class CatalogRefreshStarted(BaseModel):
     """202 body for the colorway harvest.
 

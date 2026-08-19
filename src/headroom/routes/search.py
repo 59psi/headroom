@@ -15,7 +15,7 @@ def _result_fields(h) -> dict:
     return {
         "id": h.id,
         "display_id": h.display_id,
-        "case_display_id": h.case.display_id if h.case else None,
+        "case_display_id": h.case_display_id,
         "photo_path": h.photo_path,
         # The grid renders thumbnails; without this every result loaded the
         # full-size transparent PNG.
@@ -36,8 +36,8 @@ def _result_fields(h) -> dict:
             )
             for c in (h.colors or [])
         ],
-        "room_id": h.case.room.id if h.case and h.case.room else None,
-        "room_name": h.case.room.name if h.case and h.case.room else None,
+        "room_id": h.room_id,
+        "room_name": h.room_name,
     }
 
 

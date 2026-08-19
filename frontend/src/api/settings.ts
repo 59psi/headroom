@@ -106,6 +106,26 @@ export function inventoryReportUrl(opts?: { includeDisposed?: boolean; includePh
   return qs ? `/api/admin/inventory-report?${qs}` : '/api/admin/inventory-report';
 }
 
+/**
+ * The collection as a downloadable zip — `index.html` plus an images folder.
+ *
+ * A plain URL rather than a fetch: the browser's own download machinery
+ * handles the Content-Disposition filename and shows progress, which for a
+ * multi-megabyte file beats buffering it in JS to make a blob URL.
+ */
+export function collectionExportUrl(opts?: {
+  title?: string;
+  includeValues?: boolean;
+  includeDisposed?: boolean;
+}): string {
+  const p = new URLSearchParams();
+  if (opts?.title) p.set('title', opts.title);
+  if (opts?.includeValues) p.set('include_values', 'true');
+  if (opts?.includeDisposed) p.set('include_disposed', 'true');
+  const qs = p.toString();
+  return qs ? `/api/admin/collection-export?${qs}` : '/api/admin/collection-export';
+}
+
 export function getActivityLog(limit = 100, kind?: string) {
   const p = new URLSearchParams({ limit: String(limit) });
   if (kind) p.set('kind', kind);
@@ -165,6 +185,15 @@ export function reanalyzeAll(onlyPricedByClaude: boolean) {
   return apiFetch<{ queued: number; worker_alive: boolean; job: AnalysisJobRead | null }>(
     `/api/admin/analysis/reanalyze-all?only_priced_by_claude=${onlyPricedByClaude}`,
     { method: 'POST' },
+  );
+}
+
+/** What is actually in the colorway catalog — NOT the autocomplete feed.
+ *  `/api/meta/colorways` caps at its own default limit, so reading its length
+ *  as "models known" reported 25 regardless of the real total. */
+export function getColorwayStatus() {
+  return apiFetch<{ entries: number; models: number; colorways: number; last_harvest: string | null }>(
+    '/api/admin/colorways/status',
   );
 }
 

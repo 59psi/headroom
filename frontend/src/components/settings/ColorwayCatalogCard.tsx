@@ -1,12 +1,15 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiFetch } from '../../api/client';
-import { refreshColorwayCatalog } from '../../api/settings';
+import { getColorwayStatus, refreshColorwayCatalog } from '../../api/settings';
 
 export function ColorwayCatalogCard() {
   const qc = useQueryClient();
-  const models = useQuery({
-    queryKey: ['meta', 'colorways', 'models'],
-    queryFn: () => apiFetch<{ value: string }[]>('/api/meta/colorways'),
+  // The catalog's real size. This used to read `len(GET /api/meta/colorways)`,
+  // which is the AUTOCOMPLETE feed and caps at its own default limit — so the
+  // figure sat at 25 no matter how many models had actually been harvested,
+  // and looked exactly like a harvest that had only found 25.
+  const status = useQuery({
+    queryKey: ['admin', 'colorway-status'],
+    queryFn: getColorwayStatus,
   });
 
   const refreshMut = useMutation({
@@ -14,7 +17,10 @@ export function ColorwayCatalogCard() {
     // in the background, so this returns as soon as it has started rather than
     // holding the connection open past whatever proxy sits in front of us.
     mutationFn: () => refreshColorwayCatalog(),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['meta', 'colorways'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['meta', 'colorways'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'colorway-status'] });
+    },
   });
 
   return (
@@ -36,7 +42,9 @@ export function ColorwayCatalogCard() {
             {refreshMut.isPending ? 'Starting…' : 'Refresh from Melin Recap'}
           </button>
           <span className="text-secondary small font-mono">
-            {models.data?.length ?? 0} models known
+            {status.data
+              ? `${status.data.models} models · ${status.data.colorways} colorways · ${status.data.entries} listings`
+              : '—'}
           </span>
         </div>
         {refreshMut.data && (

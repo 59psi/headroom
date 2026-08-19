@@ -21,15 +21,10 @@ import {
 import {
   BASIS_LABEL, money, moneyPrecise, realizedTotals, valueCollection, valueHat,
   costOf, type ValueBasis,
+  CONDITION_LABEL,
 } from '../lib/valuation';
 import { tileSrc } from '../lib/photo';
 import type { CaseRead, HatRead } from '../types';
-
-const CONDITION_LABEL: Record<string, string> = {
-  new_with_tags: 'New with tags',
-  new: 'New',
-  worn: 'Worn',
-};
 
 const CONDITION_COLOR: Record<string, string> = {
   new_with_tags: 'var(--neon-cyan)',

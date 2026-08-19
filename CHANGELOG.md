@@ -6,6 +6,124 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.25.0] — 2026-08-19
+
+### Fixed
+- **"25 models known" was never the catalogue's size.** The Settings card read
+  `len(GET /api/meta/colorways)` — the *autocomplete* feed, which caps at its
+  own default `limit=25`. The figure would have said 25 with 1,000 models
+  harvested, which is indistinguishable from a harvest that found 25.
+  `GET /api/admin/colorways/status` now reports the real totals, and the card
+  shows models, colorways and listings.
+
+- **One transient marketplace error abandoned the whole colorway harvest.**
+  `query_listings` raises on any non-200 — a 429, a 502, a dropped connection —
+  and the only handler was at the very top. The sweep is sequential and commits
+  per page, and the endpoint had already returned `202 started`, so a single
+  blip left a silently partial catalogue that looked exactly like a complete
+  one. Pages now retry with backoff, each category is isolated, and any that
+  still fails is reported in `failed_categories` instead of vanishing into a
+  log line. For scale: a full sweep is **988 listings across 146 models**.
+
+- **Replacing a hat's photo leaked its export image.** The cleanup loop deletes
+  everything named by a Hat column — `photo_path`, `original_path`,
+  `thumb_path` — but 2.24.0's export derivative is named after the canonical
+  photo's *filename* and lives under `uploads/hats/export/`, so it was
+  invisible to that loop. Every re-shot hat left one 800px WebP behind.
+  `utils/photo.export_derivative_path` is now the single definition of where
+  that file lives, so the code that writes it and the code that deletes it
+  cannot drift apart.
+
+- **Two query invalidations bypassed `invalidateHatViews`.** Bulk import
+  refreshed only `['hats']` and `['cases']` despite creating hats *into* a
+  case, and deleting a case refreshed only `['cases']` despite unassigning
+  every hat in it. Both left the case's own contents and the per-room counts
+  stale for the 30s `staleTime`.
+
+### Changed
+- **`hat.case.room` is no longer walked outside the model.** Five call sites
+  rebuilt what `Hat.room_name` / `Hat.case_display_id` / `Hat.display_id`
+  already provide.
+- **Three unlabelled `<select>`s got their `aria-label`** — Case Type,
+  Disposition Type, and colour Tier. The visible labels carry no `htmlFor`, so
+  nothing else associated them.
+- **The purchase-import dedupe is defined once.** Import and preview each had a
+  byte-identical copy, so "the preview predicts the import exactly" was a claim
+  maintained by hand — in the one place it had already gone wrong once.
+- **`CONDITION_LABEL` is no longer declared three times.** Two of the copies
+  were identical and differed only by a trailing `s` in the name; the third is
+  genuinely different (lowercase, for use inside a sentence) and is now named
+  `CONDITION_IN_SENTENCE` so the distinction is deliberate.
+- **The payout constants have one home again.** `melin_recap.py` defined
+  `CASH_PAYOUT`/`CREDIT_PAYOUT` a third time, unused by anything and outside
+  the reach of `tests/test_valuation_parity.py`.
+- **README and USAGE now document the zip export and per-hat notes**, which
+  2.24.0 shipped into CLAUDE.md and the CHANGELOG only.
+
+## [2.24.0] — 2026-08-19
+
+### Added
+- **Download the collection as a zip.** `index.html` plus an `images/` folder:
+  open it in any browser, works offline, nothing to host, no login. Every hat
+  gets its photo, colours, where it lives, and your notes.
+
+  A zip rather than one self-contained HTML file with base64 images — that is
+  neat until it is several MB of base64 no mail client will preview.
+  Deliberately a **showcase**, not the inventory report: prices are opt-in and
+  off by default, matching what share links already withhold.
+
+  This exists because share links, which are the better answer, only work if
+  the recipient can reach the app — and `headroom.local` resolves for nobody
+  off your LAN. That is why sharing never worked, and it was never a bug in
+  the share-link code.
+
+  Images are **re-encoded to 800px WebP** from the canonical photo rather than
+  copied from the 320px grid thumbnail, which looked soft the moment anyone
+  opened the zip on a laptop. WebP, which is open and royalty-free rather
+  than proprietary, and has worked everywhere since Safari 14 in 2020. The
+  alternatives were measured, not assumed: lossless PNG is 137 KB an image
+  (40 MB for 300 hats), 256-colour PNG is 26 KB but softens the cutout's
+  anti-aliased edge, and JPEG is 31 KB with **no alpha at all** — the hats
+  would stop floating. AVIF came in at 13.5 KB against WebP's 13.9 on
+  photographic content, a few percent rather than the ~30% it manages on flat
+  synthetic images, so it buys nothing worth a Safari 16.4 floor.
+  Derivatives are cached on disk and invalidated by modification time, so the
+  first export pays for the encoding and later ones don't, and a re-cut photo
+  regenerates without anything having to remember to clear a cache. The whole
+  zip build runs off the event loop, because re-encoding a few hundred
+  full-resolution photos is a minute of Pi CPU and the app has to stay
+  answerable while someone downloads.
+
+- **Notes of your own, on every hat.** The only free-text field no automated
+  path ever writes — not analysis, not a refresh, not a bulk re-analyse. Every
+  other prose field on a hat is derived and gets rewritten, so the card says
+  outright that this one survives.
+
+## [2.23.1] — 2026-08-18
+
+### Fixed
+- **The case part of a hat's ID is now a link back to that case.** `A-029-01`
+  reads as "hat 01 of case A-029" and sits at the very top of the page, so it
+  looks like a breadcrumb and gets tapped like one. It wasn't one. The
+  "View Case" button did already exist, but below the identification card, the
+  photo and the specs — a long scroll back to the page you just came from.
+
+  Only the case portion links; the `-01` stays plain text, so which part is
+  navigation is visible rather than guessed. A hat with no case still renders
+  `Hat #12` as plain text rather than dressing it up as something tappable.
+
+### Documentation
+- **A diagram of what happens when you add a hat.** The README now carries a
+  Mermaid flowchart of the upload → queue → cutout → Claude → price-lookup
+  path, including the branches that matter: the upload returning before any of
+  it runs, the inline fallback when no worker is draining the queue, and the
+  fact that **eBay and melinrecap only run after Claude succeeds** — both
+  fallback paths return early, because without a model name there is nothing
+  to look comparables up *for*.
+- **The colour-search description was two releases stale**, still describing
+  plain "ΔE in LAB space" after 2.20 moved to CIEDE2000 and 2.22/2.23 added
+  dominance weighting and the hue guard.
+
 ## [2.23.0] — 2026-08-18
 
 ### Fixed

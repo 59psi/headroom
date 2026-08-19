@@ -37,6 +37,10 @@ class Hat(Base):
     style_descriptor: Mapped[str | None] = mapped_column(String(120), nullable=True)
     design_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # Yours. Never written by any analysis path, never cleared by a refresh —
+    # the only free-text field on a hat that a re-analysis cannot touch.
+    owner_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # Pricing
     # Cost basis — what was actually paid (purchase-history import or manual)
     purchase_price: Mapped[float | None] = mapped_column(Float, nullable=True)

@@ -108,8 +108,8 @@ async def public_collection(token: str, db: AsyncSession = Depends(get_db)):
                     SharedColor(name=c.general_color or c.color_name, hex=c.hex_value)
                     for c in (h.colors or [])
                 ],
-                case=h.case.display_id if h.case else None,
-                room=h.case.room.name if h.case and h.case.room else None,
+                case=h.case_display_id,
+                room=h.room_name,
             )
             for h in hats
         ],

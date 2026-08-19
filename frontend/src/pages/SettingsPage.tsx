@@ -8,6 +8,7 @@ import { MdnsCard } from '../components/settings/MdnsCard';
 import { ActivityLogCard } from '../components/settings/ActivityLogCard';
 import { ShareTargetCard } from '../components/settings/ShareTargetCard';
 import { InventoryReportCard } from '../components/settings/InventoryReportCard';
+import { CollectionExportCard } from '../components/settings/CollectionExportCard';
 import { BackupsCard } from '../components/settings/BackupsCard';
 import { LogoCard } from '../components/settings/LogoCard';
 import { ColorwayCatalogCard } from '../components/settings/ColorwayCatalogCard';
@@ -35,6 +36,7 @@ export function SettingsPage() {
       <ActivityLogCard />
       <ShareTargetCard />
       <InventoryReportCard />
+      <CollectionExportCard />
       <BackupsCard />
       <LogoCard />
       <ColorwayCatalogCard />

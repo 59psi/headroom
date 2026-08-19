@@ -47,7 +47,7 @@ export function NewCaseModal({ show, onClose, onCreated }: Props) {
           </div>
           <div className="modal-body">
             <label className="form-label">Case Type</label>
-            <select className="form-select mb-3" value={caseType} onChange={e => setCaseType(e.target.value)}>
+            <select aria-label="Case Type" className="form-select mb-3" value={caseType} onChange={e => setCaseType(e.target.value)}>
               <option value="archive">Archive</option>
               <option value="daily_wear">Daily Wear</option>
             </select>

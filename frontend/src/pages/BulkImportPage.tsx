@@ -11,6 +11,7 @@ import { getStyles, getSizes, getConditions } from '../api/hats';
 import { listCases } from '../api/cases';
 import { DEFAULT_HAT_BASICS } from '../components/hats/HatFormFields';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
+import { invalidateHatViews } from '../lib/invalidate';
 
 const MAX_FILES = 100;
 
@@ -89,12 +90,14 @@ export function BulkImportPage() {
     },
   });
 
-  // When a job finishes, refresh the hats list so it shows up everywhere
+  // When a job finishes, refresh everything a new hat is visible in. Bulk
+  // import creates hats INTO a case, so `['case']` (that case's own hat list)
+  // and `['rooms']` (per-room counts) go stale too — this used to invalidate
+  // only `['hats']` and `['cases']`, which left the case you had just filled
+  // showing its old contents for the 30s staleTime. Highest-volume path in the
+  // app, so the worst place to hand-roll the subset.
   useEffect(() => {
-    if (job.data?.status === 'done') {
-      qc.invalidateQueries({ queryKey: ['hats'] });
-      qc.invalidateQueries({ queryKey: ['cases'] });
-    }
+    if (job.data?.status === 'done') invalidateHatViews(qc);
   }, [job.data?.status, qc]);
 
   function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {

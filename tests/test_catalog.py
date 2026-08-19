@@ -519,3 +519,95 @@ async def test_unmatch_is_audited(client, db_session):
     kinds = [r["kind"] for r in (await client.get("/api/admin/activity-log")).json()]
     assert "purchase.unmatched" in kinds, f"no audit row for the undo: {kinds}"
     assert hat_id  # referenced so the fixture's intent is clear
+
+
+# ------------------- harvest resilience + real counts ------------------ #
+
+
+async def test_one_failing_category_does_not_abandon_the_rest(db_session, monkeypatch):
+    """A single transient marketplace error used to end the whole harvest.
+
+    The sweep is sequential and commits per page, so the result was a silently
+    partial catalog: the endpoint had already returned 202 and nothing recorded
+    that it stopped early. A catalog missing two thirds of its models looked
+    exactly like a complete one.
+    """
+    from headroom.services import catalog_service
+    from headroom.services.melin_recap import MelinRecapError
+
+    calls: list[str] = []
+
+    async def flaky(params):
+        cat = params["pub_category"]
+        calls.append(cat)
+        if cat == "coronado":
+            raise MelinRecapError("502 from the marketplace")
+        return [{"attributes": {"title": f"{cat} Hydro - Colour"}}]
+
+    monkeypatch.setattr("headroom.services.catalog_service.query_listings", flaky)
+    async def _no_sleep(_delay):  # the retry backoff, minus the waiting
+        return None
+
+    monkeypatch.setattr("headroom.services.catalog_service.asyncio.sleep", _no_sleep)
+
+    result = await catalog_service.harvest_catalog(db_session)
+
+    assert result["failed_categories"] == ["coronado"]
+    # Every OTHER category still swept — the ones after the failure especially.
+    assert "odysea" in calls and "coast" in calls
+    assert result["distinct_models"] >= 8, result
+
+
+async def test_a_transient_page_failure_is_retried(db_session, monkeypatch):
+    """These are 429s and 502s, not permanent conditions — one retry saves the
+    whole category."""
+    from headroom.services import catalog_service
+    from headroom.services.melin_recap import MelinRecapError
+
+    attempts = {"n": 0}
+
+    async def twitchy(params):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise MelinRecapError("429 slow down")
+        return []
+
+    monkeypatch.setattr("headroom.services.catalog_service.query_listings", twitchy)
+    async def _no_sleep(_delay):  # the retry backoff, minus the waiting
+        return None
+
+    monkeypatch.setattr("headroom.services.catalog_service.asyncio.sleep", _no_sleep)
+
+    got = await catalog_service._fetch_page({"pub_category": "aGame"})
+    assert got == []
+    assert attempts["n"] == 2, "the page was not retried"
+
+
+async def test_catalog_stats_counts_the_catalog_not_a_page_of_autocomplete(
+    client, db_session
+):
+    """The Settings card reported `len(GET /api/meta/colorways)` as "models
+    known". That endpoint is autocomplete and caps at `catalog_options`'s
+    default limit of 25, so the number sat at 25 however much was harvested —
+    indistinguishable from a harvest that genuinely found 25.
+    """
+    from headroom.models.catalog import ColorwayEntry
+    from headroom.services import catalog_service
+
+    for i in range(40):
+        db_session.add(ColorwayEntry(
+            title=f"Model{i} Hydro - Colour{i}", model_name=f"Model{i} Hydro",
+            colorway=f"Colour{i}", category="aGame", listing_count=1,
+        ))
+    await db_session.commit()
+
+    # The autocomplete feed still caps — that is its job.
+    assert len(await catalog_service.catalog_options(db_session)) == 25
+    # The stats must not.
+    stats = await catalog_service.catalog_stats(db_session)
+    assert stats["models"] == 40, stats
+    assert stats["entries"] == 40
+    assert stats["colorways"] == 40
+
+    body = (await client.get("/api/admin/colorways/status")).json()
+    assert body["models"] == 40

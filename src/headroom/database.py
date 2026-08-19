@@ -65,6 +65,8 @@ _HAT_COLUMN_DDL: dict[str, str] = {
     "model_confidence": "ALTER TABLE hats ADD COLUMN model_confidence VARCHAR(10)",
     "style_descriptor": "ALTER TABLE hats ADD COLUMN style_descriptor VARCHAR(120)",
     "design_notes": "ALTER TABLE hats ADD COLUMN design_notes TEXT",
+    # v2.24 — the notes only you write.
+    "owner_notes": "ALTER TABLE hats ADD COLUMN owner_notes TEXT",
     "estimated_new_price": "ALTER TABLE hats ADD COLUMN estimated_new_price FLOAT",
     "estimated_new_price_source": "ALTER TABLE hats ADD COLUMN estimated_new_price_source VARCHAR(80)",
     "resale_price": "ALTER TABLE hats ADD COLUMN resale_price FLOAT",

@@ -46,6 +46,7 @@ const HAT: HatRead = {
   model_confidence: null,
   style_descriptor: null,
   design_notes: null,
+  owner_notes: null,
   estimated_new_price: null,
   estimated_new_price_source: null,
   resale_price: null,
