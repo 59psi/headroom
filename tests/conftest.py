@@ -12,6 +12,20 @@ os.environ.setdefault("HEADROOM_IMPORT_WORKER_ENABLED", "false")
 os.environ.setdefault("HEADROOM_ANALYSIS_WORKER_ENABLED", "false")
 os.environ.setdefault("HEADROOM_MDNS_ENABLED", "false")
 
+# Tests never call an external API — but the WORKER flags above only stop the
+# background paths, not the keys. `config.py` reads these at import and
+# `settings_service.get_*_key` falls back to the environment when the DB has
+# none, so a developer or CI runner with either exported made the suite issue
+# real, billable requests. It only ever "held" by accident of one machine's
+# shell. Cleared before any app module is imported.
+for _leaky in (
+    "HEADROOM_ANTHROPIC_API_KEY",
+    "HEADROOM_GOOGLE_VISION_API_KEY",
+    "HEADROOM_EBAY_APP_ID",
+    "HEADROOM_EBAY_CERT_ID",
+):
+    os.environ.pop(_leaky, None)
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select

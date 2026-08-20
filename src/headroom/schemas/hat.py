@@ -33,6 +33,11 @@ class HatStyle(StrEnum):
     # falls through to its `keywords=model_name` branch, which does find
     # "The Shore Islands Hydro".
     shore = "shore"
+    # melin's cold-weather shape, e.g. "Aviator Scout Thermal" (order #1318309,
+    # Dec 2024, $179). Seasonal — it drops in winter and vanishes, which is why
+    # the resale marketplace has none and a catalogue sweep will not find it.
+    # Same reasoning as `shore` for staying out of STYLE_TO_CATEGORY.
+    aviator = "aviator"
     collab = "collab"
     beanie = "beanie"
 

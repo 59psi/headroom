@@ -58,9 +58,19 @@ class BackupHealth:
         self.last_error = None
         self.consecutive_failures = 0
 
-    def record_failure(self, exc: Exception) -> None:
+    def record_failure(self, reason: Exception | str) -> None:
+        """Accepts a string as well as an exception.
+
+        The most likely failure does NOT arrive as an exception here:
+        `write_scheduled_backup` catches its own and returns None, so the loop
+        sees a falsy return and nothing else. Taking only an Exception is how
+        that path came to be recorded as a SUCCESS.
+        """
         self.last_attempt_at = datetime.now(timezone.utc)
-        self.last_error = f"{type(exc).__name__}: {exc}"[:500]
+        self.last_error = (
+            f"{type(reason).__name__}: {reason}" if isinstance(reason, Exception)
+            else str(reason)
+        )[:500]
         self.consecutive_failures += 1
 
 
@@ -382,8 +392,18 @@ async def scheduled_backup_loop(interval_hours: float, retention: int) -> None:
                 else:
                     due = True
                 if due:
-                    await write_scheduled_backup(retention)
-                    _health.record_success()
+                    # CHECK THE RETURN. `write_scheduled_backup` swallows its
+                    # own exception and returns None, so calling
+                    # record_success() unconditionally reported a backup that
+                    # failed every cycle as healthy — the exact blindness this
+                    # health record exists to remove.
+                    written = await write_scheduled_backup(retention)
+                    if written is None:
+                        _health.record_failure(
+                            "Backup failed — see the preceding log line for the cause."
+                        )
+                    else:
+                        _health.record_success()
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
