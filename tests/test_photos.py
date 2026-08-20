@@ -59,23 +59,22 @@ async def test_process_image_converts_png(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_upload_case_photo(client):
-    from headroom.config import settings
+async def test_there_is_no_case_photo_route(client):
+    """Cases show their CONTENTS, not a picture of the case.
 
+    Every case looks identical from the outside, so the photo carried no
+    information — and an empty one was actively worse: a case with three hats
+    in it rendered a screen-filling "NO PHOTO" placeholder above its own
+    contents. The grid moved to a collage of the hats first, but the detail
+    page, the edit form and this route all kept the old feature alive, so the
+    uploader was still there to be tapped. This pins the removal.
+    """
     await client.post("/api/cases", json={"case_type": "archive"})
-    photo = _make_test_image_file()
     resp = await client.post(
         "/api/cases/A-001/photo",
-        files={"photo": ("test.jpg", photo, "image/jpeg")},
+        files={"photo": ("test.jpg", _make_test_image_file(), "image/jpeg")},
     )
-    assert resp.status_code == 200
-    photo_path = resp.json()["photo_path"]
-    assert photo_path is not None
-    assert "cases/" in photo_path
-    # A returned path with no file behind it renders as a broken image — the
-    # bytes must actually be on disk.
-    saved = settings.upload_dir / photo_path
-    assert saved.is_file() and saved.stat().st_size > 0
+    assert resp.status_code == 405, "the case-photo upload route is back"
 
 
 @pytest.mark.anyio

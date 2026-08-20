@@ -136,28 +136,23 @@ async def test_oversize_hat_photo_is_refused_not_decoded(client, monkeypatch):
     assert "limit" in resp.json()["detail"].lower()
 
 
-async def test_case_photo_and_logo_are_capped_too(client, monkeypatch):
-    """All three single-file routes, not just the one that crashed.
+async def test_the_logo_route_is_capped_too(client, monkeypatch):
+    """Every single-file route, not just the one that crashed.
 
-    Bulk import got this cap after an earlier review; its three siblings were
-    left uncapped, which is how the gap survived to become an incident.
+    Bulk import got this cap after an earlier review; its siblings were left
+    uncapped, which is how the gap survived to become an incident. The case
+    photo route was one of them and no longer exists — cases show a collage of
+    their hats instead — so the remaining single-file uploads are the hat photo
+    (covered above) and this one.
     """
     from headroom.utils import upload
 
     monkeypatch.setattr(upload, "MAX_PHOTO_BYTES", 2048)
     big = b"\xff\xd8\xff" + b"\x00" * 8192
 
-    case = await client.post("/api/cases", json={"case_type": "daily_wear"})
-    display_id = case.json()["display_id"]
-
-    case_resp = await client.post(
-        f"/api/cases/{display_id}/photo", files={"photo": ("big.jpg", big, "image/jpeg")}
-    )
     logo_resp = await client.post(
         "/api/settings/logo", files={"photo": ("big.png", big, "image/png")}
     )
-
-    assert case_resp.status_code == 413
     assert logo_resp.status_code == 413
 
 

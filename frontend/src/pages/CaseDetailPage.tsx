@@ -1,18 +1,15 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate, Link } from 'react-router';
-import { getCase, deleteCase, uploadCasePhoto } from '../api/cases';
+import { getCase, deleteCase } from '../api/cases';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
-import { ImageLightbox } from '../components/common/ImageLightbox';
-import { PhotoCapture } from '../components/photos/PhotoCapture';
-import { useState } from 'react';
 import { tileSrc } from '../lib/photo';
+import { CaseCollage } from '../components/cases/CaseCollage';
 import { invalidateHatViews } from '../lib/invalidate';
 
 export function CaseDetailPage() {
   const { displayId } = useParams<{ displayId: string }>();
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const [uploading, setUploading] = useState(false);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['case', displayId],
@@ -31,16 +28,6 @@ export function CaseDetailPage() {
     },
   });
 
-  async function handlePhotoUpload(file: File) {
-    setUploading(true);
-    try {
-      await uploadCasePhoto(displayId!, file);
-      qc.invalidateQueries({ queryKey: ['case', displayId] });
-      qc.invalidateQueries({ queryKey: ['cases'] });
-    } finally {
-      setUploading(false);
-    }
-  }
 
   if (isLoading) return <LoadingSpinner />;
   if (error || !data) return (
@@ -95,20 +82,18 @@ export function CaseDetailPage() {
         </div>
       </div>
 
+      {/* The hats, not a picture of the case. Every case looks identical from
+          the outside, so a photo of one carried no information — and an EMPTY
+          photo box was worse: a case with three hats in it showed a
+          screen-filling "NO PHOTO" placeholder and pushed its actual contents
+          below the fold. The grid switched to this collage; this page kept the
+          uploader until now. */}
       <div className="card mb-3">
         <div className="card-body">
-          {data.photo_path ? (
-            <>
-              <ImageLightbox src={`/uploads/${data.photo_path}`} alt={data.display_id} />
-              <div className="mt-2">
-                <PhotoCapture onCapture={handlePhotoUpload} hidePreview />
-              </div>
-            </>
-          ) : (
-            <PhotoCapture onCapture={handlePhotoUpload} previewUrl={null} />
-          )}
-          {uploading && <div className="text-secondary small mt-2 font-mono" style={{ letterSpacing: '0.08em' }}>↑ Uploading…</div>}
-
+          <CaseCollage
+            thumbs={data.hats.map(h => h.thumb_path || h.photo_path).filter((p): p is string => !!p).slice(0, 4)}
+            label={data.display_id}
+          />
           <div className="mt-3">{capacityDisplay}</div>
         </div>
       </div>

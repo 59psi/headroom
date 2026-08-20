@@ -1,9 +1,8 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate } from 'react-router';
-import { getCase, updateCase, uploadCasePhoto } from '../api/cases';
+import { getCase, updateCase } from '../api/cases';
 import { listRooms } from '../api/rooms';
-import { PhotoCapture } from '../components/photos/PhotoCapture';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 
 export function EditCasePage() {
@@ -22,17 +21,12 @@ export function EditCasePage() {
   const [caseType, setCaseType] = useState('');
   const [roomId, setRoomId] = useState(1);
   const [capacity, setCapacity] = useState('');
-  const [photo, setPhoto] = useState<File | null>(null);
-  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
 
   useEffect(() => {
     if (caseQuery.data) {
       setCaseType(caseQuery.data.case_type);
       setRoomId(caseQuery.data.room_id);
       setCapacity(caseQuery.data.capacity != null ? String(caseQuery.data.capacity) : '');
-      if (caseQuery.data.photo_path) {
-        setPhotoPreview(`/uploads/${caseQuery.data.photo_path}`);
-      }
     }
   }, [caseQuery.data]);
 
@@ -43,9 +37,6 @@ export function EditCasePage() {
         room_id: roomId,
         ...(capacity ? { capacity: Number(capacity) } : {}),
       });
-      if (photo) {
-        await uploadCasePhoto(displayId!, photo);
-      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['case', displayId] });
@@ -54,20 +45,6 @@ export function EditCasePage() {
     },
   });
 
-  // Only ever holds a URL we minted — `photoPreview` may also be a server path.
-  const objectUrl = useRef<string | null>(null);
-
-  function handlePhotoCapture(file: File) {
-    if (objectUrl.current) URL.revokeObjectURL(objectUrl.current);
-    const url = URL.createObjectURL(file);
-    objectUrl.current = url;
-    setPhoto(file);
-    setPhotoPreview(url);
-  }
-
-  useEffect(() => () => {
-    if (objectUrl.current) URL.revokeObjectURL(objectUrl.current);
-  }, []);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -82,13 +59,6 @@ export function EditCasePage() {
       <h1 className="mb-3">Edit Case {displayId}</h1>
 
       <form onSubmit={handleSubmit}>
-        <div className="card mb-3">
-          <div className="card-body">
-            <div className="card-title">Photo</div>
-            <PhotoCapture onCapture={handlePhotoCapture} previewUrl={photoPreview} />
-          </div>
-        </div>
-
         <div className="card mb-3">
           <div className="card-body">
             <div className="mb-3">

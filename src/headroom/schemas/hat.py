@@ -26,6 +26,13 @@ class HatStyle(StrEnum):
     legend = "legend"
     caddy = "caddy"
     coast = "coast"
+    # melin ships this as "The Shore". Deliberately NOT added to
+    # `melin_recap.STYLE_TO_CATEGORY`: the marketplace has no `shore` category
+    # (sellers file these under odysea/compass), so mapping it would sweep an
+    # empty category AND break resale lookups. Left out, `fetch_resale_stats`
+    # falls through to its `keywords=model_name` branch, which does find
+    # "The Shore Islands Hydro".
+    shore = "shore"
     collab = "collab"
     beanie = "beanie"
 
