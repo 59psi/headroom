@@ -28,7 +28,7 @@
  * 1. `manual`   — a person typed a price. Used as-is; no adjustment. They know
  *                 something the feeds don't.
  * 2. `comp`     — median ask across listings matching this MODEL. A real
- *                 comparable. Adjusted for ask→sale and for condition.
+ *                 comparable. Used as-is — melinrecap is fixed-price and the median already matches this hat's condition and size.
  * 3. `retail`   — condition-based fraction of estimated new retail. No market
  *                 data for this hat, but the estimate is at least ABOUT this
  *                 hat, which beats a category average.

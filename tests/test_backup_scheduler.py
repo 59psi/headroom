@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import asyncio
 
+from pathlib import Path
+
 import pytest
 
 from headroom.services import backup_service
@@ -107,6 +109,11 @@ async def test_recovery_clears_the_failure_state(monkeypatch):
         calls += 1
         if calls == 1:
             raise OSError("transient")
+        # Returns a PATH on success, like the real thing. This stub used to
+        # return None on its success path, which was harmless only because the
+        # loop ignored the return value — the very bug that let a failed backup
+        # be recorded as a success.
+        return Path("/tmp/headroom-backup-stub.tar.gz")
 
     monkeypatch.setattr(backup_service, "write_scheduled_backup", fail_once_then_work)
     monkeypatch.setattr(
@@ -158,3 +165,46 @@ async def test_health_endpoint_reports_a_dead_scheduler(client):
     # not-running rather than as healthy.
     assert body["running"] is False
     assert body["consecutive_failures"] == 0
+
+
+async def test_a_failed_backup_is_reported_as_a_failure(monkeypatch):
+    """The health record existed to answer "is the scheduler working", and
+    answered "yes" regardless.
+
+    `write_scheduled_backup` catches its own exceptions and returns None, so
+    the loop called `record_success()` even though nothing was written. A
+    backup failing every single cycle reported `last_success_at=now` and
+    `consecutive_failures=0` — precisely the blindness the file list already
+    had, except now asserting good health.
+
+    Drives the REAL loop against a real failing tarball write, rather than
+    re-implementing the loop's decision here; the bug was in that decision.
+    """
+    def _boom(_target):
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(backup_service, "_build_tarball_sync", _boom)
+    monkeypatch.setattr(
+        backup_service, "_seconds_since_newest_backup_sync", lambda: None
+    )
+    _instant_sleep(monkeypatch)
+
+    await _run_briefly(lambda: backup_service.scheduled_backup_loop(24.0, 7))
+
+    health = backup_service.health()
+    assert health.consecutive_failures > 0, "a failing backup reported success"
+    assert health.last_success_at is None
+    assert health.last_error
+
+
+async def test_record_failure_accepts_a_plain_reason(monkeypatch):
+    """The likeliest failure arrives as a None return, not an exception, so a
+    signature taking only Exception is what let that path report success."""
+    from headroom.services.backup_service import BackupHealth
+
+    h = BackupHealth()
+    h.record_failure("Backup failed — see the log.")
+    assert h.consecutive_failures == 1
+    h.record_failure(OSError("disk full"))
+    assert h.consecutive_failures == 2
+    assert "OSError" in h.last_error

@@ -13,6 +13,9 @@ to /api/hats/import.
 from __future__ import annotations
 
 import logging
+import shutil
+import tempfile
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, UploadFile
 from fastapi.responses import RedirectResponse
@@ -22,6 +25,7 @@ from headroom.database import get_db
 from headroom.schemas.hat import HAT_DEFAULTS
 from headroom.services import import_service
 from headroom.utils.photo import validate_image_content_type
+from headroom.utils.upload import MAX_PHOTO_BYTES
 
 logger = logging.getLogger(__name__)
 
@@ -33,21 +37,52 @@ async def share_target(
     photos: list[UploadFile] | None = None,
     db: AsyncSession = Depends(get_db),
 ):
-    """Receive shared photos and queue a bulk-import job."""
-    incoming = photos or []
-    valid: list[tuple[str, bytes]] = []
-    for f in incoming:
-        if not validate_image_content_type(f.content_type):
-            logger.info("Share-target rejected non-image: %s", f.content_type)
-            continue
-        valid.append((f.filename or "shared.jpg", await f.read()))
+    """Receive shared photos and queue a bulk-import job.
 
-    if not valid:
-        # No usable files — bounce them to the regular import page.
+    Spools each file to a temp dir and hands `create_job` PATHS, exactly like
+    the bulk-import route. This previously read whole files into memory and
+    passed BYTES — which `create_job` cannot use at all: it calls
+    `source.stat()` and `shutil.copy2(source, ...)`, so every share raised
+    AttributeError on the first file. The route was both unbounded and broken,
+    and nothing exercised it (Android-only, and no test covered the handler).
+    """
+    incoming = photos or []
+    if not incoming:
         return RedirectResponse("/hats/import", status_code=303)
 
-    job = await import_service.create_job(
-        db, files=valid,
-        defaults=dict(HAT_DEFAULTS),
-    )
-    return RedirectResponse(f"/hats/import?job={job.id}", status_code=303)
+    staging = Path(tempfile.mkdtemp(prefix="share-"))
+    try:
+        files: list[tuple[str, Path]] = []
+        for idx, f in enumerate(incoming[:import_service.MAX_FILES_PER_JOB]):
+            if not validate_image_content_type(f.content_type):
+                logger.info("Share-target rejected non-image: %s", f.content_type)
+                continue
+            name = Path(f.filename or "shared.jpg").name
+            dest = staging / f"{idx:04d}-{name[:120]}"
+            # Chunked and capped: one chunk in memory at a time, and an
+            # oversize file stops just past the limit so `create_job` records
+            # it as skipped rather than the whole share failing.
+            with dest.open("wb") as out:
+                written = 0
+                while True:
+                    chunk = await f.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+                    written += len(chunk)
+                    if written > MAX_PHOTO_BYTES:
+                        break
+            files.append((name, dest))
+
+        if not files:
+            # No usable files — bounce them to the regular import page.
+            return RedirectResponse("/hats/import", status_code=303)
+
+        job = await import_service.create_job(
+            db, files=files, defaults=dict(HAT_DEFAULTS),
+        )
+        return RedirectResponse(f"/hats/import?job={job.id}", status_code=303)
+    finally:
+        # `create_job` copies what it keeps into the job's own staging dir, so
+        # these are always disposable — including on the error paths.
+        shutil.rmtree(staging, ignore_errors=True)

@@ -33,11 +33,3 @@ export function deleteCase(displayId: string) {
   return apiFetch<void>(`/api/cases/${displayId}`, { method: 'DELETE' });
 }
 
-export function uploadCasePhoto(displayId: string, file: File) {
-  const form = new FormData();
-  form.append('photo', file);
-  return apiFetch<CaseRead>(`/api/cases/${displayId}/photo`, {
-    method: 'POST',
-    body: form,
-  });
-}
