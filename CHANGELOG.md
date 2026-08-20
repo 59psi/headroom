@@ -6,6 +6,63 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.26.0] — 2026-08-19
+
+### Fixed
+- **Case photos are actually gone.** "Cases show a collage of their hats, not a
+  case photo" had been true of exactly one of three surfaces. The grid got the
+  collage; the **detail page**, the **edit form** and `POST /api/cases/{id}/photo`
+  all kept the feature — so a case with three hats in it rendered a
+  screen-filling **"NO PHOTO"** placeholder above its own contents, with a
+  Capture/Upload button under it. All three removed; the detail page now shows
+  the same collage the grid does, and a test asserts the route returns 405 so it
+  cannot come back quietly. `Case.photo_path` and any files on disk are left
+  alone — dropping those is destructive and should be a decision.
+
+- **The backup health endpoint was reporting success when the backup failed.**
+  `write_scheduled_backup` catches its own exception and returns `None`, and the
+  loop called `record_success()` without checking. A backup failing *every*
+  cycle reported `last_success_at = now` and `consecutive_failures = 0` — the
+  endpoint asserting good health while carrying precisely the blindness it was
+  built to remove. An existing test concealed it: its stub returned `None` on
+  its **success** path, harmless only because nothing read the return value.
+
+- **The Android share target was broken, not merely uncapped.** `POST /share`
+  read whole files into memory and passed `create_job` **bytes** — but that
+  function takes **paths** (`source.stat()`, `shutil.copy2(source, …)`), so
+  every share raised `AttributeError` on the first file. Nothing covered the
+  handler. It now spools to a temp dir in capped chunks and passes paths, like
+  the bulk-import route it was always meant to mirror.
+
+- **Tests could make real, billable API calls.** `conftest` neutralised
+  Sharetribe only. `config.py` reads `HEADROOM_ANTHROPIC_API_KEY` /
+  `HEADROOM_GOOGLE_VISION_API_KEY` at import and the key resolver falls back to
+  the environment, so anyone with those exported hit the live APIs. The claim
+  "tests never call the Anthropic, Google, eBay, or Sharetribe APIs" held only
+  by accident of one machine's shell.
+
+### Added
+- **Two hat styles: The Shore and Aviator.** Both confirmed against reality
+  rather than guessed — The Shore from 953 live marketplace listings
+  (`The Shore Islands Hydro`), Aviator from the order history
+  (`Aviator Scout Thermal — Heather Grey / Black`, order #1318309). Aviator is
+  seasonal, which is why the resale market carries none and no catalogue sweep
+  would ever have found it. Neither is mapped into `STYLE_TO_CATEGORY`: the
+  marketplace has no such category, so mapping them would sweep an empty one and
+  return no comps, while leaving them out lets resale lookups fall through to
+  the keyword branch that does find them.
+
+### Changed
+- **CLAUDE.md audited end to end and 15 claims corrected.** The case-photo line
+  was not an isolated slip. Also wrong: the rank-penalty budgets (stale since
+  the colour cutoff moved to 26), "three single-file photo routes" (two), the
+  path-traversal description (one shared helper now, not two copies), the
+  flicker animation (~5s, not 18s), `protected_namespaces`, `_RETENTION_DAYS`
+  (does not exist), the lifespan list (omitted the analysis worker), `auth.py`
+  (omitted `SecurityHeadersMiddleware`, which owns the CSP another section
+  blames), three undocumented services, the components tree, and the query-key
+  list.
+
 ## [2.25.0] — 2026-08-19
 
 ### Fixed
