@@ -57,27 +57,41 @@ async def test_settings_ui_offers_the_default_model_as_a_choice():
     )
 
 
-async def test_pricing_prompt_keeps_its_anchors():
-    """The price prompt must stay anchored on real numbers.
+async def test_the_prompt_agrees_with_the_price_table():
+    """The prompt must not restate prices that the table now owns.
 
-    Without anchors Claude priced melin hats at roughly half of actual — an
-    unanchored "use your knowledge of typical pricing tiers" is exactly the
-    wording that produced it. This does not check that the prices are still
-    *current* (a test cannot know that), only that the anchors are still there
-    and that HYDROLite is still described as the premium tier — the one place
-    where a flag the app already tracks should push the estimate up.
+    This test used to assert the prompt still contained "$69" — enshrining a
+    stale anchor as a requirement. That was the wrong thing to pin twice over:
+    the numbers had drifted years out of date, and the prompt was the wrong
+    place for them at all. A photo cannot show a price, so those anchors WERE
+    the answer, which meant the whole collection was priced by a comment.
+
+    `retail_pricing` owns melin prices now and OVERRIDES the model. What still
+    matters is that the two do not contradict each other — a prompt that told
+    Claude a HYDRO was $69 while the table said $79 would produce estimates the
+    table then silently discarded, which is just a slower way to be wrong.
     """
     from headroom.services.claude_analysis import SYSTEM_PROMPT
+    from headroom.services import retail_pricing
 
     assert "PRICING" in SYSTEM_PROMPT
-    for anchor in ("$69", "$79", "$89", "$99"):
-        assert anchor in SYSTEM_PROMPT, f"lost the {anchor} price anchor"
 
-    # Construction, not model line, is what moves the price.
-    assert "HYDROLite" in SYSTEM_PROMPT
-    assert "ABOVE a plain HYDRO" in SYSTEM_PROMPT, (
-        "HYDROLite must still be described as pricier than HYDRO — the hydrolite"
-        " flag is otherwise a signal the estimate ignores"
+    # Every price the prompt quotes for a construction the table knows must be
+    # the table's number.
+    hydro = retail_pricing.base_retail("a_game", "HYDRO")
+    lite = retail_pricing.base_retail("a_game", "HYDROLite")
+    assert f"HYDRO ${hydro:.0f}" in SYSTEM_PROMPT, (
+        f"prompt disagrees with the table on HYDRO (${hydro:.0f})"
     )
-    # The exact phrasing that caused the underestimate must not come back.
+    assert f"HYDROLite ${lite:.0f}" in SYSTEM_PROMPT, (
+        f"prompt disagrees with the table on HYDROLite (${lite:.0f})"
+    )
+
+    # The stale anchor must not come back, in the prompt or anywhere near it.
+    assert "$69 is the common price" not in SYSTEM_PROMPT
+
+    # The prompt's remaining job is the EXCEPTIONS — the cases the table cannot
+    # see. If that framing is lost, the estimate becomes noise the table drops.
+    assert "HIGHER than the base" in SYSTEM_PROMPT
+    # The exact phrasing that caused the original underestimate must not return.
     assert "using your knowledge of\n     the brand's typical pricing tiers" not in SYSTEM_PROMPT

@@ -6,6 +6,58 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.27.0] — 2026-08-22
+
+### Fixed
+- **Base retail prices were wrong for the entire collection, and a comment was
+  the cause.** `estimated_new_price` came entirely from Claude Vision, steered
+  by a block of price anchors in the analysis prompt. A photo cannot show a
+  price, so those anchors *were* the answer — and they read **"HYDRO caps —
+  $69 is the common price"** long after the band had moved. Every hat inherited
+  it, and so did valuation's retail-share fallback.
+
+  melin prices are now **looked up**, from a table cross-checked against 223
+  real order lines:
+
+  | item | table | order history |
+  |---|---|---|
+  | HYDRO | **$79** | $89×67, $69×30, $79×29 — the band moved over the years |
+  | HYDROLite | **$99** | $99×16, $89×1 — unambiguous |
+  | Beanie | **$79** | $79×3 (Destination, Journey) |
+  | 3 Hat Travel Case | **$49** | $49×34, $39×15 |
+  | Aviator | **$99** floor | $179 Scout Thermal, $139 Infinite Thermal |
+
+  What the table deliberately does **not** do is invent the numbers it cannot
+  know. Thermal is $79/$89/$99 on caps but $139/$179 on Aviators, and the Mill
+  straw line runs $99–$180 — so those fall through to Claude's estimate, which
+  is still labelled as a guess. And the table never pulls a *higher* estimate
+  down: the base is what a plain example costs, and collabs, artist series and
+  premium colourways genuinely exceed it. That is the "some hats are $89" case.
+
+- **An entered retail price is now permanent.** Typing one marks it `Manual`,
+  and no analysis, re-analysis or backfill may overwrite it — the same
+  protection `resale_price` has had since 2.19. Previously the next analysis
+  silently replaced it, which looks like nothing happened.
+
+- **Existing hats are re-priced once on upgrade** (`retail_prices_v2`). Fixing
+  the code alone would have left a collection where a hat's price depended on
+  *when* it happened to be photographed.
+
+- **A test was pinning the wrong price.** `test_pricing_prompt_keeps_its_anchors`
+  asserted `$69` stayed in the prompt — enshrining the stale anchor as a
+  requirement. It now asserts the prompt and the table *agree*, since a prompt
+  quoting $69 while the table says $79 just produces estimates the table
+  discards.
+
+### Changed
+- **The analysis prompt stops guessing melin prices** and is told the table
+  will override it. Its remaining job is the exceptions the table cannot see —
+  collabs, artist series, Mill straw, Thermal Aviators — where an estimate
+  *above* the base is real information.
+- **Cases publish their retail price** (`CaseRead.retail_price`). Not a column:
+  every case is the same product at the same price, so a per-row copy would be
+  forty duplicates of one number waiting to disagree.
+
 ## [2.26.0] — 2026-08-19
 
 ### Fixed

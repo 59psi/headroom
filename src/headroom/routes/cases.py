@@ -5,6 +5,7 @@ from headroom.database import get_db
 from headroom.schemas.case import CaseCreate, CaseDetail, CaseRead, CaseUpdate, HatSummary
 from headroom.services import capacity as capacity_rules
 from headroom.services import case_service
+from headroom.services import retail_pricing
 
 router = APIRouter(prefix="/api/cases", tags=["cases"])
 
@@ -27,6 +28,7 @@ def _case_to_read(case) -> CaseRead:
         display_id=case.display_id,
         photo_path=case.photo_path,
         capacity=case.capacity,
+        retail_price=retail_pricing.CASE_RETAIL,
         hat_count=len(hats),
         beanie_count=beanie_count,
         regular_count=len(hats) - beanie_count,

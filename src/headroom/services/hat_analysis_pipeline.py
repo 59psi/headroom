@@ -32,7 +32,7 @@ from headroom.database import async_session
 from headroom.models.hat import Hat
 from headroom.models.hat_color import HatColor
 from headroom.schemas.hat import KNOWN_CONSTRUCTIONS
-from headroom.services import settings_service
+from headroom.services import retail_pricing, settings_service
 from headroom.services.background_removal import remove_background
 from headroom.services.claude_analysis import (
     ClaudeAnalysisError,
@@ -504,8 +504,17 @@ def _apply_analysis(hat: Hat, analysis: HatAnalysis) -> None:
     hat.model_confidence = analysis.model_confidence
     hat.style_descriptor = analysis.style_descriptor
     hat.design_notes = analysis.design_notes
-    hat.estimated_new_price = analysis.estimated_new_price_usd
-    hat.estimated_new_price_source = "Claude Vision"
+    # Looked up, not guessed. A photo cannot show a price, so asking Claude for
+    # one made the prompt's anchors the real answer — and they were years stale.
+    # `resolve_retail` also refuses to overwrite a price a person entered, the
+    # same protection `resale_price_scope == "manual"` already has.
+    hat.estimated_new_price, hat.estimated_new_price_source = retail_pricing.resolve_retail(
+        hat.style,
+        hat.construction,
+        estimate=analysis.estimated_new_price_usd,
+        current=hat.estimated_new_price,
+        current_source=hat.estimated_new_price_source,
+    )
     hat.analysis_status = "ok"
     hat.analysis_error = None
     hat.analyzed_at = datetime.now(timezone.utc)

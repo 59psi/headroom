@@ -125,6 +125,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             await settings_service.set_setting(db, "vocabulary_merged_v1", "done")
             if merged:
                 logger.info("Merged %d case-variant vocabulary value(s)", merged)
+        if await settings_service.get_setting(db, "retail_prices_v2") is None:
+            from headroom.services import retail_pricing
+
+            repriced = await retail_pricing.backfill_retail_prices(db)
+            await settings_service.set_setting(db, "retail_prices_v2", "done")
+            if repriced:
+                logger.info(
+                    "Re-priced %d hat(s) from the melin retail table "
+                    "(the old prompt anchors were years stale)", repriced,
+                )
         if await settings_service.get_setting(db, "color_names_normalized_v1") is None:
             changed = await hat_service.normalize_existing_colors(db)
             await settings_service.set_setting(db, "color_names_normalized_v1", "done")
