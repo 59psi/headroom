@@ -6,6 +6,48 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.30.0] — 2026-08-22
+
+### Added
+- **The analyser now learns your series.** Entering a collaboration or artist
+  series taught the *typing* autocomplete (`GET /api/meta/collections` has
+  always returned every value in use, and the Add/Edit form offers it) — but it
+  never reached Claude. `analyze_hat_image` was given the owner's style and
+  construction and nothing else, so every analysis was asked to recall a collab
+  from a photo unaided.
+
+  That is the wrong thing to ask. A series is rarely legible in a photo — it is
+  usually a small woven label or an embroidery style — so most were simply
+  missed. The names already on record are now sent with the image, turning
+  recall into recognition.
+
+  The framing is deliberately careful, because a candidate list invites a
+  forced choice and a wrong series looks exactly like a right one. It is stated
+  as a record of what the collection contains, **not** a list to choose from,
+  with an explicit instruction that `null` beats a wrong match. If the list is
+  ever long enough to be truncated the prompt says so, rather than presenting a
+  partial list as if it were everything.
+
+### Fixed
+- **Analysis-written free text was never canonicalised.** `vocabulary.canonicalize`
+  ran on the client write path (`hat_service`) but not the analysis path, so
+  Claude returning `skye walker` created a second entry beside your
+  `Skye Walker`. Nothing looked wrong afterwards — both hats had *a* series —
+  and the split surfaced only as two near-identical rows in the autocomplete,
+  the Stats collab chart, and (as of 2.29) the filters. Both paths canonicalise
+  now, covering `artist_series` and a construction Claude filled in on a hat
+  that had none. Construction goes through `set_construction` so the derived
+  `hydro`/`hydrolite` flags cannot drift.
+
+  This is what made the feature above safe to ship: feeding known names into
+  the prompt without it would have multiplied the very duplicates it exists to
+  prevent.
+
+### Note
+Existing hats are not retroactively re-identified — nothing in the database can
+invent a series that was never captured. **Settings → Analysis Queue → re-analyse**
+picks them up, and a re-analysis never erases a series you typed (`_keep_on_null`).
+
 ## [2.29.0] — 2026-08-22
 
 ### Added
