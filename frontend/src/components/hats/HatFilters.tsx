@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
-import { getStyles, getSizes, getConditions } from '../../api/hats';
+import { getStyles, getSizes, getConditions, getConstructions } from '../../api/hats';
 import { getRoomOptions } from '../../api/rooms';
 import type { ColorTag } from '../../types';
 
@@ -12,6 +12,10 @@ export interface FilterableHat {
   size: string;
   condition: string;
   is_beanie: boolean;
+  /** Free-form fabric/build ("HYDRO", "HYDROLite", "Thermal", "Piña"…), and
+   *  frequently absent — analysis never fills it in over a stated value, and
+   *  clearing it is how you ask for a re-identification. */
+  construction: string | null;
   colors: ColorTag[];
 }
 
@@ -23,9 +27,24 @@ export interface HatFilterState {
   type: string;
   color: string;
   room: string;
+  /** A construction value, or `NO_CONSTRUCTION` for "not recorded". */
+  construction: string;
 }
 
-const EMPTY: HatFilterState = { style: '', size: '', condition: '', type: '', color: '', room: '' };
+/**
+ * Sentinel for "no construction recorded".
+ *
+ * Worth a filter option of its own: the field is nullable by design, so
+ * "which hats still need this filled in?" is a real question and there is
+ * otherwise no way to ask it. Readable rather than an escape sequence because
+ * it goes into the URL (`/hats?construction=(none)`). A fabric genuinely named
+ * "(none)" would collide; that is not a material.
+ */
+export const NO_CONSTRUCTION = '(none)';
+
+const EMPTY: HatFilterState = {
+  style: '', size: '', condition: '', type: '', color: '', room: '', construction: '',
+};
 
 /**
  * Filter state plus the option lists the bar renders.
@@ -61,6 +80,9 @@ export function useHatFilters() {
   const sizes = useQuery({ queryKey: ['meta', 'sizes'], queryFn: getSizes });
   const conditions = useQuery({ queryKey: ['meta', 'conditions'], queryFn: getConditions });
   const rooms = useQuery({ queryKey: ['meta', 'rooms'], queryFn: getRoomOptions });
+  // Curated list merged with everything actually in use, so a specialty fabric
+  // typed once is filterable from then on without shipping a migration.
+  const constructions = useQuery({ queryKey: ['meta', 'constructions'], queryFn: getConstructions });
 
   const activeCount = Object.values(filters).filter(Boolean).length;
 
@@ -75,7 +97,7 @@ export function useHatFilters() {
     activeCount,
     isOpen,
     setIsOpen,
-    options: { styles, sizes, conditions, rooms },
+    options: { styles, sizes, conditions, rooms, constructions },
   };
 }
 
@@ -98,6 +120,17 @@ export function matchesHatFilters(hat: FilterableHat, f: HatFilterState): boolea
   if (f.type === 'beanie' && !hat.is_beanie) return false;
   if (f.type === 'regular' && hat.is_beanie) return false;
   if (f.color && !hat.colors.some(c => c.general_color === f.color)) return false;
+  if (f.construction) {
+    const value = hat.construction?.trim() ?? '';
+    if (f.construction === NO_CONSTRUCTION) {
+      if (value) return false;
+    } else if (value.toLowerCase() !== f.construction.toLowerCase()) {
+      // Full equality, never substring: "HYDRO" must not match "HYDROLite".
+      // Case-insensitive only to tolerate rows written before the vocabulary
+      // service began snapping values to one spelling on write.
+      return false;
+    }
+  }
   return true;
 }
 
@@ -113,7 +146,7 @@ interface FilterBarProps {
   children?: React.ReactNode;
 }
 
-/** The six shared filter selects, plus any page-specific extras as children. */
+/** The seven shared filter selects, plus any page-specific extras as children. */
 export function HatFilterBar({ state, colors, activeCount, onClearExtras, children }: FilterBarProps) {
   const { filters, set, clear, options } = state;
   const shownCount = activeCount ?? state.activeCount;
@@ -162,6 +195,14 @@ export function HatFilterBar({ state, colors, activeCount, onClearExtras, childr
             <select aria-label="Room" className="form-select form-select-sm" value={filters.room} onChange={e => set('room', e.target.value)}>
               <option value="">All</option>
               {options.rooms.data?.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+            </select>
+          </div>
+          <div className="col-6 col-md-3">
+            <label className="form-label">Construction</label>
+            <select aria-label="Construction" className="form-select form-select-sm" value={filters.construction} onChange={e => set('construction', e.target.value)}>
+              <option value="">All</option>
+              {options.constructions.data?.map(c => <option key={c} value={c}>{c}</option>)}
+              <option value={NO_CONSTRUCTION}>Not recorded</option>
             </select>
           </div>
           {children}

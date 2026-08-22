@@ -173,6 +173,8 @@ export interface SearchResult {
   is_beanie: boolean;
   brand: string | null;
   model_name: string | null;
+  /** Projected so the shared filter bar works on this page too. */
+  construction: string | null;
   colors: ColorTag[];
   room_id: number | null;
   room_name: string | null;

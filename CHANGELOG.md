@@ -6,6 +6,35 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.29.0] — 2026-08-22
+
+### Added
+- **Filter hats by construction.** The Hats and Search pages share one filter
+  bar, so both gained a **Construction** select — populated from
+  `GET /api/meta/constructions`, which merges the curated list with every value
+  actually in use, so a specialty fabric typed once is filterable from then on
+  without shipping a migration. Seeds from the URL like the others
+  (`/hats?construction=HYDROLite`).
+
+  Matching is **full equality, never substring** — "hydro" is a literal
+  substring of "hydrolite", and those are different products at different
+  prices ($79 vs $99), so a `contains()` check would silently fold the two
+  together in every filtered view. Casing is ignored, only to tolerate rows
+  written before `vocabulary.canonicalize` began snapping values to one
+  spelling on write.
+
+  There is also a **"Not recorded"** option. The field is nullable by design —
+  analysis never fills it in over a stated value, and clearing it is how you
+  ask for a re-identification — so "which hats still need this?" is a real
+  question that previously had no way to be asked.
+
+### Fixed
+- `SearchResult` now carries `construction`. The Search page applies the shared
+  predicate client-side to whatever `/api/search` returns, so a field the
+  filter reads but the projection omitted would have rendered a fully populated
+  dropdown that silently matched nothing. Covered by
+  `test_search_results_carry_construction`.
+
 ## [2.28.0] — 2026-08-22
 
 ### Added

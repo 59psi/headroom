@@ -15,6 +15,11 @@ class SearchResult(BaseModel):
     is_beanie: bool
     brand: str | None
     model_name: str | None
+    # Projected so the shared hat filter bar can filter on it. The Search page
+    # applies `matchesHatFilters` to these rows client-side, so a field the
+    # filter reads but the projection omits shows a working control that
+    # silently matches nothing.
+    construction: str | None = None
     colors: list[ColorTag]
     room_id: int | None
     room_name: str | None

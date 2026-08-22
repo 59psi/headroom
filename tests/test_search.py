@@ -271,3 +271,43 @@ async def test_search_matches_artist_series(client):
 
     found = await client.get("/api/search?q=skye")
     assert hat_id in {h["id"] for h in found.json()}
+
+
+@pytest.mark.anyio
+async def test_search_results_carry_construction(client):
+    """The Hats and Search pages share one filter bar and one predicate.
+
+    `matchesHatFilters` reads `construction` off each row, and the Search page
+    applies it to whatever `/api/search` returns. A field the filter reads but
+    the projection omits is the worst kind of broken: the control renders, the
+    dropdown is populated from `/api/meta/constructions`, and selecting
+    anything silently matches nothing.
+    """
+    resp = await client.post(
+        "/api/hats",
+        json={
+            "condition": "new", "size": "classic", "style": "a_game",
+            "model_name": "Coronado", "construction": "HYDROLite",
+        },
+    )
+    assert resp.status_code == 201
+
+    results = (await client.get("/api/search?q=Coronado")).json()
+    assert len(results) == 1
+    assert results[0]["construction"] == "HYDROLite"
+
+
+@pytest.mark.anyio
+async def test_search_result_construction_is_null_when_unrecorded(client):
+    """Null rather than absent — the "Not recorded" filter option needs it."""
+    await client.post(
+        "/api/hats",
+        json={
+            "condition": "new", "size": "classic", "style": "a_game",
+            "model_name": "Bare",
+        },
+    )
+    results = (await client.get("/api/search?q=Bare")).json()
+    assert len(results) == 1
+    assert "construction" in results[0]
+    assert results[0]["construction"] is None
