@@ -198,6 +198,19 @@ export interface MetaOption {
   label: string;
 }
 
+/**
+ * A style option, carrying whether that style is a beanie.
+ *
+ * Served by the API rather than derived here, because this flag decides which
+ * cases the picker offers (6 beanies per case vs 3 regular hats). A hardcoded
+ * list of beanie styles in TypeScript would be a second definition of the
+ * server's `BEANIE_STYLES`, and the day they disagreed the picker would offer
+ * a case that the save then rejects with a 409.
+ */
+export interface StyleOption extends MetaOption {
+  is_beanie: boolean;
+}
+
 export interface RoomRead {
   id: number;
   name: string;

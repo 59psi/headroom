@@ -52,9 +52,19 @@ _BY_CONSTRUCTION: tuple[tuple[str, float], ...] = (
 # known price down.
 _BY_STYLE: dict[str, float] = {
     "aviator": 99.0,
-    # Beanies are a shape with no construction of their own; $79 across every
-    # one in the order history (Destination, Journey).
+    # Beanies are a shape with no construction of their own. $79 across every
+    # one in the order history: Journey (Dusty Sage #1715774, Mustard #1792264)
+    # and Destination (Military #1789227).
     "beanie": 79.0,
+    "journey": 79.0,
+    "destination": 79.0,
+    # `all_day` is DELIBERATELY absent. It appears in the order history exactly
+    # once, at $0.00 — the "FREE All Day Pom Beanie With Purchase" promo — and
+    # a giveaway price is not a retail price. No melin email states its value,
+    # so there is no number here to state. Falling through to Claude's estimate
+    # is the honest answer, the same call made for Thermal and the Mill straw
+    # line; inheriting the $79 that Journey and Destination establish would be
+    # asserting a price for the one beanie there is no evidence for.
 }
 
 # The physical article the whole app is organised around: melin's 3 Hat Travel

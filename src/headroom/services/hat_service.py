@@ -11,9 +11,9 @@ from headroom.schemas.hat import (
     KNOWN_CONSTRUCTIONS,
     HatCreate,
     HatDispose,
-    HatStyle,
     HatUpdate,
     construction_from_flags,
+    is_beanie_style,
 )
 from headroom.services import capacity as capacity_rules
 from headroom.services import retail_pricing
@@ -135,7 +135,7 @@ async def _validate_capacity(
 
 
 async def create_hat(db: AsyncSession, data: HatCreate) -> Hat:
-    is_beanie = data.style == HatStyle.beanie
+    is_beanie = is_beanie_style(data.style)
     position = None
 
     if data.case_id is not None:
@@ -233,7 +233,7 @@ async def update_hat(db: AsyncSession, hat_id: int, data: HatUpdate) -> Hat:
     previous = {f: getattr(hat, f, None) for f in changed_fields}
 
     if "style" in update_data:
-        new_is_beanie = update_data["style"] == HatStyle.beanie
+        new_is_beanie = is_beanie_style(update_data["style"])
         if new_is_beanie != hat.is_beanie and hat.case_id is not None:
             await _validate_capacity(db, hat.case_id, new_is_beanie, exclude_hat_id=hat.id)
         hat.is_beanie = new_is_beanie

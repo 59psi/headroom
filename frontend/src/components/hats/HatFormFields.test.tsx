@@ -5,9 +5,13 @@ import { renderWithProviders } from '../../test/utils';
 import { useHatFormOptions, HatBasicsCard, NEW_CASE_VALUE, type HatBasics } from './HatFormFields';
 
 vi.mock('../../api/hats', () => ({
+  // `is_beanie` is served by the API, not derived from the value — it decides
+  // which cases the picker offers, and a second definition client-side would
+  // eventually disagree with the server. Mock the real payload shape.
   getStyles: vi.fn(async () => [
-    { value: 'a_game', label: 'A-Game' },
-    { value: 'beanie', label: 'Beanie' },
+    { value: 'a_game', label: 'A-Game', is_beanie: false },
+    { value: 'beanie', label: 'Beanie (unspecified)', is_beanie: true },
+    { value: 'journey', label: 'Journey Beanie', is_beanie: true },
   ]),
   getSizes: vi.fn(async () => [{ value: 'classic', label: 'Classic' }]),
   getConditions: vi.fn(async () => [{ value: 'new', label: 'New' }]),
@@ -62,7 +66,7 @@ describe('HatBasicsCard', () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     renderWithProviders(<Harness onChange={onChange} onCreateCase={vi.fn()} />);
-    await waitFor(() => screen.getByRole('option', { name: 'Beanie' }));
+    await waitFor(() => screen.getByRole('option', { name: 'Beanie (unspecified)' }));
 
     await user.selectOptions(screen.getByLabelText('Style'), 'beanie');
     expect(onChange).toHaveBeenLastCalledWith('style', 'beanie');
@@ -181,7 +185,7 @@ describe('HatBasicsCard', () => {
         values={{ ...BASICS, style: 'beanie', caseId: '4', dateLastWorn: '2026-01-02' }}
       />,
     );
-    await waitFor(() => screen.getByRole('option', { name: 'Beanie' }));
+    await waitFor(() => screen.getByRole('option', { name: 'Beanie (unspecified)' }));
     expect(screen.getByLabelText('Style')).toHaveValue('beanie');
     // Closed, the field reads as the selection rather than the raw id.
     expect(screen.getByLabelText('Case Assignment')).toHaveValue('A-001 · Closet');

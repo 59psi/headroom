@@ -39,7 +39,43 @@ class HatStyle(StrEnum):
     # Same reasoning as `shore` for staying out of STYLE_TO_CATEGORY.
     aviator = "aviator"
     collab = "collab"
+    # Beanies. melin names its beanie shapes the way it names any other model
+    # (Journey, Destination, All Day — see the "Beanie Shape Guide"), so they
+    # belong here as styles rather than collapsing into one bucket that cannot
+    # tell a $79 Journey from a promo giveaway.
+    #
+    # `beanie` stays as the unspecified shape: existing rows use it, and a hat
+    # whose shape you haven't identified is a real state.
     beanie = "beanie"
+    all_day = "all_day"
+    journey = "journey"
+    destination = "destination"
+
+
+#: Every style that is physically a beanie.
+#:
+#: `Hat.is_beanie` is a real column — search filters query it and case capacity
+#: depends on it (6 beanies per case vs 3 regular hats) — but it is DERIVED
+#: from style. This set is the single definition of that derivation, for the
+#: same reason `Hat.set_construction` is the only writer of hydro/hydrolite:
+#: the two can silently disagree otherwise.
+#:
+#: Adding a beanie shape without adding it here produces a hat that packs
+#: 3-to-a-case instead of 6, is invisible to the Beanies filter, and makes the
+#: case picker offer cases the save will then reject with a 409.
+BEANIE_STYLES: frozenset[str] = frozenset(
+    {
+        HatStyle.beanie.value,
+        HatStyle.all_day.value,
+        HatStyle.journey.value,
+        HatStyle.destination.value,
+    }
+)
+
+
+def is_beanie_style(style: str | None) -> bool:
+    """Whether a style value denotes a beanie. The one place that decides."""
+    return bool(style) and str(style) in BEANIE_STYLES
 
 
 # The constructions melin ships often enough to be worth offering as choices.

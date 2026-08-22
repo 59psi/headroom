@@ -6,6 +6,43 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.31.0] — 2026-08-22
+
+### Added
+- **melin's beanie shapes are now models, not one bucket.** Journey,
+  Destination and All Day are named and sold like any other melin model (see
+  melin's own "Beanie Shape Guide"), so they are `HatStyle` members.
+  `beanie` remains as **"Beanie (unspecified)"** — existing hats use it, and a
+  shape you haven't identified is a real state.
+
+  Prices come from the order history: **Journey $79** (Dusty Sage #1715774,
+  Mustard #1792264) and **Destination $79** (Military #1789227).
+
+  **All Day is deliberately unpriced.** It appears in the order history exactly
+  once, at **$0.00** — the "FREE All Day Pom Beanie With Purchase" promo — and
+  a giveaway is not a retail price. No melin email states its value, so it
+  falls through to Claude's estimate rather than inheriting the $79 that the
+  other two establish. Same call already made for Thermal and the Mill straw
+  line: `base_retail` returning None is a real answer.
+
+### Changed
+- **`is_beanie` now has exactly one definition.** It is a real column — search
+  filters query it and case capacity depends on it (6 beanies per case vs 3
+  regular hats) — but it is *derived* from style, and that derivation was
+  written out separately at each write site. `schemas/hat.BEANIE_STYLES` +
+  `is_beanie_style()` is now the single source, the same way
+  `Hat.set_construction` is the only writer of `hydro`/`hydrolite`.
+
+  A beanie shape missing from that set would pack 3-to-a-case, disappear from
+  the Beanies filter, and make the case picker offer cases the save then
+  rejects with a 409 — none of which looks like a bug from the outside.
+
+- **`GET /api/meta/styles` publishes `is_beanie` per option.** The frontend used
+  `style === 'beanie'` to decide case availability; with several beanie shapes
+  that would have become a hardcoded TypeScript list, i.e. a second definition
+  of `BEANIE_STYLES` that eventually disagrees with the server. The flag is
+  served instead.
+
 ## [2.30.0] — 2026-08-22
 
 ### Added

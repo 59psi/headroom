@@ -222,7 +222,9 @@ export function HatBasicsCard({
             cases={options.cases.data ?? []}
             // Which cases can take this hat depends on what it IS — a beanie
             // and a regular hat see different availability in the same case.
-            isBeanie={values.style === 'beanie'}
+            isBeanie={
+              options.styles.data?.find(o => o.value === values.style)?.is_beanie ?? false
+            }
             onCreateCase={onCreateCase}
           />
         </div>
