@@ -7,9 +7,9 @@ from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.database import get_db
-from headroom.services import export_service, report_service
+from headroom.services import export_service, report_service, tag_service
 from headroom.services.activity_service import log_activity
-from headroom.services.label_service import render_case_labels
+from headroom.services.label_service import render_case_labels, render_hat_labels
 
 router = APIRouter()
 
@@ -65,5 +65,20 @@ async def collection_export(
 @router.get("/case-labels", response_class=HTMLResponse)
 async def case_labels(request: Request, db: AsyncSession = Depends(get_db)):
     """Printable QR label sheet — one label per case."""
-    base = str(request.base_url)
+    base, _source = await tag_service.get_tag_base(db, str(request.base_url))
     return HTMLResponse(await render_case_labels(db, base))
+
+
+@router.get("/hat-labels", response_class=HTMLResponse)
+async def hat_labels(
+    request: Request,
+    case: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Printable QR label sheet — one label per hat, for sweatband stickers.
+
+    `?case=AH-01` narrows it to a single case, which is the realistic way to
+    do this: a case's worth at a time, with that case open in front of you.
+    """
+    base, _source = await tag_service.get_tag_base(db, str(request.base_url))
+    return HTMLResponse(await render_hat_labels(db, base, case_display_id=case))

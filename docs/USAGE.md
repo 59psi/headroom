@@ -264,9 +264,36 @@ Wear count, last-worn date, and **cost-per-wear** (what you paid ÷ wears)
 show under the photo; the Valuation page's *Wear Rotation* card lists the
 five hats that have gone longest without sun. Mis-taps: hit *undo*.
 
-**🏷 Labels** (Cases page) opens a printable sheet of QR labels — one per
-case with its ID, room, and fill count. Print, cut, stick on the physical
-cases; scanning a QR with your phone camera opens that case in Headroom.
+### Tags: QR stickers and NFC
+
+A tag carries one URL and nothing else, so a printed QR and an NFC sticker
+are the same thing in two formats. **Settings → Tags & labels** has both
+sheets:
+
+- **Hat labels** — one per hat, sized for the sweatband. Scanning opens a
+  one-tap **"Wore it today"** screen: photo, name, one big button. That's
+  the point — wear logging only ever happens with the hat in one hand and
+  the phone in the other. A case's detail page has *Print labels for these
+  hats*, which is the realistic way to do it: a case's worth at a time.
+- **Case labels** — one per case with its ID, room and fill count.
+  Scanning opens that case's contents.
+
+**For NFC**, use any tag writer (NFC Tools on iOS, NXP TagWriter on
+Android) and write the URL as a **URI record** — iOS reads those from the
+lock screen with nothing installed. Each printed label shows its URL as
+text underneath, and each hat and case page has a **Copy** button.
+
+> **Set the tag host first.** By default tags use whatever address you're
+> browsing on, so if you happen to be on `http://192.168.1.50:8000` every
+> tag you write names a DHCP lease that will eventually move. Pin
+> `http://headroom.local:8000` in **Settings → Tags & labels** before you
+> write a batch. It must include `http://` — an NFC URI record needs a
+> scheme, and a QR without one is read as plain text rather than a link.
+
+Stickers can't be rewritten, so hat tags are keyed on the hat's internal id
+rather than its `A-012-03` display id: moving a hat to another case changes
+the display id, and a label printed with one would keep scanning and
+silently open a *different* hat.
 
 ## 11. Showing off: share links
 

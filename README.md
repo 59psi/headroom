@@ -57,8 +57,9 @@ result, and three independent price signals per hat.
   size, colors, and room.
 - **Find-it cards** — every result shows the photo, the name, and where it
   physically lives: `📍 Case A-012 · Office`.
-- **QR case labels** — print a label sheet; scan a case's QR with your phone
-  to open its contents.
+- **QR & NFC tags** — print label sheets for cases *and* hats, or write the
+  same URL to an NFC sticker. Scanning a hat opens a one-tap "wore it today"
+  screen; scanning a case opens its contents.
 
 **💰 Value**
 - **Three price signals per hat** — Claude's retail estimate, eBay
@@ -561,7 +562,8 @@ src/headroom/
     ├── catalog_service.py       # colorway harvest + purchase matching
     ├── auth_service.py          # argon2, sessions, rate limiting
     ├── passkey_service.py       # WebAuthn ceremonies
-    ├── label_service.py         # QR case-label sheet (inline SVG)
+    ├── label_service.py         # QR label sheets, cases + hats (inline SVG)
+    ├── tag_service.py           # What a QR/NFC tag points at, and the host in it
     ├── hat_analysis_pipeline.py # upload → bg-removal → analyze → price
     ├── import_service.py        # restart-surviving bulk-import worker
     └── backup_service.py        # scheduled + on-demand tar.gz

@@ -2,7 +2,7 @@ import { apiFetch } from './client';
 import type {
   ActivityRow, AnalysisJobRead, AnalysisQueueStatus, ApiKeyStatus, ApiKeyTestResult,
   BackupHealth, BackupInfo, EbayCredsStatus, ImportJob, MdnsStatus, ModelStatus,
-  RecentError,
+  RecentError, TagBaseStatus,
 } from '../types';
 
 // Re-exported so existing imports from this module keep working; the
@@ -207,4 +207,23 @@ export function refreshColorwayCatalog() {
 /** Whether scheduled backups are actually running — the file list can't say. */
 export function getBackupHealth() {
   return apiFetch<BackupHealth>('/api/admin/backups/health');
+}
+
+// ---------------------------- Physical tags -------------------------- #
+
+/** The host written into QR labels and NFC tags. */
+export function getTagBase() {
+  return apiFetch<TagBaseStatus>('/api/settings/tags');
+}
+
+export function setTagBase(base_url: string) {
+  return apiFetch<TagBaseStatus>('/api/settings/tags', {
+    method: 'PUT',
+    body: JSON.stringify({ base_url }),
+  });
+}
+
+/** Fall back to whatever host the browser is currently using. */
+export function clearTagBase() {
+  return apiFetch<void>('/api/settings/tags', { method: 'DELETE' });
 }

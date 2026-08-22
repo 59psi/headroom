@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useNavigate } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 import {
   getAuthStatus, login, setupOwner,
   passkeyLoginOptions, passkeyLoginVerify,
@@ -8,8 +8,25 @@ import {
 import { getPasskeyAssertion, passkeysSupported } from '../lib/webauthn';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 
+/**
+ * Where to go after a successful login.
+ *
+ * Only same-origin PATHS are honoured. `next` reaches us through the URL, so
+ * anyone can put anything in it — an absolute URL there would turn the login
+ * screen into an open redirect, which is a phishing primitive: a link that
+ * genuinely is your Headroom login and genuinely does hand you onward to
+ * somebody else's page afterwards. A leading `//` is rejected too, since
+ * `//evil.example` is protocol-relative and a browser reads it as a host.
+ */
+export function safeNext(raw: string | null): string {
+  if (!raw || !raw.startsWith('/') || raw.startsWith('//')) return '/';
+  return raw;
+}
+
 export function LoginPage() {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const next = safeNext(params.get('next'));
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -23,8 +40,8 @@ export function LoginPage() {
   // place for it.
   const authed = status.data?.authenticated ?? false;
   useEffect(() => {
-    if (authed) navigate('/', { replace: true });
-  }, [authed, navigate]);
+    if (authed) navigate(next, { replace: true });
+  }, [authed, navigate, next]);
 
   if (status.isLoading) return <LoadingSpinner />;
   if (authed) return null;

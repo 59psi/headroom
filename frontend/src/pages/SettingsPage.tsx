@@ -15,6 +15,7 @@ import { ColorwayCatalogCard } from '../components/settings/ColorwayCatalogCard'
 import { PurchasesCard } from '../components/settings/PurchasesCard';
 import { AccountCard } from '../components/settings/AccountCard';
 import { ShareLinksCard } from '../components/settings/ShareLinksCard';
+import { TagsCard } from '../components/settings/TagsCard';
 
 /**
  * Composition root only — every card owns its own queries, mutations and local
@@ -35,6 +36,7 @@ export function SettingsPage() {
       <MdnsCard />
       <ActivityLogCard />
       <ShareTargetCard />
+      <TagsCard />
       <InventoryReportCard />
       <CollectionExportCard />
       <BackupsCard />

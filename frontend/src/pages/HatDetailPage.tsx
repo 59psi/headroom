@@ -9,6 +9,7 @@ import { DisposeModal } from '../components/common/DisposeModal';
 import { ColorEditModal } from '../components/common/ColorEditModal';
 import { AnalysisStatus } from '../components/hats/AnalysisStatus';
 import { HatNotesCard } from '../components/hats/HatNotesCard';
+import { TagUrlRow } from '../components/common/TagUrlRow';
 import { useState } from 'react';
 import { invalidateHatViews } from '../lib/invalidate';
 import { money, valueHat } from '../lib/valuation';
@@ -653,6 +654,21 @@ export function HatDetailPage() {
           Analysis error: {data.analysis_error}
         </div>
       )}
+
+      {/* Physical tag. Sits on the hat's own page because that is where you
+          are standing when you tag it — holding this hat, with a blank NFC
+          sticker and a tag writer open. */}
+      <div className="card mb-3">
+        <div className="card-body">
+          <div className="card-title">Tag this hat</div>
+          <p className="text-secondary small">
+            Write this to an NFC sticker, or print a QR from{' '}
+            <Link to="/settings">Settings</Link>. Scanning it opens a one-tap
+            “wore it today” screen.
+          </p>
+          <TagUrlRow kind="h" ident={data.id} />
+        </div>
+      </div>
 
       <Link to="/hats/new" className="btn btn-primary w-100 mb-2">+ Add Another Hat</Link>
 

@@ -10,7 +10,12 @@ import { MemoryRouter } from 'react-router';
  * them), and retries are off so a rejected query surfaces immediately instead
  * of hanging the test for the duration of the backoff schedule.
  */
-export function renderWithProviders(ui: ReactElement) {
+export function renderWithProviders(
+  ui: ReactElement,
+  /** Initial URL. Needed by anything reading `useParams` / `useSearchParams`
+   *  — a MemoryRouter otherwise starts at "/" and those come back empty. */
+  options: { route?: string } = {},
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
   });
@@ -18,7 +23,7 @@ export function renderWithProviders(ui: ReactElement) {
   function Wrapper({ children }: { children: ReactNode }) {
     return (
       <QueryClientProvider client={client}>
-        <MemoryRouter>{children}</MemoryRouter>
+        <MemoryRouter initialEntries={[options.route ?? '/']}>{children}</MemoryRouter>
       </QueryClientProvider>
     );
   }
