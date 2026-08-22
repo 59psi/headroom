@@ -173,6 +173,7 @@ async def finalize_hat_photo(
                 canonical_path, api_key,
                 model=model_id, selected_style=hat.style,
                 selected_construction=hat.construction,
+                known_series=await _known_series(db),
             )
         except ClaudeAnalysisError as exc:
             logger.warning(
@@ -189,6 +190,7 @@ async def finalize_hat_photo(
         t_claude = time.monotonic() - t_claude0
 
         _apply_analysis(hat, analysis)
+        await _canonicalize_analysis_text(db, hat)
         await _publish_stage(hat.id, STAGE_PRICING)
         t_ebay0 = time.monotonic()
         await _refresh_ebay_comps(db, hat)
@@ -242,6 +244,7 @@ async def reanalyze_existing_photo(
             analysis = await analyze_hat_image(
                 photo_path, api_key, model=model_id, selected_style=hat.style,
                 selected_construction=hat.construction,
+                known_series=await _known_series(db),
             )
         except ClaudeAnalysisError as exc:
             logger.warning("Reanalysis failed for hat %s: %s", hat.id, exc)
@@ -254,6 +257,7 @@ async def reanalyze_existing_photo(
             return True
 
         _apply_analysis(hat, analysis)
+        await _canonicalize_analysis_text(db, hat)
         await _publish_stage(hat.id, STAGE_PRICING)
         await _refresh_ebay_comps(db, hat)
         await _publish_stage(hat.id, STAGE_RESALE)
@@ -491,6 +495,49 @@ def _keep_on_null(incoming: str | None, current: str | None) -> str | None:
     visible in *this* photo, so null there is an answer, not a gap.
     """
     return incoming if incoming else current
+
+
+async def _known_series(db) -> list[str]:
+    """Series/collab names the collection already uses, for the prompt.
+
+    A series is rarely legible in a photo — often it's a woven label or an
+    embroidery style — so an analyser recalling them unaided misses most of
+    them. Sending the ones already on record turns recall into recognition.
+    """
+    from headroom.services import vocabulary
+
+    return await vocabulary.distinct_values(db, Hat.artist_series)
+
+
+async def _canonicalize_analysis_text(db, hat: Hat) -> None:
+    """Snap analysis-written free text to the spelling already on record.
+
+    `hat_service` canonicalises on the client write path, but the ANALYSIS path
+    wrote straight through — so Claude returning "skye walker" created a second
+    entry beside the owner's "Skye Walker". Nothing looks wrong afterwards:
+    both hats have *a* series, and the split only shows up as two near-identical
+    rows in the autocomplete, the Stats collab chart and the filters. That is
+    exactly the fragmentation `vocabulary` exists to prevent, and it was
+    prevented on one of the two paths that write these fields.
+
+    Run AFTER `_apply_analysis`, so it also covers a construction Claude filled
+    in on a hat that had none.
+    """
+    from headroom.schemas.hat import KNOWN_CONSTRUCTIONS
+    from headroom.services import vocabulary
+
+    if hat.artist_series:
+        hat.artist_series = await vocabulary.canonicalize(
+            db, Hat.artist_series, hat.artist_series
+        )
+    if hat.construction:
+        canonical = await vocabulary.canonicalize(
+            db, Hat.construction, hat.construction, known=KNOWN_CONSTRUCTIONS
+        )
+        # Through the setter: `construction` owns the hydro/hydrolite flags,
+        # and assigning the column directly is what lets them drift.
+        if canonical != hat.construction:
+            hat.set_construction(canonical)
 
 
 def _apply_analysis(hat: Hat, analysis: HatAnalysis) -> None:

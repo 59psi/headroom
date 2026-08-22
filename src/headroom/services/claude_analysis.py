@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -287,7 +288,11 @@ def _read_image_b64(image_path: Path) -> tuple[str, str]:
     return base64.standard_b64encode(raw).decode("ascii"), media_type
 
 
-def _owner_context(selected_style: str | None, selected_construction: str | None) -> str:
+def _owner_context(
+    selected_style: str | None,
+    selected_construction: str | None,
+    known_series: Sequence[str] = (),
+) -> str:
     """The prompt sentence carrying what the OWNER already stated.
 
     Both are ground truth: they came from someone holding the hat and reading
@@ -301,6 +306,18 @@ def _owner_context(selected_style: str | None, selected_construction: str | None
     still folded its own guess into `model_name` — so a hat the owner recorded
     as Thermal came back named "A-Game HYDROLite", which reads as the app
     overruling them and is wrong in the one field they'd quote to someone.
+
+    `known_series` is different in kind: not ground truth about THIS hat, but
+    what the collection already contains. It is sent because a series name is
+    not something a photo reliably shows — a collab is often identifiable only
+    by a small woven label or an embroidery style — so an analyser recalling
+    them unaided misses most of them, and the ones it does catch come back in
+    whatever spelling it chose. Passing the names the owner has already
+    curated turns recall into recognition and pins the spelling.
+
+    The framing has to stay careful, because a candidate list invites a forced
+    choice: it is stated as what the collection happens to contain, NOT a set
+    of options, with an explicit instruction that null beats a wrong match.
     """
     facts: list[str] = []
     if selected_style and selected_style != "beanie":
@@ -311,17 +328,54 @@ def _owner_context(selected_style: str | None, selected_construction: str | None
     if selected_construction:
         facts.append(f"the construction is **{selected_construction}**")
 
-    if not facts:
+    parts: list[str] = []
+    if facts:
+        parts.append(
+            "The owner has the hat in hand and states that "
+            + " and ".join(facts)
+            + ". Treat that as ground truth: identify the specific variant within"
+            " it, and do NOT substitute a different model line or construction —"
+            " including inside `model_name`, which must agree with what the owner"
+            " stated rather than naming a build you think you see."
+        )
+
+    series_line = _known_series_context(known_series)
+    if series_line:
+        parts.append(series_line)
+
+    if not parts:
         return "Analyze this hat photo using the tool."
 
+    parts.append("Use the tool to record your analysis.")
+    return " ".join(parts)
+
+
+#: How many known series names to put in the prompt. Far above a personal
+#: collection's real count; a bound only so the prompt cannot grow without
+#: limit. When it does bite, the prompt SAYS the list is partial rather than
+#: presenting a truncated list as if it were everything.
+MAX_KNOWN_SERIES = 120
+
+
+def _known_series_context(known_series: Sequence[str]) -> str:
+    """The sentence listing series the collection already uses, or ''."""
+    names = [s.strip() for s in known_series if s and s.strip()]
+    if not names:
+        return ""
+
+    shown, truncated = names[:MAX_KNOWN_SERIES], len(names) > MAX_KNOWN_SERIES
+    listed = ", ".join(shown)
+    tail = ", among others" if truncated else ""
+
     return (
-        "The owner has the hat in hand and states that "
-        + " and ".join(facts)
-        + ". Treat that as ground truth: identify the specific variant within"
-        " it, and do NOT substitute a different model line or construction —"
-        " including inside `model_name`, which must agree with what the owner"
-        " stated rather than naming a build you think you see."
-        " Use the tool to record your analysis."
+        f"For reference, this collection already uses these series and"
+        f" collaboration names: {listed}{tail}. If this hat belongs to one of"
+        " them, write that name spelled EXACTLY as given so it matches. If it"
+        " is a different series, name it as printed on the hat. This is a"
+        " record of what the collection happens to contain, NOT a list to"
+        " choose from: if the hat is not a collab or artist series at all,"
+        " return null for `artist_series`. A wrong match is worse than an"
+        " empty field."
     )
 
 
@@ -331,13 +385,17 @@ async def analyze_hat_image(
     model: str | None = None,
     selected_style: str | None = None,
     selected_construction: str | None = None,
+    known_series: Sequence[str] = (),
 ) -> HatAnalysis:
     """Call Claude vision and return a structured HatAnalysis.
 
     `model` overrides the default. `selected_style` and `selected_construction`
     are what the owner already recorded — both are passed as ground truth, so
     the analysis identifies a variant *within* them rather than proposing a
-    rival answer. Raises ClaudeAnalysisError on any recoverable failure (auth,
+    rival answer. `known_series` are the collaboration/artist-series names the
+    collection already uses, sent so a series the owner has already named
+    elsewhere is recognised rather than recalled, and comes back in the
+    spelling already on record. Raises ClaudeAnalysisError on any recoverable failure (auth,
     parse, etc.).
     """
     if not api_key:
@@ -348,7 +406,7 @@ async def analyze_hat_image(
     client = AsyncAnthropic(api_key=api_key, timeout=config_settings.http_timeout)
     model_id = model or config_settings.anthropic_model
 
-    user_text = _owner_context(selected_style, selected_construction)
+    user_text = _owner_context(selected_style, selected_construction, known_series)
 
     try:
         message = await client.messages.create(
