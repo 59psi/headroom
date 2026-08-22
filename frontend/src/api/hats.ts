@@ -1,5 +1,6 @@
 import { apiFetch } from './client';
-import type { ColorTag, HatRead, MetaOption } from '../types';
+import type {
+  StyleOption, ColorTag, HatRead, MetaOption } from '../types';
 
 /**
  * Matches the `le=` ceiling on `GET /api/hats`.
@@ -104,7 +105,7 @@ export function assignHat(id: number, caseId: number | null) {
 }
 
 export function getStyles() {
-  return apiFetch<MetaOption[]>('/api/meta/styles');
+  return apiFetch<StyleOption[]>('/api/meta/styles');
 }
 
 export function getSizes() {

@@ -8,6 +8,7 @@ from headroom.schemas.hat import (
     HatCondition,
     HatSize,
     HatStyle,
+    is_beanie_style,
 )
 from headroom.services import room_service, vocabulary
 from headroom.services.catalog_service import catalog_options
@@ -28,13 +29,31 @@ STYLE_LABELS: dict[str, str] = {
     "shore": "The Shore",
     "aviator": "Aviator",
     "collab": "Collab",
-    "beanie": "Beanie",
+    "beanie": "Beanie (unspecified)",
+    "all_day": "All Day Beanie",
+    "journey": "Journey Beanie",
+    "destination": "Destination Beanie",
 }
 
 
 @router.get("/styles")
 async def list_styles():
-    return [{"value": s.value, "label": STYLE_LABELS.get(s.value, s.value)} for s in HatStyle]
+    """Style options, each flagged with whether it is a beanie.
+
+    The flag is served rather than re-derived client-side because it decides
+    which cases the picker offers (6 beanies per case vs 3 regular hats). A
+    hardcoded list in TypeScript would be a second definition of
+    `BEANIE_STYLES`, and when the two disagreed the picker would offer a case
+    the save then rejects with a 409.
+    """
+    return [
+        {
+            "value": s.value,
+            "label": STYLE_LABELS.get(s.value, s.value),
+            "is_beanie": is_beanie_style(s.value),
+        }
+        for s in HatStyle
+    ]
 
 
 @router.get("/sizes")
