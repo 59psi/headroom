@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  matchesHatFilters, collectGeneralColors, EMPTY_HAT_FILTERS,
+  matchesHatFilters, collectGeneralColors, EMPTY_HAT_FILTERS, NO_CONSTRUCTION,
   type FilterableHat, type HatFilterState,
 } from './HatFilters';
 
@@ -10,6 +10,7 @@ function hat(over: Partial<FilterableHat> = {}): FilterableHat {
     size: 'classic',
     condition: 'new',
     is_beanie: false,
+    construction: null,
     colors: [{ color_name: 'ocean', general_color: 'blue', hex_value: '#0af', dominance_rank: 1 }],
     ...over,
   };
@@ -62,6 +63,57 @@ describe('matchesHatFilters', () => {
     const f = filters({ style: 'a_game', size: 'classic', color: 'blue' });
     expect(matchesHatFilters(hat(), f)).toBe(true);
     expect(matchesHatFilters(hat({ size: 'small' }), f)).toBe(false);
+  });
+});
+
+describe('construction filter', () => {
+  it('matches the hat with that construction', () => {
+    const f = filters({ construction: 'HYDRO' });
+    expect(matchesHatFilters(hat({ construction: 'HYDRO' }), f)).toBe(true);
+    expect(matchesHatFilters(hat({ construction: 'Thermal' }), f)).toBe(false);
+  });
+
+  it('does NOT let HYDRO match HYDROLite', () => {
+    // The whole reason this is equality and not a substring test. HYDRO and
+    // HYDROLite are different products at different prices ($79 vs $99), and
+    // "hydro" is a literal substring of "hydrolite" — a contains() check would
+    // silently fold the two together in every filtered view.
+    expect(
+      matchesHatFilters(hat({ construction: 'HYDROLite' }), filters({ construction: 'HYDRO' })),
+    ).toBe(false);
+    expect(
+      matchesHatFilters(hat({ construction: 'HYDRO' }), filters({ construction: 'HYDROLite' })),
+    ).toBe(false);
+  });
+
+  it('ignores casing, for rows written before values were canonicalised', () => {
+    expect(
+      matchesHatFilters(hat({ construction: 'hydro' }), filters({ construction: 'HYDRO' })),
+    ).toBe(true);
+  });
+
+  it('finds hats with no construction recorded', () => {
+    const f = filters({ construction: NO_CONSTRUCTION });
+    expect(matchesHatFilters(hat({ construction: null }), f)).toBe(true);
+    expect(matchesHatFilters(hat({ construction: '   ' }), f)).toBe(true);
+    expect(matchesHatFilters(hat({ construction: 'HYDRO' }), f)).toBe(false);
+  });
+
+  it('excludes unrecorded hats from a specific-construction filter', () => {
+    expect(
+      matchesHatFilters(hat({ construction: null }), filters({ construction: 'HYDRO' })),
+    ).toBe(false);
+  });
+
+  it('is inert when unset', () => {
+    expect(matchesHatFilters(hat({ construction: null }), filters())).toBe(true);
+    expect(matchesHatFilters(hat({ construction: 'Thermal' }), filters())).toBe(true);
+  });
+
+  it('ANDs with the other filters', () => {
+    const f = filters({ construction: 'HYDRO', size: 'classic' });
+    expect(matchesHatFilters(hat({ construction: 'HYDRO' }), f)).toBe(true);
+    expect(matchesHatFilters(hat({ construction: 'HYDRO', size: 'small' }), f)).toBe(false);
   });
 });
 

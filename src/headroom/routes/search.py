@@ -26,6 +26,7 @@ def _result_fields(h) -> dict:
         "is_beanie": h.is_beanie,
         "brand": h.brand,
         "model_name": h.model_name,
+        "construction": h.construction,
         "colors": [
             ColorTag(
                 color_name=c.color_name,
