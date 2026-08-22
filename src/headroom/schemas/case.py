@@ -47,6 +47,10 @@ class CaseRead(BaseModel):
     photo_path: str | None
     capacity: int | None
     hat_count: int
+    # What the physical case cost new. Not a column: every case is the
+    # same product at the same price, so a per-row copy would be 40
+    # duplicates of one number waiting to disagree.
+    retail_price: float
     beanie_count: int
     regular_count: int
     room_id: int

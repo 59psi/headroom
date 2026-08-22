@@ -16,6 +16,7 @@ from headroom.schemas.hat import (
     construction_from_flags,
 )
 from headroom.services import capacity as capacity_rules
+from headroom.services import retail_pricing
 from headroom.services import vocabulary
 from headroom.services.activity_service import log_and_commit
 
@@ -277,6 +278,15 @@ async def update_hat(db: AsyncSession, hat_id: int, data: HatUpdate) -> Hat:
     # one thing valuation must not discount or let a later analysis overwrite.
     # Recorded here rather than in the route because this is the only writer
     # every client path funnels through.
+    # An entered retail price came from a tag or an order confirmation, so it
+    # outranks both the table and Claude — and must survive the next analysis.
+    # Same rule, same reason, as `resale_price` below.
+    if "estimated_new_price" in update_data:
+        hat.estimated_new_price_source = (
+            retail_pricing.MANUAL_SOURCE
+            if update_data["estimated_new_price"] is not None else None
+        )
+
     if "resale_price" in update_data:
         hat.resale_price_scope = (
             "manual" if update_data["resale_price"] is not None else None

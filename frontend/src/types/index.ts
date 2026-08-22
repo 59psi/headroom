@@ -22,6 +22,9 @@ export interface CaseRead {
   display_id: string;
   photo_path: string | null;
   capacity: number | null;
+  /** What the physical case cost new. Same for every case, so it is
+   *  published rather than stored per row. */
+  retail_price: number;
   hat_count: number;
   beanie_count: number;
   regular_count: number;

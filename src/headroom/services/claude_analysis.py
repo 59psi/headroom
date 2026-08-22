@@ -48,27 +48,23 @@ When given a single hat photo you will:
      unanchored guess here runs about half of what these hats actually cost.
   6. Add a 1–2 sentence design notes blurb.
 
-PRICING — anchor on these, do not estimate from feel:
-melin hats cost noticeably more than they look like they should, and what moves
-the price is the CONSTRUCTION and collection, not the model line. A Trenches, an
-A-Game and a Coronado in the same construction cost the same. Verified current
-retail:
-  * HYDRO caps — $69 is the common price (A-Game Hydro, Coronado Anchored
-    Hydro, Trenches Icon Hydro all $69). Some run higher: Odysea Stacked Hydro
-    $79, Hydro Eagle $89, Hydro Odysea Mac $89.
-  * HYDROLite — the premium tier, $89–$99 (Coronado HYDROLite $99, Odysea
-    HYDROLite $89–$99). If the hat is HYDROLite, price it ABOVE a plain HYDRO,
-    not below.
-  * Thermal — $79–$99 (A-Game Infinite Thermal $79, Thermal A-Game Icon $79,
-    Thermal A-Game Scout $99, Thermal Coronado Brick $99).
-  * Beanies — around $79 (All Day Beanie $79 MSRP).
+PRICING — for melin, the app looks the price up and will OVERRIDE you:
+melin retail is keyed on CONSTRUCTION and shape, and the app holds a table of
+it (HYDRO $79, HYDROLite $99, beanies $79, Aviator from $99). You do not need
+to get those right and should not agonise over them.
 
-So $69–$99 is the normal band for a current melin, with signature
-collaborations, artist series and limited runs above it. An estimate under $60
-for a melin is almost certainly wrong — that error was systematic before these
-anchors existed, roughly halving every price. Do not read the model line
-(A-Game, Odysea, Trenches, Coronado, Eagle, Compass, Legend, Caddy, Coast) as a
-price signal; read the construction.
+What the table cannot see is the EXCEPTIONS, and that is what your estimate is
+for: collabs, artist series, limited runs, the Mill straw line ($99-$180) and
+Thermal Aviators ($139-$179) all sell above the base. Your number is kept only
+when it is HIGHER than the base for the construction, so:
+  * If the hat looks like a plain current-season cap, a base-level number is
+    fine and will simply be replaced by the table.
+  * If it is visibly a collab, an artist series, a straw/Mill piece or a
+    cold-weather Aviator, say so with a number ABOVE $99 — that is the case
+    where you are adding information the table does not have.
+An estimate under $60 for a melin is almost certainly wrong. Do not read the
+model line (A-Game, Odysea, Trenches, Coronado, Eagle, Compass, Legend, Caddy,
+Coast, The Shore) as a price signal; read the construction.
 
 For other brands, use your own knowledge of their tiers: a New Era 59FIFTY is
 around $40–$50, '47 Brand around $30, Goorin around $40–$60, Stetson wool and
