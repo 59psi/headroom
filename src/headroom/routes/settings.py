@@ -1,7 +1,7 @@
 import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from PIL import Image
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,8 +15,10 @@ from headroom.schemas.settings import (
     MdnsStatus,
     ModelStatus,
     ModelUpdate,
+    TagBaseStatus,
+    TagBaseUpdate,
 )
-from headroom.services import activity_service, mdns_service, settings_service
+from headroom.services import activity_service, mdns_service, settings_service, tag_service
 from headroom.services.claude_analysis import verify_api_key
 from headroom.utils.photo import validate_image_content_type
 from headroom.utils.upload import copy_upload_capped
@@ -191,3 +193,36 @@ async def set_model(data: ModelUpdate, db: AsyncSession = Depends(get_db)):
 async def clear_model(db: AsyncSession = Depends(get_db)):
     """Reset to env / built-in default."""
     await settings_service.clear_anthropic_model(db)
+
+
+# ---------------------------- Tag base URL --------------------------- #
+
+
+async def _tag_status(db: AsyncSession, request: Request) -> TagBaseStatus:
+    base, source = await tag_service.get_tag_base(db, str(request.base_url))
+    return TagBaseStatus(
+        base_url=base,
+        source=source,
+        # Hat 1 is not guaranteed to exist; this is a shape example, not a link.
+        example_url=tag_service.tag_url(base, tag_service.HAT, 1),
+    )
+
+
+@router.get("/tags", response_model=TagBaseStatus)
+async def get_tag_base(request: Request, db: AsyncSession = Depends(get_db)):
+    """The host written into QR labels and NFC tags."""
+    return await _tag_status(db, request)
+
+
+@router.put("/tags", response_model=TagBaseStatus, dependencies=[Depends(require_admin)])
+async def set_tag_base(
+    data: TagBaseUpdate, request: Request, db: AsyncSession = Depends(get_db)
+):
+    await tag_service.set_tag_base(db, data.base_url)
+    return await _tag_status(db, request)
+
+
+@router.delete("/tags", status_code=204, dependencies=[Depends(require_admin)])
+async def clear_tag_base(db: AsyncSession = Depends(get_db)):
+    """Fall back to whatever host the request arrives on."""
+    await tag_service.set_tag_base(db, None)

@@ -1758,3 +1758,86 @@ body.hr-keyboard-open .bottom-nav {
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
+
+/* ------------------------------------------------------------------ *
+ * Tag landing (/t/h/:id) — where a hat's QR sticker or NFC tag lands.
+ *
+ * Sized for one-handed use at the moment you're putting the hat on: the
+ * action is a thumb-height target, centred, with nothing above it that
+ * needs reading first. Everything else on the page is confirmation that
+ * you scanned the right hat.
+ * ------------------------------------------------------------------ */
+
+.hr-tag-landing {
+  max-width: 26rem;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 2rem;
+  text-align: center;
+}
+
+.hr-tag-photo {
+  width: 190px;
+  height: 190px;
+  object-fit: contain;
+  margin: 0 auto 1rem;
+  display: block;
+  /* Cutouts are transparent PNGs and float on the canvas — no plate behind. */
+  filter: drop-shadow(0 8px 22px rgba(0, 0, 0, 0.55));
+}
+
+.hr-tag-photo-empty {
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  filter: none;
+}
+
+.hr-tag-name {
+  font-size: 1.35rem;
+  margin: 0 0 0.15rem;
+  overflow-wrap: anywhere;
+}
+
+.hr-tag-sub {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  margin: 0 0 1.5rem;
+}
+
+/* The whole reason the page exists. Deliberately oversized. */
+.hr-tag-action {
+  width: 100%;
+  min-height: 3.75rem;
+  font-size: 1.15rem;
+  letter-spacing: 0.02em;
+}
+
+.hr-tag-done {
+  font-family: var(--font-display, inherit);
+  font-size: 1.3rem;
+  color: var(--neon-cyan);
+  margin-bottom: 0.75rem;
+}
+
+.hr-tag-note {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  margin: 0.75rem 0 0;
+}
+
+.hr-tag-meta {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin: 1.25rem 0 0.5rem;
+}
+
+.hr-tag-more {
+  font-size: 0.85rem;
+}
+
+.hr-tag-url-row .form-control {
+  font-size: 0.8rem;
+}

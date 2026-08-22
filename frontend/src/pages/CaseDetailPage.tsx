@@ -5,6 +5,7 @@ import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { tileSrc } from '../lib/photo';
 import { CaseCollage } from '../components/cases/CaseCollage';
 import { invalidateHatViews } from '../lib/invalidate';
+import { TagUrlRow } from '../components/common/TagUrlRow';
 
 export function CaseDetailPage() {
   const { displayId } = useParams<{ displayId: string }>();
@@ -127,6 +128,23 @@ export function CaseDetailPage() {
           </Link>
         ))
       )}
+
+      <div className="card mt-4">
+        <div className="card-body">
+          <div className="card-title">Tag this case</div>
+          <p className="text-secondary small">
+            Write this to an NFC sticker on the case, or print QR labels for
+            every hat inside it.
+          </p>
+          <TagUrlRow kind="c" ident={data.display_id} />
+          <a
+            href={`/api/admin/hat-labels?case=${encodeURIComponent(data.display_id)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn btn-outline-secondary btn-sm mt-2"
+          >🏷 Print labels for these hats</a>
+        </div>
+      </div>
 
       <button
         className="btn btn-danger w-100 mt-4"

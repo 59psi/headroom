@@ -6,6 +6,74 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.28.0] — 2026-08-22
+
+### Added
+- **QR stickers and NFC tags for hats and cases.** A tag carries one URL and
+  nothing else, so both formats are the same feature: print the QR, or write
+  the identical URL to an NFC sticker with any tag writer (NFC Tools on iOS,
+  NXP TagWriter on Android). No app support is needed beyond the URL — iOS
+  reads NFC URI records from the lock screen with nothing installed.
+
+  Tapping a **hat** tag opens a one-tap *"Wore it today"* screen: photo, name,
+  and a single oversized button. That is the whole point. Wear logging only
+  ever happens at one moment — hat in one hand, phone in the other — and the
+  full hat page puts its wear button a scroll below several cards.
+
+  Tapping a **case** tag opens that case's contents.
+
+  New printable sheet at `GET /api/admin/hat-labels`, with `?case=AH-01` to
+  narrow it to one case — which is how you actually do this, a case's worth at
+  a time with that case open in front of you. Every label prints its URL as
+  text underneath, because writing an NFC tag means pasting that URL somewhere
+  and a QR you must scan to read back is a poor way to move text between apps.
+
+  Three decisions are load-bearing, all from one fact — **you cannot rewrite a
+  sticker that is already on a hat**:
+
+  - **Hat tags key on the immutable `hat.id`, not `display_id`.** A display id
+    is derived from case + position, so it changes the moment a hat is
+    reshuffled, and is `None` for an unassigned hat — precisely the state a hat
+    is in while you are tagging it. A sticker printed with one would keep
+    scanning and silently resolve to a *different* hat. Cases are the opposite
+    and key on `display_id`: it is painted on the physical case and never
+    changes.
+  - **Tags point at `/t/...`, not at the real page.** One level of indirection
+    that costs nothing now and cannot be added later; if the route table is
+    ever reorganised, the landing route absorbs it and the stickers keep
+    working.
+  - **The host is configurable** (Settings → Tags & labels), defaulting to
+    whatever you are browsing on. Browse to the Pi by IP once and every tag
+    written that afternoon names a DHCP lease; pinning
+    `http://headroom.local:8000` survives the Pi changing address. A base
+    without an `http(s)` scheme is rejected — an NDEF URI record needs one, and
+    a QR without one is read as plain text, so `headroom.local:8000` looks
+    obviously right and produces tags that do nothing.
+
+- **Login returns you where you were** (`?next=`), which physical tags need:
+  tapping a tag with an expired session previously dropped you on the home
+  page, losing the one piece of information the tap carried. Only same-origin
+  paths are honoured — an absolute URL there would make the login screen an
+  open redirect.
+
+### Fixed
+- **Case labels printed the wrong occupancy, onto adhesive.** The sheet
+  computed capacity itself as `c.capacity or (6 if beanie else 4)` — a third
+  copy of the rule `services/capacity.py` exists to centralise, and wrong two
+  ways. `4` is the *overfill limit*, not nominal capacity, so a full three-hat
+  case printed **"3/4"** — reading as room for one more. And `len(hats)`
+  counted **disposed** hats, which have already freed their slot. It now defers
+  to `capacity.evaluate`, like the picker and the write validator.
+
+### Changed
+- The copy-to-clipboard control falls back to `execCommand` outside a secure
+  context. `navigator.clipboard` is `undefined` on plain HTTP, which is exactly
+  how Headroom is served on a LAN (`docker-compose.http80.yml`) — so without
+  the fallback the button would appear to work and copy nothing.
+- Frontend tests share one `HatRead` fixture (`src/test/fixtures.ts`) instead
+  of each file writing out all ~50 fields, and `renderWithProviders` accepts an
+  initial route for components that read `useParams` / `useSearchParams`.
+
 ## [2.27.0] — 2026-08-22
 
 ### Fixed

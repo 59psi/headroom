@@ -38,6 +38,15 @@ vi.mock('../api/settings', () => ({
   getColorwayStatus: vi.fn(async () => ({
     entries: 988, models: 146, colorways: 402, last_harvest: null,
   })),
+  // Deliberately NOT the mDNS host: the assertions below identify each card
+  // by a value only that card's own query supplies, so two cards showing the
+  // same string would make the check ambiguous rather than stronger.
+  getTagBase: vi.fn(async () => ({
+    base_url: 'http://tags.example:9000',
+    source: 'settings',
+    example_url: 'http://tags.example:9000/t/h/1',
+  })),
+  setTagBase: vi.fn(), clearTagBase: vi.fn(),
 }));
 
 vi.mock('../api/auth', () => ({
@@ -65,6 +74,7 @@ const CARD_TITLES = [
   'LAN Discovery (mDNS)',
   'Recent Activity',
   'Share Photos to Headroom',
+  'Tags & labels',
   'Inventory Report',
   'Share the collection',
   'Backups',
@@ -96,6 +106,7 @@ describe('SettingsPage', () => {
     expect(await screen.findByText('sk-an…wxyz')).toBeInTheDocument();       // key card
     expect(await screen.findByText('claude-sonnet-5')).toBeInTheDocument(); // model card
     expect(await screen.findByText('http://headroom.local:8000')).toBeInTheDocument(); // mDNS card
+    expect(await screen.findByText('http://tags.example:9000')).toBeInTheDocument();
     expect(await screen.findByText(/Signed in as/)).toBeInTheDocument();      // account card
   });
 });

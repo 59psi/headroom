@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from 'react-router';
+import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AppShell } from './components/layout/AppShell';
 import { HomePage } from './pages/HomePage';
@@ -19,6 +19,7 @@ import { StatsPage } from './pages/StatsPage';
 import { BulkImportPage } from './pages/BulkImportPage';
 import { LoginPage } from './pages/LoginPage';
 import { SharePage } from './pages/SharePage';
+import { TagLandingPage } from './pages/TagLandingPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -28,6 +29,13 @@ const queryClient = new QueryClient({
     },
   },
 });
+
+/** A case tag just opens the case; the indirection is what buys us the
+ *  freedom to change that later without reprinting labels. */
+function CaseTagRedirect() {
+  const { displayId } = useParams();
+  return <Navigate to={`/cases/${displayId}`} replace />;
+}
 
 export function App() {
   return (
@@ -54,6 +62,12 @@ export function App() {
             <Route path="/valuation" element={<ValuationPage />} />
             <Route path="/stats" element={<StatsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
+            {/* Physical tags (QR stickers / NFC). Deliberately its own stable
+                prefix rather than a link straight to /hats/:id — a sticker
+                cannot be rewritten, so the URL a tag carries has to outlive
+                any future reshuffle of the route table. See tag_service.py. */}
+            <Route path="/t/h/:hatId" element={<TagLandingPage />} />
+            <Route path="/t/c/:displayId" element={<CaseTagRedirect />} />
           </Route>
         </Routes>
       </BrowserRouter>

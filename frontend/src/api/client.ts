@@ -13,7 +13,12 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     // we're already somewhere public.
     const here = window.location.pathname;
     if (here !== '/login' && !here.startsWith('/share/')) {
-      window.location.assign('/login');
+      // Carry where we were so login can put you back. This matters most for
+      // physical tags: tapping an NFC tag on a hat with an expired session
+      // otherwise drops you on the home page, having silently lost the one
+      // piece of information the tap carried — which hat you were holding.
+      const next = here + window.location.search;
+      window.location.assign(`/login?next=${encodeURIComponent(next)}`);
     }
     throw new Error('Authentication required');
   }

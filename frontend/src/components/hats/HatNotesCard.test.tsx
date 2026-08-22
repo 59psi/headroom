@@ -7,34 +7,13 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../../test/utils';
+import { hatFixture } from '../../test/fixtures';
 import { HatNotesCard } from './HatNotesCard';
 import * as hatsApi from '../../api/hats';
-import type { HatRead } from '../../types';
 
 vi.mock('../../api/hats', () => ({ updateHat: vi.fn(async () => ({})) }));
 
-function hat(over: Partial<HatRead> = {}): HatRead {
-  return {
-    id: 5, case_id: null, position_in_case: null, display_id: 'A-001-01',
-    case_display_id: 'A-001', case_type: null, photo_path: null,
-    original_path: null, thumb_path: null, condition: 'new', date_last_worn: null,
-    wear_count: 0, size: 'classic', style: 'a_game', is_beanie: false, colors: [],
-    room_id: null, room_name: null, brand: null, logo_detected: null,
-    artist_series: null, construction: null, hydrolite: false, hydro: false,
-    model_name: null, colorway: null, purchase_price: null, purchased_at: null,
-    model_confidence: null, style_descriptor: null, design_notes: null,
-    owner_notes: null,
-    estimated_new_price: null, estimated_new_price_source: null, resale_price: null,
-    resale_price_source: null, resale_price_url: null, resale_checked_at: null,
-    resale_price_scope: null, analysis_status: null, analysis_stage: null,
-    analysis_job_id: null, analysis_error: null, analyzed_at: null,
-    disposed_at: null, disposed_via: null, disposed_price: null, disposed_to: null,
-    disposed_notes: null, ebay_avg_price: null, ebay_median_price: null,
-    ebay_listing_count: null, ebay_search_url: null, ebay_checked_at: null,
-    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
-    ...over,
-  };
-}
+const hat = hatFixture;
 
 beforeEach(() => vi.clearAllMocks());
 

@@ -228,6 +228,14 @@ export interface MdnsStatus {
   error: string | null;
 }
 
+/** The host burned into printed QR labels and NFC tags. */
+export interface TagBaseStatus {
+  base_url: string;
+  /** 'request' = whatever host you're browsing on; 'settings' = pinned. */
+  source: 'settings' | 'request';
+  example_url: string;
+}
+
 export interface ModelStatus {
   model_id: string;
   source: 'database' | 'environment' | 'default';
