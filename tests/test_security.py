@@ -122,6 +122,31 @@ async def test_security_headers_are_present_on_every_response(client):
     """Hardening headers, applied once in middleware rather than per-route."""
     resp = await client.get("/health")
 
+    _assert_hardening_headers(resp)
+
+
+@pytest.mark.anyio
+async def test_security_headers_survive_the_auth_gate_401(anon_client):
+    """The 401 is a response too — and the one strangers actually receive.
+
+    `add_middleware` prepends, so the LAST middleware added is outermost.
+    SecurityHeadersMiddleware was added first, which put it *behind* the auth
+    gate: the gate short-circuits an unauthenticated /api/* request with its
+    own 401 and that response never reached the header middleware. An
+    anonymous GET /api/hats came back with two headers, content-type and
+    content-length.
+
+    The test that was named for this invariant asserted against /health, which
+    the gate lets through — so the invariant it pinned was the one path where
+    it already held.
+    """
+    resp = await anon_client.get("/api/hats")
+
+    assert resp.status_code == 401
+    _assert_hardening_headers(resp)
+
+
+def _assert_hardening_headers(resp) -> None:
     csp = resp.headers.get("content-security-policy", "")
     assert "default-src 'self'" in csp
     # script-src must NOT allow inline — that is the directive that actually

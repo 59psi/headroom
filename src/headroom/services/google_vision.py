@@ -32,9 +32,19 @@ class GoogleVisionError(Exception):
 
 
 async def _annotate(payload: dict, api_key: str) -> dict:
-    """Single seam for the HTTP call — tests stub this."""
+    """Single seam for the HTTP call — tests stub this.
+
+    The key goes in the `X-Goog-Api-Key` HEADER, not `?key=`. As a query
+    parameter it ends up in the request URL — and httpx logs the full URL at
+    INFO on every call, so the key was printed in clear text into the
+    container log each time a hat fell back to Vision. Logs get shipped,
+    pasted into issues and read over shoulders; a URL is not a private place
+    to put a credential, and Google documents the header for exactly this.
+    """
     async with httpx.AsyncClient(timeout=settings.http_timeout) as client:
-        resp = await client.post(_ENDPOINT, params={"key": api_key}, json=payload)
+        resp = await client.post(
+            _ENDPOINT, headers={"X-Goog-Api-Key": api_key}, json=payload
+        )
     if resp.status_code != 200:
         detail = ""
         try:

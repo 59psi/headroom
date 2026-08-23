@@ -72,7 +72,7 @@ async def test_scheduled_backup_ships_off_box_and_local_survives(tmp_path, monke
     dest.mkdir()
     monkeypatch.setenv("HEADROOM_BACKUP_UPLOAD_CMD", f"cp {{path}} {dest}/{{name}}")
 
-    result = await backup_service.write_scheduled_backup(retention=7)
+    result = await backup_service.write_scheduled_backup(keep=7)
 
     assert result is not None and result.exists()   # local backup intact
     assert (dest / result.name).exists()             # shipped off-box
@@ -81,5 +81,5 @@ async def test_scheduled_backup_ships_off_box_and_local_survives(tmp_path, monke
 async def test_scheduled_backup_survives_broken_uploader(tmp_path, monkeypatch):
     """A failing upload command still yields a successful local backup path."""
     monkeypatch.setenv("HEADROOM_BACKUP_UPLOAD_CMD", "false")
-    result = await backup_service.write_scheduled_backup(retention=7)
+    result = await backup_service.write_scheduled_backup(keep=7)
     assert result is not None and result.exists()

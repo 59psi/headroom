@@ -34,7 +34,29 @@ class BackupHealthRead(BaseModel):
     running: bool
     last_attempt_at: datetime | None = None
     last_success_at: datetime | None = None
+
+    last_success_derived: bool = False
+    """True when `last_success_at` came from a file's mtime, not a recorded run.
+
+    The health record is process-local and a restart clears it — and on a Pi
+    with a restart policy, restarts are routine. Rather than report `null` and
+    let it read as "never succeeded", the newest backup's mtime stands in, and
+    this says which of the two you are looking at. Derived means a backup was
+    written; it does NOT mean the scheduler is still alive to write another,
+    which is what `running` is for.
+    """
+
     last_error: str | None = None
+
+    last_skip_reason: str | None = None
+    """Why the last cycle wrote nothing, when that was the right answer.
+
+    Backups are only written when the data has actually changed, so on a quiet
+    collection the newest tarball can be legitimately old. Without this the UI
+    could only show a stale timestamp and let the reader guess whether the
+    scheduler had died.
+    """
+
     consecutive_failures: int = 0
 
 

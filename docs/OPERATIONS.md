@@ -92,7 +92,10 @@ fleet-default, the UI is the per-install override.
 | `HEADROOM_LOG_LEVEL` | `INFO` | Applies when no other logging config is active |
 | `HEADROOM_BACKUP_ENABLED` | `true` | Scheduled backups on/off (on-demand download always works) |
 | `HEADROOM_BACKUP_INTERVAL_HOURS` | `24` | Scheduled backup cadence |
-| `HEADROOM_BACKUP_RETENTION_DAYS` | `7` | Older *local* scheduled backups are pruned |
+| `HEADROOM_BACKUP_KEEP` | `5` | Keep the newest N local scheduled backups (a **count**; `HEADROOM_BACKUP_RETENTION_DAYS` is still read, as a count, for existing `.env` files) |
+| `HEADROOM_MAX_BODY_BYTES` | `2097152` | Non-multipart request bodies over this are refused with 413 |
+| `HEADROOM_DISK_MIN_FREE_MB` | `500` | `/health/ready` fails below this — the container goes unhealthy |
+| `HEADROOM_DISK_WARN_PCT` | `15` | Warn in the log below this share of the volume |
 | `HEADROOM_BACKUP_UPLOAD_CMD` | _(unset)_ | Command run after each scheduled backup to ship it off-box; `{path}`/`{dir}`/`{name}` substituted (argv, no shell). Best-effort — see §4 |
 | `HEADROOM_BACKUP_UPLOAD_TIMEOUT` | `600` | Seconds before the upload command is killed |
 | `HEADROOM_IMPORT_WORKER_ENABLED` | `true` | Bulk-import background worker |
@@ -137,11 +140,30 @@ fleet-default, the UI is the per-install override.
 
 ## 4. Backups & restore
 
-**Scheduled**: a rolling `tar.gz` (database + uploads) is written every
-`HEADROOM_BACKUP_INTERVAL_HOURS` to `backups/` next to the upload dir —
-`/data/backups/` in Docker. Files are named
-`headroom-backup-<timestamp>.tar.gz`; ones older than the retention window
-are pruned after each new write. The Settings page lists them.
+**Scheduled**: every `HEADROOM_BACKUP_INTERVAL_HOURS` the scheduler checks
+whether anything has changed, and writes a `tar.gz` (database + uploads) to
+`backups/` next to the upload dir — `/data/backups/` in Docker — **only if it
+has**. Files are named `headroom-backup-<timestamp>.tar.gz`; ones beyond the
+newest `HEADROOM_BACKUP_KEEP` are pruned after each new write. The Settings
+page lists them, along with whether the scheduler is healthy.
+
+*Only when changed* matters because the alternative wastes the thing it is
+protecting: on an untouched collection, a daily tarball re-reads every photo,
+wears the card, and evicts a real historical snapshot from a fixed-size window
+to store a restatement of the newest one. Change is judged from the size and
+mtime of the database, its WAL sidecar, and every file under uploads; the
+marker recording the last backed-up state is a file in `backups/`, never a row
+in the database — the database is part of what it measures.
+
+This is also why retention is a **count** rather than an age. Age-based
+pruning and change-gating combine badly: leave the collection alone for longer
+than the window and the last backup ages out with nothing being written to
+replace it, so the steady state on an idle system is zero backups.
+
+An old newest-backup is therefore not by itself a problem. Check
+`GET /api/admin/backups/health` (or the Settings card, which renders it): it
+distinguishes *running and idle because nothing changed* from *failing* from
+*not running at all*.
 
 **On-demand**: Settings → Backup, or
 `GET /api/admin/backup` (add `?include_uploads=false` for a database-only

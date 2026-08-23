@@ -342,7 +342,14 @@ export interface BackupHealth {
   running: boolean;
   last_attempt_at: string | null;
   last_success_at: string | null;
+  /** True when `last_success_at` came from a file's mtime, not a recorded run.
+   *  The health record is process-local and a restart clears it, so a null
+   *  would otherwise read as "never succeeded" after every reboot. */
+  last_success_derived: boolean;
   last_error: string | null;
+  /** Why the last cycle correctly wrote nothing. Backups only run when the
+   *  data changed, so an old snapshot is not by itself a problem. */
+  last_skip_reason: string | null;
   consecutive_failures: number;
 }
 

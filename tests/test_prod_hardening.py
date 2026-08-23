@@ -247,22 +247,33 @@ def _make_backup(name_ts: str, age_days: float):
     return p
 
 
-async def test_backup_retention_prunes_by_age_keeps_newest():
+async def test_backup_retention_keeps_the_newest_n():
     from headroom.services import backup_service
 
-    old = _make_backup("2020-01-01T00-00-00Z", age_days=30)
-    recent = _make_backup("2026-07-15T00-00-00Z", age_days=1)
-    backup_service._enforce_retention(7)
-    assert not old.exists()      # older than 7 days → pruned
-    assert recent.exists()       # within window → kept
+    kept = [_make_backup(f"2026-07-1{i}T00-00-00Z", age_days=i) for i in range(3)]
+    evicted = _make_backup("2020-01-01T00-00-00Z", age_days=900)
+
+    backup_service._enforce_retention(3)
+
+    assert all(p.exists() for p in kept)
+    assert not evicted.exists()
 
 
-async def test_backup_retention_never_deletes_the_only_backup():
+async def test_an_old_backup_survives_when_it_is_all_there_is():
+    """Count-based, so age alone never empties the directory.
+
+    This is why the policy moved off age. Backups are only written when the
+    data changed, so an untouched collection stops producing them — and an
+    age-based rule would then delete the last one with nothing to replace it.
+    Its steady state on an idle system is zero backups.
+    """
     from headroom.services import backup_service
 
     lonely = _make_backup("2019-01-01T00-00-00Z", age_days=999)
-    backup_service._enforce_retention(7)
-    assert lonely.exists()  # never leave zero backups on disk
+
+    backup_service._enforce_retention(5)
+
+    assert lonely.exists()
 
 
 async def test_backup_startup_skip_signal():
