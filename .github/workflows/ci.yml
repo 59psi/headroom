@@ -100,20 +100,23 @@ jobs:
       - uses: actions/checkout@v7
       # Catches the class of bug that shipped in 2.0.6: config the pinned
       # toolchain in the image can't actually parse. Tests alone missed it.
-      # Layer caching. Without it this job rebuilt every layer every run —
-      # apt, uv sync, npm ci and a full SPA build — which is nearly all of its
-      # wall time and none of its value on a branch that only touched Python.
-      # `type=gha` is scoped per-branch by Actions and falls back to main's
-      # cache, so a fresh branch still starts warm.
-      - uses: docker/setup-buildx-action@v3
+      # NO registry-backed layer cache here, and that is a measured decision
+      # rather than an omission.
+      #
+      # `cache-to: type=gha,mode=max` was tried and made this job roughly 2.7x
+      # SLOWER — 98s before, 204-284s after, including on runs that changed
+      # nothing in the image. `mode=max` exports every intermediate layer to
+      # GitHub's cache backend, and this image carries a 171 MB ONNX model plus
+      # a full venv, so each run shipped on the order of a gigabyte over the
+      # network to avoid a build that took 98 seconds. The cache cost more than
+      # the thing it was caching.
+      #
+      # The BuildKit cache MOUNTS in the Dockerfile (npm, apt, the model) are a
+      # different mechanism and are kept: they are local disk, they cost
+      # nothing to consult, and they are aimed at the Raspberry Pi, where the
+      # scarce resource is a home internet connection rather than a runner.
       - name: Build image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          load: true
-          tags: headroom:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+        run: docker build -t headroom:ci .
       - name: Container serves /health
         run: |
           docker run -d --name ci -p 8000:8000 headroom:ci
