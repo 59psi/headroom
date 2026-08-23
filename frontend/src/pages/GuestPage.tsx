@@ -73,7 +73,7 @@ export function GuestPage() {
             {data.hat_count} hat{data.hat_count !== 1 ? 's' : ''}
             {submitted && <> matching “{submitted}”</>}
           </p>
-          <SharedCollectionGrid hats={data.hats} />
+          <SharedCollectionGrid hats={data.hats} hrefFor={h => `/guest/hat/${h.id}`} />
         </>
       )}
     </div>

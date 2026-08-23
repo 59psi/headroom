@@ -117,16 +117,32 @@ async def shared_hats(db: AsyncSession) -> list[Hat]:
 
 
 async def shared_hat(db: AsyncSession, hat_id: int) -> Hat | None:
-    """A single shared hat, or None if it isn't one.
+    """A single hat an outside viewer may see, or None.
 
     Re-checks `disposed_at` rather than trusting that the caller came from
-    `shared_hats`: this backs the photo endpoint, where the hat id arrives
-    straight from the URL.
+    `shared_hats`: the id arrives straight from a URL on every route that uses
+    this.
+
+    Deliberately does NOT require a photo. It used to, because its only caller
+    was the photo endpoint — but a hat with no photo is still a real hat in the
+    collection, and a detail view that 404s on one would be hiding something
+    that is plainly listed on the page you clicked from. Photo-ness is the
+    photo route's business, and both photo routes check it themselves.
+
+    Eager-loads what the projection reads. `db.get` returned a bare instance,
+    and `room_name` walks `hat.case.room` — a relationship hop that raises
+    rather than lazy-loading under asyncio.
     """
-    hat = await db.get(Hat, hat_id)
-    if hat is None or hat.disposed_at is not None or not hat.photo_path:
-        return None
-    return hat
+    result = await db.execute(
+        select(Hat)
+        .options(
+            selectinload(Hat.case).selectinload(Case.room),
+            selectinload(Hat.direct_room),
+            selectinload(Hat.colors),
+        )
+        .where(Hat.id == hat_id, Hat.disposed_at.is_(None))
+    )
+    return result.scalar_one_or_none()
 
 
 def to_shared_hat(hat: Hat, photo_url: str | None):

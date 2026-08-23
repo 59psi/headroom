@@ -6,6 +6,31 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.37.0] — 2026-08-22
+
+### Added
+- **Guests can open a hat.** Tiles in the guest view are now links to
+  `/guest/hat/:id`, showing the photo, name, style, colours and — given the
+  most room, because it is the question a guest actually has — **which room and
+  which case** it lives in. A caseless hat says so and still names its room.
+
+  A real endpoint rather than a detail rendered from the listing payload, so
+  the link survives being sent to somebody. It returns **exactly** the
+  `SharedHat` projection the grid already used: a per-hat endpoint is precisely
+  where someone reaches for "just one more field", and this is the surface
+  where that costs most, so a test pins the response's key set.
+
+### Fixed
+- **`shared_hat` required a photo**, because its only caller was the photo
+  endpoint. A hat plainly listed on the page you clicked from would have 404ed
+  when you clicked it. It now answers "may an outsider see this hat", which is
+  a different question from "does it have a photo to serve" — both photo routes
+  check that themselves, and a test pins that share-link photos still 404
+  without one.
+- **`shared_hat` used `db.get`**, returning a bare instance. `room_name` walks
+  `hat.case.room`, a relationship hop that raises rather than lazy-loading
+  under asyncio. It now eager-loads what the projection reads.
+
 ## [2.36.2] — 2026-08-22
 
 Findings from a two-axis review of 2.34–2.36.1.
