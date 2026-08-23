@@ -16,7 +16,13 @@ import type { QueryClient } from '@tanstack/react-query';
  * which `displayId` is mounted.
  */
 export function invalidateHatViews(qc: QueryClient, hatId?: number) {
-  const keys: unknown[][] = [['hats'], ['cases'], ['case'], ['rooms']];
+  // `['room']` is a SIBLING of `['rooms']`, not covered by it — TanStack
+  // matches by prefix, and "rooms" is not a prefix of "room". The room view
+  // lists a room's loose hats, so a hat moving into or out of a room changes
+  // it; without this the page would keep showing the hat where it used to be
+  // for the whole 30s staleTime. Same shape of trap as
+  // `['admin','recent-errors']` vs `['admin','recent-errors-count']`.
+  const keys: unknown[][] = [['hats'], ['cases'], ['case'], ['rooms'], ['room']];
   if (hatId !== undefined) keys.push(['hat', hatId]);
   return Promise.all(keys.map(queryKey => qc.invalidateQueries({ queryKey })));
 }
