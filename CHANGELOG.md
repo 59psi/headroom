@@ -6,6 +6,53 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.36.2] — 2026-08-22
+
+Findings from a two-axis review of 2.34–2.36.1.
+
+### Security
+- **Guest search could be used as an oracle for fields the projection
+  withholds.** `SharedHat` deliberately omits condition, size, collection and
+  construction — but guest search delegated to the owner's search, which
+  matches on all four. `?q=worn` returned exactly the worn hats, so a guest
+  could read every hat's condition by probing, and its size, collection and
+  construction the same way. Verified live during review.
+
+  `search_hats(public_fields_only=True)` now drops those clauses **and the
+  hydro/hydrolite flags derived from construction** — closing the front door
+  and leaving that window open would have leaked the same fact. The owner's own
+  search is unchanged.
+
+- **`/api/auth/status` no longer tells anonymous callers that guest view
+  exists.** It returned `guest_view_enabled: false`, which is precisely the
+  fact the guest routes' 404-rather-than-403 was written to keep private. The
+  field is now absent when off.
+
+### Fixed
+- **Guest search reported a capped count.** The response's `hat_count` is its
+  own length, and search was bounded to 50 — so a search matching 200 said "50
+  hats". The third instance of the same `len()`-of-a-capped-list mistake, after
+  the colourway catalog and the analysis queue. Guest search uses its own,
+  higher bound.
+- **The case-valuation rule was stated a third time**, inside
+  `report_service`, where `tests/test_valuation_parity.py` cannot see it — and
+  it had already drifted: a flat constant per row, where the browser sums each
+  case's served `retail_price`. Moved to `services/valuation.value_cases()`
+  beside the hat rule, with a parity test that fails if the renderer restates
+  it again.
+- **Home and Stats showed a Cases tile beside a hats-only total**, which
+  answers "what's it all worth" only if you do the addition yourself. Both now
+  carry a combined figure, as the Valuation page and the report already did.
+
+### Changed
+- One projection *mapper*, not just one projection type. The share-link and
+  guest routes each built `SharedHat` field by field; the type was shared, the
+  ten-field mapper was copied — so a field added to the projection would be
+  filled in at whichever site the author was looking at, and the copy that fell
+  behind would be the one exposed to strangers. `share_link_service.to_shared_hat()`.
+- Guest fetching moved into `frontend/src/api/guest.ts`, per the convention
+  that API functions live in `api/`.
+
 ## [2.36.1] — 2026-08-22
 
 ### Fixed

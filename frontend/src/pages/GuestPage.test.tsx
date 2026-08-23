@@ -12,11 +12,11 @@ import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../test/utils';
 import { GuestPage } from './GuestPage';
-import * as client from '../api/client';
+import * as guestApi from '../api/guest';
 
-vi.mock('../api/client', () => ({ apiFetch: vi.fn() }));
+vi.mock('../api/guest', () => ({ getGuestCollection: vi.fn() }));
 
-const mocked = vi.mocked(client);
+const mocked = vi.mocked(guestApi);
 
 function collection(names: string[]) {
   return {
@@ -33,7 +33,7 @@ beforeEach(() => vi.clearAllMocks());
 
 describe('GuestPage', () => {
   it('lists the collection', async () => {
-    mocked.apiFetch.mockResolvedValue(collection(['Coronado', 'Odysea']));
+    mocked.getGuestCollection.mockResolvedValue(collection(['Coronado', 'Odysea']));
 
     renderWithProviders(<GuestPage />);
 
@@ -43,54 +43,50 @@ describe('GuestPage', () => {
 
   it('sends the search to the server, not a client-side filter', async () => {
     const user = userEvent.setup();
-    mocked.apiFetch.mockResolvedValue(collection(['Coronado']));
+    mocked.getGuestCollection.mockResolvedValue(collection(['Coronado']));
     renderWithProviders(<GuestPage />);
     await screen.findByText('Melin Coronado');
 
     await user.type(screen.getByLabelText('Search the collection'), 'hydro');
     await user.click(screen.getByRole('button', { name: 'Search' }));
 
-    expect(mocked.apiFetch).toHaveBeenLastCalledWith(
-      '/api/public/guest/collection?q=hydro',
-    );
+    expect(mocked.getGuestCollection).toHaveBeenLastCalledWith('hydro');
   });
 
   it('does not fire a request per keystroke', async () => {
     // A request per character is a lot of load to hand an unauthenticated
     // caller; only the submitted term goes to the server.
     const user = userEvent.setup();
-    mocked.apiFetch.mockResolvedValue(collection(['Coronado']));
+    mocked.getGuestCollection.mockResolvedValue(collection(['Coronado']));
     renderWithProviders(<GuestPage />);
     await screen.findByText('Melin Coronado');
-    const before = mocked.apiFetch.mock.calls.length;
+    const before = mocked.getGuestCollection.mock.calls.length;
 
     await user.type(screen.getByLabelText('Search the collection'), 'hydro');
 
-    expect(mocked.apiFetch.mock.calls.length).toBe(before);
+    expect(mocked.getGuestCollection.mock.calls.length).toBe(before);
   });
 
-  it('escapes the query rather than pasting it into the URL', async () => {
+  it('passes the raw term — the client escapes it', async () => {
     const user = userEvent.setup();
-    mocked.apiFetch.mockResolvedValue(collection([]));
+    mocked.getGuestCollection.mockResolvedValue(collection([]));
     renderWithProviders(<GuestPage />);
 
     await user.type(screen.getByLabelText('Search the collection'), 'a&b c');
     await user.click(screen.getByRole('button', { name: 'Search' }));
 
-    expect(mocked.apiFetch).toHaveBeenLastCalledWith(
-      '/api/public/guest/collection?q=a%26b%20c',
-    );
+    expect(mocked.getGuestCollection).toHaveBeenLastCalledWith('a&b c');
   });
 
   it('offers a way back to signing in', async () => {
-    mocked.apiFetch.mockResolvedValue(collection([]));
+    mocked.getGuestCollection.mockResolvedValue(collection([]));
     renderWithProviders(<GuestPage />);
     expect(await screen.findByRole('link', { name: 'Sign in' })).toBeInTheDocument();
   });
 
   it('says so plainly when guest browsing is unavailable', async () => {
     // The server 404s when the owner has it switched off.
-    mocked.apiFetch.mockRejectedValue(new Error('Not found'));
+    mocked.getGuestCollection.mockRejectedValue(new Error('Not found'));
 
     renderWithProviders(<GuestPage />);
 

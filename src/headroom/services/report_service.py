@@ -18,7 +18,7 @@ from sqlalchemy.orm import selectinload
 from headroom.config import settings
 from headroom.models.case import Case
 from headroom.models.hat import Hat
-from headroom.services import retail_pricing, valuation
+from headroom.services import valuation
 
 
 def _fmt_dollars(v: float | None) -> str:
@@ -70,7 +70,7 @@ async def render_report(
     # resale market at all, and adding two different kinds of number under one
     # heading is how a total stops meaning anything.
     case_count = (await db.execute(select(func.count(Case.id)))).scalar() or 0
-    case_value = case_count * retail_pricing.CASE_RETAIL
+    case_value = valuation.value_cases(case_count)
 
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     rows_html = "\n".join(_row_html(h, include_photos) for h in rows)

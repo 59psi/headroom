@@ -9,7 +9,7 @@ readable without opening the transport layer.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, model_serializer, Field
 
 # Argon2id makes long passwords cheap to verify, so the ceiling exists only to
 # bound what gets hashed, not to constrain the user.
@@ -30,7 +30,27 @@ class AuthStatus(BaseModel):
     #: rather than on its own endpoint because this is the one unauthenticated
     #: call the login page already makes, and a second would be a second
     #: round-trip before anything renders.
-    guest_view_enabled: bool = False
+    #:
+    #: `None` when guest view is off, and then EXCLUDED from the response
+    #: entirely (`exclude_none`). Returning `false` would tell an anonymous
+    #: caller "this install has a guest mode and it is switched off" — which is
+    #: exactly the fact the guest routes' 404-rather-than-403 exists to keep to
+    #: itself. Absent is what "off" looks like from outside.
+    guest_view_enabled: bool | None = None
+
+    @model_serializer(mode="wrap")
+    def _hide_guest_view_when_off(self, handler):
+        """Drop `guest_view_enabled` from the payload when it is off.
+
+        Precisely this one field — `response_model_exclude_none` would have
+        done it, but it would also have dropped `username` on an anonymous
+        response, quietly changing a contract this change has no business
+        touching.
+        """
+        data = handler(self)
+        if self.guest_view_enabled is None:
+            data.pop("guest_view_enabled", None)
+        return data
 
 
 class PasswordChange(BaseModel):

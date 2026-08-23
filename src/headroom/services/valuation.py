@@ -27,6 +27,24 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from headroom.models.hat import Hat
+from headroom.services import retail_pricing
+
+def value_cases(count: int) -> float:
+    """What `count` cases are worth, at replacement cost.
+
+    Mirrors `valueCases()` in the TypeScript, and lives here rather than in
+    `report_service` for the reason the module docstring gives: the valuation
+    rule is stated once per language, and the parity test only guards the
+    copies it can see. A third statement of it inside the report renderer is
+    exactly the drift this file exists to prevent — and it had already begun,
+    charging a flat `CASE_RETAIL` per row where the browser sums each case's
+    own served `retail_price`.
+
+    Reads `retail_pricing.CASE_RETAIL` rather than restating $49, so there is
+    one number even across the two rules.
+    """
+    return count * retail_pricing.CASE_RETAIL
+
 
 #: What the marketplace pays a seller, as a fraction of the sale price.
 CASH_PAYOUT = 0.80

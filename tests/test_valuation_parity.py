@@ -152,3 +152,49 @@ async def test_case_value_is_reported_separately_from_hats(client):
     # The hat figure keeps its own label and is not silently inflated.
     assert "Current Value (best estimate)" in html
     assert "replacement" in html
+
+
+async def test_the_case_rule_is_stated_once_per_language():
+    """`value_cases` lives beside the hat rule, not in the report renderer.
+
+    It was written into `report_service` first — a THIRD statement of the
+    valuation rule, in a file the parity check does not read — and it had
+    already begun to drift: the browser sums each case's served `retail_price`
+    while the renderer charged a flat constant per row. Identical today only
+    because the server publishes the same number for every case.
+    """
+    from headroom.services import retail_pricing, valuation
+
+    assert valuation.value_cases(0) == 0
+    assert valuation.value_cases(3) == 3 * retail_pricing.CASE_RETAIL
+
+    # The renderer must not do the arithmetic itself again.
+    report_src = (_ROOT / "src/headroom/services/report_service.py").read_text()
+    assert "CASE_RETAIL" not in report_src, (
+        "report_service is restating the case rule instead of calling it"
+    )
+
+
+async def test_the_browser_sums_the_served_case_price(client):
+    """The TS side deliberately has no $49 in it.
+
+    `valueCases()` adds up each case's own `retail_price` as served, so the
+    price has exactly one home (`retail_pricing.CASE_RETAIL`) and the client
+    follows the server without an edit. A literal here would be a second copy
+    of the number that the Python-side parity check above cannot see.
+    """
+    from headroom.services import retail_pricing
+
+    ts = _TS.read_text()
+    marker = "export function valueCases"
+    assert marker in ts, "valueCases has moved or been renamed"
+    body = ts[ts.index(marker):].split("\n}")[0]
+
+    assert "retail_price" in body, "valueCases must sum the served price"
+    assert str(int(retail_pricing.CASE_RETAIL)) not in body, (
+        "valueCases hardcodes the case price instead of summing what is served"
+    )
+
+    # And the API really does serve it on every case.
+    case = (await client.post("/api/cases", json={"case_type": "archive"})).json()
+    assert case["retail_price"] == retail_pricing.CASE_RETAIL

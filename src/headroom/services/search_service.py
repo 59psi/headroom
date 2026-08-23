@@ -30,12 +30,25 @@ def _in_room(room_id: int):
     )
 
 
+#: How many results a search returns. A backstop, not a page: the UI has no
+#: paging, so anything past this is simply unfindable.
+SEARCH_LIMIT = 50
+
+#: The limit used for guest search. Higher because the guest view has no
+#: paging either AND reports the result count as the number of matches — a
+#: truncated list would make that count a lie, which is the `len()`-of-a-capped
+#: -list mistake this codebase has now made twice.
+GUEST_SEARCH_LIMIT = 500
+
+
 async def search_hats(
     db: AsyncSession,
     query: str,
     *,
     exact_colors: bool = False,
     room_id: int | None = None,
+    public_fields_only: bool = False,
+    limit: int = SEARCH_LIMIT,
 ) -> list[Hat]:
     """Multi-term AND search across hat fields and color names.
 
@@ -71,18 +84,13 @@ async def search_hats(
     for term in terms:
         pattern = f"%{term}%"
         # Each term must match something
+        # Fields an outside viewer can already SEE — the ones `SharedHat`
+        # carries. Safe to match on, because a hit reveals nothing the results
+        # don't already show.
         clauses = [
             Hat.style.ilike(pattern),
-            Hat.condition.ilike(pattern),
-            Hat.size.ilike(pattern),
             Hat.brand.ilike(pattern),
             Hat.model_name.ilike(pattern),
-            Hat.artist_series.ilike(pattern),
-            # Free-form since 2.11, so "canvas" finds a Waxed Canvas hat. The
-            # flag clauses below stay because they are not redundant with this:
-            # `hydro` must keep finding a hat recorded as "A-Game Hydro", and
-            # `hydrolite` must NOT drag in every HYDRO.
-            Hat.construction.ilike(pattern),
             Hat.id.in_(
                 select(HatColor.hat_id).where(color_field.ilike(pattern))
             ),
@@ -92,20 +100,42 @@ async def search_hats(
                 Hat.direct_room.has(Room.name.ilike(pattern)),
             ),
         ]
-        # HYDRO / HYDROLite also have boolean columns, derived from the text
-        # above. They used to be values of `style`, and USAGE still promised
-        # "`hydro` finds every Hydro" — moving them to flags in 2.6.0 quietly
-        # broke that. Matched on the term itself so the promise holds again.
-        # "hydro" is a prefix of "hydrolite", so check the longer word first or
-        # every HYDROLite search also drags in every HYDRO.
-        low = term.lower()
-        if "hydrolite" in low:
-            clauses.append(Hat.hydrolite.is_(True))
-        elif "hydro" in low:
-            clauses.append(Hat.hydro.is_(True))
+        if not public_fields_only:
+            # Matching on a field the caller cannot see turns search into an
+            # oracle for it: `?q=worn` returns exactly the worn hats, so a
+            # guest could read every hat's condition by probing even though
+            # `SharedHat` withholds it. Same for size, collection and
+            # construction — and for the hydro/hydrolite flags below, which
+            # are derived from construction.
+            clauses += [
+                Hat.condition.ilike(pattern),
+                Hat.size.ilike(pattern),
+                Hat.artist_series.ilike(pattern),
+                # Free-form since 2.11, so "canvas" finds a Waxed Canvas hat.
+                # The flag clauses below stay because they are not redundant
+                # with this: `hydro` must keep finding a hat recorded as
+                # "A-Game Hydro", and `hydrolite` must NOT drag in every HYDRO.
+                Hat.construction.ilike(pattern),
+            ]
+            # HYDRO / HYDROLite also have boolean columns, derived from the
+            # text above. They used to be values of `style`, and USAGE still
+            # promised "`hydro` finds every Hydro" — moving them to flags in
+            # 2.6.0 quietly broke that. Matched on the term itself so the
+            # promise holds again. "hydro" is a prefix of "hydrolite", so check
+            # the longer word first or every HYDROLite search also drags in
+            # every HYDRO.
+            #
+            # Inside the same guard as `construction`: these are DERIVED from
+            # it, so leaving them out here would close the front door and leave
+            # the window open.
+            low = term.lower()
+            if "hydrolite" in low:
+                clauses.append(Hat.hydrolite.is_(True))
+            elif "hydro" in low:
+                clauses.append(Hat.hydro.is_(True))
         stmt = stmt.where(or_(*clauses))
 
-    stmt = stmt.order_by(Hat.id).limit(50)
+    stmt = stmt.order_by(Hat.id).limit(limit)
     result = await db.execute(stmt)
     return list(result.scalars().all())
 
