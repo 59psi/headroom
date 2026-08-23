@@ -11,6 +11,7 @@ import { HatDetailPage } from './pages/HatDetailPage';
 import { AddHatPage } from './pages/AddHatPage';
 import { EditHatPage } from './pages/EditHatPage';
 import { RoomsPage } from './pages/RoomsPage';
+import { RoomDetailPage } from './pages/RoomDetailPage';
 import { SearchPage } from './pages/SearchPage';
 import { DuplicatesPage } from './pages/DuplicatesPage';
 import { SettingsPage } from './pages/SettingsPage';
@@ -57,6 +58,7 @@ export function App() {
             <Route path="/hats/:hatId" element={<HatDetailPage />} />
             <Route path="/hats/:hatId/edit" element={<EditHatPage />} />
             <Route path="/rooms" element={<RoomsPage />} />
+            <Route path="/rooms/:roomId" element={<RoomDetailPage />} />
             <Route path="/search" element={<SearchPage />} />
             <Route path="/duplicates" element={<DuplicatesPage />} />
             <Route path="/valuation" element={<ValuationPage />} />

@@ -29,9 +29,15 @@ function RoomCard({ room, onEdit, onDelete, onMakeDefault }: {
           )}
           <span className="text-muted small font-mono ms-auto">
             {room.case_count} case{room.case_count !== 1 ? 's' : ''}
+            {/* A room holding only loose hats used to read as empty. */}
+            {room.loose_hat_count > 0 && <> · {room.loose_hat_count} loose</>}
           </span>
         </div>
         <div className="d-flex gap-1">
+          <Link
+            to={`/rooms/${room.id}`}
+            className="btn btn-sm btn-primary flex-fill"
+          >View</Link>
           <button
             className="btn btn-sm btn-outline-primary flex-fill"
             disabled={room.is_default}

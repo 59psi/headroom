@@ -223,11 +223,19 @@ export interface RoomRead {
   id: number;
   name: string;
   case_count: number;
+  /** Hats kept in this room with no case — they have no other home in the UI. */
+  loose_hat_count: number;
   /** Exactly one room is the default: the fallback for orphaned cases and the
    *  room new cases land in. It's the only room that can't be deleted. */
   is_default: boolean;
   created_at: string;
   updated_at: string;
+}
+
+/** A room and what is in it. Loose hats first — see RoomDetailPage. */
+export interface RoomDetail extends RoomRead {
+  loose_hats: HatRead[];
+  cases: CaseRead[];
 }
 
 export interface ApiKeyStatus {

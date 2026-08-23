@@ -167,3 +167,56 @@ async def delete_room(db: AsyncSession, room_id: int) -> None:
             f"caseless hat(s) moved to the default room"
         ),
     )
+
+
+async def get_room_contents(db: AsyncSession, room_id: int) -> tuple[Room, list[Hat], list[Case]]:
+    """A room, the hats kept loose in it, and its cases.
+
+    Loose hats come back as their own list rather than mixed in with the cases'
+    contents, because they are the half of a room that has nowhere else to be
+    seen: a cased hat is reachable through its case from the Cases tab, but a
+    hat on a shelf is only ever visible here and in search.
+
+    Ordered newest-first — a hat set down loose is usually one you have just
+    handled, and the room view is where you go to find it again.
+    """
+    room = await get_room(db, room_id)
+
+    loose = (
+        await db.execute(
+            select(Hat)
+            .options(
+                selectinload(Hat.case).selectinload(Case.room),
+                selectinload(Hat.direct_room),
+                selectinload(Hat.colors),
+            )
+            .where(Hat.direct_room_id == room_id, Hat.disposed_at.is_(None))
+            .order_by(Hat.created_at.desc(), Hat.id.desc())
+        )
+    ).scalars().all()
+
+    cases = (
+        await db.execute(
+            select(Case)
+            .options(selectinload(Case.room), selectinload(Case.hats))
+            .where(Case.room_id == room_id)
+            .order_by(Case.display_id)
+        )
+    ).scalars().all()
+
+    return room, list(loose), list(cases)
+
+
+async def loose_hat_counts(db: AsyncSession) -> dict[int, int]:
+    """Loose-hat count per room, for the rooms list.
+
+    One grouped COUNT rather than loading hats per room, for the same reason
+    `list_rooms` counts cases in SQL: pulling the rows cascades into colours and
+    wear logs for the whole collection to produce a number.
+    """
+    rows = await db.execute(
+        select(Hat.direct_room_id, func.count(Hat.id))
+        .where(Hat.direct_room_id.is_not(None), Hat.disposed_at.is_(None))
+        .group_by(Hat.direct_room_id)
+    )
+    return {room_id: int(n) for room_id, n in rows.all()}

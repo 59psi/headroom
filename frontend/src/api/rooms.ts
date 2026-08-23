@@ -1,5 +1,5 @@
 import { apiFetch } from './client';
-import type { RoomRead } from '../types';
+import type { RoomDetail, RoomRead } from '../types';
 
 export function listRooms() {
   return apiFetch<RoomRead[]>('/api/rooms');
@@ -31,4 +31,9 @@ export function setDefaultRoom(id: number) {
 /** Room options for filter dropdowns (value/label format). */
 export function getRoomOptions() {
   return apiFetch<{ value: number; label: string }[]>('/api/meta/rooms');
+}
+
+/** A room and what is in it — loose hats first, then its cases. */
+export function getRoom(id: number) {
+  return apiFetch<RoomDetail>(`/api/rooms/${id}`);
 }

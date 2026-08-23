@@ -6,6 +6,35 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.35.0] — 2026-08-22
+
+### Added
+- **Rooms are viewable, and loose hats come first.** There was no room view at
+  all: `/rooms` listed names with rename and delete, and rooms weren't
+  clickable. So the room-stored hats added in 2.33 had **nowhere to be seen** —
+  the Cases tab reaches a hat through its case, and a hat on a shelf has no
+  case to be reached through.
+
+  `/rooms/:id` shows what's actually in a room, with the loose hats **above**
+  the cases. That ordering is the point: a cased hat is findable three other
+  ways, a loose one is findable here and in search. It also matches a physical
+  room — the things sitting out are what you see when you walk in.
+
+  The rooms list gains a loose count too, since a room holding three hats and
+  no cases previously read as empty.
+
+  `GET /api/rooms/{id}` now returns `RoomDetail` (loose hats + cases); loose
+  hats are newest-first, because a hat set down loose is usually one you just
+  handled.
+
+### Fixed
+- **`invalidateHatViews` now covers `['room']`.** It is a *sibling* of
+  `['rooms']`, not a prefix match — TanStack matches by prefix and "rooms" is
+  not a prefix of "room". Without it, moving a hat into or out of a room left
+  the room view showing it where it used to be for the full 30s `staleTime`.
+  Exactly the shape of trap already documented for
+  `['admin','recent-errors']` vs `['admin','recent-errors-count']`.
+
 ## [2.34.0] — 2026-08-22
 
 ### Fixed
