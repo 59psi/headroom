@@ -31,11 +31,15 @@ services:
       # passkeys work, and the alternative was `docker compose cp` on the Pi
       # followed by AirDrop.
       #
-      # `:ro` matters more than usual: this volume also holds root.key and
-      # intermediate.key. The route hardcodes the one filename it serves and
-      # takes no path input, but a read-only mount means a bug there still
-      # cannot write to Caddy's PKI.
-      - caddy-data:/caddy-data:ro
+      # This mounts the EXPORT volume, which holds exactly one public
+      # certificate — not Caddy's PKI. Mounting the PKI is what the overlay
+      # used to do, and it never once worked: Caddy creates that tree
+      # 0700 root:root, this app runs as a non-root user by policy, so the
+      # route could not traverse into it and answered 404 on every install.
+      # Copying one file out fixes that and is the stronger arrangement
+      # anyway — there is no key material in this container's view to serve
+      # by mistake.
+      - caddy-ca:/caddy-ca:ro
 
   # Deliberately self-contained rather than layered on docker-compose.https.yml
   # (keeps the run command to two -f flags) — keep this block in sync with the
@@ -52,6 +56,35 @@ services:
     depends_on:
       - headroom
 
+  # Publishes Caddy's public root where a non-root app can read it.
+  #
+  # Runs as root (so it can read the 0700 PKI) but touches nothing else: it
+  # reads one file from a read-only mount and writes one file, world-readable,
+  # to a volume that holds nothing else.
+  #
+  # It polls instead of copying once because Caddy mints the CA a moment AFTER
+  # startup on a first boot, and rotates the intermediate periodically
+  # thereafter — a one-shot copy would race the former and leave the endpoint
+  # 404ing until someone restarted the stack.
+  caddy-ca-export:
+    image: caddy:2-alpine
+    container_name: headroom-caddy-ca-export
+    restart: unless-stopped
+    depends_on:
+      - caddy
+    volumes:
+      - caddy-data:/data:ro
+      - caddy-ca:/export
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      'while :; do
+         if [ -f /data/caddy/pki/authorities/local/root.crt ]; then
+           install -m 0644 /data/caddy/pki/authorities/local/root.crt /export/root.crt
+         fi
+         sleep 60
+       done'
+
 volumes:
   caddy-data:
   caddy-config:
+  caddy-ca:

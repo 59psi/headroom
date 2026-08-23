@@ -285,8 +285,8 @@ docker compose -f docker-compose.yml -f docker-compose.http80.yml up -d --build
 
 `down -v` removes the `headroom-data` volume; the next boot re-creates a fresh
 database and re-seeds the default room. **Note:** on the `https-lan` overlay
-`-v` *also* removes Caddy's `caddy-data`/`caddy-config` (its local CA), so each
-device has to re-trust the cert once.
+`-v` *also* removes Caddy's `caddy-data`/`caddy-config`/`caddy-ca` (its local CA
+and the exported copy of the root), so each device has to re-trust the cert once.
 
 Keep Caddy's cert (reset only the app data) — remove just the one volume:
 
