@@ -311,3 +311,92 @@ async def test_search_result_construction_is_null_when_unrecorded(client):
     assert len(results) == 1
     assert "construction" in results[0]
     assert results[0]["construction"] is None
+
+
+async def _hat_with_colors(client, model_name, colors):
+    """Create a hat whose swatches are `colors`, IN DOMINANCE ORDER.
+
+    `dominance_rank` is assigned positionally by every writer — the analysis
+    pipeline, the fallback path and this endpoint all do `enumerate(start=1)`
+    — so the rank is the index, not something a caller can state. Passing a
+    rank field here would be ignored, which is exactly the trap that made an
+    earlier version of these tests pass for the wrong reason.
+    """
+    resp = await client.post(
+        "/api/hats",
+        json={"condition": "new", "size": "classic", "style": "a_game",
+              "model_name": model_name},
+    )
+    hat_id = resp.json()["id"]
+    await client.put(
+        f"/api/hats/{hat_id}/colors",
+        json={"colors": [
+            {"color_name": c, "general_color": c, "hex_value": "#123456",
+             "dominance_rank": i}
+            for i, c in enumerate(colors, start=1)
+        ]},
+    )
+    return hat_id
+
+
+@pytest.mark.anyio
+async def test_colour_search_ignores_accents_by_default(client):
+    """A hat is not "pink" because its logo is.
+
+    Every melin hat is a dark crown with a bright mark on it, so matching any
+    row in `hat_colors` made colour terms close to useless — the accent colours
+    are precisely the ones that vary.
+    """
+    # Names deliberately free of the search term: `model_name` is also
+    # searched, so calling them "PinkLogo" would match whatever the colour
+    # clause did and the test would prove nothing.
+    await _hat_with_colors(client, "Coronado", ["pink", "black"])
+    await _hat_with_colors(client, "Odysea", ["black", "grey", "pink"])
+
+    hits = (await client.get("/api/search?q=pink")).json()
+
+    assert [h["model_name"] for h in hits] == ["Coronado"], "an accent matched"
+
+
+@pytest.mark.anyio
+async def test_accent_scope_finds_the_opposite_set(client):
+    """Its own question, not just the complement: "which hats have pink on them
+    somewhere" is how you look for a collab mark."""
+    await _hat_with_colors(client, "Coronado", ["pink", "black"])
+    await _hat_with_colors(client, "Odysea", ["black", "grey", "pink"])
+
+    hits = (await client.get("/api/search?q=pink&color_scope=accent")).json()
+
+    assert [h["model_name"] for h in hits] == ["Odysea"]
+
+
+@pytest.mark.anyio
+async def test_all_scope_returns_both(client):
+    await _hat_with_colors(client, "Coronado", ["pink"])
+    await _hat_with_colors(client, "Odysea", ["black", "grey", "pink"])
+
+    hits = (await client.get("/api/search?q=pink&color_scope=all")).json()
+
+    assert sorted(h["model_name"] for h in hits) == ["Coronado", "Odysea"]
+
+
+@pytest.mark.anyio
+async def test_secondary_colours_still_count_as_major(client):
+    """Rank 2 is the hat's other real colour — a two-tone crown — not an
+    accent. Excluding it would make a black/white cap unfindable as "white"."""
+    await _hat_with_colors(client, "TwoTone", ["black", "white"])
+
+    hits = (await client.get("/api/search?q=white")).json()
+
+    assert [h["model_name"] for h in hits] == ["TwoTone"]
+
+
+@pytest.mark.anyio
+async def test_an_unknown_colour_scope_falls_back_to_the_default(client):
+    """It arrives from a query string. The safe reading of a typo is the
+    default — not a 500, and not a silently wider search."""
+    await _hat_with_colors(client, "Odysea", ["black", "grey", "pink"])
+
+    hits = (await client.get("/api/search?q=pink&color_scope=nonsense")).json()
+
+    assert hits == []

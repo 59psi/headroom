@@ -115,6 +115,14 @@ h5, h6 { font-size: 0.95rem; text-transform: uppercase; }
 
 /* ===== Cards ===================================================== */
 .card {
+  /* An anchor is `display: inline` by default, and `.card` is applied to one
+     in six places (the Cases grid, the Hats list, Duplicates, the case detail
+     list, and both outside-viewer grids). An inline box ignores `h-100`
+     entirely and breaks its border across line boxes, which is what the guest
+     grid's ragged, half-drawn tiles were. Divs are already block, so this
+     changes nothing for them; `.d-flex` is `!important` and still wins where
+     a card needs to be a flex container. */
+  display: block;
   position: relative;
   background: var(--bg-card);
   background-image: var(--gradient-card);

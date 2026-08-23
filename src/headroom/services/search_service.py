@@ -30,6 +30,45 @@ def _in_room(room_id: int):
     )
 
 
+def _color_rank_clause(scope: str):
+    """The dominance-rank restriction for a colour term, as WHERE args.
+
+    Returns a tuple so the caller can splat it — `all` contributes nothing
+    rather than a `True` literal SQLAlchemy would render into the SQL.
+
+    An unknown scope falls back to `major` rather than raising: this is reached
+    from a query string, and the safe reading of a typo is the default, not a
+    500 and not a silently wider search.
+    """
+    if scope == "all":
+        return ()
+    if scope == "accent":
+        return (HatColor.dominance_rank > MAJOR_COLOR_RANK,)
+    return (HatColor.dominance_rank <= MAJOR_COLOR_RANK,)
+
+
+#: Colours at this dominance rank or better are what the hat IS; anything
+#: deeper is an accent — a logo, a piping, an underbrim.
+#:
+#: Searching "pink" used to return a black cap with a pink embroidered logo
+#: alongside actual pink hats, because the clause matched ANY row in
+#: `hat_colors`. Every melin hat is a dark crown with a bright mark on it, so
+#: that made colour terms close to useless: the accent colours are precisely
+#: the ones that vary.
+#:
+#: Keyed on `dominance_rank`, not `tier`, for the same reason the colour-
+#: similarity ranking is: `tier` arrives from the client on the manual-edit
+#: path and can disagree with the position the row is actually stored at.
+MAJOR_COLOR_RANK = 2
+
+#: Which swatches a colour term is allowed to match.
+#:
+#: `accent` is not merely the complement of the default — it is its own useful
+#: question. "Which of my hats has pink on it somewhere" is exactly how you
+#: look for a collab mark or a contrast underbrim, and asking it against the
+#: whole collection returns almost everything.
+COLOR_SCOPES = ("major", "accent", "all")
+
 #: How many results a search returns. A backstop, not a page: the UI has no
 #: paging, so anything past this is simply unfindable.
 SEARCH_LIMIT = 50
@@ -48,6 +87,7 @@ async def search_hats(
     exact_colors: bool = False,
     room_id: int | None = None,
     public_fields_only: bool = False,
+    color_scope: str = "major",
     limit: int = SEARCH_LIMIT,
 ) -> list[Hat]:
     """Multi-term AND search across hat fields and color names.
@@ -91,8 +131,12 @@ async def search_hats(
             Hat.style.ilike(pattern),
             Hat.brand.ilike(pattern),
             Hat.model_name.ilike(pattern),
+            # Major colours only unless asked otherwise — see
+            # `MAJOR_COLOR_RANK`. A hat is not "pink" because its logo is.
             Hat.id.in_(
-                select(HatColor.hat_id).where(color_field.ilike(pattern))
+                select(HatColor.hat_id).where(
+                    color_field.ilike(pattern), *_color_rank_clause(color_scope)
+                )
             ),
             # Same reasoning as `room_id` above: both ways of being in a room.
             or_(

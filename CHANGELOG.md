@@ -6,6 +6,41 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.39.0] — 2026-08-22
+
+### Fixed
+- **The guest grid's tiles were broken, and it was `.card` on an anchor.**
+  `.card` never declared a `display`, which was invisible while every card was
+  a `<div>` (already block). 2.37 made the guest tiles links, and an `<a>` is
+  `display: inline` — so `h-100` was ignored outright and the border broke
+  across line boxes. `.card` now says `display: block`; divs are unaffected and
+  `.d-flex` is `!important` so flex cards still win. This was latent in five
+  other places that already put `.card` on a `<Link>`.
+
+- **A hat is not "pink" because its logo is.** Colour terms matched ANY row in
+  `hat_colors`, so searching "pink" returned every black cap with a pink
+  embroidered mark. On this collection that made colour search close to
+  useless: a melin hat is a dark crown with a bright logo, and the accent
+  colours are exactly the ones that vary. Colour terms now match **major
+  colours only** by default — dominance rank 1–2, which is the hat's own
+  colour and its second, not its trim.
+
+- **The guest search didn't survive going to a hat and back.** The term lived
+  in component state, which a re-mount discards, so Back returned you to the
+  whole collection with an empty box. It lives in the URL now (`/guest?q=…`),
+  and the results are cached long enough that the page is its full height when
+  the browser restores your scroll position — without that, Back put you at the
+  top of a list that was still loading.
+
+### Added
+- **A colour-match toggle: Main colours / Accents only / Any.** "Accents only"
+  is its own question rather than the leftovers of the default — *which of my
+  hats has pink on it somewhere* is how you look for a collab mark or a
+  contrast underbrim. On the Search page and the guest page; on the latter it
+  is in the URL too, so Back restores the whole search rather than half of it.
+  An unrecognised value falls back to the default, because it arrives from a
+  query string and the safe reading of a typo is not a wider search.
+
 ## [2.38.0] — 2026-08-22
 
 ### Added
