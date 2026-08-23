@@ -64,7 +64,16 @@ vi.mock('../api/auth', () => ({
   createShareLink: vi.fn(), revokeShareLink: vi.fn(),
 }));
 
-vi.mock('../api/client', () => ({ apiFetch: vi.fn(async () => []) }));
+// The CA-certificate probe must FAIL here: `TrustCertCard` renders only when
+// a local CA exists, which is the LAN-HTTPS overlay only. A blanket-success
+// `apiFetch` made the card's appearance a race against the section assertions
+// below — it passed only because 'Account' resolved first.
+vi.mock('../api/client', () => ({
+  apiFetch: vi.fn(async (path: string) => {
+    if (path.includes('ca-certificate')) throw new Error('404');
+    return [];
+  }),
+}));
 vi.mock('../lib/webauthn', () => ({
   createPasskey: vi.fn(), passkeysSupported: vi.fn(() => false),
 }));

@@ -301,12 +301,29 @@ On first boot Caddy mints a root CA and a `headroom.local` certificate, the
 app advertises `https://headroom.local` over mDNS, and the passkey identity
 (`HEADROOM_RP_ID` / `HEADROOM_ORIGIN`) is set to the LAN name automatically.
 
-**2. Export Caddy's root certificate** (from the Docker host, in the repo
-directory):
+**2. Get Caddy's root certificate onto the device.** Easiest way — on the
+device itself, open:
+
+```
+http://headroom.local:8000/api/public/ca-certificate
+```
+
+That serves the **root** certificate with the right content type, so iOS
+offers to install it directly. It's also linked from **Settings → This device
+→ Trust this device**, which only appears when a local CA exists.
+
+Or copy it off the host manually:
 
 ```bash
 docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt headroom-ca.crt
 ```
+
+> **Install `root.crt`, not `intermediate.crt`.** They sit side by side in
+> that directory and only the root is a trust anchor. An intermediate is
+> presented by the server during the handshake and means nothing until its
+> issuer is already trusted — so installing it appears to succeed and changes
+> nothing, which is exactly what "the certificate won't install" looks like.
+> The two `.key` files in there are private and never leave the Pi.
 
 **3. Trust it on each device** (passkeys require a *trusted* certificate,
 not just any TLS):
@@ -334,6 +351,9 @@ sign in with Face ID.
   (or `docker compose logs | grep -i mdns`) to confirm the app is advertising.
 - *Still a certificate warning* — on iOS the profile install alone isn't
   enough; the Certificate Trust Settings toggle in step 3 must be on.
+- *The certificate "installs" but nothing changes* — you almost certainly
+  installed `intermediate.crt`. Only `root.crt` is a trust anchor; see the
+  note in step 2.
 - *No Face ID prompt* — passkeys are bound to the domain they were created
   on. One registered at `localhost` or a public domain won't be offered at
   `headroom.local`; add a new passkey while on the LAN name.
