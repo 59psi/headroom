@@ -17,3 +17,15 @@ uploads
 Headroom.zip
 tests/.coverage
 .python-version
+
+# Nothing in the build COPYs these, and every byte of context is uploaded to
+# the daemon before the first layer runs — which on a Pi is time spent before
+# anything has started.
+tests
+docs
+analysis
+.ruff_cache
+htmlcov
+.coverage
+CHANGELOG.md
+CLAUDE.md

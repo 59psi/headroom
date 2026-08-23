@@ -138,6 +138,39 @@ fleet-default, the UI is the per-install override.
 
 ---
 
+## 3b. Build time on the Pi
+
+`docker compose up -d --build` rebuilds from source on the Pi. Three BuildKit
+cache mounts exist to keep that bearable, and each one targets a specific thing
+that was being re-fetched over your home connection for no reason:
+
+| Mount | Why it exists |
+|---|---|
+| `/root/.npm` | Cutting a release edits `frontend/package.json`, which busts the `npm ci` layer. Without the mount that re-downloaded the entire dependency tree on **every upgrade**. |
+| `/opt/model-cache` | The rembg weights are **171 MB**. That layer busts on any dependency change, so it was re-downloading a byte-identical file. |
+| `/var/cache/apt`, `/var/lib/apt` | Same idea for the native libs. |
+
+They are local disk and cost nothing to consult. Note the deliberate asymmetry
+with CI, which has **no** registry-backed layer cache: exporting layers to
+GitHub's cache backend was measured at ~2.7x slower than simply building
+(98s → 204–284s), because this image carries a 171 MB model plus a full venv
+and shipping that over the network costs more than the build it replaces.
+
+**The build's only non-registry network dependency is the model fetch**, and it
+is deliberately non-fatal. rembg downloads the weights on first use anyway, so
+a failure there costs a slow first analysis rather than a deploy you cannot
+perform because somebody else's file host is down. Watch for
+`WARNING: could not pre-cache the rembg model` in the build output.
+
+**If you would rather not build on the Pi at all**, the alternative is to
+publish the image from CI and `docker compose pull`. That turns a first build
+into a download. It is not wired up, because it costs Actions minutes: an
+arm64 image has to be built under QEMU emulation on an amd64 runner, which is
+roughly 15–25 minutes per release. Restricting it to tags (not pull requests)
+keeps that to about one run per release. The trade is Actions minutes against
+Pi minutes; both are currently free for this repository, so it is a question of
+which one you would rather wait for.
+
 ## 4. Backups & restore
 
 **Scheduled**: every `HEADROOM_BACKUP_INTERVAL_HOURS` the scheduler checks
