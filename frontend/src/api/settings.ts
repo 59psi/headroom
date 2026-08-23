@@ -1,7 +1,7 @@
 import { apiFetch } from './client';
 import type {
   ActivityRow, AnalysisJobRead, AnalysisQueueStatus, ApiKeyStatus, ApiKeyTestResult,
-  BackupHealth, BackupInfo, EbayCredsStatus, ImportJob, MdnsStatus, ModelStatus,
+  BackupHealth, BackupInfo, BackupUploadStatus, EbayCredsStatus, ImportJob, MdnsStatus, ModelStatus,
   RecentError, TagBaseStatus, ConstructionAuditRow, ConstructionClearResult,
 } from '../types';
 
@@ -209,6 +209,28 @@ export function refreshColorwayCatalog() {
 /** Whether scheduled backups are actually running — the file list can't say. */
 export function getBackupHealth() {
   return apiFetch<BackupHealth>('/api/admin/backups/health');
+}
+
+export function getBackupUpload() {
+  return apiFetch<BackupUploadStatus>('/api/admin/backups/upload');
+}
+
+/** Provider + destination, never a command — see the route's own note. */
+export function setBackupUpload(provider: string, destination: string) {
+  return apiFetch<BackupUploadStatus>('/api/admin/backups/upload', {
+    method: 'PUT',
+    body: JSON.stringify({ provider, destination }),
+  });
+}
+
+export function clearBackupUpload() {
+  return apiFetch<BackupUploadStatus>('/api/admin/backups/upload', { method: 'DELETE' });
+}
+
+export function testBackupUpload() {
+  return apiFetch<{ ok: boolean; detail: string }>(
+    '/api/admin/backups/upload/test', { method: 'POST' },
+  );
 }
 
 // ---------------------------- Physical tags -------------------------- #

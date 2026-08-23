@@ -497,6 +497,7 @@ link-only if the API is unreachable.
 | `HEADROOM_LOG_LEVEL` | `INFO` | Log level when running uvicorn directly |
 | `HEADROOM_BACKUP_ENABLED` | `true` | Scheduled backups on/off |
 | `HEADROOM_BACKUP_INTERVAL_HOURS` | `24` | Scheduled backup cadence |
+| `HEADROOM_BACKUP_UPLOAD_CMD` | _(unset)_ | Raw off-site upload command. Overrides the Settings UI — host access only, on purpose |
 | `HEADROOM_BACKUP_KEEP` | `5` | How many rolling local backups to keep (a **count**, not days) |
 | `HEADROOM_MAX_BODY_BYTES` | `2097152` | Cap on non-multipart request bodies (uploads have their own, larger caps) |
 | `HEADROOM_DISK_MIN_FREE_MB` | `500` | Below this free space, `/health/ready` fails |

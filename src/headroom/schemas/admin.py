@@ -60,6 +60,41 @@ class BackupHealthRead(BaseModel):
     consecutive_failures: int = 0
 
 
+class BackupUploadStatus(BaseModel):
+    """Whether the off-box copy is configured, and whether it is working.
+
+    Separate from `BackupHealthRead` because the two fail independently: a
+    local backup can succeed every night while the upload has been failing for
+    a month, and only the second means the archive exists nowhere but the SD
+    card it is protecting against.
+    """
+
+    configured: bool
+    provider: str | None = None
+    destination: str | None = None
+    #: True when the command comes from `HEADROOM_BACKUP_UPLOAD_CMD`. That
+    #: variable wins over the stored setting and cannot be changed from here —
+    #: it is settable only with host access, which is a privilege boundary the
+    #: web UI must not be able to cross.
+    from_environment: bool = False
+    available_providers: list[str] = []
+    last_upload_at: datetime | None = None
+    last_upload_ok: bool | None = None
+    last_upload_error: str | None = None
+    upload_successes: int = 0
+    upload_failures: int = 0
+
+
+class BackupUploadUpdate(BaseModel):
+    provider: str
+    destination: str = Field(min_length=1, max_length=200)
+
+
+class BackupUploadTestResult(BaseModel):
+    ok: bool
+    detail: str
+
+
 class ActivityRow(BaseModel):
     id: int
     occurred_at: datetime

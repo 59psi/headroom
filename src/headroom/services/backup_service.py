@@ -13,6 +13,7 @@ import io
 import logging
 import os
 import shutil
+import re
 import shlex
 import stat
 import tarfile
@@ -54,6 +55,25 @@ class BackupHealth:
     last_error: str | None = None
     last_skip_reason: str | None = None
     consecutive_failures: int = 0
+
+    # The off-box copy is tracked SEPARATELY from the backup itself, because
+    # the two fail independently and only one of them means "the archive
+    # exists nowhere but this SD card". A local backup can succeed every night
+    # while the upload has been failing for a month.
+    last_upload_at: datetime | None = None
+    last_upload_ok: bool | None = None
+    last_upload_error: str | None = None
+    upload_successes: int = 0
+    upload_failures: int = 0
+
+    def record_upload(self, ok: bool, error: str | None = None) -> None:
+        self.last_upload_at = datetime.now(timezone.utc)
+        self.last_upload_ok = ok
+        self.last_upload_error = (error or None) if not ok else None
+        if ok:
+            self.upload_successes += 1
+        else:
+            self.upload_failures += 1
 
     def record_success(self) -> None:
         now = datetime.now(timezone.utc)
@@ -400,7 +420,7 @@ async def newest_backup_at() -> datetime | None:
         return None
 
 
-async def _run_upload_hook(path: Path) -> None:
+async def _run_upload_hook(path: Path, argv: list[str] | None = None) -> None:
     """Best-effort off-box copy of a freshly written backup.
 
     Runs ``HEADROOM_BACKUP_UPLOAD_CMD`` (e.g. ``rclone copy {path} box:Backups``)
@@ -413,17 +433,22 @@ async def _run_upload_hook(path: Path) -> None:
     safely on disk. The upload target is the operator's problem to keep tidy;
     Headroom only prunes the local copies.
     """
-    cmd = backup_upload_cmd()
-    if not cmd:
+    # `argv` pre-resolved by the caller when it already holds a session — the
+    # test endpoint does, and resolving twice would read the setting twice and
+    # leave the two reads free to disagree.
+    if argv is None:
+        from headroom.database import async_session  # noqa: PLC0415 — cycle
+
+        try:
+            async with async_session() as db:
+                argv = await resolve_upload_argv(db, path)
+        except Exception as exc:  # noqa: BLE001 — never break the backup
+            logger.error("Could not resolve the backup upload command: %s", exc)
+            return
+    if not argv:
         return
     timeout = backup_upload_timeout()
     try:
-        argv = [
-            tok.replace("{path}", str(path))
-            .replace("{dir}", str(path.parent))
-            .replace("{name}", path.name)
-            for tok in shlex.split(cmd)
-        ]
         # stdout is discarded, so never buffer it: a verbose uploader
         # (`rclone --progress`) would otherwise stream megabytes into memory
         # for the whole transfer — on a 1 GB Pi that matters.
@@ -437,12 +462,14 @@ async def _run_upload_hook(path: Path) -> None:
         except asyncio.TimeoutError:
             proc.kill()
             await proc.wait()
-            logger.warning(
+            logger.error(
                 "Backup upload timed out after %.0fs: %s", timeout, argv[0]
             )
+            _health.record_upload(False, f"Timed out after {timeout:.0f}s")
             return
         if proc.returncode == 0:
             logger.info("Backup uploaded off-box: %s", path.name)
+            _health.record_upload(True)
         else:
             # Slice the bytes before decoding — only the tail is logged, and a
             # chatty failure shouldn't cost a full-size str to throw away.
@@ -454,8 +481,10 @@ async def _run_upload_hook(path: Path) -> None:
                 "Backup upload failed (rc=%s) for %s: %s",
                 proc.returncode, path.name, tail,
             )
+            _health.record_upload(False, f"exit {proc.returncode}: {tail}"[:500])
     except Exception as exc:  # noqa: BLE001 — off-site copy is best-effort
         logger.error("Backup upload hook error for %s: %s", path.name, exc)
+        _health.record_upload(False, str(exc)[:500])
 
 
 async def write_scheduled_backup(keep: int, fingerprint: str | None = None) -> Path | None:
@@ -631,6 +660,81 @@ def backup_keep() -> int:
     if keep > 0:
         return keep
     return env_int("HEADROOM_BACKUP_RETENTION_DAYS", 5)
+
+
+#: Upload providers the UI may configure, as argv TEMPLATES this module owns.
+#:
+#: The point is that a browser never supplies a command. It supplies a
+#: destination, which lands in exactly one argv slot of a template chosen from
+#: this dict — so there is no arrangement of user input that adds a flag,
+#: changes the binary, or reaches a shell.
+UPLOAD_PROVIDERS: dict[str, list[str]] = {
+    "rclone": ["rclone", "copy", "{path}", "{dest}"],
+}
+
+#: `remote:path` and nothing else. Anchored, and `-` is excluded from the
+#: first character on purpose: `--config=/somewhere` is a perfectly good
+#: "destination" that turns a copy into an arbitrary-config rclone run, which
+#: is flag injection wearing an argument's clothes.
+_DESTINATION_RE = re.compile(r"^[A-Za-z0-9_-]+:[A-Za-z0-9_./ -]*$")
+
+UPLOAD_PROVIDER_KEY = "backup_upload_provider"
+UPLOAD_DESTINATION_KEY = "backup_upload_destination"
+
+
+def validate_destination(dest: str) -> str:
+    """Return a cleaned `remote:path`, or raise ValueError.
+
+    Deliberately strict rather than clever. This value becomes an argument to
+    a subprocess that runs unattended on every backup, so the safe move is to
+    accept only the shape rclone documents and reject everything else.
+    """
+    cleaned = (dest or "").strip()
+    if not cleaned:
+        raise ValueError("Destination is required, e.g. box:Headroom")
+    if cleaned.startswith("-"):
+        raise ValueError("Destination may not start with '-' (that is a flag, not a remote).")
+    if not _DESTINATION_RE.match(cleaned):
+        raise ValueError(
+            "Destination must look like remote:path — letters, digits, "
+            "'_', '-', '.', '/' and spaces only."
+        )
+    return cleaned
+
+
+async def resolve_upload_argv(db, path: Path) -> list[str] | None:
+    """The argv to run for `path`, or None when no upload is configured.
+
+    Environment WINS over the stored setting, which is the opposite of the
+    precedence used for API keys — and deliberately so. `HEADROOM_BACKUP_UPLOAD_CMD`
+    is a raw command, settable only by someone with host access, and that is a
+    privilege boundary. Letting a browser override a host-level decision about
+    what executes on every backup would erase it.
+    """
+    raw = backup_upload_cmd()
+    if raw:
+        return [
+            tok.replace("{path}", str(path))
+            .replace("{dir}", str(path.parent))
+            .replace("{name}", path.name)
+            for tok in shlex.split(raw)
+        ]
+
+    from headroom.services import settings_service  # noqa: PLC0415 — cycle
+
+    provider = await settings_service.get_setting(db, UPLOAD_PROVIDER_KEY)
+    dest = await settings_service.get_setting(db, UPLOAD_DESTINATION_KEY)
+    template = UPLOAD_PROVIDERS.get(provider or "")
+    if not template or not dest:
+        return None
+    try:
+        dest = validate_destination(dest)
+    except ValueError as exc:
+        # A stored value that no longer validates is a configuration error, not
+        # a reason to run something unexpected.
+        logger.error("Stored backup destination is invalid, upload skipped: %s", exc)
+        return None
+    return [tok.replace("{path}", str(path)).replace("{dest}", dest) for tok in template]
 
 
 def backup_upload_cmd() -> str:

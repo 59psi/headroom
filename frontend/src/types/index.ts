@@ -356,6 +356,28 @@ export interface BackupHealth {
   consecutive_failures: number;
 }
 
+/** Whether the off-box backup copy is configured, and whether it works.
+ *
+ *  Separate from `BackupHealth` because the two fail independently: a local
+ *  backup can succeed every night while the upload has been failing for a
+ *  month, and only the second means the archive exists nowhere but the card
+ *  it is protecting against. */
+export interface BackupUploadStatus {
+  configured: boolean;
+  provider: string | null;
+  destination: string | null;
+  /** Set from `HEADROOM_BACKUP_UPLOAD_CMD`. That wins over anything set here
+   *  and is read-only in the UI: it is settable only with host access, which
+   *  is a privilege boundary the browser must not cross. */
+  from_environment: boolean;
+  available_providers: string[];
+  last_upload_at: string | null;
+  last_upload_ok: boolean | null;
+  last_upload_error: string | null;
+  upload_successes: number;
+  upload_failures: number;
+}
+
 /** A set of hats that look like the same hat entered more than once. */
 export interface DuplicateGroup {
   key: string;
