@@ -94,6 +94,17 @@ export function HomePage() {
   // Cases count too — dozens at $49 each, previously absent from every total.
   const caseValue = useMemo(() => valueCases(cases.data ?? []), [cases.data]);
 
+  // A failed fetch must not render as an empty collection. `?? []` turns a
+  // 500 or a dropped connection into "$0 across 0 hats", which is a confident
+  // wrong answer — the exact thing `valueHat` returns `null` rather than 0 to
+  // avoid. Errors are shown, not averaged in.
+  if (cases.isError || hats.isError) {
+    return (
+      <div className="alert alert-danger" role="alert">
+        Couldn&rsquo;t load your collection. Reload to try again.
+      </div>
+    );
+  }
   if (cases.isLoading || hats.isLoading) return <LoadingSpinner />;
 
   const totalHats = hats.data?.length ?? 0;

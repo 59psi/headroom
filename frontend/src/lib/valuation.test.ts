@@ -58,6 +58,7 @@ function hat(over: Partial<HatRead> = {}): HatRead {
     resale_price_scope: null,
     analysis_status: null,
     analysis_stage: null,
+    analysis_stage_at: null,
     analysis_job_id: null,
     analysis_error: null,
     analyzed_at: null,

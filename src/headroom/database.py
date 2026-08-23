@@ -83,6 +83,7 @@ _HAT_COLUMN_DDL: dict[str, str] = {
     "limited_edition": "ALTER TABLE hats ADD COLUMN limited_edition BOOLEAN NOT NULL DEFAULT 0",
     "analysis_status": "ALTER TABLE hats ADD COLUMN analysis_status VARCHAR(20)",
     "analysis_stage": "ALTER TABLE hats ADD COLUMN analysis_stage VARCHAR(20)",
+    "analysis_stage_at": "ALTER TABLE hats ADD COLUMN analysis_stage_at DATETIME",
     "analysis_job_id": "ALTER TABLE hats ADD COLUMN analysis_job_id INTEGER",
     "analysis_error": "ALTER TABLE hats ADD COLUMN analysis_error TEXT",
     "analyzed_at": "ALTER TABLE hats ADD COLUMN analyzed_at DATETIME",

@@ -1861,26 +1861,25 @@ body.hr-keyboard-open .bottom-nav {
 
 .hr-settings-tabs {
   display: flex;
-  gap: 0.5rem;
-  overflow-x: auto;
-  overflow-y: hidden;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
+  /* WRAPS, it does not scroll. Five labels are wider than a phone, and as a
+     horizontal scroller the tabs past the fold were invisible — there is no
+     scrollbar on touch and the last pill sat flush with the gutter, so
+     nothing on screen said "Maintenance" existed. A row-and-a-half of pills
+     costs ~30px and shows every section at once, which is the entire job of
+     a tab bar. */
+  flex-wrap: wrap;
+  gap: 0.4rem;
   padding-bottom: 0.25rem;
   margin-bottom: 0.75rem;
-  /* Bleed to the screen edges so the last tab doesn't look clipped by the
-     page gutter — it should read as "more this way". */
-  scroll-snap-type: x proximity;
 }
 
-.hr-settings-tabs::-webkit-scrollbar { display: none; }
-
 .hr-settings-tab {
-  flex: 0 0 auto;
-  scroll-snap-align: start;
+  /* Shrinkable, so a long label gives ground before the row overflows. */
+  flex: 0 1 auto;
+  min-width: 0;
   /* 44px minimum tap target. */
   min-height: 44px;
-  padding: 0.5rem 1rem;
+  padding: 0.5rem 0.85rem;
   border-radius: 999px;
   border: 1px solid var(--border);
   background: transparent;
@@ -1894,6 +1893,16 @@ body.hr-keyboard-open .bottom-nav {
 .hr-settings-tab:hover {
   color: var(--text-primary, #fff);
   border-color: var(--neon-cyan);
+}
+
+@media (max-width: 400px) {
+  /* On a 360px screen the five pills need one more concession to land on two
+     rows rather than three. Font and padding only — the 44px tap target is
+     not negotiable. */
+  .hr-settings-tab {
+    font-size: 0.82rem;
+    padding: 0.5rem 0.7rem;
+  }
 }
 
 .hr-settings-tab.is-active {

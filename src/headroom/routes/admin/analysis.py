@@ -13,12 +13,9 @@ old one, and watching it drain is exactly what the queue view is for.
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from headroom.database import get_db
-from headroom.models.hat import Hat
 from headroom.schemas.admin import (
     AnalysisJobRead,
     AnalysisQueueStatus,

@@ -1,6 +1,5 @@
 """Tests for the bulk-import endpoints (job lifecycle)."""
 
-import asyncio
 import io
 
 import pytest

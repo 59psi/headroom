@@ -99,6 +99,18 @@ class PendingHat(BaseModel):
     stage: str | None = None
 
 
+class AnalysisJobRead(BaseModel):
+    """A bulk re-analysis run. `done`/`failed` are derived, not stored."""
+
+    id: int
+    total: int
+    done: int
+    failed: int
+    status: str
+    started_at: datetime
+    finished_at: datetime | None = None
+
+
 class AnalysisQueueStatus(BaseModel):
     """`queued` is the in-memory depth, `pending_count` what the DB says.
 
@@ -115,18 +127,6 @@ class AnalysisQueueStatus(BaseModel):
     # the last one finish, and did anything fail?"
     current_job: AnalysisJobRead | None = None
     recent_jobs: list[AnalysisJobRead] = []
-
-
-class AnalysisJobRead(BaseModel):
-    """A bulk re-analysis run. `done`/`failed` are derived, not stored."""
-
-    id: int
-    total: int
-    done: int
-    failed: int
-    status: str
-    started_at: datetime
-    finished_at: datetime | None = None
 
 
 class ReanalyzeAllResult(BaseModel):

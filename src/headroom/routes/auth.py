@@ -74,7 +74,10 @@ async def first_run_setup(
 ):
     """Create the owner account. Only available while no users exist."""
     if await auth_service.user_count(db) > 0:
-        raise HTTPException(status_code=403, detail="Setup already completed")
+        # `from None`, not `from exc`: an auth response must not carry the
+        # database error that produced it, and here the IntegrityError is
+        # expected — it IS the concurrency guard working.
+        raise HTTPException(status_code=403, detail="Setup already completed") from None
     # Serialize first-run setup against a racing second POST: app_settings.key
     # is a PRIMARY KEY, so only one concurrent transaction can claim this
     # sentinel — the loser's INSERT collides and rolls back its owner account
@@ -84,7 +87,12 @@ async def first_run_setup(
         user = await auth_service.create_user(db, data.username, data.password)
     except IntegrityError:
         await db.rollback()
-        raise HTTPException(status_code=403, detail="Setup already completed")
+        # `from None`, not `from exc`: an auth response must not carry the
+        # database error that produced it, and here the IntegrityError is
+        # expected — it IS the concurrency guard doing its job.
+        raise HTTPException(
+            status_code=403, detail="Setup already completed"
+        ) from None
     session = await auth_service.create_session(db, user)
     _set_session_cookie(response, request, session.id)
     await log_activity(
@@ -239,7 +247,9 @@ async def passkey_register_verify(
     try:
         verified = passkey_service.verify_registration(data.credential, entry[0])
     except Exception as exc:  # noqa: BLE001 — library raises many subtypes
-        raise HTTPException(status_code=400, detail=f"Passkey verification failed: {exc}")
+        raise HTTPException(
+            status_code=400, detail=f"Passkey verification failed: {exc}"
+        ) from None
     db.add(
         PasskeyCredential(
             user_id=user.id,
@@ -304,7 +314,9 @@ async def passkey_login_verify(
             data.credential, entry[0], stored
         )
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=401, detail=f"Passkey login failed: {exc}")
+        raise HTTPException(
+            status_code=401, detail=f"Passkey login failed: {exc}"
+        ) from None
     stored.sign_count = new_count
     user = stored.user
     session = await auth_service.create_session(db, user)

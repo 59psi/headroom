@@ -1,6 +1,6 @@
 [project]
 name = "headroom"
-version = "2.41.0"
+version = "2.42.0"
 description = "Headroom — AI-powered hat collection tracker"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -25,6 +25,12 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest",
+    # 58 `# noqa: <CODE>` comments were written across this codebase to an
+    # authority that was never installed, so none of them had ever been
+    # checked and nothing enforced the style they assume. Runs inside the
+    # existing backend CI job — a separate lint job would pay a fresh runner
+    # to do a second of work.
+    "ruff",
     # anyio ships the pytest plugin that provides the `@pytest.mark.anyio`
     # marker; the tests run asyncio-only (see conftest `anyio_backend`), so no
     # trio extra and no separate `pytest-anyio` stub package are needed.
@@ -69,3 +75,41 @@ packages = ["src/headroom"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+
+[tool.ruff]
+line-length = 100
+# `src/` layout, so first-party imports resolve for isort-style rules.
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# Deliberately close to ruff's defaults plus the rule families whose `noqa`
+# codes already appear in this tree (BLE001, PLC0415, S105) — turning on
+# everything would bury a real finding under a thousand style opinions on a
+# codebase that has never once been linted.
+select = [
+    "E", "F", "W",   # pyflakes + pycodestyle: real errors, unused names
+    "B",             # bugbear: mutable defaults, shadowed loop vars
+    "BLE",           # blind except — 40+ `noqa: BLE001` here were never checked
+    "PLC0415",       # import-outside-top-level — the other suppression in use
+    "S105", "S106",  # hardcoded credentials
+]
+ignore = [
+    "E501",     # line length: prose-heavy comments are deliberate here
+    "B008",     # FastAPI's `Depends()` in a default IS the framework's idiom
+    "PLC0415",  # import-outside-top-level: a deliberate pattern here, used to
+                # break import cycles and keep heavy modules (sqlite3, rembg,
+                # retail_pricing) off the boot path. 33 sites, all intentional.
+    "E402",     # same reason in reverse — `tests/conftest.py` MUST pop the API
+                # keys out of os.environ before any app module is imported, or
+                # config.py reads them at import time and the suite starts
+                # talking to live APIs.
+]
+# Deliberately NOT enabling `UP` or the rest of `PL`. `UP017` alone would
+# rewrite ~90 call sites from `datetime.now(timezone.utc)` to `datetime.UTC`,
+# against a convention this repo documents in CLAUDE.md — a linter's job here
+# is to find the mistakes nobody checked for, not to relitigate a house style.
+
+[tool.ruff.lint.per-file-ignores]
+# Tests assert, sleep, and use hard-coded credentials on purpose.
+"tests/*" = ["S", "PLC0415", "BLE001"]

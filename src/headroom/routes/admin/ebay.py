@@ -88,7 +88,7 @@ async def refresh_ebay_for_hat(hat_id: int, db: AsyncSession = Depends(get_db)):
             db, brand=hat.brand, model=hat.model_name, style=hat.style,
         )
     except ebay_service.EbayError as exc:
-        raise HTTPException(status_code=502, detail=str(exc))
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     for k, v in result.items():
         setattr(hat, k, v)
     await db.commit()

@@ -19,7 +19,6 @@ from anthropic import APIError, AsyncAnthropic
 from anthropic._exceptions import AuthenticationError
 
 from headroom.config import settings as config_settings
-from headroom.schemas.hat import KNOWN_CONSTRUCTIONS
 
 logger = logging.getLogger(__name__)
 
@@ -128,32 +127,22 @@ HAT_ANALYSIS_TOOL = {
             "construction": {
                 "type": ["string", "null"],
                 "description": (
-                    "What the hat is BUILT from. Prefer one of these exact"
-                    " spellings when it matches: "
-                    + ", ".join(KNOWN_CONSTRUCTIONS)
-                    + ". 'HYDRO' is usually named in the product name ('A-Game"
-                    " Hydro'). 'HYDROLite' is featherweight, with bonded (not"
-                    " stitched) seams, a gel-welded rubbery logo rather than"
-                    " embroidery, and an antimicrobial sweatband."
+                    "ADVISORY — this value is NOT stored. Construction is"
+                    " owner-stated in Headroom, because it cannot be read off a"
+                    " photo reliably and a wrong guess both moves money (HYDRO"
+                    " $79 vs HYDROLite $99) and hides hats from a filter."
+                    " Answer null unless the owner has stated one below, in"
+                    " which case repeat it verbatim."
+                    " The field still matters for one reason: whatever you"
+                    " conclude must appear HERE and never inside model_name,"
+                    " which IS stored and is the name a person reads."
                     " RULE: if you can see STITCHING along the panel seams, the"
                     " crown seams or around the brim edge, it is NOT HYDROLite —"
-                    " HYDROLite seams are bonded and show no thread at all. Say"
-                    " 'HYDRO' or null instead. Apply this as a hard exclusion:"
-                    " visible stitching rules HYDROLite out even when everything"
-                    " else about the hat suggests it. Do NOT answer 'HYDROLite'"
-                    " merely because a hat looks lightweight or technical — that"
-                    " describes HYDRO too, and defaulting to HYDROLite is the"
-                    " specific error this rule exists to stop. If the hat is"
-                    " plainly some other fabric — a seasonal or collab-only"
-                    " specialty material — name that instead, in the same short"
-                    " form; this field is not limited to the list."
-                    " Null if you cannot tell. If the owner has stated a"
-                    " construction it is ground truth — repeat it here verbatim"
-                    " and do not propose a different one; your answer is only"
-                    " used when they left it blank. These constructions are"
-                    " offered across every model line, so this is independent of"
-                    " model_name — a hat is 'a Coronado in HYDROLite', not 'a"
-                    " HYDROLite'."
+                    " HYDROLite seams are bonded and show no thread at all."
+                    " Apply this as a hard exclusion, and do not answer"
+                    " 'HYDROLite' merely because a hat looks lightweight or"
+                    " technical: that describes HYDRO too, and defaulting to"
+                    " HYDROLite is the specific error this rule exists to stop."
                 ),
             },
             "artist_series": {
@@ -232,7 +221,9 @@ HAT_ANALYSIS_TOOL = {
         "required": [
             "brand",
             "logo_detected",
-            "construction",
+            # `construction` is deliberately NOT required. It is advisory, never
+            # stored, and demanding an answer for a field that gets discarded
+            # invites a confident guess where null is the honest reply.
             "artist_series",
             "model_name",
             "model_confidence",

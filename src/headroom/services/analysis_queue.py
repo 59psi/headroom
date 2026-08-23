@@ -110,7 +110,7 @@ async def _process_hat(hat_id: int) -> None:
         # row through a second session, because this one holds the pending write.
         if await _photo_replaced_since(hat_id, photo_at_start):
             logger.info(
-                "Discarding stale analysis for hat %s — its photo was replaced "
+                "Discarding stale analysis for hat=%s — its photo was replaced "
                 "while the pipeline was running; the re-queued run will handle it.",
                 hat_id,
             )
@@ -160,7 +160,7 @@ async def mark_failed(hat_id: int, exc: Exception) -> None:
                 stamp_failure(hat, exc)
                 await db.commit()
     except Exception as inner:  # noqa: BLE001 — bookkeeping must not raise
-        logger.warning("Analysis error-bookkeeping failed for hat %s: %s", hat_id, inner)
+        logger.warning("Analysis error-bookkeeping failed for hat=%s: %s", hat_id, inner)
 
 
 async def _worker_loop() -> None:
@@ -174,7 +174,7 @@ async def _worker_loop() -> None:
                 await _process_hat(hat_id)
             except Exception as exc:  # noqa: BLE001 — one bad hat must NOT kill
                 # the worker, or every later upload hangs on 'pending' forever.
-                logger.exception("Analysis worker: unhandled error on hat %s: %s", hat_id, exc)
+                logger.exception("Analysis worker: unhandled error on hat=%s: %s", hat_id, exc)
                 await mark_failed(hat_id, exc)
             finally:
                 _queue.task_done()

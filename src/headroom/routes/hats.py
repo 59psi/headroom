@@ -218,7 +218,7 @@ async def upload_hat_photo(
             await finalize_hat_photo(db, hat, final_path)
             await db.commit()
         except Exception as exc:  # noqa: BLE001 — recorded on the hat instead
-            logger.exception("Inline analysis failed for hat %s: %s", hat_id, exc)
+            logger.exception("Inline analysis failed for hat=%s: %s", hat_id, exc)
             await db.rollback()
             hat = await hat_service.get_hat(db, hat_id)
             analysis_queue.stamp_failure(hat, exc)
@@ -265,7 +265,7 @@ async def recut_hat(hat_id: int, db: AsyncSession = Depends(get_db)):
             await finalize_hat_photo(db, hat, original)
             await db.commit()
         except Exception as exc:  # noqa: BLE001 — recorded on the hat instead
-            logger.exception("Inline re-cut failed for hat %s: %s", hat_id, exc)
+            logger.exception("Inline re-cut failed for hat=%s: %s", hat_id, exc)
             await db.rollback()
             hat = await hat_service.get_hat(db, hat_id)
             analysis_queue.stamp_failure(hat, exc)

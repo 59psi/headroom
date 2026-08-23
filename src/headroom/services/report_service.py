@@ -9,13 +9,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from html import escape
-from typing import Iterable
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from headroom.config import settings
 from headroom.models.case import Case
 from headroom.models.hat import Hat
 from headroom.services import valuation

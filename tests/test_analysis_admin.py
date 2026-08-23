@@ -222,7 +222,7 @@ async def test_reanalyze_all_covers_every_hat_with_a_photo(client, monkeypatch):
     # manual, one unpriced.
     sources = ["melin retail", "melin retail", "Claude Vision", "Manual", None]
     async with test_session_factory() as db:
-        for hat_id, source in zip(ids, sources):
+        for hat_id, source in zip(ids, sources, strict=False):
             hat = (await db.execute(select(Hat).where(Hat.id == hat_id))).scalar_one()
             hat.photo_path = f"hats/{hat_id}.png"
             hat.estimated_new_price_source = source

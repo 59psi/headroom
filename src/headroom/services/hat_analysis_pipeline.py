@@ -89,11 +89,15 @@ async def _publish_stage(hat_id: int | None, stage: str | None) -> None:
     try:
         async with async_session() as db:
             await db.execute(
-                update(Hat).where(Hat.id == hat_id).values(analysis_stage=stage)
+                update(Hat)
+                .where(Hat.id == hat_id)
+                # Stamped by the SAME update that sets the stage, so the
+                # two can never disagree about when this step began.
+                .values(analysis_stage=stage, analysis_stage_at=datetime.now(timezone.utc))
             )
             await db.commit()
     except Exception as exc:  # noqa: BLE001 — cosmetic; never fail a run for it
-        logger.debug("Could not publish analysis stage for hat %s: %s", hat_id, exc)
+        logger.debug("Could not publish analysis stage for hat=%s: %s", hat_id, exc)
 
 
 async def finalize_hat_photo(
@@ -202,7 +206,7 @@ async def finalize_hat_photo(
             )
         except ClaudeAnalysisError as exc:
             logger.warning(
-                "Hat analysis failed for hat %s (rembg=%.2fs claude=%.2fs): %s",
+                "Hat analysis failed for hat=%s (rembg=%.2fs claude=%.2fs): %s",
                 hat.id, t_rembg, time.monotonic() - t_claude0, exc,
             )
             hat.analysis_status = "error"
@@ -236,7 +240,7 @@ async def _refresh_ebay_comps(db: AsyncSession, hat: Hat) -> None:
             for k, v in comps.items():
                 setattr(hat, k, v)
         except EbayError as exc:
-            logger.info("eBay comp refresh skipped for hat %s: %s", hat.id, exc)
+            logger.info("eBay comp refresh skipped for hat=%s: %s", hat.id, exc)
 
 
 async def reanalyze_existing_photo(
@@ -272,7 +276,7 @@ async def reanalyze_existing_photo(
                 known_series=await _known_series(db),
             )
         except ClaudeAnalysisError as exc:
-            logger.warning("Reanalysis failed for hat %s: %s", hat.id, exc)
+            logger.warning("Reanalysis failed for hat=%s: %s", hat.id, exc)
             hat.analysis_status = "error"
             hat.analysis_error = str(exc)
             hat.analyzed_at = datetime.now(timezone.utc)
@@ -316,7 +320,7 @@ async def refresh_melin_resale(hat: Hat) -> None:
             hat.style, hat.model_name, condition=hat.condition, size=hat.size
         )
     except MelinRecapError as exc:
-        logger.info("Melin Recap stats skipped for hat %s: %s", hat.id, exc)
+        logger.info("Melin Recap stats skipped for hat=%s: %s", hat.id, exc)
         return
     if not stats:
         return
@@ -362,7 +366,7 @@ async def run_fallback_analysis(
         try:
             colors = await asyncio.to_thread(extract_hat_colors, photo_path)
         except Exception as exc:  # noqa: BLE001 — fallback must never break uploads
-            logger.warning("Fallback color extraction failed for hat %s: %s", hat.id, exc)
+            logger.warning("Fallback color extraction failed for hat=%s: %s", hat.id, exc)
 
     brand: str | None = None
     google_key, _gsrc = await settings_service.get_google_vision_key(db)
@@ -372,7 +376,7 @@ async def run_fallback_analysis(
             if logo:
                 brand = logo[0]
         except GoogleVisionError as exc:
-            logger.info("Fallback logo detection skipped for hat %s: %s", hat.id, exc)
+            logger.info("Fallback logo detection skipped for hat=%s: %s", hat.id, exc)
 
     if not colors and not brand:
         return False

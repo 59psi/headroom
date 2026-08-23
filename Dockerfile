@@ -22,7 +22,19 @@ RUN npm install -g "npm@${NPM_VERSION}"
 ENV NPM_CONFIG_LOGLEVEL=warn
 WORKDIR /build
 COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm ci
+# Cache mount, matching the uv one in the Python stage below.
+#
+# This layer is busted by every release, because cutting one edits
+# `frontend/package.json` — so without a cache the Pi re-downloaded the entire
+# dependency tree over its own network on every single upgrade, which is the
+# slowest part of `docker compose up -d --build` there. The mount survives the
+# layer invalidation: npm still re-resolves, it just stops re-fetching.
+#
+# `--prefer-offline` makes it use those cached tarballs instead of revalidating
+# each one against the registry, which is most of the remaining wall time on a
+# link like that.
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --prefer-offline
 COPY frontend/ ./
 # .git never enters the build context, so the footer's build SHA must be
 # injected via this arg (empty → footer hides it).

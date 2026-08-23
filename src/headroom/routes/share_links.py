@@ -21,8 +21,6 @@ from headroom.config import settings
 from headroom.database import get_db
 from headroom.schemas.share import (
     SharedCollection,
-    SharedColor,
-    SharedHat,
     ShareLinkCreate,
     ShareLinkCreated,
     ShareLinkRead,
