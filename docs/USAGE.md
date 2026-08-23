@@ -35,14 +35,14 @@ still removed, and fallback color swatches still appear.
 
 ## 2. How things are organized
 
-**Rooms → Cases → Hats.**
+**Rooms → Cases → Hats** — and Rooms → Hats directly, for anything you keep out of a case.
 
 - **Rooms** are physical locations. Exactly one is the **default**: new cases
   go there when you don't pick a room, and deleting a room moves its cases
   there. That makes it the only room you can't delete — hit **Make default**
   on another room first, then the original is deletable like any other.
 - **Cases** hold hats and are type-exclusive (regular hats or beanies,
-  never mixed). A case is **full at 3 hats** (or 6 beanies) — that's what the
+  never mixed). A case is **full at 3 hats** (or 8 beanies) — that's what the
   physical case is built for. A 4th still fits, so Headroom accepts it and
   marks the case **overfull** rather than refusing something that works or
   pretending it's normal. One over is the whole allowance; the 5th is

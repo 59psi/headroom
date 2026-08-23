@@ -14,10 +14,11 @@ from dataclasses import dataclass
 
 # Nominal capacity when a case carries no explicit `capacity` — what "full"
 # means. The physical article is a three-hat case; melin's own order lines
-# call it a "3 Hat Travel Case". Beanies pack smaller, so more fit in the same
-# shell.
+# call it a "3 Hat Travel Case". Beanies have no brim and squash flat, so far
+# more fit in the same shell — eight, measured by the owner packing them, not
+# derived from the three-hat figure.
 MAX_REGULAR = 3
-MAX_BEANIE = 6
+MAX_BEANIE = 8
 
 # How far past nominal a DEFAULT case may be crammed. A fourth hat does go in,
 # it just isn't how the case is meant to be loaded — so it's allowed on write
@@ -29,6 +30,13 @@ MAX_BEANIE = 6
 # to set it. Unset means "a standard case, with the usual latitude"; set means
 # "I am telling you the limit".
 OVERFILL_ALLOWANCE = 1
+
+# Beanies get NO allowance. The regular allowance exists because 3 is melin's
+# *name* for the case — a "3 Hat Travel Case" — and a fourth demonstrably fits,
+# so the number to be lenient about was never a measurement. 8 is the opposite:
+# it is what the owner fits in one, counted by packing it. Adding slack on top
+# of a measured maximum asserts a ninth fits, which nobody has claimed.
+BEANIE_OVERFILL_ALLOWANCE = 0
 
 
 @dataclass(frozen=True)
@@ -73,8 +81,9 @@ def evaluate(
     # note on OVERFILL_ALLOWANCE. A zero capacity holds nothing either way:
     # the allowance is slack on a real capacity, not a way in.
     allowance = 0 if stated else OVERFILL_ALLOWANCE
+    beanie_allowance = 0 if stated else BEANIE_OVERFILL_ALLOWANCE
     limit_regular = max_regular + allowance if max_regular > 0 else 0
-    limit_beanie = max_beanie + allowance if max_beanie > 0 else 0
+    limit_beanie = max_beanie + beanie_allowance if max_beanie > 0 else 0
 
     # Type exclusivity: a case holds beanies OR regular hats, never both.
     has_beanies = beanie_count > 0

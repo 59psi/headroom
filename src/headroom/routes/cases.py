@@ -51,6 +51,8 @@ def _case_to_read(case) -> CaseRead:
         # that checks the wrong one.
         overfull=room.overfull_beanie if beanie_count else room.overfull_regular,
         nominal_capacity=room.max_beanie if beanie_count else room.max_regular,
+        nominal_regular=room.max_regular,
+        nominal_beanie=room.max_beanie,
         created_at=case.created_at,
         updated_at=case.updated_at,
     )

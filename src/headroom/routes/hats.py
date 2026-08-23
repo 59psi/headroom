@@ -92,7 +92,7 @@ async def delete_hat(hat_id: int, db: AsyncSession = Depends(get_db)):
 async def assign_hat(
     hat_id: int, data: HatAssign, db: AsyncSession = Depends(get_db)
 ):
-    hat = await hat_service.assign_hat(db, hat_id, data.case_id)
+    hat = await hat_service.assign_hat(db, hat_id, data.case_id, data.room_id)
     return _hat_to_read(hat)
 
 

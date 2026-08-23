@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getStyles, getSizes, getConditions, getConstructions, getCollections } from '../../api/hats';
 import { listCases } from '../../api/cases';
+import { getRoomOptions } from '../../api/rooms';
 import { PhotoCapture } from '../photos/PhotoCapture';
 import { Combobox } from '../common/Combobox';
 import { CasePicker } from './CasePicker';
@@ -21,6 +22,13 @@ export interface HatBasics {
   artistSeries: string;
   /** Case id as a string ('' = unassigned), matching the <select> value. */
   caseId: string;
+  /** Room id as a string, for a hat kept with NO case — a shelf, a hook, a
+   *  stand. Ignored while `caseId` is set: a cased hat's room is its case's,
+   *  and a second stored answer is one that can disagree. */
+  roomId: string;
+  /** A special or limited run. Nothing can derive this — a hat is limited
+   *  because the drop was. */
+  limitedEdition: boolean;
   /** ISO date or '' */
   dateLastWorn: string;
   /** What was paid, as typed ('' = not stated). Kept as a string so the input
@@ -46,13 +54,16 @@ export { NEW_CASE_VALUE } from './CasePicker';
 // Widened to `string` on purpose: `as const` would infer literal types and make
 // these unusable as useState seeds for controls whose value is a plain string.
 export const DEFAULT_HAT_BASICS: {
-  style: string; size: string; condition: string; construction: string; artistSeries: string;
+  style: string; size: string; condition: string; construction: string;
+  artistSeries: string; roomId: string; limitedEdition: boolean;
 } = {
   style: 'a_game',
   size: 'classic',
   condition: 'new',
   construction: '',
   artistSeries: '',
+  roomId: '',
+  limitedEdition: false,
 };
 
 /** The dropdown sources both hat forms need, plus a single loading flag. */
@@ -63,9 +74,11 @@ export function useHatFormOptions() {
   const constructions = useQuery({ queryKey: ['meta', 'constructions'], queryFn: getConstructions });
   const collections = useQuery({ queryKey: ['meta', 'collections'], queryFn: getCollections });
   const cases = useQuery({ queryKey: ['cases'], queryFn: listCases });
+  // For a hat kept with no case. Same key the filter bar uses.
+  const rooms = useQuery({ queryKey: ['meta', 'rooms'], queryFn: getRoomOptions });
 
   return {
-    styles, sizes, conditions, constructions, collections, cases,
+    styles, sizes, conditions, constructions, collections, cases, rooms,
     // `constructions` is deliberately absent from `isLoading`: it only fills
     // the suggestion list, so a slow or failed fetch costs autocomplete, not
     // the ability to type a value.
@@ -218,7 +231,13 @@ export function HatBasicsCard({
           <CasePicker
             label={caseLabel}
             value={values.caseId}
-            onChange={v => onChange('caseId', v)}
+            onChange={v => {
+              onChange('caseId', v);
+              // A case and a room are mutually exclusive server-side, so the
+              // form must not leave a stale room selected underneath a case —
+              // the save would drop it and the screen would still show it.
+              if (v) onChange('roomId', '');
+            }}
             cases={options.cases.data ?? []}
             // Which cases can take this hat depends on what it IS — a beanie
             // and a regular hat see different availability in the same case.
@@ -227,6 +246,50 @@ export function HatBasicsCard({
             }
             onCreateCase={onCreateCase}
           />
+        </div>
+
+        {/* Only offered when there's no case. Caddies and Aviators don't fit a
+            three-hat travel case, special editions get displayed rather than
+            packed, and plenty of hats are simply out on a shelf — but a hat in
+            a case already has a room, via the case. */}
+        {!values.caseId && (
+          <div className="mb-3">
+            <label className="form-label" htmlFor="hat-room">Room (no case)</label>
+            <select
+              id="hat-room"
+              aria-label="Room (no case)"
+              className="form-select"
+              value={values.roomId}
+              onChange={e => onChange('roomId', e.target.value)}
+            >
+              <option value="">Not in a room</option>
+              {options.rooms.data?.map(r => (
+                <option key={r.value} value={r.value}>{r.label}</option>
+              ))}
+            </select>
+            <div className="form-text">
+              Where this hat lives when it isn't in a case — a shelf, a hook, a
+              stand.
+            </div>
+          </div>
+        )}
+
+        <div className="mb-3 form-check">
+          <input
+            id="hat-limited-edition"
+            aria-label="Limited edition"
+            className="form-check-input"
+            type="checkbox"
+            checked={values.limitedEdition}
+            onChange={e => onChange('limitedEdition', e.target.checked)}
+          />
+          <label className="form-check-label" htmlFor="hat-limited-edition">
+            Limited edition
+          </label>
+          <div className="form-text">
+            A special or limited run. Nothing can work this out from a photo —
+            a hat is limited because the drop was.
+          </div>
         </div>
 
         {/* Cost basis, at add time for the same reason as the collection name

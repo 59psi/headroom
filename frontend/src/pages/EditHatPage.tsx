@@ -24,7 +24,8 @@ export function EditHatPage() {
 
   const [basics, setBasics] = useState<HatBasics>({
     style: '', size: '', condition: '', construction: '', artistSeries: '',
-    caseId: '', dateLastWorn: '', purchasePrice: '', purchasedAt: '',
+    caseId: '', roomId: '', limitedEdition: false,
+    dateLastWorn: '', purchasePrice: '', purchasedAt: '',
   });
   const [brand, setBrand] = useState('');
   const [modelName, setModelName] = useState('');
@@ -62,6 +63,11 @@ export function EditHatPage() {
         construction: hat.data.construction || '',
         artistSeries: hat.data.artist_series || '',
         caseId: hat.data.case_id?.toString() || '',
+        // The DIRECT room only — a cased hat's `room_id` comes from its case,
+        // and seeding that here would show a room the form cannot own and
+        // would then try to save alongside the case.
+        roomId: hat.data.direct_room_id?.toString() || '',
+        limitedEdition: hat.data.limited_edition,
         dateLastWorn: hat.data.date_last_worn || '',
         purchasePrice: hat.data.purchase_price != null ? String(hat.data.purchase_price) : '',
         // `<input type="date">` only accepts YYYY-MM-DD; the API sends a full
@@ -99,13 +105,21 @@ export function EditHatPage() {
       data.design_notes = designNotes || null;
       data.estimated_new_price = estimatedPrice ? Number(estimatedPrice) : null;
       data.resale_price = resalePrice ? Number(resalePrice) : null;
+      data.limited_edition = basics.limitedEdition;
 
       await updateHat(id, data);
 
+      // Placement goes through `assign`, not the PUT: it is the one path that
+      // validates capacity and keeps case and room mutually exclusive.
       const newCaseId = basics.caseId ? Number(basics.caseId) : null;
+      // A case wins over a room, and no room means null — spelled out rather
+      // than as a precedence-dependent double negative.
+      const inACase = Boolean(basics.caseId);
+      const newRoomId = !inACase && basics.roomId ? Number(basics.roomId) : null;
       const oldCaseId = hat.data?.case_id ?? null;
-      if (newCaseId !== oldCaseId) {
-        await assignHat(id, newCaseId);
+      const oldRoomId = hat.data?.direct_room_id ?? null;
+      if (newCaseId !== oldCaseId || newRoomId !== oldRoomId) {
+        await assignHat(id, newCaseId, newRoomId);
       }
 
       if (photo) {

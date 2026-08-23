@@ -15,6 +15,7 @@ import type { HatRead } from '../types';
  */
 
 const HAT: HatRead = {
+  direct_room_id: null, limited_edition: false,
   id: 7,
   case_id: null,
   position_in_case: null,

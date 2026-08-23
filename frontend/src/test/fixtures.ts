@@ -11,6 +11,7 @@ import type { HatRead } from '../types';
 export function hatFixture(over: Partial<HatRead> = {}): HatRead {
   return {
     id: 5, case_id: null, position_in_case: null, display_id: 'A-001-01',
+    direct_room_id: null, limited_edition: false,
     case_display_id: 'A-001', case_type: null, photo_path: null,
     original_path: null, thumb_path: null, condition: 'new', date_last_worn: null,
     wear_count: 0, size: 'classic', style: 'a_game', is_beanie: false, colors: [],

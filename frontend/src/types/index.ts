@@ -38,6 +38,9 @@ export interface CaseRead {
   overfull: boolean;
   /** The count at which this case reads as FULL (per-case override aware). */
   nominal_capacity: number;
+  /** Both type defaults, served so no client restates them. */
+  nominal_regular: number;
+  nominal_beanie: number;
   accepts_regular: boolean;
   accepts_beanie: boolean;
   free_regular: number;
@@ -54,6 +57,11 @@ export interface HatRead {
   id: number;
   case_id: number | null;
   position_in_case: number | null;
+  /** Set when the hat lives in a room with NO case. `room_id` resolves either
+   *  this or the case's room, so most callers should read that instead. */
+  direct_room_id: number | null;
+  /** A special or limited run — stated by you, never derived. */
+  limited_edition: boolean;
   display_id: string | null;
   case_display_id: string | null;
   case_type: 'archive' | 'daily_wear' | null;

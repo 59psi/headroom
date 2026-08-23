@@ -19,6 +19,7 @@ export function AddHatPage() {
   const [basics, setBasics] = useState<HatBasics>({
     ...DEFAULT_HAT_BASICS,
     caseId: searchParams.get('caseId') || '',
+    roomId: '',
     dateLastWorn: '',
     purchasePrice: '',
     purchasedAt: '',
@@ -44,6 +45,10 @@ export function AddHatPage() {
       if (basics.construction.trim()) data.construction = basics.construction.trim();
       if (basics.artistSeries.trim()) data.artist_series = basics.artistSeries.trim();
       if (basics.caseId) data.case_id = Number(basics.caseId);
+      // Only when there's no case: a cased hat's room is its case's, and the
+      // server ignores this alongside a case anyway.
+      else if (basics.roomId) data.room_id = Number(basics.roomId);
+      if (basics.limitedEdition) data.limited_edition = true;
       if (basics.dateLastWorn) data.date_last_worn = basics.dateLastWorn;
       if (basics.purchasePrice) data.purchase_price = Number(basics.purchasePrice);
       // Midnight local, matching how `date_last_worn` is sent — the column is

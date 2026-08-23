@@ -14,6 +14,23 @@ class Hat(Base):
         Integer, ForeignKey("cases.id"), nullable=True
     )
     position_in_case: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # A hat kept in a room with NO case — on a shelf, a hook, a stand.
+    #
+    # Rooms contain Cases contain Hats was the whole model, so a hat outside a
+    # case was nowhere: `room` walked `self.case.room`, and a caseless hat
+    # reported no room at all. That is not how the collection actually sits.
+    # Caddies and Aviators do not fit a three-hat travel case, special editions
+    # get displayed rather than packed, and plenty of hats are simply out.
+    #
+    # Meaningful only when `case_id` is NULL: a hat in a case takes that case's
+    # room, and `hat_service` clears one whenever it sets the other so the two
+    # can never both be set and disagree.
+    direct_room_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("rooms.id"), nullable=True
+    )
+    # Special/limited runs. Not derived from anything — a hat is limited
+    # because the drop was, which no photo and no field can tell you.
+    limited_edition: Mapped[bool] = mapped_column(Boolean, default=False)
     photo_path: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # The processed JPEG the cutout was made from, kept so the background can be
     # redone later. Before this the JPEG was deleted the moment rembg succeeded,
@@ -144,6 +161,12 @@ class Hat(Base):
     case: Mapped["Case | None"] = relationship(  # noqa: F821
         back_populates="hats", lazy="selectin"
     )
+    # No `back_populates`: Room does not need a hats collection, and adding one
+    # would give a room two sources of hats (its cases' hats, and these) that
+    # every caller would then have to remember to union.
+    direct_room: Mapped["Room | None"] = relationship(  # noqa: F821
+        foreign_keys=[direct_room_id], lazy="selectin"
+    )
     colors: Mapped[list["HatColor"]] = relationship(  # noqa: F821
         back_populates="hat", lazy="selectin", cascade="all, delete-orphan"
     )
@@ -189,8 +212,16 @@ class Hat(Base):
 
     @property
     def room(self) -> "Room | None":  # noqa: F821
-        """The room this hat sits in, via its case. None when unassigned."""
-        return self.case.room if self.case else None
+        """The room this hat sits in — via its case, or directly.
+
+        A cased hat takes its case's room; the case is the thing that moved.
+        A caseless hat can still be somewhere: on a shelf, a hook, a stand.
+        Only one of the two can be set (`hat_service` clears the other), so
+        the order here is a tiebreak that should never be needed.
+        """
+        if self.case:
+            return self.case.room
+        return self.direct_room
 
     @property
     def room_id(self) -> int | None:

@@ -6,6 +6,62 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.33.0] — 2026-08-22
+
+### Added
+- **A hat can live in a room with no case.** Rooms contain Cases contain Hats
+  was the whole model, so `Hat.room` walked `self.case.room` and a caseless hat
+  reported no room at all — it was *nowhere*. That is not how a collection
+  sits: Caddies and Aviators don't fit a three-hat travel case, special
+  editions get displayed rather than packed, and plenty of hats are simply out
+  on a shelf.
+
+  Any hat can be placed this way; nothing is restricted by style. A case and a
+  direct room are **mutually exclusive** — `assign_hat` clears one when it sets
+  the other, because a cased hat's room *is* its case's room and a second
+  stored answer is one that can disagree. `room_id` still resolves either, so
+  nothing reading it had to change.
+
+  Deleting a room moves its caseless hats to the default room alongside its
+  cases. They aren't reachable through any case, so the existing sweep missed
+  them entirely — left behind they'd point at a room that no longer exists,
+  which reads as the hat vanishing from every room view while still existing.
+
+- **Limited edition** checkbox on the hat form. Nothing can derive this: a hat
+  is limited because the drop was, which no photo and no other field can tell
+  you.
+
+### Changed
+- **Beanie case capacity is 8, up from 6**, and 8 is a *hard* ceiling. They have
+  no brim and squash flat, so far more fit in the same shell than the three the
+  case is named for. Beanies get **no overfill allowance**: the regular one
+  exists because 3 is melin's *name* for the case and a fourth demonstrably
+  fits, so the number to be lenient about was never a measurement. 8 is the
+  opposite — it is what fits, counted by packing it — and slack on top would
+  assert a ninth fits, which nobody has claimed.
+
+### Fixed
+- **Search by room could not see room-stored hats** — caught by review before
+  release, and the worst kind of bug: `Hat.case.has(Case.room_id == …)` is NULL
+  for a caseless hat, so the API filter excluded exactly the hats the feature
+  adds, while the Hats page (which filters client-side on the resolved
+  `room_id`) kept showing them. Two room filters, disagreeing about the same
+  collection. Searching a room by *name* had it too. `search_service._in_room()`
+  is now the one disjunction both call sites use — `Hat.room_id` is a Python
+  `@property` and cannot appear in a `WHERE`, so each caller would otherwise
+  write it out and one would forget half.
+- **Creating a hat in a nonexistent room was accepted.** `assign_hat` checked;
+  `create_hat` didn't. The migration adds `direct_room_id` without a foreign key
+  (SQLite cannot add one to an existing table), so the bad id persisted and the
+  hat reported no room at all — looking like the placement simply hadn't taken.
+- **The case detail page showed the wrong capacity, twice.** It computed its
+  own `capacity ?? 4` / `?? 6` — a second copy of a rule `services/capacity.py`
+  owns. `4` is the *overfill limit* rather than nominal, so a full three-hat
+  case displayed **"3/4"** (the same bug fixed in the printed case labels in
+  2.28, still live here), and the hardcoded `6` would have silently become
+  wrong the moment beanie capacity moved. `CaseRead` now publishes
+  `nominal_regular` and `nominal_beanie` so no client restates either.
+
 ## [2.32.0] — 2026-08-22
 
 ### Breaking

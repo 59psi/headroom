@@ -75,7 +75,13 @@ class CaseRead(BaseModel):
     overfull: bool = False
     #: Nominal capacity for this case, so the UI can render "3 of 3" without
     #: re-deriving the default it would then get wrong for an override.
-    nominal_capacity: int = 0
+    nominal_capacity: int
+    #: Both type defaults, so no client has to restate them. The detail page
+    #: hardcoded `capacity ?? 4` / `?? 6` — 4 being the OVERFILL limit rather
+    #: than nominal, so a full three-hat case displayed "3/4", and 6 silently
+    #: became wrong the day beanie capacity moved to 8.
+    nominal_regular: int
+    nominal_beanie: int
     created_at: datetime
     updated_at: datetime
 

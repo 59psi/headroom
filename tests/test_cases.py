@@ -142,7 +142,7 @@ async def test_case_read_reports_what_it_can_accept(client):
     assert case["accepts_regular"] is True
     assert case["accepts_beanie"] is True
     assert case["free_regular"] == 3, "a three-hat case; melin's own order lines call it that"
-    assert case["free_beanie"] == 6
+    assert case["free_beanie"] == 8, "beanies squash flat — eight to a case"
 
     # One regular hat in: still takes regular hats, no longer takes beanies.
     await client.post("/api/hats", json={
