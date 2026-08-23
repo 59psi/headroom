@@ -51,8 +51,32 @@ All notable changes are documented here. This project follows
   indistinguishable from one somebody checked. **A price you entered manually
   is never touched**, the same protection it has everywhere else.
 
+  It **reassigns** rather than only clearing: `to=HYDRO` writes the right
+  answer, because the common case is not "I don't know" but "these are all
+  actually HYDRO", and clearing would discard a correction you already know how
+  to make. The price is then re-looked-up from the new value ($99 → $79) rather
+  than dropped.
+
+  And it **leaves your own values alone**. `hat_service` writes an audit row
+  naming the fields a client PUT changed, so a `hat.updated` row mentioning
+  `construction` is proof a person typed it; those hats are skipped and the
+  count is reported so you can see the protection working. This is a proof of
+  ownership, not a complete one — audit rows prune after 90 days and
+  creation-time values were never logged — so it can say "this one is
+  definitely yours", never "this one is definitely not. That asymmetry is the
+  right way round: it only ever protects more.
+
   `GET /api/admin/constructions/audit`, `POST /api/admin/constructions/clear`
-  (`dry_run=true` by default — it removes data that cannot be recomputed).
+  (`dry_run=true` and `skip_owner_set=true` by default).
+
+- **The analyser now knows the one HYDROLite tell that a photo can show.**
+  HYDROLite seams are bonded and show no thread, so **visible stitching on the
+  panel or crown seams rules HYDROLite out**. That is a falsifier rather than an
+  identification, which is what makes it worth having: it can be checked against
+  what the photo actually shows, instead of inferred from an overall impression
+  — and "looks lightweight and technical" describes HYDRO just as well, which is
+  how HYDROLite became the default wrong answer. Stated as a hard exclusion in
+  both the system prompt and the tool schema.
 
 ### Changed
 - **Settings is five sections instead of nineteen cards in a row.** It had

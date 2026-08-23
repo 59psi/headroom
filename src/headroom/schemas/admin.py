@@ -169,11 +169,15 @@ class ConstructionAuditRow(BaseModel):
 
 
 class ConstructionClearResult(BaseModel):
-    """What clearing a construction did, or would do under `dry_run`."""
+    """What reassigning a construction did, or would do under `dry_run`."""
 
     construction: str
+    #: What the matched hats become. None clears the field.
+    to: str | None = None
     dry_run: bool
     hats_cleared: int
+    #: Skipped because the audit log proves the owner typed this value.
+    owner_set_skipped: int = 0
     model_names_corrected: int
     prices_cleared: int
     manual_prices_kept: int

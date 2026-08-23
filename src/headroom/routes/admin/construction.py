@@ -35,16 +35,28 @@ async def audit_constructions(db: AsyncSession = Depends(get_db)):
 @router.post("/constructions/clear", response_model=ConstructionClearResult)
 async def clear_construction(
     value: str,
+    to: str | None = None,
     dry_run: bool = True,
+    skip_owner_set: bool = True,
     db: AsyncSession = Depends(get_db),
 ):
-    """Clear one construction value from every active hat carrying it.
+    """Reassign one construction value across every active hat carrying it.
+
+    `to` writes the right answer instead of a blank — "these are all actually
+    HYDRO" is the common case, and clearing would discard a correction the
+    owner already knows. Omit it to clear, which is right when the truth is
+    genuinely unknown.
+
+    `skip_owner_set` (default true) leaves alone any hat whose construction the
+    audit log proves a person typed.
 
     `dry_run=true` (the default) reports what would change and writes nothing —
-    this removes data that cannot be recomputed, so the destructive form has to
-    be asked for.
+    this overwrites data that cannot be recomputed, so the destructive form has
+    to be asked for.
     """
-    report = await construction_audit.clear_construction(db, value, dry_run=dry_run)
+    report = await construction_audit.clear_construction(
+        db, value, to=to, dry_run=dry_run, skip_owner_set=skip_owner_set
+    )
 
     if not dry_run and report.hats_cleared:
         await log_activity(
@@ -52,19 +64,25 @@ async def clear_construction(
             kind="construction.cleared",
             entity_type="system",
             entity_id=None,
-            summary=f"Cleared construction {value!r} from {report.hats_cleared} hat(s)",
+            summary=(
+                f"Construction {value!r} → {report.to or 'cleared'} "
+                f"on {report.hats_cleared} hat(s)"
+            ),
             details=(
                 f"model names corrected: {report.model_names_corrected}; "
-                f"table prices cleared: {report.prices_cleared}; "
-                f"manual prices kept: {report.manual_prices_kept}"
+                f"table prices recomputed: {report.prices_cleared}; "
+                f"manual prices kept: {report.manual_prices_kept}; "
+                f"owner-set skipped: {report.owner_set_skipped}"
             ),
         )
         await db.commit()
 
     return ConstructionClearResult(
         construction=report.construction,
+        to=report.to,
         dry_run=report.dry_run,
         hats_cleared=report.hats_cleared,
+        owner_set_skipped=report.owner_set_skipped,
         model_names_corrected=report.model_names_corrected,
         prices_cleared=report.prices_cleared,
         manual_prices_kept=report.manual_prices_kept,

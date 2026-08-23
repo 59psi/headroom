@@ -331,7 +331,11 @@ export interface ConstructionAuditRow {
 /** What clearing a construction did, or would do under `dry_run`. */
 export interface ConstructionClearResult {
   construction: string;
+  /** What the matched hats become. Null clears the field. */
+  to: string | null;
   dry_run: boolean;
+  /** Left alone because the audit log proves the owner typed the value. */
+  owner_set_skipped: number;
   hats_cleared: number;
   model_names_corrected: number;
   prices_cleared: number;

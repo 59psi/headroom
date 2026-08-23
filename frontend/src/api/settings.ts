@@ -234,9 +234,16 @@ export function auditConstructions() {
   return apiFetch<ConstructionAuditRow[]>('/api/admin/constructions/audit');
 }
 
-/** `dryRun` reports what would change and writes nothing. */
-export function clearConstruction(value: string, dryRun: boolean) {
+/**
+ * Reassign a construction across every hat carrying it.
+ *
+ * `to` writes the right answer instead of a blank — the common case is "these
+ * are all actually HYDRO", not "I don't know". Null clears the field.
+ * `dryRun` reports what would change and writes nothing.
+ */
+export function clearConstruction(value: string, dryRun: boolean, to?: string | null) {
   const qs = new URLSearchParams({ value, dry_run: String(dryRun) });
+  if (to) qs.set('to', to);
   return apiFetch<ConstructionClearResult>(`/api/admin/constructions/clear?${qs}`, {
     method: 'POST',
   });

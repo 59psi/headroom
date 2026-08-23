@@ -173,3 +173,123 @@ async def test_the_endpoints_are_auth_gated(anon_client):
     assert (
         await anon_client.post("/api/admin/constructions/clear?value=HYDROLite")
     ).status_code == 401
+
+
+# ----------------------- reassigning, not just clearing --------------------- #
+
+
+async def test_reassigning_writes_the_right_answer(client):
+    """"These are all actually HYDRO" is the common case, and clearing them
+    would throw away a correction the owner already knows how to make."""
+    hat_id = await _hat(client, construction="HYDROLite")
+
+    body = (await client.post(
+        "/api/admin/constructions/clear?value=HYDROLite&to=HYDRO&dry_run=false"
+    )).json()
+
+    assert body["to"] == "HYDRO"
+    hat = (await client.get(f"/api/hats/{hat_id}")).json()
+    assert hat["construction"] == "HYDRO"
+    # The derived flags must follow the new value, both directions.
+    assert hat["hydro"] is True
+    assert hat["hydrolite"] is False
+
+
+async def test_reassigning_reprices_from_the_new_construction(client, db_session):
+    """The old price was looked up FROM the construction being replaced, so it
+    has to be recomputed rather than kept — HYDROLite $99 becomes HYDRO $79."""
+    hat_id = await _hat(client, construction="HYDROLite")
+    await _set_price(db_session, hat_id, 99.0, "melin retail")
+
+    await client.post(
+        "/api/admin/constructions/clear?value=HYDROLite&to=HYDRO&dry_run=false"
+    )
+
+    hat = (await client.get(f"/api/hats/{hat_id}")).json()
+    assert hat["estimated_new_price"] == 79.0
+    assert hat["estimated_new_price_source"] == "melin retail"
+
+
+async def test_reassigning_strips_the_old_word_without_inventing_the_new_one(client):
+    """Remove, don't substitute: "A-Game HYDRO" would be inventing the product
+    name back, which is the rule the pipeline already follows."""
+    hat_id = await _hat(client, construction="HYDROLite", model_name="A-Game HYDROLite")
+
+    await client.post(
+        "/api/admin/constructions/clear?value=HYDROLite&to=HYDRO&dry_run=false"
+    )
+
+    assert (await client.get(f"/api/hats/{hat_id}")).json()["model_name"] == "A-Game"
+
+
+# --------------------- protecting what the owner typed ---------------------- #
+
+
+async def test_a_construction_the_owner_edited_is_left_alone(client):
+    """The whole point of the skip: a bulk reassignment must not overwrite a
+    value a person typed. `hat.updated` naming `construction` is the proof."""
+    mine = await _hat(client)
+    # Set it the way a person does — through the API, which audits the change.
+    await client.put(f"/api/hats/{mine}", json={"construction": "HYDROLite"})
+    claudes = await _hat(client, construction="HYDROLite")
+
+    body = (await client.post(
+        "/api/admin/constructions/clear?value=HYDROLite&to=HYDRO&dry_run=false"
+    )).json()
+
+    assert body["owner_set_skipped"] == 1
+    assert body["hats_cleared"] == 1
+    assert (await client.get(f"/api/hats/{mine}")).json()["construction"] == "HYDROLite"
+    assert (await client.get(f"/api/hats/{claudes}")).json()["construction"] == "HYDRO"
+
+
+async def test_the_skip_can_be_turned_off(client):
+    """For when the owner knows their own edit was the wrong one."""
+    mine = await _hat(client)
+    await client.put(f"/api/hats/{mine}", json={"construction": "HYDROLite"})
+
+    body = (await client.post(
+        "/api/admin/constructions/clear"
+        "?value=HYDROLite&to=HYDRO&dry_run=false&skip_owner_set=false"
+    )).json()
+
+    assert body["owner_set_skipped"] == 0
+    assert body["hats_cleared"] == 1
+    assert (await client.get(f"/api/hats/{mine}")).json()["construction"] == "HYDRO"
+
+
+async def test_the_dry_run_reports_the_skip_too(client):
+    """The preview has to show the protection working, or it isn't reassurance."""
+    mine = await _hat(client)
+    await client.put(f"/api/hats/{mine}", json={"construction": "HYDROLite"})
+    await _hat(client, construction="HYDROLite")
+
+    body = (await client.post(
+        "/api/admin/constructions/clear?value=HYDROLite&to=HYDRO"
+    )).json()
+
+    assert body["dry_run"] is True
+    assert body["owner_set_skipped"] == 1
+    assert body["hats_cleared"] == 1
+    assert (await client.get(f"/api/hats/{mine}")).json()["construction"] == "HYDROLite"
+
+
+# ------------------------------- the seam rule ------------------------------ #
+
+
+async def test_the_prompt_carries_the_stitching_falsifier():
+    """Visible stitching is the one HYDROLite tell that IS legible in a photo,
+    and it is a falsifier — worth far more than a positive guess, because it
+    can be checked against what the photo shows rather than inferred from an
+    overall impression.
+    """
+    from headroom.services.claude_analysis import HAT_ANALYSIS_TOOL, SYSTEM_PROMPT
+
+    assert "not HYDROLite" in SYSTEM_PROMPT or "is not HYDROLite" in SYSTEM_PROMPT
+    assert "stitching" in SYSTEM_PROMPT.lower()
+
+    schema = HAT_ANALYSIS_TOOL["input_schema"]["properties"]["construction"]["description"]
+    assert "STITCHING" in schema
+    assert "NOT HYDROLite" in schema
+    # The specific failure mode the rule exists to stop.
+    assert "lightweight" in schema.lower()
