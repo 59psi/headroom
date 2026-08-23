@@ -239,3 +239,43 @@ async def test_the_error_row_records_the_path_but_not_the_query(client, monkeypa
 
     assert "hunter2" not in (row["details"] or "")
     assert "/api/hats" in (row["details"] or "")
+
+
+# ---- effective configuration ------------------------------------------ #
+
+
+async def test_the_config_endpoint_reports_what_the_code_will_do(client):
+    """Not what a file says — what the next call will actually use.
+
+    Every toggle here is an env var read live, and `env_int`/`env_flag`
+    degrade a typo to the default rather than crashing. That is the right
+    trade, and it means a misconfigured box looks identical to a correct one
+    from outside. This is where the difference becomes visible.
+    """
+    body = (await client.get("/api/admin/config")).json()
+
+    assert body["backups"]["keep"] == backup_service.backup_keep()
+    assert body["workers"]["analysis"]["expected"] is False  # disabled in tests
+    assert body["limits"]["disk_min_free_mb"] == disk.DEFAULT_MIN_FREE_MB
+    assert body["storage"]["total_bytes"] > 0
+
+
+async def test_a_typo_shows_up_as_the_default_it_silently_became(client, monkeypatch):
+    monkeypatch.setenv("HEADROOM_BACKUP_KEEP", "five")
+
+    body = (await client.get("/api/admin/config")).json()
+
+    assert body["backups"]["keep"] == 5  # not "five", and not a 500
+
+
+async def test_the_config_endpoint_leaks_no_secrets(client):
+    """Key presence is the key-status endpoints' job; repeating it here would
+    be a second place to keep the same redaction correct."""
+    text = (await client.get("/api/admin/config")).text.lower()
+
+    for forbidden in ("sk-ant", "api_key", "secret", "token", "password"):
+        assert forbidden not in text
+
+
+async def test_the_config_endpoint_needs_auth(anon_client):
+    assert (await anon_client.get("/api/admin/config")).status_code == 401

@@ -182,6 +182,18 @@ export function ValuationPage() {
     [hats],
   );
 
+  // A failed fetch must not render as an empty collection. `?? []` turns a
+  // 500 or a dropped connection into "$0 across 0 hats", which is a confident
+  // wrong answer — the exact thing `valueHat` returns `null` rather than 0 to
+  // avoid. Errors are shown, not averaged in.
+  if (hatsQ.isError || disposedQ.isError || casesQ.isError) {
+    return (
+      <div className="alert alert-danger" role="alert">
+        Couldn&rsquo;t load the collection, so no totals are shown — a partial
+        valuation would be worse than none. Reload to try again.
+      </div>
+    );
+  }
   if (hatsQ.isLoading) return <LoadingSpinner />;
 
   const avgPaid = totals.spentCount > 0 ? totals.spentTotal / totals.spentCount : 0;

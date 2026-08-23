@@ -6,7 +6,6 @@ from datetime import datetime
 from typing import cast
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.database import get_db

@@ -129,6 +129,12 @@ class Hat(Base):
     # any non-pending status instead, so the invariant holds in one place. The
     # column keeping its last value is the intended cost of that.
     analysis_stage: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    #: When `analysis_stage` last changed. A stage on its own cannot tell a
+    #: pipeline that is working from one that is wedged — both read
+    #: "identifying" — so the UI can only say "Analyzing…" and hope. With a
+    #: timestamp it can say "in identifying for 41 min", which is the same
+    #: information a person would use to decide something is stuck.
+    analysis_stage_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Which bulk re-analysis run this hat belongs to, if any. Indexed because
     # progress for a job is a COUNT over exactly this column.
     analysis_job_id: Mapped[int | None] = mapped_column(

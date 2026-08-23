@@ -77,7 +77,7 @@ def verify_password(password_hash: str, password: str) -> bool:
         return _hasher.verify(password_hash, password)
     except VerifyMismatchError:
         return False
-    except Exception:  # malformed hash — treat as auth failure, not a 500
+    except Exception:  # noqa: BLE001 — malformed hash is an auth failure, not a 500
         return False
 
 

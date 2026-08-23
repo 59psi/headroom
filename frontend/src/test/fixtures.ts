@@ -22,7 +22,7 @@ export function hatFixture(over: Partial<HatRead> = {}): HatRead {
     owner_notes: null,
     estimated_new_price: null, estimated_new_price_source: null, resale_price: null,
     resale_price_source: null, resale_price_url: null, resale_checked_at: null,
-    resale_price_scope: null, analysis_status: null, analysis_stage: null,
+    resale_price_scope: null, analysis_status: null, analysis_stage: null, analysis_stage_at: null,
     analysis_job_id: null, analysis_error: null, analyzed_at: null,
     disposed_at: null, disposed_via: null, disposed_price: null, disposed_to: null,
     disposed_notes: null, ebay_avg_price: null, ebay_median_price: null,

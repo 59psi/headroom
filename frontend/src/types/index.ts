@@ -109,6 +109,9 @@ export interface HatRead {
   resale_price_scope: 'manual' | 'model' | 'category' | null;
   analysis_status: string | null;
   analysis_stage: string | null;
+  /** When `analysis_stage` last changed — lets the UI say "in identifying
+   *  for 41 min" instead of an indefinite "Analyzing…". */
+  analysis_stage_at: string | null;
   analysis_job_id: number | null;
   analysis_error: string | null;
   analyzed_at: string | null;

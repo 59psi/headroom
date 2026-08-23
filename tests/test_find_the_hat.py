@@ -585,7 +585,6 @@ async def test_a_colour_search_does_not_return_the_whole_collection(
     not pinning an exact result set, it is pinning that the feature
     discriminates at all, which for three releases it did not.
     """
-    from headroom.services.color_extraction import palette
 
     chips = palette()
     for chip in chips:
@@ -612,7 +611,6 @@ async def test_every_palette_colour_finds_itself_first(client, db_session):
     have that a distance threshold cannot: a name filed under the wrong word
     would make a colour unfindable by its own chip.
     """
-    from headroom.services.color_extraction import palette
 
     ids = {}
     for chip in palette():

@@ -139,8 +139,19 @@ async def query_listings(params: dict) -> list[dict]:
                     headers={"Authorization": f"bearer {token}"},
                 )
     except httpx.HTTPError as exc:
+        # ERROR, not a bare raise. The caller catches MelinRecapError and
+        # degrades to a link, which is right — but it means a total outage is
+        # invisible from the outside except as every hat quietly losing its
+        # resale price. This module had a logger and never once used it.
+        logger.error("Melin Recap lookup failed: %s", exc)
         raise MelinRecapError(f"Melin Recap lookup failed: {exc}") from exc
     if resp.status_code != 200:
+        # The documented failure mode is Treet rotating the anonymous client
+        # id, which arrives as a 401/403 on every call. Naming the status is
+        # the difference between "prices stopped" and a diagnosis.
+        logger.error(
+            "Melin Recap query returned %s: %s", resp.status_code, resp.text[:200]
+        )
         raise MelinRecapError(f"Melin Recap query {resp.status_code}: {resp.text[:200]}")
     return resp.json().get("data", [])
 

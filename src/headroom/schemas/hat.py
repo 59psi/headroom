@@ -287,6 +287,7 @@ class HatRead(BaseModel):
     resale_price_scope: str | None = None
     analysis_status: str | None = None
     analysis_stage: str | None = None
+    analysis_stage_at: datetime | None = None
     analysis_job_id: int | None = None
     analysis_error: str | None = None
     analyzed_at: datetime | None = None
@@ -320,6 +321,7 @@ class HatRead(BaseModel):
         """
         if self.analysis_status != "pending":
             self.analysis_stage = None
+            self.analysis_stage_at = None
         return self
 
 

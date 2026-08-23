@@ -48,7 +48,7 @@ const SECTIONS = [
   },
   {
     id: 'data',
-    label: 'Collection data',
+    label: 'Data',
     blurb: 'What the app knows about your hats, and where it came from.',
     cards: [ConstructionAuditCard, ColorwayCatalogCard, PurchasesCard, EbayCredsCard],
   },
@@ -67,13 +67,13 @@ const SECTIONS = [
   },
   {
     id: 'device',
-    label: 'This device',
+    label: 'Device',
     blurb: 'Reaching Headroom, and who is allowed to.',
     cards: [TrustCertCard, AccountCard, MdnsCard, LogoCard],
   },
   {
     id: 'maintenance',
-    label: 'Maintenance',
+    label: 'Upkeep',
     blurb: 'Making sure you still have all of this tomorrow.',
     cards: [BackupsCard, ActivityLogCard],
   },

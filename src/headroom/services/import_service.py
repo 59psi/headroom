@@ -21,9 +21,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from headroom.config import env_flag
 from headroom.config import settings as config_settings
 from headroom.database import async_session
-from headroom.models.hat import Hat
 from headroom.models.import_job import ImportJob, ImportJobItem
-from headroom.schemas.hat import HAT_DEFAULTS, HatCreate, HatStyle
+from headroom.schemas.hat import HAT_DEFAULTS, HatCreate
 from headroom.services import hat_service
 from headroom.services.activity_service import log_activity
 from headroom.services.hat_analysis_pipeline import finalize_hat_photo

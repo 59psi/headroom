@@ -6,6 +6,67 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.42.0] — 2026-08-23
+
+The remainder of the archaeology report, plus build-time work.
+
+### Added
+- **`GET /api/admin/config`** — what this deployment is *effectively* configured
+  to do. Every toggle is an env var read live, and `env_int` degrades a typo to
+  the default rather than crashing, so a misconfigured box looked identical to a
+  correct one from outside. Reports worker expected-vs-alive, backup interval
+  and keep-count, **whether an off-box upload is configured at all**, the body
+  and disk limits, and free space. No secrets.
+- **`analysis_stage_at`** — a stage alone can't distinguish a pipeline that is
+  working from one that is wedged; both read "identifying". Stamped by the same
+  `UPDATE` that sets the stage, so the two can never disagree.
+- **ruff**, inside the existing backend CI job rather than a new one — a
+  separate lint job would pay a fresh runner and a full `uv sync` to do a second
+  of work. It immediately found **16 dead imports** and a genuine forward
+  reference (`AnalysisJobRead` used 4 lines before it was defined, working only
+  because `from __future__ import annotations` defers resolution). 58 `noqa`
+  codes had been written to an authority that was never installed.
+
+### Fixed
+- **The Settings tabs fit a phone, on one line.** As a horizontal scroller the
+  tabs past the fold were invisible — no scrollbar on touch, last pill flush
+  with the gutter — so nothing on screen said the last section existed. The
+  real constraint turned out to be the LABELS, not the layout: five names have
+  to share ~320px, which "Collection data" and "This device" never could. They
+  are **Data**, **Device** and **Upkeep** now, in five equal columns, one row,
+  no scrolling and no ellipsis. The 44px tap target is unchanged.
+- **Stats, Valuation and Home gate on `isError`.** `?? []` turned a failed
+  fetch into "$0 across 0 hats" — a confident wrong answer, and precisely what
+  `valueHat` returns `null` rather than 0 to avoid.
+- **The nav error badge is labelled.** A bare red dot is unreadable to a screen
+  reader and ambiguous to everyone else; it counts hats whose *analysis* failed,
+  not errors in general.
+- **`melin_recap` logs.** A network service with a declared, never-used logger,
+  whose documented failure mode — Treet rotating the anonymous client id —
+  presents as the entire collection quietly losing its resale prices.
+- **One correlation token.** `hat=%s` everywhere, so `grep 'hat=42'` is a
+  complete trace of one run instead of five formats.
+- **The Claude prompt stopped teaching a discarded answer.** `construction` is
+  owner-only, but the schema demanded it and spent ~200 tokens per analysis on
+  identification guidance that ended with a false claim ("your answer is used
+  when they left it blank" — it never is). Trimmed and dropped from `required`.
+  The **stitching falsifier stays**, reframed around what it actually protects:
+  `model_name`, which *is* stored and *is* the name a person reads.
+
+### Changed
+- **Docker builds cache their layers in CI.** The image job rebuilt apt, `uv
+  sync`, `npm ci` and a full SPA build from scratch on every run — nearly all
+  its wall time and none of its value on a branch that touched only Python.
+- **`npm ci` caches on the Pi.** Cutting a release edits
+  `frontend/package.json`, which busts that layer — so every upgrade
+  re-downloaded the entire dependency tree over the Pi's own network, the
+  slowest part of `docker compose up -d --build` there. A cache mount survives
+  the invalidation, and `--prefer-offline` stops it revalidating each tarball.
+- **A docs-only commit no longer re-runs CI on `main`.** A squash-merge fires a
+  second full run on the same tree the PR just passed; worth keeping for code,
+  pure waste for prose. Excluded on `push` only — `pull_request` still gates
+  every change.
+
 ## [2.41.0] — 2026-08-23
 
 ### Fixed

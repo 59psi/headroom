@@ -265,6 +265,18 @@ export function StatsPage() {
       .filter(r => r.value > 0);
   }, [valuation]);
 
+  // A failed fetch must not render as an empty collection. `?? []` turns a
+  // 500 or a dropped connection into "$0 across 0 hats", which is a confident
+  // wrong answer — the exact thing `valueHat` returns `null` rather than 0 to
+  // avoid. Errors are shown, not averaged in.
+  if (hatsQ.isError || disposedQ.isError || casesQ.isError) {
+    return (
+      <div className="alert alert-danger" role="alert">
+        Couldn&rsquo;t load the collection, so no charts are shown — they would
+        describe a collection you don&rsquo;t have. Reload to try again.
+      </div>
+    );
+  }
   if (hatsQ.isLoading || casesQ.isLoading) return <LoadingSpinner />;
 
   const conditionData: ChartDatum[] = ['new_with_tags', 'new', 'worn']

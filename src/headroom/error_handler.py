@@ -2,7 +2,7 @@
 
 Until this existed, a 500 left exactly one trace: a stack trace on stdout,
 inside a container, on a Pi. Nothing in the app could show it to you. The one
-in-app error surface — "Recent errors" and its nav badge — queries hats whose
+in-app error surface — "Recent Analysis Errors" and its nav badge — queries hats whose
 `analysis_status` is `'error'`, so it covers photo analysis and nothing else:
 not a route 500, not a lock storm, not a failed backup. A badge reading 0 was
 an affirmative claim of general health that its own query could not support.

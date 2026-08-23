@@ -1860,27 +1860,27 @@ body.hr-keyboard-open .bottom-nav {
  * ------------------------------------------------------------------ */
 
 .hr-settings-tabs {
-  display: flex;
-  gap: 0.5rem;
-  overflow-x: auto;
-  overflow-y: hidden;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
-  padding-bottom: 0.25rem;
+  /* ONE ROW, always. Not a scroller and not wrapped.
+     As a horizontal scroller the tabs past the fold were invisible — no
+     scrollbar on touch, last pill flush with the gutter — so nothing said
+     "Upkeep" existed. Wrapping fixed that and looked like a broken toolbar.
+     The real constraint is that five labels have to share ~320px on a phone,
+     which is a LABEL problem, not a layout one: the sections are named Data /
+     Device / Upkeep rather than "Collection data" / "This device" /
+     "Maintenance" so five equal columns fit without ellipsis. */
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 0.35rem;
   margin-bottom: 0.75rem;
-  /* Bleed to the screen edges so the last tab doesn't look clipped by the
-     page gutter — it should read as "more this way". */
-  scroll-snap-type: x proximity;
 }
 
-.hr-settings-tabs::-webkit-scrollbar { display: none; }
-
 .hr-settings-tab {
-  flex: 0 0 auto;
-  scroll-snap-align: start;
-  /* 44px minimum tap target. */
+  /* 44px minimum tap target — the one thing that never gives. */
   min-height: 44px;
-  padding: 0.5rem 1rem;
+  min-width: 0;
+  padding: 0.5rem 0.4rem;
+  text-align: center;
   border-radius: 999px;
   border: 1px solid var(--border);
   background: transparent;
@@ -1894,6 +1894,15 @@ body.hr-keyboard-open .bottom-nav {
 .hr-settings-tab:hover {
   color: var(--text-primary, #fff);
   border-color: var(--neon-cyan);
+}
+
+@media (max-width: 420px) {
+  /* Last concession on the narrowest phones. Type only — the row stays one
+     row and the tap target stays 44px. */
+  .hr-settings-tab {
+    font-size: 0.78rem;
+    padding: 0.5rem 0.25rem;
+  }
 }
 
 .hr-settings-tab.is-active {
