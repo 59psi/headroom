@@ -6,6 +6,47 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.43.0] — 2026-08-23
+
+A test-coverage audit, and the bug it found.
+
+### Fixed
+- **Bulk import failed every single item.** `_process_item` reads
+  `item.filename` a few lines after calling `create_hat` — and `create_hat`
+  ends in `_reload_hat`, which calls `db.expire_all()`. That expires every
+  object in the session, the `ImportJobItem` included, so the next attribute
+  read triggered a lazy refresh through synchronous attribute access, which an
+  async session cannot service: `greenlet_spawn has not been called`. The
+  per-item handler caught it and recorded an error, so the feature failed
+  completely while presenting as a batch of bad files.
+
+  Found by writing the first test that ever ran the worker. It reads what it
+  needs into plain locals before `create_hat` now — the same discipline the
+  export service already uses for crossing a thread boundary.
+
+### Added
+- **Coverage measurement**, as `pytest --cov` with **branch** coverage. Branch
+  rather than statement because this codebase's risk lives in degradation
+  paths — Claude unconfigured, rembg failed, worker dead — which are branches,
+  and a statement-only number counts them covered the moment the happy path
+  runs once.
+- **58 new tests** against what the audit found was least covered, which was
+  not random: the modules with the strongest docstring promises had the
+  weakest coverage.
+  - `import_service` **46% → 87%** — the durability claims (`the loop survives
+    ANY per-item exception`, the boot sweep healing crash-stranded state, a
+    cancelled job never being resurrected) were prose, not tests.
+  - `utils/upload` — the 413 cap, a security control whose own docstring says
+    an untestable limit "is how the last one went missing".
+  - `report_service` **53% → 97%** — the document that goes to an insurer, and
+    the only place the valuation rule renders server-side.
+  - `claude_analysis` **57% → 84%** — request shape (owner-stated construction
+    is sent as ground truth; dropping it is the bug that shipped in 2.17) and
+    failure translation.
+  - `ebay_service` **53% → 73%**, `melin_recap` **69% → 83%**,
+    `google_vision` **72% → 84%** — the degrade-don't-fail paths, which on a
+    Pi talking to four third parties are not edge cases.
+
 ## [2.42.0] — 2026-08-23
 
 The remainder of the archaeology report, plus build-time work.

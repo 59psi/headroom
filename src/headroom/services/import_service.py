@@ -233,6 +233,19 @@ async def _process_item(item_id: int) -> None:
             if staged is None or not staged.exists():
                 raise FileNotFoundError("staged file missing")
 
+            # Read every attribute this block needs off `item` NOW, into plain
+            # locals.
+            #
+            # `create_hat` below ends in `_reload_hat`, which calls
+            # `db.expire_all()` — and that expires EVERY object in the session,
+            # this item included. Touching `item.filename` afterwards triggers a
+            # lazy refresh from synchronous attribute access, which an async
+            # session cannot service: it raises "greenlet_spawn has not been
+            # called". That failure was caught by the handler below and recorded
+            # as a per-item error, so bulk import failed every single item while
+            # looking like it had merely had a bad batch.
+            original_filename = item.filename or "import.jpg"
+
             # Resolve defaults from the job
             job = (await db.execute(
                 select(ImportJob).where(ImportJob.id == item.job_id)
@@ -252,7 +265,7 @@ async def _process_item(item_id: int) -> None:
             from headroom.utils.photo import generate_filename
             upload_dir = config_settings.upload_dir / "hats"
             upload_dir.mkdir(parents=True, exist_ok=True)
-            filename = generate_filename(item.filename or "import.jpg")
+            filename = generate_filename(original_filename)
             output_path = upload_dir / filename
             final_path = await process_image_async(staged, output_path)
             await finalize_hat_photo(db, hat, final_path)
