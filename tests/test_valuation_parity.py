@@ -119,3 +119,36 @@ async def test_the_python_rule_ranks_signals_the_same_way():
     unpriced = valuation.value_hat(hat())
     assert unpriced.basis == "none"
     assert unpriced.value is None  # not 0.0
+
+
+@pytest.mark.anyio
+async def test_the_report_counts_the_cases(client):
+    """Cases are part of what you own, and this report goes to an insurer.
+
+    They were in no total anywhere: `CaseRead.retail_price` was served and read
+    by nothing. Dozens of $49 cases understated the claim by four figures, and
+    silently — nothing on the page hinted they were excluded rather than worth
+    nothing.
+    """
+    for _ in range(3):
+        await client.post("/api/cases", json={"case_type": "archive"})
+
+    html = (await client.get("/api/admin/inventory-report")).text
+
+    assert "Cases (3, replacement)" in html
+    assert "$147" in html, "3 cases at $49 replacement cost"
+    assert "Total (hats + cases)" in html
+
+
+@pytest.mark.anyio
+async def test_case_value_is_reported_separately_from_hats(client):
+    """Hats are valued from live comparable listings; cases have no resale
+    market at all. Adding two different kinds of number under one heading is
+    how a total stops meaning anything, so they get their own line."""
+    await client.post("/api/cases", json={"case_type": "archive"})
+
+    html = (await client.get("/api/admin/inventory-report")).text
+
+    # The hat figure keeps its own label and is not silently inflated.
+    assert "Current Value (best estimate)" in html
+    assert "replacement" in html

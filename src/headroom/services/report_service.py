@@ -11,14 +11,14 @@ from datetime import datetime, timezone
 from html import escape
 from typing import Iterable
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from headroom.config import settings
 from headroom.models.case import Case
 from headroom.models.hat import Hat
-from headroom.services import valuation
+from headroom.services import retail_pricing, valuation
 
 
 def _fmt_dollars(v: float | None) -> str:
@@ -63,6 +63,15 @@ async def render_report(
     total_new = sum((h.estimated_new_price or 0) for h in rows)
     total_value = sum(_best_value(h)[0] or 0 for h in rows)
 
+    # The cases are part of what you own, and this report is the document that
+    # goes to an insurer — leaving dozens of $49 cases out understated the
+    # claim by four figures. Counted at REPLACEMENT cost and reported on their
+    # own line: hats are valued from live comparable listings, cases have no
+    # resale market at all, and adding two different kinds of number under one
+    # heading is how a total stops meaning anything.
+    case_count = (await db.execute(select(func.count(Case.id)))).scalar() or 0
+    case_value = case_count * retail_pricing.CASE_RETAIL
+
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     rows_html = "\n".join(_row_html(h, include_photos) for h in rows)
 
@@ -71,6 +80,9 @@ async def render_report(
         total_count=total_count,
         total_new=_fmt_dollars(total_new),
         total_value=_fmt_dollars(total_value),
+        case_count=case_count,
+        case_value=_fmt_dollars(case_value),
+        grand_total=_fmt_dollars(total_value + case_value),
         rows=rows_html,
         version_label=escape(_version_label()),
     )
@@ -194,6 +206,14 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
   <div class="tile">
     <div class="label">Current Value (best estimate)</div>
     <div class="value">{total_value}</div>
+  </div>
+  <div class="tile">
+    <div class="label">Cases ({case_count}, replacement)</div>
+    <div class="value">{case_value}</div>
+  </div>
+  <div class="tile">
+    <div class="label">Total (hats + cases)</div>
+    <div class="value">{grand_total}</div>
   </div>
 </div>
 

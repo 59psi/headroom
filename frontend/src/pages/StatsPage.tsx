@@ -19,7 +19,7 @@ import {
   type ChartDatum, type TimePoint,
 } from '../components/charts/Charts';
 import {
-  BASIS_LABEL, money, moneyPrecise, realizedTotals, valueCollection, valueHat,
+  BASIS_LABEL, money, moneyPrecise, realizedTotals, valueCases, valueCollection, valueHat,
   costOf, type ValueBasis,
   CONDITION_LABEL,
 } from '../lib/valuation';
@@ -170,6 +170,10 @@ export function StatsPage() {
   const cases = useMemo(() => casesQ.data ?? [], [casesQ.data]);
 
   const valuation = useMemo(() => valueCollection(hats), [hats]);
+  // Cases are part of the collection: dozens of them at $49 each. Shown as
+  // their own tile rather than folded into the hat figures — they are valued
+  // at replacement cost, where hats are valued at market.
+  const caseValue = useMemo(() => valueCases(casesQ.data ?? []), [casesQ.data]);
   const realized = useMemo(() => realizedTotals(disposed), [disposed]);
 
   const wear = useMemo(() => {
@@ -318,6 +322,12 @@ export function StatsPage() {
             value: money(valuation.marketTotal),
             tone: 'pink',
             sub: valuation.retentionPct != null ? `${valuation.retentionPct}% of retail` : undefined,
+          },
+          {
+            label: 'Cases',
+            value: money(caseValue.retailTotal),
+            tone: 'cyan',
+            sub: `${caseValue.count} at replacement cost`,
           },
           {
             label: 'Realized',

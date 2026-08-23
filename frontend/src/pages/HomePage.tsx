@@ -6,7 +6,7 @@ import { listRooms } from '../api/rooms';
 import { getLogo } from '../api/settings';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { StatTiles } from '../components/charts/Charts';
-import { money, valueCollection } from '../lib/valuation';
+import { money, valueCases, valueCollection } from '../lib/valuation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 function shuffleArray<T>(arr: T[]): T[] {
@@ -91,6 +91,8 @@ export function HomePage() {
   // ALL hooks must run on every render in the same order — Rules of Hooks.
   // The valuation useMemo MUST live above the early-return below.
   const valuation = useMemo(() => valueCollection(hats.data ?? []), [hats.data]);
+  // Cases count too — dozens at $49 each, previously absent from every total.
+  const caseValue = useMemo(() => valueCases(cases.data ?? []), [cases.data]);
 
   if (cases.isLoading || hats.isLoading) return <LoadingSpinner />;
 
@@ -177,6 +179,12 @@ export function HomePage() {
                   sub: valuation.retentionPct != null
                     ? `${valuation.retentionPct}% of retail`
                     : undefined,
+                },
+                {
+                  label: 'Cases',
+                  value: money(caseValue.retailTotal),
+                  tone: 'cyan',
+                  sub: `${caseValue.count} at replacement cost`,
                 },
                 {
                   label: 'vs. paid',

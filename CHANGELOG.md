@@ -6,6 +6,36 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.34.0] — 2026-08-22
+
+### Fixed
+- **The cases were in no total at all.** `CaseRead.retail_price` had been
+  served since 2.27 and was read by *nothing* — it existed only in the
+  TypeScript type. So "collection value" excluded dozens of $49 travel cases,
+  understating the thing it names by four figures, and silently: nothing on
+  screen hinted cases were left out rather than counted as worthless.
+
+  They now appear on the Home summary, the Stats "Money" card, the Valuation
+  page and the printable inventory report — which matters most, since that is
+  the document that goes to an insurer.
+
+  **Reported on their own line, never folded into the hat figures.** Two
+  reasons, and both would have been invisible if ignored:
+
+  - A case is not a hat. Quietly adding a couple of thousand to a number
+    labelled *market value* would make every comparison on the page — retail
+    retention, unrealised gain, cost per hat — wrong in a way nobody could see.
+  - The two are different *kinds* of number. Hats are valued from live
+    comparable listings; cases have no resale market at all, so $49 is
+    replacement cost, not what one would fetch. The Valuation page adds a
+    "Everything, together" line so the combined figure is available without
+    either number pretending to be the other.
+
+  `valueCases()` sums each case's **served** `retail_price` rather than
+  multiplying by a constant declared in TypeScript — the price lives in
+  `services/retail_pricing.CASE_RETAIL`, and a second copy is one that can
+  drift.
+
 ## [2.33.0] — 2026-08-22
 
 ### Added

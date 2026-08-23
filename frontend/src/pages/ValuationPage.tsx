@@ -11,12 +11,13 @@ import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import { listAllHats, listDisposedHats } from '../api/hats';
+import { listCases } from '../api/cases';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { BarList, ChartCard, StatTiles } from '../components/charts/Charts';
 import {
   BASIS_LABEL, CASH_PAYOUT, CREDIT_PAYOUT, RETAIL_RETENTION,
-  costOf, money, realizedTotals, valueCollection, valueHat, type ValueBasis,
-  CONDITION_LABEL,
+  costOf, money, realizedTotals, valueCases, valueCollection, valueHat,
+  type ValueBasis, CONDITION_LABEL,
 } from '../lib/valuation';
 import type { HatRead } from '../types';
 import { tileSrc } from '../lib/photo';
@@ -134,6 +135,11 @@ export function ValuationPage() {
   const disposed = useMemo(() => disposedQ.data ?? [], [disposedQ.data]);
 
   const totals = useMemo(() => valueCollection(hats), [hats]);
+  // The cases are part of the collection too — a melin travel case is $49 and
+  // there are dozens, so leaving them out understated the total by four
+  // figures, silently.
+  const casesQ = useQuery({ queryKey: ['cases'], queryFn: listCases });
+  const caseValue = useMemo(() => valueCases(casesQ.data ?? []), [casesQ.data]);
   const realized = useMemo(() => realizedTotals(disposed), [disposed]);
 
   const basisRows = useMemo(() => {
@@ -229,6 +235,33 @@ export function ValuationPage() {
               price data at all and {totals.unvalued === 1 ? 'is' : 'are'} left out
               of every figure above rather than counted as $0.
             </p>
+          )}
+
+          {/* Kept as its own line rather than folded into the tiles above:
+              cases are valued at replacement cost, hats at market, and adding
+              two different KINDS of number together silently would make every
+              comparison on this page — retention, gain, cost per hat — wrong
+              in a way nobody could see. */}
+          {caseValue.count > 0 && (
+            <div className="hr-case-total mt-3">
+              <div className="d-flex justify-content-between align-items-baseline">
+                <span className="text-secondary small">
+                  + {caseValue.count} case{caseValue.count === 1 ? '' : 's'} at
+                  replacement cost
+                </span>
+                <span className="font-mono">{money(caseValue.retailTotal)}</span>
+              </div>
+              <div className="d-flex justify-content-between align-items-baseline mt-1">
+                <strong className="small">Everything, together</strong>
+                <strong className="font-mono" style={{ color: 'var(--neon-cyan)' }}>
+                  {money(totals.marketTotal + caseValue.retailTotal)}
+                </strong>
+              </div>
+              <p className="text-muted mb-0 mt-1" style={{ fontSize: '0.72rem' }}>
+                Hats at estimated sale value plus cases at what they cost to
+                replace — cases have no resale market to price them against.
+              </p>
+            </div>
           )}
         </div>
       </div>

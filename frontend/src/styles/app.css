@@ -1898,3 +1898,12 @@ body.hr-keyboard-open .bottom-nav {
 .hr-settings-blurb {
   margin-bottom: 1rem;
 }
+
+/* The cases line under the collection totals. Set apart from the tiles
+   because it is a different KIND of number — replacement cost, not market
+   value — and adding the two silently would make every comparison above it
+   wrong in a way nobody could see. */
+.hr-case-total {
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
+}
