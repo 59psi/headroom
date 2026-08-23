@@ -59,8 +59,23 @@ async def guest_hats(db: AsyncSession, query: str | None = None) -> list[Hat]:
     the room list, which a guest has not.
     """
     from headroom.services import share_link_service
-    from headroom.services.search_service import search_hats
+    from headroom.services.search_service import GUEST_SEARCH_LIMIT, search_hats
 
     if query and query.strip():
-        return await search_hats(db, query.strip())
+        # `public_fields_only` is the important half. Matching on a field the
+        # caller cannot see turns search into an ORACLE for it: `?q=worn`
+        # returns exactly the worn hats, so a guest could read every hat's
+        # condition — and its size, collection and construction — by probing,
+        # even though `SharedHat` withholds all four.
+        #
+        # The higher limit is the other half: the response reports its own
+        # length as the match count, so a truncated list would make that count
+        # a lie. That is the `len()`-of-a-capped-list mistake this codebase has
+        # already made twice.
+        return await search_hats(
+            db,
+            query.strip(),
+            public_fields_only=True,
+            limit=GUEST_SEARCH_LIMIT,
+        )
     return await share_link_service.shared_hats(db)

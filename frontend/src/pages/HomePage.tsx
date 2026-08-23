@@ -187,6 +187,15 @@ export function HomePage() {
                   sub: `${caseValue.count} at replacement cost`,
                 },
                 {
+                  // The question this page gets asked is "what's it all
+                  // worth", and a Cases tile beside a hats-only total answers
+                  // it only if you do the addition yourself.
+                  label: 'Everything',
+                  value: money(valuation.marketTotal + caseValue.retailTotal),
+                  tone: 'pink',
+                  sub: 'hats + cases',
+                },
+                {
                   label: 'vs. paid',
                   value: valuation.unrealizedGain != null
                     ? `${valuation.unrealizedGain >= 0 ? '+' : '−'}${money(Math.abs(valuation.unrealizedGain))}`

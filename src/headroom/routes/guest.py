@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.config import settings
 from headroom.database import get_db
-from headroom.schemas.share import SharedCollection, SharedColor, SharedHat
+from headroom.schemas.share import SharedCollection
 from headroom.services import guest_view_service, share_link_service
 from headroom.utils.paths import safe_file
 
@@ -50,19 +50,8 @@ async def guest_collection(
         label="The collection",
         hat_count=len(hats),
         hats=[
-            SharedHat(
-                id=h.id,
-                display_id=h.display_id,
-                brand=h.brand,
-                model_name=h.model_name,
-                style=h.style,
-                photo_url=f"/api/public/guest/photo/{h.id}" if h.photo_path else None,
-                colors=[
-                    SharedColor(name=c.general_color or c.color_name, hex=c.hex_value)
-                    for c in (h.colors or [])
-                ],
-                case=h.case_display_id,
-                room=h.room_name,
+            share_link_service.to_shared_hat(
+                h, f"/api/public/guest/photo/{h.id}" if h.photo_path else None
             )
             for h in hats
         ],

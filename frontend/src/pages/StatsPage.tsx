@@ -330,6 +330,12 @@ export function StatsPage() {
             sub: `${caseValue.count} at replacement cost`,
           },
           {
+            label: 'Everything',
+            value: money(valuation.marketTotal + caseValue.retailTotal),
+            tone: 'pink',
+            sub: 'hats + cases',
+          },
+          {
             label: 'Realized',
             value: money(realized.proceeds),
             tone: 'muted',

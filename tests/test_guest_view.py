@@ -85,7 +85,9 @@ async def test_the_login_screen_is_told_whether_to_offer_it(client, anon_client)
     """The login page already makes this one unauthenticated call, so the flag
     rides along rather than costing a second round-trip before anything
     renders."""
-    assert (await anon_client.get("/api/auth/status")).json()["guest_view_enabled"] is False
+    # Absent when off — a `false` would disclose that this install has a guest
+    # mode at all, which is what the guest routes' 404 keeps private.
+    assert "guest_view_enabled" not in (await anon_client.get("/api/auth/status")).json()
 
     await _enable(client)
 
@@ -151,14 +153,22 @@ async def test_a_guest_can_search(client, anon_client):
 
 
 async def test_guest_search_uses_the_real_search(client, anon_client):
-    """Delegated rather than reimplemented: a guest-only copy would quietly
-    stop matching what the owner's search matches, and nobody would notice
-    because nobody runs both."""
-    await _hat(client, model_name="Coronado", construction="HYDROLite")
+    """Delegated rather than reimplemented, but over the PROJECTED fields only.
+
+    This test used to prove delegation by searching `construction=HYDROLite` —
+    which was the leak: construction is not in `SharedHat`, so a hit confirmed
+    a value the projection withholds. Room name is the right demonstration: it
+    IS shown to guests, and matching a hat through its case's room is real
+    search machinery no guest-only copy would reproduce by accident.
+    """
+    room = (await client.post("/api/rooms", json={"name": "Attic"})).json()
+    case = (await client.post(
+        "/api/cases", json={"case_type": "archive", "room_id": room["id"]}
+    )).json()
+    await _hat(client, model_name="Coronado", case_id=case["id"])
     await _enable(client)
 
-    # Construction is one of the fields the real multi-term search covers.
-    hits = (await anon_client.get("/api/public/guest/collection?q=HYDROLite")).json()
+    hits = (await anon_client.get("/api/public/guest/collection?q=Attic")).json()
 
     assert [h["model_name"] for h in hits["hats"]] == ["Coronado"]
 
@@ -222,3 +232,85 @@ async def test_guest_view_does_not_open_the_rest_of_the_api(client, anon_client)
 
     for path in ("/api/hats", "/api/cases", "/api/rooms", "/api/settings/guest-view"):
         assert (await anon_client.get(path)).status_code == 401, path
+
+
+# --------------------- search must not become an oracle --------------------- #
+
+
+@pytest.mark.parametrize(
+    "field,value,term",
+    [
+        ("condition", "worn", "worn"),
+        ("size", "x_large", "x_large"),
+        ("artist_series", "Skye Walker", "Skye"),
+        ("construction", "HYDROLite", "HYDROLite"),
+        # Derived from construction — closing the front door and leaving this
+        # window open would leak the same fact.
+        ("construction", "HYDRO", "hydro"),
+    ],
+)
+async def test_guest_search_cannot_probe_for_hidden_fields(
+    client, anon_client, field, value, term
+):
+    """Matching on a field the caller cannot see turns search into an oracle.
+
+    `SharedHat` withholds condition, size, collection and construction. If the
+    query still matched them, a guest could read every hat's condition by
+    trying `?q=worn` and seeing which came back — the projection would be
+    withholding the value while search confirmed it.
+    """
+    base = {"condition": "new", "size": "classic", "style": "a_game"}
+    marked = await _hat(client, model_name="Marked", **{**base, field: value})
+    await _hat(client, model_name="Plain", **base)
+    await _enable(client)
+
+    hits = (await anon_client.get(
+        f"/api/public/guest/collection?q={term}"
+    )).json()["hats"]
+
+    assert [h["model_name"] for h in hits] != ["Marked"], (
+        f"guest search leaked {field}={value!r} via ?q={term}"
+    )
+    assert marked  # named for the reader
+
+
+async def test_guest_search_still_works_on_what_it_shows(client, anon_client):
+    """The restriction must not gut the feature: everything the projection
+    displays stays searchable."""
+    # `brand` is analysis-written, not a creation field — set it the way the
+    # Edit form does.
+    for model in ("Coronado", "Odysea"):
+        hat = await _hat(client, model_name=model)
+        await client.put(f"/api/hats/{hat['id']}", json={"brand": "Melin"})
+    await _enable(client)
+
+    for term, expected in (("Coronado", ["Coronado"]), ("Melin", ["Coronado", "Odysea"])):
+        hits = (await anon_client.get(
+            f"/api/public/guest/collection?q={term}"
+        )).json()["hats"]
+        assert sorted(h["model_name"] for h in hits) == expected, term
+
+
+async def test_the_owners_own_search_still_sees_everything(client):
+    """The restriction is for guests only — narrowing the owner's search would
+    be a real regression in the feature they use most."""
+    await _hat(
+        client, model_name="Marked", condition="worn", construction="HYDROLite"
+    )
+
+    for term in ("worn", "HYDROLite"):
+        hits = (await client.get(f"/api/search?q={term}")).json()
+        assert [h["model_name"] for h in hits] == ["Marked"], term
+
+
+async def test_guest_search_count_is_not_capped(client, anon_client):
+    """`hat_count` is the response's own length, so a truncated list would make
+    it a lie — the `len()`-of-a-capped-list mistake, for the third time."""
+    for i in range(55):
+        await _hat(client, model_name=f"Coronado {i}")
+    await _enable(client)
+
+    body = (await anon_client.get("/api/public/guest/collection?q=Coronado")).json()
+
+    assert body["hat_count"] == 55
+    assert len(body["hats"]) == 55

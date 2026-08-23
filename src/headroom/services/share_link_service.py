@@ -127,3 +127,34 @@ async def shared_hat(db: AsyncSession, hat_id: int) -> Hat | None:
     if hat is None or hat.disposed_at is not None or not hat.photo_path:
         return None
     return hat
+
+
+def to_shared_hat(hat: Hat, photo_url: str | None):
+    """Project a Hat into the shape an outside viewer receives.
+
+    The TYPE was shared between share links and the guest view from the start;
+    the mapper was copied. That is the half that matters — a field added to
+    `SharedHat` gets filled in at whichever call site the author happened to be
+    looking at, and the other one keeps working, so the copy that fell behind
+    would be the one exposed to strangers.
+
+    `photo_url` is the caller's, because the two surfaces stream photos through
+    different routes (a token path vs the guest path). It is the only thing
+    that legitimately differs.
+    """
+    from headroom.schemas.share import SharedColor, SharedHat
+
+    return SharedHat(
+        id=hat.id,
+        display_id=hat.display_id,
+        brand=hat.brand,
+        model_name=hat.model_name,
+        style=hat.style,
+        photo_url=photo_url,
+        colors=[
+            SharedColor(name=c.general_color or c.color_name, hex=c.hex_value)
+            for c in (hat.colors or [])
+        ],
+        case=hat.case_display_id,
+        room=hat.room_name,
+    )

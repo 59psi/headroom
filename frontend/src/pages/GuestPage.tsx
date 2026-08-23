@@ -1,10 +1,9 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
-import { apiFetch } from '../api/client';
+import { getGuestCollection } from '../api/guest';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { SharedCollectionGrid } from '../components/share/SharedCollectionGrid';
-import type { SharedCollection } from '../types';
 
 /**
  * Browsing the collection without an account.
@@ -25,11 +24,7 @@ export function GuestPage() {
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['guest-collection', submitted],
-    queryFn: () => apiFetch<SharedCollection>(
-      submitted
-        ? `/api/public/guest/collection?q=${encodeURIComponent(submitted)}`
-        : '/api/public/guest/collection',
-    ),
+    queryFn: () => getGuestCollection(submitted || undefined),
     retry: false,
   });
 

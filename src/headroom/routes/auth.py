@@ -59,7 +59,11 @@ async def auth_status(request: Request, db: AsyncSession = Depends(get_db)):
         needs_setup=needs_setup,
         authenticated=user is not None,
         username=user.username if user else None,
-        guest_view_enabled=await guest_view_service.is_enabled(db),
+        # None, not False — see the field's note. The model serializer then
+        # drops it from the payload entirely.
+        guest_view_enabled=(
+            True if await guest_view_service.is_enabled(db) else None
+        ),
     )
 
 
