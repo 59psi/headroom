@@ -82,6 +82,14 @@ HYDROLite vs Thermal turns on bonded seams, a gel-welded logo and the
 sweatband, none of which are reliably legible in a single photo, so your guess
 there is weak evidence against their direct observation.
 
+One part of that IS reliably legible, and it is a falsifier rather than an
+identification: **visible stitching on the panel or crown seams means the hat
+is not HYDROLite.** HYDROLite seams are bonded and show no thread. A negative
+like this is worth far more than a positive guess, because it can be checked
+against what the photo actually shows rather than inferred from an overall
+impression — and "looks lightweight and technical" describes HYDRO just as
+well, which is how HYDROLite became the default wrong answer.
+
 This binds `model_name` too. If they said Thermal, do not return a model_name
 containing "HYDROLite" — that contradicts them in the one field they will read
 and repeat. If the photo seems inconsistent with what they stated, prefer their
@@ -126,7 +134,16 @@ HAT_ANALYSIS_TOOL = {
                     + ". 'HYDRO' is usually named in the product name ('A-Game"
                     " Hydro'). 'HYDROLite' is featherweight, with bonded (not"
                     " stitched) seams, a gel-welded rubbery logo rather than"
-                    " embroidery, and an antimicrobial sweatband. If the hat is"
+                    " embroidery, and an antimicrobial sweatband."
+                    " RULE: if you can see STITCHING along the panel seams, the"
+                    " crown seams or around the brim edge, it is NOT HYDROLite —"
+                    " HYDROLite seams are bonded and show no thread at all. Say"
+                    " 'HYDRO' or null instead. Apply this as a hard exclusion:"
+                    " visible stitching rules HYDROLite out even when everything"
+                    " else about the hat suggests it. Do NOT answer 'HYDROLite'"
+                    " merely because a hat looks lightweight or technical — that"
+                    " describes HYDRO too, and defaulting to HYDROLite is the"
+                    " specific error this rule exists to stop. If the hat is"
                     " plainly some other fabric — a seasonal or collab-only"
                     " specialty material — name that instead, in the same short"
                     " form; this field is not limited to the list."

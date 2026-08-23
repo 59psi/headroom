@@ -319,3 +319,26 @@ export interface DuplicateGroup {
   label: string;
   hats: SearchResult[];
 }
+
+/** One construction value on record, and what depends on it. */
+export interface ConstructionAuditRow {
+  construction: string;
+  hat_count: number;
+  /** Hats priced from the table — i.e. derived from this construction. */
+  priced_from_table: number;
+}
+
+/** What clearing a construction did, or would do under `dry_run`. */
+export interface ConstructionClearResult {
+  construction: string;
+  /** What the matched hats become. Null clears the field. */
+  to: string | null;
+  dry_run: boolean;
+  /** Left alone because the audit log proves the owner typed the value. */
+  owner_set_skipped: number;
+  hats_cleared: number;
+  model_names_corrected: number;
+  prices_cleared: number;
+  manual_prices_kept: number;
+  samples: string[];
+}

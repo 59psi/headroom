@@ -1841,3 +1841,60 @@ body.hr-keyboard-open .bottom-nav {
 .hr-tag-url-row .form-control {
   font-size: 0.8rem;
 }
+
+/* ------------------------------------------------------------------ *
+ * Settings section tabs.
+ *
+ * Nineteen cards in one scroll became five errands. The strip scrolls
+ * horizontally rather than wrapping: three rows of small targets is
+ * worse on a phone than one row you swipe, and wrapping moves the tabs
+ * under your thumb at unpredictable heights.
+ * ------------------------------------------------------------------ */
+
+.hr-settings-tabs {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  padding-bottom: 0.25rem;
+  margin-bottom: 0.75rem;
+  /* Bleed to the screen edges so the last tab doesn't look clipped by the
+     page gutter — it should read as "more this way". */
+  scroll-snap-type: x proximity;
+}
+
+.hr-settings-tabs::-webkit-scrollbar { display: none; }
+
+.hr-settings-tab {
+  flex: 0 0 auto;
+  scroll-snap-align: start;
+  /* 44px minimum tap target. */
+  min-height: 44px;
+  padding: 0.5rem 1rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.hr-settings-tab:hover {
+  color: var(--text-primary, #fff);
+  border-color: var(--neon-cyan);
+}
+
+.hr-settings-tab.is-active {
+  color: var(--neon-cyan);
+  border-color: var(--neon-cyan);
+  background: rgba(0, 255, 255, 0.08);
+  box-shadow: 0 0 12px rgba(0, 255, 255, 0.15);
+}
+
+.hr-settings-blurb {
+  margin-bottom: 1rem;
+}

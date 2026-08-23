@@ -6,6 +6,97 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.32.0] — 2026-08-22
+
+### Breaking
+- **Analysis no longer decides construction. At all.** It never overwrote a
+  stated value, but it filled the field whenever it was *empty* — and
+  `_apply_construction`'s own docstring already explained why that was unsafe:
+  Claude reads HYDRO vs HYDROLite off a photo unreliably, because the tells are
+  bonded seams, a gel-welded logo and a sweatband, none of which survive a
+  front-on shot. It was established in 2.11 that letting it *correct* a value
+  replaced right answers with wrong ones; filling a blank is the same coin
+  toss, with nothing prior to notice being lost.
+
+  Two later changes turned a cosmetic guess into an expensive one:
+
+  - **It moved money.** `retail_pricing` prices HYDRO at $79 and HYDROLite at
+    $99, so a guess skewing HYDROLite over-priced the hat by $20.
+  - **It hid hats.** 2.29 made construction a filter, so a mislabelled hat is
+    absent from a filtered view rather than merely wrong in a detail pane.
+
+  A blank construction is an honest *"nobody has looked yet"*. A guessed one is
+  indistinguishable from one you typed. **Construction is now owner-only.**
+
+- **A model name may not assert a construction nobody stated.** melin names
+  read `<line> <construction>`, so "A-Game HYDROLite" carries the same guess in
+  the field a person actually reads and quotes — and
+  `_strip_contradicting_construction` returned early when no construction was
+  stated, so a blank protected nothing. With none stated, every construction is
+  now stripped from the name. Removed, not rewritten: "A-Game" is less specific
+  than "A-Game HYDROLite" and, unlike it, known to be true. State the
+  construction and re-analyse and the full name comes back.
+
+### Added
+- **Construction audit** (Settings → Construction audit), for undoing what
+  analysis already wrote. Nothing in the database records which values came
+  from a person, so this deliberately is *not* a startup backfill that decides
+  for you: it lists every construction on record with how many hats are priced
+  from it, previews exactly what clearing one would do, and acts only on an
+  explicit confirmation.
+
+  Clearing a construction also clears what was derived from it — the
+  construction word in `model_name`, and a retail price that came from the
+  price table. Leaving that price behind would be a number with no derivation,
+  indistinguishable from one somebody checked. **A price you entered manually
+  is never touched**, the same protection it has everywhere else.
+
+  It **reassigns** rather than only clearing: `to=HYDRO` writes the right
+  answer, because the common case is not "I don't know" but "these are all
+  actually HYDRO", and clearing would discard a correction you already know how
+  to make. The price is then re-looked-up from the new value ($99 → $79) rather
+  than dropped.
+
+  And it **leaves your own values alone**. `hat_service` writes an audit row
+  naming the fields a client PUT changed, so a `hat.updated` row mentioning
+  `construction` is proof a person typed it; those hats are skipped and the
+  count is reported so you can see the protection working. This is a proof of
+  ownership, not a complete one — audit rows prune after 90 days and
+  creation-time values were never logged — so it can say "this one is
+  definitely yours", never "this one is definitely not. That asymmetry is the
+  right way round: it only ever protects more.
+
+  `GET /api/admin/constructions/audit`, `POST /api/admin/constructions/clear`
+  (`dry_run=true` and `skip_owner_set=true` by default).
+
+- **The analyser now knows the one HYDROLite tell that a photo can show.**
+  HYDROLite seams are bonded and show no thread, so **visible stitching on the
+  panel or crown seams rules HYDROLite out**. That is a falsifier rather than an
+  identification, which is what makes it worth having: it can be checked against
+  what the photo actually shows, instead of inferred from an overall impression
+  — and "looks lightweight and technical" describes HYDRO just as well, which is
+  how HYDROLite became the default wrong answer. Stated as a hard exclusion in
+  both the system prompt and the tool schema.
+
+### Changed
+- **Settings is five sections instead of nineteen cards in a row.** It had
+  grown by accretion, ordered by the sequence things were built in — API keys
+  next to LAN discovery next to the backup list — so finding anything meant
+  scrolling past everything, which on a phone is most of a minute.
+
+  Grouped by **errand**, not by subsystem: *Analysis* (how a photo becomes an
+  identified hat) spans two API keys, a worker queue and an error list, and
+  that is fine because it is one thing you came to do. Then *Collection data*,
+  *Sharing*, *This device*, *Maintenance*.
+
+  The section lives in the URL (`/settings?tab=data`), like the Cases type
+  filter, so it survives a reload and can be linked to. The tab strip scrolls
+  horizontally rather than wrapping — three rows of small targets is worse on a
+  phone than one row you swipe.
+
+  Side effect worth having: only the open section is mounted, so opening
+  Settings no longer fires all nineteen cards' queries at once.
+
 ## [2.31.1] — 2026-08-22
 
 ### Fixed

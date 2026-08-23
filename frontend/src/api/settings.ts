@@ -2,7 +2,7 @@ import { apiFetch } from './client';
 import type {
   ActivityRow, AnalysisJobRead, AnalysisQueueStatus, ApiKeyStatus, ApiKeyTestResult,
   BackupHealth, BackupInfo, EbayCredsStatus, ImportJob, MdnsStatus, ModelStatus,
-  RecentError, TagBaseStatus,
+  RecentError, TagBaseStatus, ConstructionAuditRow, ConstructionClearResult,
 } from '../types';
 
 // Re-exported so existing imports from this module keep working; the
@@ -226,4 +226,25 @@ export function setTagBase(base_url: string) {
 /** Fall back to whatever host the browser is currently using. */
 export function clearTagBase() {
   return apiFetch<void>('/api/settings/tags', { method: 'DELETE' });
+}
+
+// ------------------------- Construction audit ------------------------ #
+
+export function auditConstructions() {
+  return apiFetch<ConstructionAuditRow[]>('/api/admin/constructions/audit');
+}
+
+/**
+ * Reassign a construction across every hat carrying it.
+ *
+ * `to` writes the right answer instead of a blank — the common case is "these
+ * are all actually HYDRO", not "I don't know". Null clears the field.
+ * `dryRun` reports what would change and writes nothing.
+ */
+export function clearConstruction(value: string, dryRun: boolean, to?: string | null) {
+  const qs = new URLSearchParams({ value, dry_run: String(dryRun) });
+  if (to) qs.set('to', to);
+  return apiFetch<ConstructionClearResult>(`/api/admin/constructions/clear?${qs}`, {
+    method: 'POST',
+  });
 }
