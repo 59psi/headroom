@@ -3,6 +3,30 @@ import { usePickerOpen } from './usePickerOpen';
 import { AnchoredList } from './AnchoredList';
 
 /**
+ * Matches for `query`, best first: exact, then prefix, then anywhere.
+ *
+ * Ordering matters because the list is capped by screen height on a phone. A
+ * plain `includes` filter is alphabetical, so typing "Links" put "Cypress
+ * Links" above "Links" — the thing you typed, pushed below a longer name that
+ * merely contains it.
+ */
+function rank(options: string[], query: string): string[] {
+  const score = (o: string) => {
+    const lower = o.toLowerCase();
+    if (lower === query) return 0;
+    if (lower.startsWith(query)) return 1;
+    return lower.includes(query) ? 2 : 3;
+  };
+  return options
+    .map((o, i) => ({ o, s: score(o), i }))
+    .filter(x => x.s < 3)
+    // Stable within a tier: preserve the caller's order (alphabetical from
+    // `distinct_values`) rather than reshuffling equally-good matches.
+    .sort((a, b) => a.s - b.s || a.i - b.i)
+    .map(x => x.o);
+}
+
+/**
  * A text field with a visible, tappable list of known values.
  *
  * Replaces a native `<datalist>`, which was the wrong tool on a phone: iOS
@@ -34,18 +58,29 @@ export function Combobox({
 }) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
+  // Whether the value in the box was typed here, as opposed to picked from the
+  // list or arriving as a prop. Only typing should narrow the list.
+  const [typing, setTyping] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   // State, not a ref: the list positions against this element, and a plain
   // ref would still be null on the render that first opens the list.
   const [inputEl, setInputEl] = useState<HTMLInputElement | null>(null);
   const listId = useId();
 
-  // Filter on what's typed, but show everything when the field is empty or
-  // exactly matches a suggestion — otherwise picking an option immediately
-  // collapses the list to that one item, which reads as the others vanishing.
+  // Filter on what's TYPED. The list stays whole when the field is empty, and
+  // when the current value arrived by picking rather than typing — otherwise
+  // choosing an option would immediately collapse the list to that one row,
+  // which reads as the other choices vanishing.
+  //
+  // That second condition used to be `options.some(o => o === query)`, i.e.
+  // "the value exactly matches a suggestion". It cannot tell picking from
+  // typing, and typing a known value out in full is the normal case — so
+  // typing "Links" when Links was already on the list showed the ENTIRE list,
+  // headed by 'Ohana and 23XI Racing, and looked like the search was ignoring
+  // the box. Tracking where the value came from is the distinction the old
+  // test actually meant.
   const query = value.trim().toLowerCase();
-  const exact = options.some(o => o.toLowerCase() === query);
-  const shown = !query || exact ? options : options.filter(o => o.toLowerCase().includes(query));
+  const shown = !query || !typing ? options : rank(options, query);
 
   // A click anywhere else closes the list. Pointerdown rather than click so the
   // list is gone before a tap on another control lands.
@@ -69,6 +104,9 @@ export function Combobox({
     onChange(option);
     setOpen(false);
     setActive(-1);
+    // Picked, not typed — so reopening the list shows every choice again
+    // rather than just the one already in the box.
+    setTyping(false);
   }
 
   function onKeyDown(e: React.KeyboardEvent) {
@@ -108,8 +146,22 @@ export function Combobox({
         aria-controls={listId}
         aria-autocomplete="list"
         autoComplete="off"
-        onChange={e => { onChange(e.target.value); setOpen(true); setActive(-1); }}
-        onFocus={() => setOpen(true)}
+        onChange={e => { onChange(e.target.value); setOpen(true); setActive(-1); setTyping(true); }}
+        // Focusing an already-filled field shows everything: you are reopening
+        // the list to change your mind, not searching for what is already in
+        // the box.
+        onFocus={() => { setOpen(true); setTyping(false); }}
+        // Focus alone is not enough to reopen. Picking an option calls
+        // `preventDefault` on its mousedown so the field keeps focus, so after
+        // a pick the input is focused with the list closed — and tapping it
+        // again fires no focus event, leaving no way back to the list short of
+        // focusing something else first.
+        //
+        // Guarded on `!open`: unlike focus, click fires every time, including
+        // when you tap mid-word to move the cursor. Unconditionally clearing
+        // `typing` there would widen the list back to everything while you are
+        // still in the middle of narrowing it.
+        onClick={() => { if (!open) { setOpen(true); setTyping(false); } }}
         onKeyDown={onKeyDown}
       />
       <AnchoredList anchor={inputEl} open={open && shown.length > 0} id={listId} role="listbox">
