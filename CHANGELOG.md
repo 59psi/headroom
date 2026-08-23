@@ -6,6 +6,36 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.38.0] — 2026-08-22
+
+### Added
+- **The server hands you the certificate to trust.**
+  `GET /api/public/ca-certificate` serves Caddy's **root** CA, linked from
+  **Settings → This device → Trust this device** (which appears only when a
+  local CA exists). Open it on the phone and iOS offers to install it — no
+  `docker compose cp` on the Pi and no AirDrop.
+
+  Served as `application/x-x509-ca-cert`, because as `text/plain` a perfectly
+  good certificate is displayed rather than installed, which looks like it is
+  broken.
+
+  **Only `root.crt` is served, and the filename is hardcoded.** The same
+  directory holds `root.key` and `intermediate.key`, so the handler takes no
+  path, no filename and no parameter of any kind — there is no input to
+  traverse with, which is a stronger guarantee than validating one. The
+  overlay mounts Caddy's volume `:ro` so a bug there still cannot write to the
+  PKI.
+
+### Documentation
+- **The intermediate is the trap, and now the docs say so.** `root.crt` and
+  `intermediate.crt` sit side by side and only the root is a trust anchor: a
+  root is self-signed and installed out of band, whereas an intermediate is
+  presented by the server during the handshake and means nothing until its
+  issuer is already trusted. Installing one therefore *appears to succeed and
+  changes nothing* — which is exactly what "the certificate won't install"
+  looks like from the outside. Called out in the README's step 2 and added to
+  its troubleshooting list.
+
 ## [2.37.0] — 2026-08-22
 
 ### Added

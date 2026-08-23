@@ -25,6 +25,17 @@ services:
       # stays LAN-reachable here, so trust forwarded headers from loopback
       # ONLY (a LAN client hitting :8000 directly must not spoof its IP).
       FORWARDED_ALLOW_IPS: "127.0.0.1"
+    volumes:
+      # Read-only, so the app can hand out Caddy's ROOT certificate at
+      # /api/public/ca-certificate. Every device has to trust that CA before
+      # passkeys work, and the alternative was `docker compose cp` on the Pi
+      # followed by AirDrop.
+      #
+      # `:ro` matters more than usual: this volume also holds root.key and
+      # intermediate.key. The route hardcodes the one filename it serves and
+      # takes no path input, but a read-only mount means a bug there still
+      # cannot write to Caddy's PKI.
+      - caddy-data:/caddy-data:ro
 
   # Deliberately self-contained rather than layered on docker-compose.https.yml
   # (keeps the run command to two -f flags) — keep this block in sync with the

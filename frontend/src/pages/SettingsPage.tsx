@@ -19,6 +19,7 @@ import { ShareLinksCard } from '../components/settings/ShareLinksCard';
 import { TagsCard } from '../components/settings/TagsCard';
 import { ConstructionAuditCard } from '../components/settings/ConstructionAuditCard';
 import { GuestViewCard } from '../components/settings/GuestViewCard';
+import { TrustCertCard } from '../components/settings/TrustCertCard';
 
 /**
  * Settings, grouped by what you came here to do.
@@ -68,7 +69,7 @@ const SECTIONS = [
     id: 'device',
     label: 'This device',
     blurb: 'Reaching Headroom, and who is allowed to.',
-    cards: [AccountCard, MdnsCard, LogoCard],
+    cards: [TrustCertCard, AccountCard, MdnsCard, LogoCard],
   },
   {
     id: 'maintenance',
