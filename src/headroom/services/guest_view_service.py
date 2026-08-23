@@ -45,7 +45,9 @@ async def set_enabled(db: AsyncSession, enabled: bool) -> None:
     await settings_service.set_setting(db, GUEST_VIEW_KEY, "1" if enabled else None)
 
 
-async def guest_hats(db: AsyncSession, query: str | None = None) -> list[Hat]:
+async def guest_hats(
+    db: AsyncSession, query: str | None = None, color_scope: str = "major"
+) -> list[Hat]:
     """The hats a guest can see, optionally narrowed by a search term.
 
     Delegates to the same two services the owner's own views use — the share
@@ -76,6 +78,7 @@ async def guest_hats(db: AsyncSession, query: str | None = None) -> list[Hat]:
             db,
             query.strip(),
             public_fields_only=True,
+            color_scope=color_scope,
             limit=GUEST_SEARCH_LIMIT,
         )
     return await share_link_service.shared_hats(db)

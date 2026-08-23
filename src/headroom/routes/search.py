@@ -47,9 +47,19 @@ async def search(
     q: str = Query(..., min_length=1),
     exact_colors: bool = Query(False),
     room_id: int | None = Query(None),
+    color_scope: str = Query(
+        "major",
+        description=(
+            "Which swatches a colour term may match: 'major' (the hat's own"
+            " colours, the default), 'accent' (logos, piping, underbrims), or"
+            " 'all'."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
 ):
-    hats = await search_hats(db, q, exact_colors=exact_colors, room_id=room_id)
+    hats = await search_hats(
+        db, q, exact_colors=exact_colors, room_id=room_id, color_scope=color_scope
+    )
     return [SearchResult(**_result_fields(h)) for h in hats]
 
 

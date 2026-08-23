@@ -50,7 +50,8 @@ describe('GuestPage', () => {
     await user.type(screen.getByLabelText('Search the collection'), 'hydro');
     await user.click(screen.getByRole('button', { name: 'Search' }));
 
-    expect(mocked.getGuestCollection).toHaveBeenLastCalledWith('hydro');
+    // Second arg is the colour scope — which swatches a colour term may match.
+    expect(mocked.getGuestCollection).toHaveBeenLastCalledWith('hydro', 'major');
   });
 
   it('does not fire a request per keystroke', async () => {
@@ -75,7 +76,7 @@ describe('GuestPage', () => {
     await user.type(screen.getByLabelText('Search the collection'), 'a&b c');
     await user.click(screen.getByRole('button', { name: 'Search' }));
 
-    expect(mocked.getGuestCollection).toHaveBeenLastCalledWith('a&b c');
+    expect(mocked.getGuestCollection).toHaveBeenLastCalledWith('a&b c', 'major');
   });
 
   it('makes each hat openable', async () => {
@@ -87,6 +88,21 @@ describe('GuestPage', () => {
 
     const tile = await screen.findByRole('link', { name: /Melin Coronado/ });
     expect(tile).toHaveAttribute('href', '/guest/hat/1');
+  });
+
+  it('lets you switch to matching accents only', async () => {
+    // "Which of my hats has pink on it somewhere" is its own question, not the
+    // leftovers of the default.
+    const user = userEvent.setup();
+    mocked.getGuestCollection.mockResolvedValue(collection(['Coronado']));
+    renderWithProviders(<GuestPage />);
+    await screen.findByText('Melin Coronado');
+
+    await user.type(screen.getByLabelText('Search the collection'), 'pink');
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+    await user.click(await screen.findByRole('button', { name: 'Accents only' }));
+
+    expect(mocked.getGuestCollection).toHaveBeenLastCalledWith('pink', 'accent');
   });
 
   it('offers a way back to signing in', async () => {

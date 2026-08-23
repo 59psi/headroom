@@ -35,6 +35,7 @@ async def _require_enabled(db: AsyncSession) -> None:
 @router.get("/collection", response_model=SharedCollection)
 async def guest_collection(
     q: str | None = Query(None, max_length=200),
+    color_scope: str = Query("major", max_length=10),
     db: AsyncSession = Depends(get_db),
 ):
     """Browse, or search with `?q=`.
@@ -45,7 +46,7 @@ async def guest_collection(
     """
     await _require_enabled(db)
 
-    hats = await guest_view_service.guest_hats(db, q)
+    hats = await guest_view_service.guest_hats(db, q, color_scope)
     return SharedCollection(
         label="The collection",
         hat_count=len(hats),

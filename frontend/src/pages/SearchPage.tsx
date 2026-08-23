@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router';
 import { getColorPalette, searchHats, searchHatsByColor } from '../api/search';
+import { ColorScopePicker } from '../components/common/ColorScopePicker';
 import { ColorSwatches } from '../components/common/ColorSwatch';
 import { ConditionBadge } from '../components/common/ConditionBadge';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
@@ -36,6 +37,9 @@ export function SearchPage() {
   const [query, setQuery] = useState(initialQuery);
   const [searchTerm, setSearchTerm] = useState(initialQuery);
   const [exactColors, setExactColors] = useState(false);
+  // Which swatches a colour term may match. Default is the hat's own
+  // colours — a hat is not "pink" because its logo is.
+  const [colorScope, setColorScope] = useState('major');
   const [colorHex, setColorHex] = useState<string | null>(
     () => searchParams.get('color'),
   );
@@ -53,8 +57,8 @@ export function SearchPage() {
   const roomIdParam = filters.room ? Number(filters.room) : undefined;
 
   const textQ = useQuery({
-    queryKey: ['search', searchTerm, exactColors, roomIdParam],
-    queryFn: () => searchHats(searchTerm, exactColors, roomIdParam),
+    queryKey: ['search', searchTerm, exactColors, roomIdParam, colorScope],
+    queryFn: () => searchHats(searchTerm, exactColors, roomIdParam, colorScope),
     enabled: !colorHex && searchTerm.length > 0,
   });
 
@@ -123,6 +127,14 @@ export function SearchPage() {
           <label className="form-check-label small text-secondary mb-0" htmlFor="exactColors">
             Match exact color names (e.g. <span className="font-mono">darkslategray</span>)
           </label>
+        </div>
+
+        {/* Which swatches a colour term may match. Shown next to the exact-name
+            toggle because they answer adjacent questions: that one is "which
+            NAME", this is "which SWATCH". */}
+        <div className="d-flex align-items-center gap-2 mt-2 flex-wrap">
+          <span className="small text-secondary">Colour terms match:</span>
+          <ColorScopePicker value={colorScope} onChange={setColorScope} />
         </div>
       </form>
 

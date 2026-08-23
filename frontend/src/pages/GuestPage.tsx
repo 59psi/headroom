@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import { getGuestCollection } from '../api/guest';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { SharedCollectionGrid } from '../components/share/SharedCollectionGrid';
+import { ColorScopePicker } from '../components/common/ColorScopePicker';
 
 /**
  * Browsing the collection without an account.
@@ -17,15 +18,29 @@ import { SharedCollectionGrid } from '../components/share/SharedCollectionGrid';
  * owner's search matches.
  */
 export function GuestPage() {
-  const [query, setQuery] = useState('');
-  // Only the submitted term hits the server — a request per keystroke is a lot
-  // of load to hand an unauthenticated caller.
-  const [submitted, setSubmitted] = useState('');
+  // The submitted term lives in the URL, not in state. Opening a hat and
+  // pressing Back re-mounts this page, and component state does not survive
+  // that — you came back to the whole collection with an empty box, having
+  // lost the search you were part-way through. In the URL it is restored by
+  // the browser, and the result is linkable.
+  const [params, setParams] = useSearchParams();
+  const submitted = params.get('q') ?? '';
+  // In the URL too, so Back restores the whole search, not half of it.
+  const scope = params.get('color_scope') ?? 'major';
+  // The input is still local: it changes on every keystroke and the URL should
+  // not.
+  const [query, setQuery] = useState(submitted);
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['guest-collection', submitted],
-    queryFn: () => getGuestCollection(submitted || undefined),
+    queryKey: ['guest-collection', submitted, scope],
+    queryFn: () => getGuestCollection(submitted || undefined, scope),
     retry: false,
+    // Serve the cached page instantly on Back. Without this the list is empty
+    // for a beat while it refetches, and the browser — which restores scroll
+    // against the height of the page as it is at that moment — puts you at the
+    // top. Cached data means the page is its full height immediately and your
+    // position survives.
+    staleTime: 60_000,
   });
 
   if (error) {
@@ -48,7 +63,16 @@ export function GuestPage() {
 
       <form
         className="d-flex gap-2 mb-4"
-        onSubmit={e => { e.preventDefault(); setSubmitted(query.trim()); }}
+        onSubmit={e => {
+          e.preventDefault();
+          const next = query.trim();
+          // `replace` so a run of searches doesn't build a back stack you have
+          // to unwind one press at a time to leave the page.
+          setParams(
+            next ? { q: next, ...(scope !== 'major' && { color_scope: scope }) } : {},
+            { replace: true },
+          );
+        }}
       >
         <input
           aria-label="Search the collection"
@@ -62,10 +86,22 @@ export function GuestPage() {
           <button
             type="button"
             className="btn btn-outline-secondary"
-            onClick={() => { setQuery(''); setSubmitted(''); }}
+            onClick={() => { setQuery(''); setParams({}, { replace: true }); }}
           >Clear</button>
         )}
       </form>
+
+      {submitted && (
+        <div className="mb-4">
+          <ColorScopePicker
+            value={scope}
+            onChange={next => setParams(
+              { q: submitted, ...(next !== 'major' && { color_scope: next }) },
+              { replace: true },
+            )}
+          />
+        </div>
+      )}
 
       {isLoading || !data ? <LoadingSpinner /> : (
         <>
