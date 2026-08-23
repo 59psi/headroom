@@ -47,6 +47,8 @@ vi.mock('../api/settings', () => ({
     example_url: 'http://tags.example:9000/t/h/1',
   })),
   setTagBase: vi.fn(), clearTagBase: vi.fn(),
+  getGuestView: vi.fn(async () => ({ enabled: false })),
+  setGuestView: vi.fn(),
   auditConstructions: vi.fn(async () => [
     { construction: 'HYDROLite', hat_count: 12, priced_from_table: 9 },
   ]),
@@ -90,6 +92,7 @@ const SECTION_CARDS: Record<string, string[]> = {
     'eBay Comparable Listings (optional)',
   ],
   sharing: [
+    'Guest browsing',
     'Share Links',
     'Share the collection',
     'Inventory Report',
@@ -127,7 +130,7 @@ describe('SettingsPage', () => {
     // no section renders nowhere and nothing else notices.
     const all = Object.values(SECTION_CARDS).flat();
     expect(new Set(all).size).toBe(all.length);
-    expect(all).toHaveLength(19);
+    expect(all).toHaveLength(20);
   });
 
   it('defaults to the first section when no tab is named', async () => {

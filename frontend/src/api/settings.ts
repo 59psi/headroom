@@ -248,3 +248,17 @@ export function clearConstruction(value: string, dryRun: boolean, to?: string | 
     method: 'POST',
   });
 }
+
+// ---------------------------- Guest browsing ------------------------- #
+
+export function getGuestView() {
+  return apiFetch<{ enabled: boolean }>('/api/settings/guest-view');
+}
+
+/** Turn unauthenticated read-only browsing on or off. Audited server-side. */
+export function setGuestView(enabled: boolean) {
+  return apiFetch<{ enabled: boolean }>('/api/settings/guest-view', {
+    method: 'PUT',
+    body: JSON.stringify({ enabled }),
+  });
+}

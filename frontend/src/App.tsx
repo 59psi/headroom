@@ -20,6 +20,7 @@ import { StatsPage } from './pages/StatsPage';
 import { BulkImportPage } from './pages/BulkImportPage';
 import { LoginPage } from './pages/LoginPage';
 import { SharePage } from './pages/SharePage';
+import { GuestPage } from './pages/GuestPage';
 import { TagLandingPage } from './pages/TagLandingPage';
 
 const queryClient = new QueryClient({
@@ -46,6 +47,9 @@ export function App() {
           {/* Public routes — no auth, no app shell */}
           <Route path="/login" element={<LoginPage />} />
           <Route path="/share/:token" element={<SharePage />} />
+          {/* Public and outside the shell: a guest has no session, so every
+              nav tab would bounce them to the login screen. */}
+          <Route path="/guest" element={<GuestPage />} />
           <Route element={<AppShell />}>
             <Route path="/" element={<HomePage />} />
             <Route path="/cases" element={<CasesPage />} />

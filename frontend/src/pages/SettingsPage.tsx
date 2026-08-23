@@ -18,6 +18,7 @@ import { AccountCard } from '../components/settings/AccountCard';
 import { ShareLinksCard } from '../components/settings/ShareLinksCard';
 import { TagsCard } from '../components/settings/TagsCard';
 import { ConstructionAuditCard } from '../components/settings/ConstructionAuditCard';
+import { GuestViewCard } from '../components/settings/GuestViewCard';
 
 /**
  * Settings, grouped by what you came here to do.
@@ -55,6 +56,7 @@ const SECTIONS = [
     label: 'Sharing',
     blurb: 'Getting the collection out of here — on screen, on paper, or on a tag.',
     cards: [
+      GuestViewCard,
       ShareLinksCard,
       CollectionExportCard,
       InventoryReportCard,

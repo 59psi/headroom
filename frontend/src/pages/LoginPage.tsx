@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useNavigate, useSearchParams } from 'react-router';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import {
   getAuthStatus, login, setupOwner,
   passkeyLoginOptions, passkeyLoginVerify,
@@ -155,6 +155,19 @@ export function LoginPage() {
             >
               🔑 Sign in with passkey
             </button>
+          )}
+
+          {/* Only when the owner has switched it on. Absent otherwise — not
+              disabled, not explained: a stranger has no reason to learn that
+              this install has a guest mode it isn't using. */}
+          {!needsSetup && status.data?.guest_view_enabled && (
+            <Link
+              to="/guest"
+              className="btn btn-link w-100 mt-3"
+              style={{ color: 'var(--neon-cyan)' }}
+            >
+              Browse the collection as a guest
+            </Link>
           )}
         </div>
       </div>

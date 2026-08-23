@@ -53,10 +53,13 @@ async def auth_status(request: Request, db: AsyncSession = Depends(get_db)):
 
     needs_setup = (await auth_service.user_count(db)) == 0
     user = None if needs_setup else await resolve_user(request)
+    from headroom.services import guest_view_service
+
     return AuthStatus(
         needs_setup=needs_setup,
         authenticated=user is not None,
         username=user.username if user else None,
+        guest_view_enabled=await guest_view_service.is_enabled(db),
     )
 
 

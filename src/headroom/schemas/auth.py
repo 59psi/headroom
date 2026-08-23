@@ -26,6 +26,11 @@ class AuthStatus(BaseModel):
     needs_setup: bool
     authenticated: bool
     username: str | None = None
+    #: Whether the login screen should offer "browse as a guest". Carried here
+    #: rather than on its own endpoint because this is the one unauthenticated
+    #: call the login page already makes, and a second would be a second
+    #: round-trip before anything renders.
+    guest_view_enabled: bool = False
 
 
 class PasswordChange(BaseModel):

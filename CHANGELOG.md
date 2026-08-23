@@ -6,6 +6,44 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.36.0] — 2026-08-22
+
+### Added
+- **Guest browsing.** A "browse the collection as a guest" link on the login
+  screen, letting anyone who can reach Headroom look through the collection and
+  search it without an account. Useful on a LAN when people in the house should
+  be able to look but shouldn't have a login.
+
+  **Off by default.** Unauthenticated read access to somebody's whole
+  collection is not a thing anyone should acquire by upgrading — it is a switch
+  in **Settings → Sharing → Guest browsing**, and until it is thrown the
+  endpoints behave exactly as if they did not exist.
+
+  **404, not 403, when off.** A 403 confirms the feature is there and merely
+  switched off, which is a fact about a private install a stranger has no
+  reason to learn. The login screen omits the link entirely rather than
+  disabling it, for the same reason.
+
+  **No pricing, and not by hiding it.** Guests get the same `SharedHat`
+  projection share links use: photos, brand, model, style, colours and where a
+  hat lives. Prices, purchase history, disposition, wear counts, analysis state
+  and owner notes are *never sent* — returning the full model and trusting the
+  frontend not to render the rest is exactly how that leaks. Disposed hats are
+  excluded too: what something sold for is nobody else's business.
+
+  Search is delegated to the real search service rather than reimplemented. A
+  guest-only copy would quietly stop matching what the owner's search matches,
+  and nobody would notice because nobody runs both. Only a submitted term hits
+  the server — a request per keystroke is a lot of load to hand an
+  unauthenticated caller.
+
+  Read-only by construction: there are no non-GET routes in the module, and a
+  test fails if one is ever added. Turning guest view on does not weaken the
+  gate on anything else, which is also tested.
+
+  Flipping the switch is written to the activity log both ways — "when did that
+  get turned on" is a question the log should be able to answer.
+
 ## [2.35.0] — 2026-08-22
 
 ### Added

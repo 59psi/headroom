@@ -15,10 +15,18 @@ from headroom.schemas.settings import (
     MdnsStatus,
     ModelStatus,
     ModelUpdate,
+    GuestViewStatus,
+    GuestViewUpdate,
     TagBaseStatus,
     TagBaseUpdate,
 )
-from headroom.services import activity_service, mdns_service, settings_service, tag_service
+from headroom.services import (
+    activity_service,
+    guest_view_service,
+    mdns_service,
+    settings_service,
+    tag_service,
+)
 from headroom.services.claude_analysis import verify_api_key
 from headroom.utils.photo import validate_image_content_type
 from headroom.utils.upload import copy_upload_capped
@@ -226,3 +234,32 @@ async def set_tag_base(
 async def clear_tag_base(db: AsyncSession = Depends(get_db)):
     """Fall back to whatever host the request arrives on."""
     await tag_service.set_tag_base(db, None)
+
+
+# ---------------------------- Guest view ----------------------------- #
+
+
+@router.get("/guest-view", response_model=GuestViewStatus)
+async def get_guest_view(db: AsyncSession = Depends(get_db)):
+    """Whether anyone reaching the login screen may browse without an account."""
+    return GuestViewStatus(enabled=await guest_view_service.is_enabled(db))
+
+
+@router.put("/guest-view", response_model=GuestViewStatus, dependencies=[Depends(require_admin)])
+async def set_guest_view(data: GuestViewUpdate, db: AsyncSession = Depends(get_db)):
+    """Turn guest browsing on or off.
+
+    Audited both ways: this is the switch that decides whether the collection
+    is readable without an account, and "when did that get turned on" is a
+    question the log should be able to answer.
+    """
+    await guest_view_service.set_enabled(db, data.enabled)
+    await activity_service.log_activity(
+        db,
+        kind="settings.guest_view",
+        entity_type="system",
+        entity_id=None,
+        summary=f"Guest view {'enabled' if data.enabled else 'disabled'}",
+    )
+    await db.commit()
+    return GuestViewStatus(enabled=await guest_view_service.is_enabled(db))
