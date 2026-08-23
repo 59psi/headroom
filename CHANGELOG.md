@@ -6,6 +6,31 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.31.1] — 2026-08-22
+
+### Fixed
+- **Typing a known value showed the whole list instead of the match.** Typing
+  `Links` into Collection offered `'Ohana`, `23XI Racing`, `Adventure Club`,
+  `ALOHA 96761` — every option, alphabetically — which reads as the box being
+  ignored. The filter skipped itself whenever the typed text exactly matched an
+  option, on the theory that "value equals an option" meant "the user picked
+  it". It cannot: typing a known value out in full is the normal case. The
+  Combobox now tracks whether the value was **typed** or **picked**, which is
+  the distinction that check was reaching for. Affects both Construction and
+  Collection, which share the component.
+
+- **Matches are ranked exact → prefix → substring.** The list is capped by
+  screen height on a phone and a plain filter is alphabetical, so typing
+  "Links" put "Cypress Links" above "Links" — the thing you typed, below a
+  longer name that merely contains it.
+
+- **The list could not be reopened after picking.** Found while fixing the
+  above, not reported. Options call `preventDefault` on mousedown so the field
+  keeps focus through a pick; that leaves the input focused with the list
+  closed, and tapping it fires no focus event. There was no way back to the
+  list except focusing another control first. Fixed in **both** the Combobox
+  and the case picker, which had it too.
+
 ## [2.31.0] — 2026-08-22
 
 ### Added

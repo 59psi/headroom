@@ -173,6 +173,13 @@ export function CasePicker({
         value={open ? query : summary}
         placeholder="Search by case or room…"
         onFocus={() => { setOpen(true); setQuery(''); }}
+        // Focus alone cannot reopen this. Options call `preventDefault` on
+        // mousedown so the field keeps focus through a pick, which leaves the
+        // input focused with the list closed — and a tap then fires no focus
+        // event, so there is no way back to the picker without focusing
+        // something else first. Guarded on `!open` so tapping mid-search to
+        // move the cursor doesn't wipe what you have typed.
+        onClick={() => { if (!open) { setOpen(true); setQuery(''); } }}
         onChange={e => { setQuery(e.target.value); setOpen(true); }}
         onKeyDown={e => { if (e.key === 'Escape') setOpen(false); }}
       />
