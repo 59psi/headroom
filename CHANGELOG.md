@@ -6,6 +6,54 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.32.0] — 2026-08-22
+
+### Breaking
+- **Analysis no longer decides construction. At all.** It never overwrote a
+  stated value, but it filled the field whenever it was *empty* — and
+  `_apply_construction`'s own docstring already explained why that was unsafe:
+  Claude reads HYDRO vs HYDROLite off a photo unreliably, because the tells are
+  bonded seams, a gel-welded logo and a sweatband, none of which survive a
+  front-on shot. It was established in 2.11 that letting it *correct* a value
+  replaced right answers with wrong ones; filling a blank is the same coin
+  toss, with nothing prior to notice being lost.
+
+  Two later changes turned a cosmetic guess into an expensive one:
+
+  - **It moved money.** `retail_pricing` prices HYDRO at $79 and HYDROLite at
+    $99, so a guess skewing HYDROLite over-priced the hat by $20.
+  - **It hid hats.** 2.29 made construction a filter, so a mislabelled hat is
+    absent from a filtered view rather than merely wrong in a detail pane.
+
+  A blank construction is an honest *"nobody has looked yet"*. A guessed one is
+  indistinguishable from one you typed. **Construction is now owner-only.**
+
+- **A model name may not assert a construction nobody stated.** melin names
+  read `<line> <construction>`, so "A-Game HYDROLite" carries the same guess in
+  the field a person actually reads and quotes — and
+  `_strip_contradicting_construction` returned early when no construction was
+  stated, so a blank protected nothing. With none stated, every construction is
+  now stripped from the name. Removed, not rewritten: "A-Game" is less specific
+  than "A-Game HYDROLite" and, unlike it, known to be true. State the
+  construction and re-analyse and the full name comes back.
+
+### Added
+- **Construction audit** (Settings → Construction audit), for undoing what
+  analysis already wrote. Nothing in the database records which values came
+  from a person, so this deliberately is *not* a startup backfill that decides
+  for you: it lists every construction on record with how many hats are priced
+  from it, previews exactly what clearing one would do, and acts only on an
+  explicit confirmation.
+
+  Clearing a construction also clears what was derived from it — the
+  construction word in `model_name`, and a retail price that came from the
+  price table. Leaving that price behind would be a number with no derivation,
+  indistinguishable from one somebody checked. **A price you entered manually
+  is never touched**, the same protection it has everywhere else.
+
+  `GET /api/admin/constructions/audit`, `POST /api/admin/constructions/clear`
+  (`dry_run=true` by default — it removes data that cannot be recomputed).
+
 ## [2.31.1] — 2026-08-22
 
 ### Fixed

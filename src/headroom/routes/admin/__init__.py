@@ -17,6 +17,7 @@ from headroom.routes.admin import (
     analysis,
     backups,
     catalog,
+    construction,
     ebay,
     errors,
     reports,
@@ -26,5 +27,5 @@ router = APIRouter(
     prefix="/api/admin", tags=["admin"], dependencies=[Depends(require_admin)]
 )
 
-for _sub in (errors, backups, activity, reports, ebay, catalog, analysis):
+for _sub in (errors, backups, activity, reports, ebay, catalog, analysis, construction):
     router.include_router(_sub.router)
