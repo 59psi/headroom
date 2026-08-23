@@ -287,3 +287,42 @@ async def test_create_leaves_cost_basis_null_when_not_given(client):
     })
     assert resp.json()["purchase_price"] is None
     assert resp.json()["purchased_at"] is None
+
+
+@pytest.mark.anyio
+async def test_a_legacy_flag_survives_arriving_with_another_field(client):
+    """The `elif` was attached to the wrong `if`.
+
+    A pre-2.11 client's hydro/hydrolite booleans were handled in a branch that
+    hung off the `artist_series` test rather than the `construction` test — so
+    a legacy client sending a flag ALONGSIDE an artist series had the flag
+    silently dropped, while one that sent it alone happened to work. Two
+    unrelated fields, one `elif`, and a bug visible only in combination.
+    """
+    hat_id = (await client.post("/api/hats", json={
+        "condition": "new", "size": "classic", "style": "a_game",
+    })).json()["id"]
+
+    resp = await client.put(f"/api/hats/{hat_id}", json={
+        "artist_series": "Neon Nights", "hydrolite": True,
+    })
+
+    assert resp.status_code == 200
+    hat = resp.json()
+    assert hat["hydrolite"] is True, "the legacy flag was dropped"
+    assert hat["artist_series"] == "Neon Nights"
+    assert hat["construction"] is not None
+
+
+@pytest.mark.anyio
+async def test_an_explicit_construction_still_beats_the_legacy_flags(client):
+    """Order matters the other way too: a modern client states the text."""
+    hat_id = (await client.post("/api/hats", json={
+        "condition": "new", "size": "classic", "style": "a_game",
+    })).json()["id"]
+
+    resp = await client.put(f"/api/hats/{hat_id}", json={
+        "construction": "Waxed Canvas", "hydro": True,
+    })
+
+    assert resp.json()["construction"] == "Waxed Canvas"

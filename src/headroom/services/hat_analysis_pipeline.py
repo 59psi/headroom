@@ -48,7 +48,12 @@ from headroom.services.melin_recap import (
     fetch_resale_stats,
     is_melin,
 )
-from headroom.utils.photo import THUMBS_DIR, make_thumbnail_async
+from headroom.utils.photo import (
+    THUMBS_DIR,
+    export_derivative_path,
+    make_export_image_async,
+    make_thumbnail_async,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +146,26 @@ async def finalize_hat_photo(
         canonical_path, photo_dir / THUMBS_DIR / canonical_path.stem
     )
     hat.thumb_path = f"hats/{THUMBS_DIR}/{thumb.name}" if thumb else None
+
+    # Export derivative, generated HERE rather than lazily at export time.
+    #
+    # It used to be built on demand, once per hat, inside the export request —
+    # on the event loop. A first export of a few hundred hats was therefore
+    # several hundred full-resolution decodes and slow WebP encodes with the
+    # app answering nothing throughout, and a peak allocation that a 1 GB
+    # container running rembg cannot comfortably absorb. The download appeared
+    # to do nothing, which is exactly what it looked like from outside.
+    #
+    # One hat's worth of work belongs where one hat is being processed. This
+    # runs in the analysis worker, so it costs the upload nothing, and the
+    # export becomes a zip of files that already exist.
+    #
+    # Not stored on the Hat: `export_derivative_path` derives it from the
+    # canonical photo's own name, and a column would be a second source of
+    # truth for a file that is regenerable and cache-like.
+    await make_export_image_async(
+        canonical_path, export_derivative_path(settings.upload_dir, hat.photo_path)
+    )
 
     # Everything below interleaves DB reads (API key, model, eBay creds) with
     # slow network calls. With autoflush on, the FIRST of those reads flushes

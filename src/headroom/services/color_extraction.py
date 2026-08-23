@@ -334,6 +334,181 @@ def is_neutral_mismatch(
     return (paler / bolder) < MIN_CHROMA_RATIO
 
 
+# ---- colour identity, which is not colour distance ---------------------- #
+#
+# Every curated palette name, grouped under the word a person would actually
+# use for it. This is what colour search matches on. It replaced a distance
+# threshold, and the reason is a measurement rather than a preference.
+#
+# Within-family distances run up to **ΔE 55.8** — light blue to navy, which
+# are both unarguably "blue". Cross-family distances go down to **15.4**,
+# black to navy. The ranges do not merely overlap, they invert: no threshold
+# anywhere can keep the first pair and reject the second. At the cutoff of 26
+# this replaced, 51 cross-family pairs matched — black/navy, silver/beige,
+# white/cream, charcoal/dark brown — which is why a search returned most of
+# the shelf whatever colour you asked for.
+#
+# Three releases were spent moving that number (30, then 22, then 26) and the
+# file's own comment already had the answer: a distance threshold cannot
+# answer "is this hat purple?", and tuning it will never make it. Distance
+# measures how far apart two colours look. Search asks what a colour IS.
+# Those are different questions, and only the second one has a shelf of hats
+# as its answer.
+#
+# So distance stops deciding membership and goes back to what it is good at:
+# ORDERING the hats that are already the right colour. The palette is curated
+# and closed, so membership has an exact answer.
+#
+# The groups are the basic colour words, not a hue wheel. Deliberately strict:
+# "gold" does not return tans, "blue" does not return teals. Over-matching is
+# the failure being fixed, and a neighbour that is genuinely wanted is one
+# entry away — whereas a search that returns everything is not fixable by the
+# person using it.
+# A name may belong to more than one word. Charcoal is both a soft black and
+# a dark grey, and someone searching either should find it — forcing it into
+# one bucket makes the other search wrong.
+_COLOR_FAMILIES: dict[str, frozenset[str]] = {
+    "black": frozenset({"black"}), "charcoal": frozenset({"black", "gray"}),
+    "gray": frozenset({"gray"}), "silver": frozenset({"gray", "white"}),
+    "white": frozenset({"white"}),
+    "cream": frozenset({"cream"}), "beige": frozenset({"cream", "brown"}),
+    "tan": frozenset({"brown"}), "brown": frozenset({"brown"}),
+    "dark brown": frozenset({"brown"}),
+    "maroon": frozenset({"red"}), "red": frozenset({"red"}),
+    "pink": frozenset({"pink"}),
+    "orange": frozenset({"orange"}),
+    "gold": frozenset({"yellow"}), "yellow": frozenset({"yellow"}),
+    "olive": frozenset({"green"}), "lime": frozenset({"green"}),
+    "green": frozenset({"green"}), "forest green": frozenset({"green"}),
+    "teal": frozenset({"teal"}),
+    "light blue": frozenset({"blue"}), "blue": frozenset({"blue"}),
+    "navy": frozenset({"blue"}),
+    "purple": frozenset({"purple"}), "lavender": frozenset({"purple"}),
+}
+
+#: How much further than the nearest palette entry another one may sit and
+#: still describe the same swatch. A margin, not a distance cutoff: it asks
+#: "is this classification ambiguous?", never "is this colour close?".
+#:
+#: Saturated colours are unambiguous at any margin here — teal resolves to
+#: teal alone, its runner-up 21 away — so a SEARCH always asks for exactly
+#: one colour. Only muted swatches come out ambiguous, which is honest: a
+#: slate really is somewhere between charcoal and teal.
+FAMILY_AMBIGUITY_MARGIN = 5.0
+
+#: Below this chroma a swatch's nearest-name is decided by lightness rather
+#: than by colour, so the hue fallback applies. Above it, the name is trusted.
+NAME_UNRELIABLE_CHROMA = CHROMATIC_CHROMA
+
+#: A swatch needs at least this much chroma for its hue angle to mean
+#: anything. Under it the hue is numerical noise off the neutral axis, and
+#: admitting it is how a grey hat starts matching pink.
+MIN_HUE_CHROMA = 6.0
+
+#: How far apart two hue angles may be and still be the same colour.
+MAX_HUE_DELTA = 25.0
+
+#: Families the hue fallback must never bridge, whatever the angle says.
+#:
+#: CIELAB's hue angle is famously non-linear through the blue region —
+#: straight lines bend toward purple — so a navy and a purple can land within
+#: a few degrees of each other while looking nothing alike. This is a defect
+#: of the colour space, not a judgement call, and it is the same defect that
+#: put palette blue ΔE 16.5 from purple under the old cutoff.
+_INCOMPATIBLE_FAMILIES: frozenset[frozenset[str]] = frozenset({
+    frozenset({"blue", "purple"}),
+})
+
+
+def color_family(name: str | None) -> frozenset[str]:
+    """The basic colour words for a palette name; empty if it isn't one.
+
+    Empty means "not a curated name" — treated as unknown rather than as a
+    family of its own, so unrecognised values never silently group together.
+    """
+    return _COLOR_FAMILIES.get((name or "").strip().lower(), frozenset())
+
+
+def families_of_lab(lab: tuple[float, float, float]) -> frozenset[str]:
+    """Every basic colour word that could reasonably describe this colour.
+
+    Classifies against the curated palette and keeps every entry within
+    `FAMILY_AMBIGUITY_MARGIN` of the nearest, so a colour the palette cannot
+    decide about is reported as belonging to all its candidates rather than
+    to whichever one happened to win by half a unit.
+    """
+    scored = sorted(
+        (lab_distance(lab, lab_of(f"#{r:02x}{g:02x}{b:02x}")), name)
+        for name, (r, g, b) in _PALETTE
+    )
+    if not scored:
+        return frozenset()
+    cutoff = scored[0][0] + FAMILY_AMBIGUITY_MARGIN
+    out: set[str] = set()
+    for distance, name in scored:
+        if distance > cutoff:
+            break
+        out |= color_family(name)
+    return frozenset(out)
+
+
+def hue_of(lab: tuple[float, float, float]) -> float:
+    """Hue angle in degrees. Survives darkening and desaturation."""
+    _l, a, b = lab
+    return math.degrees(math.atan2(b, a)) % 360
+
+
+def _hue_gap(lab_a: tuple[float, float, float], lab_b: tuple[float, float, float]) -> float:
+    gap = abs(hue_of(lab_a) - hue_of(lab_b)) % 360
+    return min(gap, 360 - gap)
+
+
+def is_same_color(
+    target_lab: tuple[float, float, float],
+    swatch_lab: tuple[float, float, float],
+    swatch_name: str | None = None,
+) -> bool:
+    """Whether a swatch is the colour being searched for.
+
+    Membership, decided categorically — see the long note in
+    `search_service` for why no distance threshold can do this job.
+
+    Two ways to qualify, and the second exists for one specific failure of
+    the first. Nearest-name classification is driven by ΔE, which is
+    dominated by LIGHTNESS: a dark teal at L=21 lands nearest charcoal
+    because it is dark, not because it is grey. Its hue angle, though, is
+    197° — the same as a mid teal's. So when a swatch is too muted for its
+    name to be trustworthy, the hue answers instead, which is exactly the
+    axis that survives being darkened.
+    """
+    stored = color_family(swatch_name)
+    swatch_families = stored or families_of_lab(swatch_lab)
+    target_families = families_of_lab(target_lab)
+    if swatch_families & target_families:
+        return True
+
+    # Hue fallback, for muted swatches only.
+    swatch_chroma = chroma_of(swatch_lab)
+    if swatch_chroma >= NAME_UNRELIABLE_CHROMA or swatch_chroma < MIN_HUE_CHROMA:
+        return False
+    if chroma_of(target_lab) < CHROMATIC_CHROMA:
+        return False  # a muted target claims nothing about a muted swatch
+    # The chroma RATIO decides whether this swatch has enough of the target's
+    # colour to be a muted version of it rather than a neutral near it. It is
+    # the same test, and the same constant, that keeps a blue-grey from
+    # matching purple — and it is what separates the two cases the hue angle
+    # alone cannot: a dark teal holds 41% of teal's chroma, a blue-grey 20%
+    # of blue's, and their absolute chromas are 11.1 and 11.7.
+    if is_neutral_mismatch(target_lab, swatch_lab):
+        return False
+    if any(
+        swatch_families & pair and target_families & pair
+        for pair in _INCOMPATIBLE_FAMILIES
+    ):
+        return False
+    return _hue_gap(target_lab, swatch_lab) <= MAX_HUE_DELTA
+
+
 def extract_hat_colors(image_path: Path, max_colors: int = 3) -> list[ExtractedColor]:
     """Return up to `max_colors` dominant hat colors, ranked, background-free.
 

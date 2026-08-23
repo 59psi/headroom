@@ -187,3 +187,117 @@ async def test_export_names_images_by_hat_id_not_display_id():
     hat.photo_path = None
     hat.thumb_path = None
     assert _image_name(hat) is None
+
+
+# ------------------------- the export does no image work ---------------- #
+
+
+async def test_the_export_does_no_image_work_on_the_event_loop(
+    client, db_session, isolated_upload_dir, monkeypatch
+):
+    """The bug: minutes of a Pi answering nothing, and a download that
+    appeared to produce nothing at all.
+
+    Every hat's 800px derivative was generated inline, in the card-rendering
+    loop, ON the event loop — a full-resolution decode plus a WebP `method=6`
+    encode each. A few hundred hats is several minutes during which the app
+    serves no request, with a decoded full-res image resident alongside
+    rembg's model in a 1 GB container.
+
+    Asserts on the thread rather than on elapsed time, because a timing
+    assertion here would be slow AND flaky while proving something weaker.
+    """
+    import threading
+
+    from headroom.services import export_service
+    from headroom.config import settings
+
+    hat_id = await _hat(client)
+    _write_photo(settings.upload_dir / "hats" / "loop.png")
+    row = await _row(db_session, hat_id)
+    row.photo_path = "hats/loop.png"
+    await db_session.commit()
+
+    loop_thread = threading.current_thread().ident
+    ran_on: list[int | None] = []
+    real = export_service._export_image_path
+
+    def _spy(source_rel):
+        ran_on.append(threading.current_thread().ident)
+        return real(source_rel)
+
+    monkeypatch.setattr(export_service, "_export_image_path", _spy)
+
+    await _export(client)
+
+    assert ran_on, "the image path was never resolved"
+    assert all(t != loop_thread for t in ran_on), (
+        "export image work ran on the event loop"
+    )
+
+
+async def test_the_derivative_is_written_when_the_photo_is_processed(
+    client, db_session, isolated_upload_dir
+):
+    """So an export is a zip of files that already exist.
+
+    Generating them lazily meant the FIRST export of an existing collection
+    paid for all of them at once, inside one request. One hat's work belongs
+    where one hat is processed — in the analysis worker, where it costs the
+    upload nothing.
+    """
+    from headroom.config import settings
+    from headroom.services.hat_analysis_pipeline import finalize_hat_photo
+    from headroom.utils.photo import export_derivative_path
+
+    hat_id = await _hat(client)
+    source = _write_photo(settings.upload_dir / "hats" / "fresh.png")
+    row = await _row(db_session, hat_id)
+
+    await finalize_hat_photo(db_session, row, source)
+
+    assert export_derivative_path(settings.upload_dir, row.photo_path).exists()
+
+
+async def test_the_backfill_covers_hats_that_predate_the_change(
+    client, db_session, isolated_upload_dir
+):
+    """Otherwise the first export after upgrading still pays for everything.
+
+    Which is the same several-minute stall, moved to a slightly later date.
+    """
+    from headroom.config import settings
+    from headroom.services import hat_service
+    from headroom.utils.photo import export_derivative_path
+
+    hat_id = await _hat(client)
+    _write_photo(settings.upload_dir / "hats" / "old.png")
+    row = await _row(db_session, hat_id)
+    row.photo_path = "hats/old.png"
+    await db_session.commit()
+    cache = export_derivative_path(settings.upload_dir, "hats/old.png")
+    assert not cache.exists()
+
+    made = await hat_service.backfill_export_images(db_session)
+
+    assert made == 1
+    assert cache.exists()
+
+
+async def test_the_backfill_is_idempotent(client, db_session, isolated_upload_dir):
+    """A restart mid-sweep must pick up, not start over.
+
+    The file's existence is the record — there is no column — so this falls
+    out of the mtime check rather than needing bookkeeping.
+    """
+    from headroom.config import settings
+    from headroom.services import hat_service
+
+    hat_id = await _hat(client)
+    _write_photo(settings.upload_dir / "hats" / "twice.png")
+    row = await _row(db_session, hat_id)
+    row.photo_path = "hats/twice.png"
+    await db_session.commit()
+
+    assert await hat_service.backfill_export_images(db_session) == 1
+    assert await hat_service.backfill_export_images(db_session) == 0

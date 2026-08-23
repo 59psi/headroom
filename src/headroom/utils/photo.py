@@ -135,6 +135,17 @@ async def make_thumbnail_async(source_path: Path, dest_path: Path) -> Path | Non
     return await asyncio.to_thread(make_thumbnail, source_path, dest_path)
 
 
+async def make_export_image_async(source_path: Path, dest_path: Path) -> Path | None:
+    """Async wrapper — same reason as `make_thumbnail_async`, more so.
+
+    This one decodes a full-resolution photo and re-encodes it at WebP
+    `method=6`, the slowest effort setting. It is the single most expensive
+    per-hat operation outside rembg, and running it on the event loop stops
+    the whole app for the duration.
+    """
+    return await asyncio.to_thread(make_export_image, source_path, dest_path)
+
+
 async def process_image_async(input_path: Path, output_path: Path) -> Path:
     """Async wrapper around process_image — runs Pillow off the event loop."""
     return await asyncio.to_thread(process_image, input_path, output_path)
