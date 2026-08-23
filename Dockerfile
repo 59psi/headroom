@@ -101,14 +101,25 @@ ENV HEADROOM_REMBG_MODEL=${REMBG_MODEL}
 # an fd-level redirect works, and it is restored immediately so anything rembg
 # reports afterwards still surfaces. Build-step only — the runtime keeps
 # onnxruntime's default logging.
+# NON-FATAL, deliberately. Every other network call in this build is a package
+# manager against a registry; this one is arbitrary Python reaching out to a
+# file host, and it is the only build step that can fail for a reason that has
+# nothing to do with this project. rembg fetches the weights on first use
+# anyway, so a failure here costs a slow first analysis — not a deploy you
+# cannot perform because someone else's host is down.
+#
+# The directory is created FIRST so the runtime stage's `COPY --from` has
+# something to copy even when the fetch failed.
 RUN --mount=type=cache,target=/opt/model-cache,sharing=locked \
-    U2NET_HOME=/opt/model-cache /opt/venv/bin/python -c "\
+    mkdir -p /root/.u2net \
+ && { U2NET_HOME=/opt/model-cache /opt/venv/bin/python -c "\
 import os; _n=os.open(os.devnull, os.O_WRONLY); _e=os.dup(2); os.dup2(_n, 2); \
 import onnxruntime; os.dup2(_e, 2); os.close(_n); os.close(_e); \
 onnxruntime.set_default_logger_severity(3); \
 from rembg import new_session; new_session('${REMBG_MODEL}')" \
- && mkdir -p /root/.u2net \
- && cp -a /opt/model-cache/. /root/.u2net/
+      && cp -a /opt/model-cache/. /root/.u2net/ \
+      && echo "rembg model ${REMBG_MODEL} cached into the image" ; } \
+ || echo "WARNING: could not pre-cache the rembg model — the app will download it on first use"
 
 COPY src ./src
 COPY README.md ./
