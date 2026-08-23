@@ -6,6 +6,67 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.45.0] — 2026-08-23
+
+### Fixed
+- **`GET /api/public/ca-certificate` returned 404 on every install that ever
+  ran the LAN-HTTPS overlay.** The endpoint exists so a phone can trust
+  `https://headroom.local` by opening a URL; instead it reported "No local CA
+  certificate on this install. It exists only when running
+  docker-compose.https-lan.yml" to operators who were looking directly at
+  Caddy serving certificates.
+
+  The route read Caddy's PKI in place. Caddy creates that tree `0700 root`,
+  and this app's container runs as a non-root user by policy, so the traversal
+  failed — and `Path.is_file()` reports a permission failure as plain `False`,
+  which made **"mounted but unreadable" indistinguishable from "not
+  installed"** and sent the endpoint's own error message to the wrong
+  conclusion. It had never worked, on any release, on any deployment.
+
+  The overlay now runs a `caddy-ca-export` sidecar that copies the public root
+  out to its own volume, world-readable, and the app mounts *that* instead of
+  the PKI. Copying one file rather than loosening permissions also means the
+  app container has no key material in view at all — a stronger guarantee than
+  the route's hardcoded filename, since there is now nothing else in the mount
+  to serve by mistake. It polls rather than copying once: Caddy mints the CA a
+  moment after startup on a first boot and rotates its intermediate
+  periodically after that.
+
+  `_unavailable_detail()` now tells the two failures apart, so a still-broken
+  install is told what is actually wrong instead of being sent to check an
+  overlay that is demonstrably already running.
+
+  **Upgrading:** recreate the stack (`docker compose -f docker-compose.yml -f
+  docker-compose.https-lan.yml up -d --build`) to pick up the new service.
+  Until you do, the endpoint keeps 404ing — with an accurate message now.
+
+- **README's macOS trust step.** It said to double-click the certificate,
+  which lands it in whichever keychain Keychain Access last had selected. The
+  **iCloud** keychain cannot hold certificates and refuses with
+  `Error: -26276` — an error that reads like a bad file rather than a wrong
+  destination. The step now leads with `security add-trusted-cert`, which
+  imports and trusts in one command and cannot guess wrong, and the
+  troubleshooting list covers both `-26276` and the 404 above.
+
+### Changed
+- **The home carousel shows two hats side by side on a desktop**, one on a
+  phone. The breakpoint is 992px — the width this app already treats as
+  desktop, since it is where the top nav replaces the bottom nav — so it is
+  not a new number to keep in step.
+
+  The count is decided in JavaScript (`lib/useMediaQuery.ts`) rather than by
+  hiding a second slide in CSS, so a phone never downloads a photo it will not
+  display. `useSyncExternalStore` rather than `useState` + an effect: the
+  effect version renders one frame at the wrong size and visibly pops from one
+  hat to two on every mount.
+
+  Two details that are easy to get wrong and are pinned by tests: the visible
+  count is clamped to the number of hats that actually have photos, because a
+  one-photo collection rendering the same hat in both panes reads as a bug
+  rather than a layout; and the arrows now hide when everything is already on
+  screen, since stepping by a screenful through a two-hat list lands back
+  where it started.
+
 ## [2.44.0] — 2026-08-23
 
 ### Added

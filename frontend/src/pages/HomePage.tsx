@@ -7,7 +7,11 @@ import { getLogo } from '../api/settings';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { StatTiles } from '../components/charts/Charts';
 import { money, valueCases, valueCollection } from '../lib/valuation';
+import { useMediaQuery } from '../lib/useMediaQuery';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+
+/** Desktop, as this app already defines it — the width where TopNav appears. */
+const TWO_UP_QUERY = '(min-width: 992px)';
 
 function shuffleArray<T>(arr: T[]): T[] {
   const shuffled = [...arr];
@@ -27,6 +31,7 @@ export function HomePage() {
   const [activeIndex, setActiveIndex] = useState(0);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const touchStartX = useRef<number | null>(null);
+  const twoUp = useMediaQuery(TWO_UP_QUERY);
 
   const withPhotos = useMemo(
     () => hats.data?.filter(h => h.photo_path) ?? [],
@@ -41,38 +46,59 @@ export function HomePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [photoKey]
   );
-  // Clamp rather than index blindly: the list can shrink under a running
-  // carousel (a hat disposed or deleted on another device, then a refetch),
-  // and `hatsWithPhotos[activeIndex]` would then be undefined and throw,
-  // taking the whole page down to the ErrorBoundary.
-  const activeHat = hatsWithPhotos.length
-    ? hatsWithPhotos[activeIndex % hatsWithPhotos.length]
-    : null;
+  // Two hats on a desktop, one on a phone — but never more than exist, or a
+  // single-photo collection renders the same hat twice side by side, which
+  // reads as a bug rather than a layout.
+  const visibleCount = Math.min(twoUp ? 2 : 1, Math.max(hatsWithPhotos.length, 1));
 
+  // Take a window rather than indexing blindly: the list can shrink under a
+  // running carousel (a hat disposed or deleted on another device, then a
+  // refetch), and `hatsWithPhotos[activeIndex]` would then be undefined and
+  // throw, taking the whole page down to the ErrorBoundary.
+  const visibleHats = useMemo(
+    () =>
+      hatsWithPhotos.length
+        ? Array.from(
+            { length: Math.min(visibleCount, hatsWithPhotos.length) },
+            (_, i) => hatsWithPhotos[(activeIndex + i) % hatsWithPhotos.length]
+          )
+        : [],
+    [hatsWithPhotos, activeIndex, visibleCount]
+  );
+
+  // Nothing to page to when every hat is already on screen. Generalises the
+  // old `length <= 1` guard, which on a two-up view left the arrows visible
+  // for a two-hat collection and stepping by 2 landed back where it started.
+  const canPage = hatsWithPhotos.length > visibleCount;
+
+  // Advance by a full screenful so both panes turn over together and the
+  // arrows page rather than shuffle one hat along.
   const goNext = useCallback(() => {
-    if (hatsWithPhotos.length <= 1) return;
-    setActiveIndex(prev => (prev + 1) % hatsWithPhotos.length);
-  }, [hatsWithPhotos.length]);
+    if (!canPage) return;
+    setActiveIndex(prev => (prev + visibleCount) % hatsWithPhotos.length);
+  }, [canPage, visibleCount, hatsWithPhotos.length]);
 
   const goPrev = useCallback(() => {
-    if (hatsWithPhotos.length <= 1) return;
-    setActiveIndex(prev => (prev - 1 + hatsWithPhotos.length) % hatsWithPhotos.length);
-  }, [hatsWithPhotos.length]);
+    if (!canPage) return;
+    setActiveIndex(
+      prev => (prev - visibleCount + hatsWithPhotos.length) % hatsWithPhotos.length
+    );
+  }, [canPage, visibleCount, hatsWithPhotos.length]);
 
   useEffect(() => {
-    if (hatsWithPhotos.length <= 1) return;
+    if (!canPage) return;
     intervalRef.current = setInterval(goNext, 5000);
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [hatsWithPhotos.length, goNext]);
+  }, [canPage, goNext]);
 
   const resetTimer = useCallback(() => {
     if (intervalRef.current) clearInterval(intervalRef.current);
-    if (hatsWithPhotos.length > 1) {
+    if (canPage) {
       intervalRef.current = setInterval(goNext, 5000);
     }
-  }, [hatsWithPhotos.length, goNext]);
+  }, [canPage, goNext]);
 
   function handleTouchStart(e: React.TouchEvent) {
     touchStartX.current = e.touches[0].clientX;
@@ -226,26 +252,32 @@ export function HomePage() {
         </div>
       </div>
 
-      {activeHat && (
+      {visibleHats.length > 0 && (
         <div
           className="hr-carousel mb-3"
           onTouchStart={handleTouchStart}
           onTouchEnd={handleTouchEnd}
         >
-          <div
-            onClick={() => navigate(`/hats/${activeHat.id}`)}
-            style={{ cursor: 'pointer' }}
-          >
-            <img
-              src={`/uploads/${activeHat.photo_path}`}
-              alt={activeHat.display_id || `Hat #${activeHat.id}`}
-            />
-            <div className="carousel-caption">
-              <h6>{activeHat.display_id || `Hat #${activeHat.id}`}</h6>
-              <small>{activeHat.style.replace(/_/g, ' ')}</small>
-            </div>
+          <div className="hr-carousel-track">
+            {visibleHats.map(hat => (
+              <div
+                key={hat.id}
+                className="hr-carousel-slide"
+                onClick={() => navigate(`/hats/${hat.id}`)}
+                style={{ cursor: 'pointer' }}
+              >
+                <img
+                  src={`/uploads/${hat.photo_path}`}
+                  alt={hat.display_id || `Hat #${hat.id}`}
+                />
+                <div className="carousel-caption">
+                  <h6>{hat.display_id || `Hat #${hat.id}`}</h6>
+                  <small>{hat.style.replace(/_/g, ' ')}</small>
+                </div>
+              </div>
+            ))}
           </div>
-          {hatsWithPhotos.length > 1 && (
+          {canPage && (
             <>
               <button
                 className="carousel-control-prev"

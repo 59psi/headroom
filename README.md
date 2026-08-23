@@ -312,6 +312,12 @@ That serves the **root** certificate with the right content type, so iOS
 offers to install it directly. It's also linked from **Settings → This device
 → Trust this device**, which only appears when a local CA exists.
 
+> Upgrading from an overlay older than 2.45? Recreate the stack
+> (`up -d` again) before using that URL. It is served from a certificate the
+> `caddy-ca-export` service copies out of Caddy's PKI, and without that
+> service the endpoint returns 404 — Caddy's PKI is `0700 root`, and the app
+> container runs as a non-root user, so it cannot read the file in place.
+
 Or copy it off the host manually:
 
 ```bash
@@ -332,8 +338,14 @@ not just any TLS):
   it, then **Settings → Profile Downloaded → Install**. Finally — easy to
   miss — enable it under **Settings → General → About → Certificate Trust
   Settings**.
-- **Mac**: double-click the file to add it to Keychain Access, open it, and
-  set *When using this certificate* to **Always Trust**.
+- **Mac**: one command does the whole thing, import and trust together —
+  `sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain headroom-ca.crt`.
+  Double-clicking works too, but it lands in whichever keychain Keychain
+  Access last had selected, and it must be **login** or **System** — the
+  **iCloud** keychain cannot hold certificates and refuses the import with
+  `Error: -26276`, which reads like a bad file rather than a wrong
+  destination. Then open it and set *When using this certificate* to
+  **Always Trust**.
 - **Android**: Settings → Security → More → Encryption & credentials →
   **Install a certificate → CA certificate**.
 - **Windows**: right-click → Install Certificate → Local Machine → place in
@@ -353,7 +365,16 @@ sign in with Face ID.
   enough; the Certificate Trust Settings toggle in step 3 must be on.
 - *The certificate "installs" but nothing changes* — you almost certainly
   installed `intermediate.crt`. Only `root.crt` is a trust anchor; see the
-  note in step 2.
+  note in step 2. A browser's "export certificate" button hands you the leaf
+  or the intermediate, never the root — a root is self-signed and never sent
+  during a handshake, so it can only come off the Pi.
+- *macOS says `Error: -26276`* — the import is aimed at the **iCloud**
+  keychain, which cannot store certificates. Pick **login** or **System** in
+  the Keychain Access sidebar, or use the `security add-trusted-cert` command
+  in step 3, which never has to guess.
+- *`/api/public/ca-certificate` returns 404 while Caddy is plainly serving
+  HTTPS* — the `caddy-ca-export` service isn't running. Recreate the stack;
+  see the note in step 2.
 - *No Face ID prompt* — passkeys are bound to the domain they were created
   on. One registered at `localhost` or a public domain won't be offered at
   `headroom.local`; add a new passkey while on the LAN name.

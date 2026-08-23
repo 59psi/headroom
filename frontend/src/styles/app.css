@@ -1005,6 +1005,37 @@ button.card:hover::before,
   position: relative;
 }
 
+/* Two hats side by side from `lg` up — the width this app already treats as
+   desktop, since it's where TopNav replaces the bottom nav. Below that a
+   single hat keeps the full width: two 16/9 panes on a phone are each about
+   as tall as a thumbnail, which is a worse version of the grid rather than a
+   showcase. The COUNT is decided in JS (`useMediaQuery`) rather than by
+   hiding a second slide here, so a phone never downloads a photo it will not
+   show. */
+.hr-carousel-track {
+  display: flex;
+}
+
+.hr-carousel-slide {
+  flex: 1 1 0;
+  /* Without this a wide caption refuses to shrink and pushes the flex row
+     past its container. */
+  min-width: 0;
+  /* The caption is absolutely positioned; this is what it anchors to, so each
+     hat gets its own rather than one spanning both. */
+  position: relative;
+}
+
+.hr-carousel-slide + .hr-carousel-slide {
+  border-left: 1px solid var(--border);
+}
+
+@media (min-width: 992px) {
+  .hr-carousel {
+    max-width: 1120px;
+  }
+}
+
 .hr-carousel img {
   display: block;
   width: 100%;

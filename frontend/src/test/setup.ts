@@ -4,5 +4,14 @@
 import '@testing-library/jest-dom/vitest';
 import { afterEach } from 'vitest';
 import { cleanup } from '@testing-library/react';
+import { installMatchMedia, resetViewportWidth } from './matchMedia';
 
-afterEach(cleanup);
+// jsdom has no CSS engine and therefore no `window.matchMedia`, so anything
+// asking about the viewport throws on mount. The stub answers "no match" until
+// a test calls `setViewportWidth`, which is the mobile-first base case.
+installMatchMedia();
+
+afterEach(() => {
+  cleanup();
+  resetViewportWidth();
+});
