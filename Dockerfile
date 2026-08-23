@@ -50,9 +50,16 @@ RUN npx tsc -b --noEmit && npx vite build
 # build clean and then fail on import at container start.
 FROM python:3.14-slim-trixie AS base
 # rembg + Pillow + onnxruntime need these; tini is the runtime init.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        libgl1 libglib2.0-0 libheif1 tini \
-    && rm -rf /var/lib/apt/lists/*
+# Cache mounts, so a cold rebuild does not re-download the same debs.
+# `docker-clean` is Debian's hook that deletes them straight after install,
+# which would empty the cache we are trying to fill. Neither mount lands in
+# the layer, so the image is no bigger and the explicit `rm -rf` this replaces
+# is no longer needed to keep it small.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+    && apt-get update && apt-get install -y --no-install-recommends \
+        libgl1 libglib2.0-0 libheif1 tini
 
 FROM base AS python-base
 ENV UV_LINK_MODE=copy \
@@ -78,18 +85,30 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # keeping it here means a source edit doesn't re-download ~40s of ONNX weights.
 ARG REMBG_MODEL=isnet-general-use
 ENV HEADROOM_REMBG_MODEL=${REMBG_MODEL}
-# onnxruntime probes the host for GPUs while `import onnxruntime` runs and logs
-# a WARNING per device it can't read — guaranteed noise in a container, which
-# has none, and it buries real build errors. The messages come from C++ straight
-# to fd 2 *during the import*, so set_default_logger_severity() runs too late to
-# stop them; only an fd-level redirect works, and it is restored immediately so
-# anything rembg reports afterwards still surfaces. Build-step only — the
-# runtime keeps onnxruntime's default logging.
-RUN /opt/venv/bin/python -c "\
+# The weights are ~175 MB, and this layer busts whenever anything above it
+# changes — a dependency bump, the uv pin, the model arg. On a Pi that meant a
+# 175 MB download over a home connection to reproduce a file that had not
+# changed. `U2NET_HOME` points rembg at a BuildKit cache mount; the copy
+# afterwards materialises the weights INTO the layer, which is required because
+# a cache mount is not part of the image and the runtime stage `COPY --from`s
+# this exact path.
+#
+# The `python -c` body looks odd for a reason. onnxruntime probes the host for
+# GPUs while `import onnxruntime` runs and logs a WARNING per device it can't
+# read — guaranteed noise in a container, which has none, and it buries real
+# build errors. Those messages come from C++ straight to fd 2 *during the
+# import*, so `set_default_logger_severity()` runs too late to stop them; only
+# an fd-level redirect works, and it is restored immediately so anything rembg
+# reports afterwards still surfaces. Build-step only — the runtime keeps
+# onnxruntime's default logging.
+RUN --mount=type=cache,target=/opt/model-cache,sharing=locked \
+    U2NET_HOME=/opt/model-cache /opt/venv/bin/python -c "\
 import os; _n=os.open(os.devnull, os.O_WRONLY); _e=os.dup(2); os.dup2(_n, 2); \
 import onnxruntime; os.dup2(_e, 2); os.close(_n); os.close(_e); \
 onnxruntime.set_default_logger_severity(3); \
-from rembg import new_session; new_session('${REMBG_MODEL}')"
+from rembg import new_session; new_session('${REMBG_MODEL}')" \
+ && mkdir -p /root/.u2net \
+ && cp -a /opt/model-cache/. /root/.u2net/
 
 COPY src ./src
 COPY README.md ./
