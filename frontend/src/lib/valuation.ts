@@ -39,7 +39,7 @@
  * 5. `none`     — nothing supports a number. Counted, never guessed at, and
  *                 never quietly treated as $0 inside an average.
  */
-import type { HatRead } from '../types';
+import type { CaseRead, HatRead } from '../types';
 
 /**
  * What the marketplace pays a seller, as a fraction of the sale price.
@@ -263,6 +263,39 @@ export function valueCollection(hats: HatRead[]): CollectionValuation {
     unrealizedGain: overlapCost > 0 ? overlapMarketVsCost - overlapCost : null,
     byBasis,
   };
+}
+
+export interface CaseValuation {
+  count: number;
+  /** Sum of each case's own `retail_price`. */
+  retailTotal: number;
+}
+
+/**
+ * What the cases themselves are worth.
+ *
+ * They were missing from every total. A melin 3 Hat Travel Case is $49 and
+ * there are dozens of them, so "collection value" was understating the thing
+ * it names by four figures — and silently, because nothing on screen hinted
+ * that cases were excluded rather than counted at zero.
+ *
+ * Kept SEPARATE from the hat figures rather than folded in, for two reasons:
+ *
+ * * A case is not a hat. Quietly adding a couple of thousand to a number
+ *   labelled "market value" would make every comparison on the page — retail
+ *   retention, unrealised gain, cost per hat — wrong in a way nobody could see.
+ * * The two numbers are different KINDS. Hats are valued from live comparable
+ *   listings; cases have no resale market at all (melinrecap sells hats), so
+ *   $49 is replacement cost, not what one would fetch.
+ *
+ * Sums each case's served `retail_price` rather than multiplying by a constant
+ * declared here: the price lives in `services/retail_pricing.CASE_RETAIL` and a
+ * second copy in TypeScript is one that can drift.
+ */
+export function valueCases(cases: readonly CaseRead[]): CaseValuation {
+  let retailTotal = 0;
+  for (const c of cases) retailTotal += c.retail_price ?? 0;
+  return { count: cases.length, retailTotal };
 }
 
 export interface RealizedTotals {

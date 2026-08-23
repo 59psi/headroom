@@ -10,9 +10,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   CASH_PAYOUT, CREDIT_PAYOUT, RETAIL_RETENTION,
-  costOf, realizedTotals, valueCollection, valueHat,
+  costOf, realizedTotals, valueCases, valueCollection, valueHat,
 } from './valuation';
-import type { HatRead } from '../types';
+import type { HatRead, CaseRead } from '../types';
 
 /** A hat with nothing priced. Tests set only the fields they're about. */
 function hat(over: Partial<HatRead> = {}): HatRead {
@@ -226,5 +226,33 @@ describe('realizedTotals', () => {
     const r = realizedTotals([hat({ disposed_via: 'sold', disposed_price: 99 })]);
     expect(r.proceeds).toBe(99);
     expect(r.netGain).toBeNull();
+  });
+});
+
+describe('valueCases', () => {
+  const c = (over: Partial<CaseRead> = {}): CaseRead => ({
+    id: 1, case_type: 'archive', sequence_number: 1, display_id: 'A-001',
+    photo_path: null, capacity: null, retail_price: 49,
+    hat_count: 0, beanie_count: 0, regular_count: 0,
+    room_id: 1, room_name: 'Closet', hat_thumbs: [],
+    overfull: false, nominal_capacity: 3, nominal_regular: 3, nominal_beanie: 8,
+    accepts_regular: true, accepts_beanie: true, free_regular: 3, free_beanie: 8,
+    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    ...over,
+  });
+
+  it('sums what the cases are worth', () => {
+    expect(valueCases([c(), c(), c()])).toEqual({ count: 3, retailTotal: 147 });
+  });
+
+  it('sums the SERVED price rather than a constant declared here', () => {
+    // The price lives in `services/retail_pricing.CASE_RETAIL`; a second copy
+    // in TypeScript is one that can drift. If the server ever changes it, this
+    // follows without an edit.
+    expect(valueCases([c({ retail_price: 39 })]).retailTotal).toBe(39);
+  });
+
+  it('is zero for an empty collection, not NaN', () => {
+    expect(valueCases([])).toEqual({ count: 0, retailTotal: 0 });
   });
 });
