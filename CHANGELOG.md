@@ -54,6 +54,25 @@ All notable changes are documented here. This project follows
   `GET /api/admin/constructions/audit`, `POST /api/admin/constructions/clear`
   (`dry_run=true` by default — it removes data that cannot be recomputed).
 
+### Changed
+- **Settings is five sections instead of nineteen cards in a row.** It had
+  grown by accretion, ordered by the sequence things were built in — API keys
+  next to LAN discovery next to the backup list — so finding anything meant
+  scrolling past everything, which on a phone is most of a minute.
+
+  Grouped by **errand**, not by subsystem: *Analysis* (how a photo becomes an
+  identified hat) spans two API keys, a worker queue and an error list, and
+  that is fine because it is one thing you came to do. Then *Collection data*,
+  *Sharing*, *This device*, *Maintenance*.
+
+  The section lives in the URL (`/settings?tab=data`), like the Cases type
+  filter, so it survives a reload and can be linked to. The tab strip scrolls
+  horizontally rather than wrapping — three rows of small targets is worse on a
+  phone than one row you swipe.
+
+  Side effect worth having: only the open section is mounted, so opening
+  Settings no longer fires all nineteen cards' queries at once.
+
 ## [2.31.1] — 2026-08-22
 
 ### Fixed

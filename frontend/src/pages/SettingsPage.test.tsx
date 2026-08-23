@@ -67,52 +67,115 @@ vi.mock('../lib/webauthn', () => ({
   createPasskey: vi.fn(), passkeysSupported: vi.fn(() => false),
 }));
 
-/** Every card the page is expected to compose, in on-screen order. */
-const CARD_TITLES = [
-  'Claude API Key',
-  'Claude Model',
-  'Google Vision Key (fallback)',
-  'Analysis Queue',
-  'Recent Analysis Errors',
-  'eBay Comparable Listings (optional)',
-  'LAN Discovery (mDNS)',
-  'Recent Activity',
-  'Share Photos to Headroom',
-  'Tags & labels',
-  'Inventory Report',
-  'Share the collection',
-  'Backups',
-  'Site Logo',
-  'Construction audit',
-  'Colorway Catalog',
-  'Purchase History',
-  'Account',
-  'Share Links',
-];
+/**
+ * Every card, by the section it lives in and in on-screen order within it.
+ *
+ * The page was one flat scroll of nineteen; it is now five sections and only
+ * the active one is mounted. So the check is per-section rather than one list,
+ * and the union below is what guarantees no card was dropped on the way — a
+ * silent failure nothing else in the toolchain catches.
+ */
+const SECTION_CARDS: Record<string, string[]> = {
+  analysis: [
+    'Claude API Key',
+    'Claude Model',
+    'Google Vision Key (fallback)',
+    'Analysis Queue',
+    'Recent Analysis Errors',
+  ],
+  data: [
+    'Construction audit',
+    'Colorway Catalog',
+    'Purchase History',
+    'eBay Comparable Listings (optional)',
+  ],
+  sharing: [
+    'Share Links',
+    'Share the collection',
+    'Inventory Report',
+    'Tags & labels',
+    'Share Photos to Headroom',
+  ],
+  device: ['Account', 'LAN Discovery (mDNS)', 'Site Logo'],
+  maintenance: ['Backups', 'Recent Activity'],
+};
+
+/** Cards visible in a section, scoped to `.card-title` — card *bodies* mention
+ *  other cards by name (ShareTargetCard points at "Account"), so a bare text
+ *  query would be ambiguous. */
+function renderedCards(container: HTMLElement): string[] {
+  return [...container.querySelectorAll('.card-title')].map(el => el.textContent?.trim() ?? '');
+}
 
 beforeEach(() => { vi.clearAllMocks(); });
 
 describe('SettingsPage', () => {
-  it('renders every card, in the documented order', async () => {
-    // The page is a composition root over 16 modules; dropping one is a silent
-    // failure nothing else in the toolchain catches. Scoped to `.card-title`
-    // because card *bodies* mention other cards by name (ShareTargetCard points
-    // at "Account"), so a bare text query is ambiguous.
-    const { container } = renderWithProviders(<SettingsPage />);
-    await screen.findByText('Share Links');
+  it.each(Object.entries(SECTION_CARDS))(
+    'renders the %s section, in the documented order',
+    async (tab, expected) => {
+      const { container } = renderWithProviders(<SettingsPage />, {
+        route: `/settings?tab=${tab}`,
+      });
+      await screen.findByText(expected[0]);
 
-    const rendered = [...container.querySelectorAll('.card-title')]
-      .map(el => el.textContent?.trim() ?? '');
-    expect(rendered).toEqual(CARD_TITLES);
+      expect(renderedCards(container)).toEqual(expected);
+    },
+  );
+
+  it('accounts for every card across the sections', () => {
+    // Guards the real risk of splitting one list into five: a card that is in
+    // no section renders nowhere and nothing else notices.
+    const all = Object.values(SECTION_CARDS).flat();
+    expect(new Set(all).size).toBe(all.length);
+    expect(all).toHaveLength(19);
+  });
+
+  it('defaults to the first section when no tab is named', async () => {
+    const { container } = renderWithProviders(<SettingsPage />);
+    await screen.findByText('Claude API Key');
+    expect(renderedCards(container)).toEqual(SECTION_CARDS.analysis);
+  });
+
+  it('falls back to the first section when the tab is unknown', async () => {
+    // `?tab=` comes from the URL, so it is whatever anyone types.
+    const { container } = renderWithProviders(<SettingsPage />, {
+      route: '/settings?tab=nonsense',
+    });
+    await screen.findByText('Claude API Key');
+    expect(renderedCards(container)).toEqual(SECTION_CARDS.analysis);
+  });
+
+  it('switches section on tab press', async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<SettingsPage />);
+    await screen.findByText('Claude API Key');
+
+    await user.click(screen.getByRole('tab', { name: 'Maintenance' }));
+
+    expect(renderedCards(container)).toEqual(SECTION_CARDS.maintenance);
   });
 
   it("surfaces data from each card's own query rather than a page-level fetch", async () => {
-    renderWithProviders(<SettingsPage />);
+    renderWithProviders(<SettingsPage />, { route: '/settings?tab=analysis' });
     expect(await screen.findByText('sk-an…wxyz')).toBeInTheDocument();       // key card
     expect(await screen.findByText('claude-sonnet-5')).toBeInTheDocument(); // model card
-    expect(await screen.findByText('http://headroom.local:8000')).toBeInTheDocument(); // mDNS card
-    expect(await screen.findByText('http://tags.example:9000')).toBeInTheDocument();
+  });
+
+  it("surfaces each card's own query in the other sections too", async () => {
+    renderWithProviders(<SettingsPage />, { route: '/settings?tab=device' });
     expect(await screen.findByText(/Signed in as/)).toBeInTheDocument();      // account card
+    expect(await screen.findByText('http://headroom.local:8000')).toBeInTheDocument(); // mDNS
+  });
+
+  it('does not fetch for sections you are not looking at', async () => {
+    // The point of mounting one section: the flat page fired every card's
+    // query on open, most for cards you were never going to look at.
+    const settingsApi = await import('../api/settings');
+    renderWithProviders(<SettingsPage />, { route: '/settings?tab=maintenance' });
+    await screen.findByText('Backups');
+
+    expect(settingsApi.getApiKeyStatus).not.toHaveBeenCalled();
+    expect(settingsApi.auditConstructions).not.toHaveBeenCalled();
   });
 });
 
