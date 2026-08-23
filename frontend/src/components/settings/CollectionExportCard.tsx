@@ -21,7 +21,7 @@ export function CollectionExportCard() {
         <p className="text-secondary small mb-3">
           Downloads a <strong>.zip</strong> — open <code>index.html</code> inside it in
           any browser. Works offline, no login, nothing to host. Every hat gets its
-          photo, colours, and its write-up.
+          photo, colors, and its write-up.
           <br />
           <span className="text-muted">
             A share link is better when the person can reach this app: it stays current

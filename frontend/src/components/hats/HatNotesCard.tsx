@@ -8,7 +8,7 @@ import type { HatRead } from '../../types';
  * Your notes on a hat — the only free-text field a re-analysis cannot touch.
  *
  * Worth saying on screen, because every other prose field here (`design_notes`,
- * the colours, the model name) is derived and gets rewritten by a refresh. A
+ * the colors, the model name) is derived and gets rewritten by a refresh. A
  * field that looks the same and behaves differently is a trap unless it says
  * which one it is.
  */

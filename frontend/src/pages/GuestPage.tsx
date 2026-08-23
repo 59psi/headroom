@@ -77,7 +77,7 @@ export function GuestPage() {
         <input
           aria-label="Search the collection"
           className="form-control"
-          placeholder="Search by model, colour, style…"
+          placeholder="Search by model, color, style…"
           value={query}
           onChange={e => setQuery(e.target.value)}
         />

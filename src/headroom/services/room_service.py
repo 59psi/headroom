@@ -26,7 +26,7 @@ async def list_rooms(db: AsyncSession) -> list[tuple[Room, int]]:
     `selectinload(Room.cases)` reads harmlessly — the caller only wants
     `len(room.cases)` — but `Case.hats`, `Hat.colors` and `Hat.wear_logs` are
     all `lazy="selectin"` at the mapper, so pulling the cases cascades into
-    every hat, colour and wear-log row in the whole collection to produce a
+    every hat, color and wear-log row in the whole collection to produce a
     number. The cost scaled with the size of the collection rather than the
     number of rooms (~30ms vs ~0.3ms at 300 hats, and a Pi is several times
     slower). One grouped COUNT gives the same answer.
@@ -211,7 +211,7 @@ async def loose_hat_counts(db: AsyncSession) -> dict[int, int]:
     """Loose-hat count per room, for the rooms list.
 
     One grouped COUNT rather than loading hats per room, for the same reason
-    `list_rooms` counts cases in SQL: pulling the rows cascades into colours and
+    `list_rooms` counts cases in SQL: pulling the rows cascades into colors and
     wear logs for the whole collection to produce a number.
     """
     rows = await db.execute(

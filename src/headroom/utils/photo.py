@@ -27,7 +27,7 @@ THUMBS_DIR = "thumbs"
 #
 #     format                per image   x300 hats   alpha
 #     PNG lossless            137 KB      40 MB      yes
-#     PNG 256-colour           26 KB     7.7 MB      yes, edges soften
+#     PNG 256-color           26 KB     7.7 MB      yes, edges soften
 #     JPEG q85                 31 KB     8.9 MB      NO — hats stop floating
 #     WebP q82                  9 KB     2.6 MB      yes
 #

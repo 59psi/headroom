@@ -58,7 +58,7 @@ async def test_genuinely_different_hats_are_not_grouped(client):
 async def test_an_unanalysed_twin_is_reported_as_likely(client):
     """The common bulk-import shape: one row analysed, its twin not yet.
 
-    Same model and size, colourway missing on one side — an exact match is
+    Same model and size, colorway missing on one side — an exact match is
     impossible, and dropping it would hide the case this feature exists for.
     """
     await _add(client, model_name="Coronado", brand="Melin", colorway="Heather Ocean")

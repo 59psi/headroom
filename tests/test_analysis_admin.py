@@ -267,7 +267,7 @@ async def test_reanalyze_all_still_skips_photoless_and_disposed(client):
 async def test_pending_count_is_not_capped_by_the_preview_list(client):
     """`pending_count` was `len(hats)` over a list bounded to 50, so a deep
     queue always reported 50 — a count read off a limited feed, the same
-    mistake as sizing the colourway catalog from its autocomplete endpoint."""
+    mistake as sizing the colorway catalog from its autocomplete endpoint."""
     from sqlalchemy import select
 
     from headroom.models.hat import Hat

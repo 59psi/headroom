@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
@@ -32,6 +34,34 @@ class ModelUpdate(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
 
     model_id: str = Field(min_length=3, max_length=120)
+
+
+class TlsStatusRead(BaseModel):
+    """The certificate the HTTPS front door is actually serving.
+
+    Read-only, and reported rather than enforced: an expired certificate
+    belongs to Caddy, so failing readiness on it would restart-loop the app
+    without fixing anything.
+    """
+
+    #: False on every deployment without an HTTPS front door, which is not a
+    #: problem and must not be rendered as one.
+    applicable: bool
+    host: str | None = None
+    port: int = 443
+    not_before: datetime | None = None
+    not_after: datetime | None = None
+    days_remaining: float | None = None
+    expired: bool = False
+    #: Expired, or close enough that renewal has evidently stopped.
+    needs_attention: bool = False
+    #: A valid certificate for the wrong name fails in a browser just as hard.
+    hostname_ok: bool | None = None
+    #: SHA-256 of the CA this install hands out. Published because Caddy names
+    #: every root identically, so two installs yield two different roots with
+    #: the same name — and only a fingerprint tells them apart.
+    ca_sha256: str | None = None
+    error: str | None = None
 
 
 class MdnsStatus(BaseModel):

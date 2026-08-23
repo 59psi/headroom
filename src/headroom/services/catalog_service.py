@@ -225,7 +225,7 @@ def _line_fields(item: dict) -> tuple[str, str | None, str | None, int]:
     # An explicit colorway beats one recovered from the title. Order lines
     # carry it separately ("Indigo Depth / Classic") and plenty of titles have
     # no " - " to split on at all -- "Odysea Hydro Indigo Depth" parses to a
-    # model with no colourway, which then can't disambiguate anything.
+    # model with no colorway, which then can't disambiguate anything.
     colorway = (item.get("colorway") or colorway) or None
     try:
         quantity = max(int(item.get("quantity", 1) or 1), 1)
@@ -484,7 +484,7 @@ def _looks_like_headwear(purchase: Purchase, hats: list[Hat]) -> bool:
 def _match_score(purchase: Purchase, hat: Hat) -> int | None:
     """How well one hat fits one purchase. Higher is better; None = no match.
 
-    Model name is mandatory. Colourway and size each *rule a hat out* when both
+    Model name is mandatory. Colorway and size each *rule a hat out* when both
     sides state one and they disagree, and otherwise add to the score when they
     agree — so a stated-and-matching field beats a silent one, and neither is
     required. Scoring rather than first-hit is the point: the old matcher took
@@ -510,7 +510,7 @@ def _match_score(purchase: Purchase, hat: Hat) -> int | None:
     if ps and hs:
         if ps != hs:
             return None
-        score += 4  # outranks colourway: two sizes of one colourway is common
+        score += 4  # outranks colorway: two sizes of one colorway is common
 
     return score
 
@@ -550,7 +550,7 @@ async def match_purchases_to_hats(db: AsyncSession, *, dry_run: bool = False) ->
         best_score = max(score for score, _ in candidates)
         best = [hat for score, hat in candidates if score == best_score]
         # A tie means the records genuinely cannot tell these hats apart (same
-        # model, same colourway, same size). Taking one at random would be a
+        # model, same colorway, same size). Taking one at random would be a
         # coin flip presented as a fact; the tie is reported instead so it can
         # be resolved by hand.
         ambiguous = len(best) > 1
@@ -638,7 +638,7 @@ async def unmatch_purchase(db: AsyncSession, purchase_id: int) -> dict:
     years of imported order history in one call, and `match_purchases_to_hats`
     only ever considers purchases with a NULL `hat_id` — so a wrong link was
     permanent and invisible, since the hat still ended up with *a* cost basis
-    and *a* colourway.
+    and *a* colorway.
     """
     purchase = await db.get(Purchase, purchase_id)
     if purchase is None:

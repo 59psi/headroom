@@ -81,7 +81,7 @@ export function GuestHatPage() {
       {data.colors.length > 0 && (
         <div className="card">
           <div className="card-body">
-            <div className="card-title">Colours</div>
+            <div className="card-title">Colors</div>
             <div className="d-flex flex-wrap gap-2">
               {data.colors.map((c, i) => (
                 <span key={i} className="d-flex align-items-center gap-2">

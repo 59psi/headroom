@@ -195,7 +195,7 @@ export interface ColorSearchResult extends SearchResult {
   matched_hex: string;
   /** Raw CIEDE2000 to the matched swatch — NOT the sort key. See matched_rank. */
   distance: number;
-  /** dominance_rank of the matched swatch. 1 is the hat's main colour. */
+  /** dominance_rank of the matched swatch. 1 is the hat's main color. */
   matched_rank: number;
 }
 
@@ -362,6 +362,50 @@ export interface BackupHealth {
  *  backup can succeed every night while the upload has been failing for a
  *  month, and only the second means the archive exists nowhere but the card
  *  it is protecting against. */
+/** The certificate the HTTPS front door is actually serving.
+ *
+ *  Reported, never enforced: the certificate belongs to Caddy, so failing
+ *  readiness on it would restart-loop the app without fixing anything. */
+export interface TlsStatus {
+  /** False on every install without an HTTPS front door — not a problem. */
+  applicable: boolean;
+  host: string | null;
+  port: number;
+  not_before: string | null;
+  not_after: string | null;
+  days_remaining: number | null;
+  expired: boolean;
+  /** Expired, or close enough that renewal has evidently stopped. */
+  needs_attention: boolean;
+  hostname_ok: boolean | null;
+  /** SHA-256 of the CA this install hands out. Caddy names every root the
+   *  same, so two installs give two different roots with one name — a browser
+   *  matching by name picks the wrong one and reports "invalid signature" on a
+   *  chain that verifies fine at the server. Only the fingerprint separates
+   *  them. */
+  ca_sha256: string | null;
+  error: string | null;
+}
+
+/** One way to get a backup off the box.
+ *
+ *  The setup steps come from the SERVER, not from a copy in here: they are
+ *  facts about what it will run — which binary, which environment variable —
+ *  and a second copy in TypeScript is a second thing to keep in step. */
+export interface BackupUploadProvider {
+  name: string;
+  label: string;
+  /** Shape of a valid destination, e.g. `user@host::module/path`. */
+  destination_hint: string;
+  example: string;
+  setup: string[];
+  /** Env var carrying this transport's secret, where it takes one. Named, not
+   *  read — the value never leaves the host. */
+  secret_env: string | null;
+  binary: string;
+  binary_available: boolean;
+}
+
 export interface BackupUploadStatus {
   configured: boolean;
   provider: string | null;
@@ -370,7 +414,11 @@ export interface BackupUploadStatus {
    *  and is read-only in the UI: it is settable only with host access, which
    *  is a privilege boundary the browser must not cross. */
   from_environment: boolean;
-  available_providers: string[];
+  available_providers: BackupUploadProvider[];
+  /** Whether the CONFIGURED provider's binary exists in the container. None of
+   *  them are guaranteed to be, and a missing one fails every unattended
+   *  upload while the card would otherwise still read "configured". */
+  binary_available: boolean | null;
   last_upload_at: string | null;
   last_upload_ok: boolean | null;
   last_upload_error: string | null;
@@ -382,8 +430,8 @@ export interface BackupUploadStatus {
 export interface DuplicateGroup {
   key: string;
   /** "exact" — every identity field agrees. "likely" — same model and size,
-   *  with the colourway missing on at least one side (usually an unanalysed
-   *  twin). Colourways that actively disagree are never grouped. */
+   *  with the colorway missing on at least one side (usually an unanalysed
+   *  twin). Colorways that actively disagree are never grouped. */
   confidence: 'exact' | 'likely';
   label: string;
   hats: SearchResult[];

@@ -114,10 +114,10 @@ directly on the Add Hat or Edit Hat form. Valuation lists the hats still
 missing a price so the gap is visible rather than assumed.
 
 **Import order matters.** Matching sets a hat's price *and* fills its
-colourway, and a hat that hasn't been analysed yet will accept any colourway
+colorway, and a hat that hasn't been analysed yet will accept any colorway
 of the right model and size. So add and analyse your hats *first*, then
 import once — otherwise a purchase can attach to a stand-in hat and stamp the
-wrong colourway on it. Add `?dry_run=true` to the import to see every proposed
+wrong colorway on it. Add `?dry_run=true` to the import to see every proposed
 match without writing anything.
 
 If a run does go wrong, it's reversible: **unmatch** a single purchase, or
@@ -195,7 +195,7 @@ much of the total rests on the weaker ones.
 The **Valuation** page rolls the whole collection up: what you've paid, retail
 value, estimated sale value, unrealized gain against cost, and realized
 proceeds from hats you've sold. **Stats** (`/stats`) is the full picture —
-charts for condition, style, size, brand, construction, colourway, colour,
+charts for condition, style, size, brand, construction, colorway, color,
 room, case fill, acquisitions and spend over time, plus leaderboards for most
 valuable, most expensive, most worn and best cost-per-wear.
 
@@ -217,11 +217,11 @@ model when known), and **where it lives** ("📍 Case A-012 · Office"):
   Bulk-importing a camera roll can turn two photos of one hat into two hats,
   and past a hundred or so you stop noticing; the collection then reports more
   than you own and the valuation follows it. Grouped on what's *recorded* —
-  model, colourway, size — never on the photos, since two shots of one hat look
-  different and two different hats in one colourway look the same. **exact**
+  model, colorway, size — never on the photos, since two shots of one hat look
+  different and two different hats in one colorway look the same. **exact**
   means everything matches; **likely** means same model and size with a
-  colourway missing on one side, which is what an unanalysed twin looks like.
-  Two hats naming *different* colourways are never grouped. Nothing is deleted
+  colorway missing on one side, which is what an unanalysed twin looks like.
+  Two hats naming *different* colorways are never grouped. Nothing is deleted
   — open a hat and dispose of it, or leave it if you really do own two.
 - **Search by color** — tap a palette swatch (or pick any color with the
   color-wheel input) and every hat is ranked by *perceptual closeness* to
@@ -310,7 +310,7 @@ current and you can revoke it. But the app lives on your own network, so that
 link resolves for nobody outside the house.
 
 **Settings → Share the collection** downloads a **`.zip`**. Unpack it and open
-`index.html` in any browser: every hat with its photo, colours, where it lives,
+`index.html` in any browser: every hat with its photo, colors, where it lives,
 and your notes. It works offline forever and needs no login, no server and no
 internet.
 
@@ -334,7 +334,7 @@ Every hat has a **Your notes** box on its page: where you got it, who you wore
 it with, why you kept it.
 
 It is the one free-text field on a hat that **nothing automatic ever writes**.
-Re-analysing a hat rewrites its colours, model name and design notes; it never
+Re-analysing a hat rewrites its colors, model name and design notes; it never
 touches this. Notes travel with the hat into the zip export above.
 
 ---

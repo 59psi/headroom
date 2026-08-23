@@ -123,7 +123,7 @@ async def update_hat_colors(
 
     # Rank by position, ignoring whatever the client sent. Ranks are the only
     # handle the UI has on a row — it edits and removes BY rank — so a duplicate
-    # makes one tap hit two colours, and a gap invites one: the add path picks
+    # makes one tap hit two colors, and a gap invites one: the add path picks
     # `colors.length + 1`, which collides the moment the ranks aren't dense
     # (ranks [1,3] + length 2 → 3). Storing them verbatim let that state persist.
     # Position is already the client's intended order, so this is authoritative
@@ -131,7 +131,7 @@ async def update_hat_colors(
     for rank, c in enumerate(data.colors, start=1):
         # An explicitly-typed general_color is a CORRECTION and must win. This
         # used to derive the name from the hex whenever a hex was present, so
-        # editing a mis-detected colour to "green" while its (wrong) grey hex
+        # editing a mis-detected color to "green" while its (wrong) grey hex
         # stayed put simply re-derived "gray" and overwrote the fix — the edit
         # looked like it silently reverted. Only fall back to the hex when the
         # field is blank. Names still snap to the palette's spelling so the
@@ -292,7 +292,7 @@ async def reanalyze_hat(hat_id: int, db: AsyncSession = Depends(get_db)):
 
     # Queue only the slow case. With a Claude key configured this is the same
     # multi-minute sequence the upload path had, so it goes to the worker. With
-    # no key it's just local fallback colour extraction — fast, and running it
+    # no key it's just local fallback color extraction — fast, and running it
     # inline is what preserves the 400 below, which can only be decided by
     # actually attempting the fallback.
     api_key, _source = await settings_service.get_anthropic_key(db)

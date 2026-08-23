@@ -60,6 +60,30 @@ class BackupHealthRead(BaseModel):
     consecutive_failures: int = 0
 
 
+class BackupUploadProvider(BaseModel):
+    """One transport, described well enough for the card to render it.
+
+    The setup steps travel with the provider rather than living in the
+    frontend, because they are facts about what the SERVER will run — the
+    binary it needs, whether a secret comes from the host environment — and a
+    second copy in TypeScript is a second thing to keep in step.
+    """
+
+    name: str
+    label: str
+    #: Shape of a valid destination, e.g. `user@host::module/path`.
+    destination_hint: str
+    example: str
+    #: Host-side work the operator still has to do. "Configured" and "working"
+    #: are different states, and everything between them is on this list.
+    setup: list[str] = []
+    #: Env var carrying the transport's secret, where it takes one. Named, not
+    #: read: the value never leaves the host.
+    secret_env: str | None = None
+    binary: str
+    binary_available: bool = False
+
+
 class BackupUploadStatus(BaseModel):
     """Whether the off-box copy is configured, and whether it is working.
 
@@ -77,7 +101,12 @@ class BackupUploadStatus(BaseModel):
     #: it is settable only with host access, which is a privilege boundary the
     #: web UI must not be able to cross.
     from_environment: bool = False
-    available_providers: list[str] = []
+    available_providers: list[BackupUploadProvider] = []
+    #: Whether the CONFIGURED provider's binary exists in this container. None
+    #: when nothing is configured. Published because none of these binaries are
+    #: in the base image, and a missing one fails every unattended upload while
+    #: the card would otherwise still read "configured".
+    binary_available: bool | None = None
     last_upload_at: datetime | None = None
     last_upload_ok: bool | None = None
     last_upload_error: str | None = None

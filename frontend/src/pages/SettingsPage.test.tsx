@@ -22,6 +22,15 @@ vi.mock('../api/settings', () => ({
     enabled: true, advertising: true, hostname: 'headroom.local', port: 8000,
     ip: '192.168.1.20', url: 'http://headroom.local:8000',
   })),
+  // Mock the real payload shape: pydantic serialises every field, including
+  // the ones with defaults, so a partial literal here would be a fiction the
+  // component is never handed in production.
+  getTlsStatus: vi.fn(async () => ({
+    applicable: true, host: 'headroom.local', port: 443,
+    not_before: '2026-08-23T22:44:33Z', not_after: '2026-08-24T10:44:33Z',
+    days_remaining: 0.5, expired: false, needs_attention: false,
+    hostname_ok: true, ca_sha256: 'CB:08:88:5B:FD:B7:F7:DD', error: null,
+  })),
   getRecentErrors: vi.fn(async () => []),
   getAnalysisQueue: vi.fn(async () => ({
     worker_alive: true, queued: 0, pending_count: 0, pending: [],

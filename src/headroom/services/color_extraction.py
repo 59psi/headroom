@@ -114,11 +114,11 @@ _PALETTE_NAMES: dict[str, str] = {name.lower(): name for name, _rgb in _PALETTE}
 
 
 def normalize_color_name(name: str) -> str:
-    """Snap a hand-typed colour name onto the palette's spelling.
+    """Snap a hand-typed color name onto the palette's spelling.
 
     The counterpart to `normalize_hex_name` for the case where a human, not the
     analyser, supplied the name. Matching by NAME rather than by hex is the
-    whole point: a person correcting a mis-detected colour is telling us the
+    whole point: a person correcting a mis-detected color is telling us the
     stored hex is wrong, so re-deriving from that hex would just reinstate the
     error. Anything not in the palette passes through trimmed and unchanged —
     the user's word beats our vocabulary.
@@ -166,8 +166,8 @@ def _srgb_to_lab(rgb: tuple[int, int, int]) -> tuple[float, float, float]:
 def lab_of(hex_value: str) -> tuple[float, float, float] | None:
     """Hex → CIE L*a*b*, or None if it doesn't parse.
 
-    Exposed so a caller comparing ONE colour against many can convert it once.
-    `_srgb_to_lab` runs three `** 2.4` powers per channel, and the colour search
+    Exposed so a caller comparing ONE color against many can convert it once.
+    `_srgb_to_lab` runs three `** 2.4` powers per channel, and the color search
     was paying that for the search target on every stored swatch it looked at.
     """
     rgb = parse_hex(hex_value)
@@ -194,7 +194,7 @@ def lab_distance(a: tuple[float, float, float], b: tuple[float, float, float]) -
     c2 = math.hypot(a2, b2)
     c_bar = (c1 + c2) / 2.0
 
-    # G expands a* in low-chroma colours so near-greys don't get a hue that
+    # G expands a* in low-chroma colors so near-greys don't get a hue that
     # swamps the comparison.
     c_bar7 = c_bar ** 7
     g = 0.5 * (1.0 - math.sqrt(c_bar7 / (c_bar7 + 25.0 ** 7)))
@@ -216,7 +216,7 @@ def lab_distance(a: tuple[float, float, float], b: tuple[float, float, float]) -
     dcp = c2p - c1p
 
     # Hue difference takes the short way round the circle; undefined (and so
-    # zero) when either colour is achromatic.
+    # zero) when either color is achromatic.
     if c1p * c2p == 0.0:
         dhp = 0.0
     elif abs(h2p - h1p) <= 180.0:
@@ -277,8 +277,8 @@ def color_distance(hex_a: str, hex_b: str) -> float | None:
     return lab_distance(a, b)
 
 
-# ------------------------ grey is not a dark colour -------------------- #
-# Chroma is how much colour a colour has: 0 is a pure grey, ~60 a vivid
+# ------------------------ grey is not a dark color -------------------- #
+# Chroma is how much color a color has: 0 is a pure grey, ~60 a vivid
 # purple. Below NEUTRAL there is no hue worth speaking of; at or above
 # CHROMATIC there plainly is.
 #
@@ -290,10 +290,10 @@ def color_distance(hex_a: str, hex_b: str) -> float | None:
 # of chroma; that divisor compresses the gap to ~22, and when their lightness
 # happens to agree the pair scores ~17. So a grey hat sat NEARER the purple
 # swatch than two genuinely different purples sit to each other, and every
-# colour search returned the whole shelf of black/charcoal/navy/grey caps.
+# color search returned the whole shelf of black/charcoal/navy/grey caps.
 #
-# The test is a RATIO, not an absolute floor, because "how much colour counts
-# as some colour" depends on the colour. Teal is itself only C=27 where red is
+# The test is a RATIO, not an absolute floor, because "how much color counts
+# as some color" depends on the color. Teal is itself only C=27 where red is
 # C=73, so a muted teal at C=10 has a real share of teal's chroma while a
 # blue-grey at C=12 has almost none of purple's C=59. An absolute floor cannot
 # see that difference: set low enough to keep the muted teal findable, it lets
@@ -317,7 +317,7 @@ def chroma_of(lab: tuple[float, float, float]) -> float:
 def is_neutral_mismatch(
     lab_a: tuple[float, float, float], lab_b: tuple[float, float, float]
 ) -> bool:
-    """True when one colour has essentially none of the other's colour.
+    """True when one color has essentially none of the other's color.
 
     Deliberately NOT a penalty on the chroma difference in general. Navy and
     blue differ by 41 units of chroma, red and maroon by 36, and those pairs
@@ -334,10 +334,10 @@ def is_neutral_mismatch(
     return (paler / bolder) < MIN_CHROMA_RATIO
 
 
-# ---- colour identity, which is not colour distance ---------------------- #
+# ---- color identity, which is not color distance ---------------------- #
 #
 # Every curated palette name, grouped under the word a person would actually
-# use for it. This is what colour search matches on. It replaced a distance
+# use for it. This is what color search matches on. It replaced a distance
 # threshold, and the reason is a measurement rather than a preference.
 #
 # Within-family distances run up to **ΔE 55.8** — light blue to navy, which
@@ -346,20 +346,20 @@ def is_neutral_mismatch(
 # anywhere can keep the first pair and reject the second. At the cutoff of 26
 # this replaced, 51 cross-family pairs matched — black/navy, silver/beige,
 # white/cream, charcoal/dark brown — which is why a search returned most of
-# the shelf whatever colour you asked for.
+# the shelf whatever color you asked for.
 #
 # Three releases were spent moving that number (30, then 22, then 26) and the
 # file's own comment already had the answer: a distance threshold cannot
 # answer "is this hat purple?", and tuning it will never make it. Distance
-# measures how far apart two colours look. Search asks what a colour IS.
+# measures how far apart two colors look. Search asks what a color IS.
 # Those are different questions, and only the second one has a shelf of hats
 # as its answer.
 #
 # So distance stops deciding membership and goes back to what it is good at:
-# ORDERING the hats that are already the right colour. The palette is curated
+# ORDERING the hats that are already the right color. The palette is curated
 # and closed, so membership has an exact answer.
 #
-# The groups are the basic colour words, not a hue wheel. Deliberately strict:
+# The groups are the basic color words, not a hue wheel. Deliberately strict:
 # "gold" does not return tans, "blue" does not return teals. Over-matching is
 # the failure being fixed, and a neighbour that is genuinely wanted is one
 # entry away — whereas a search that returns everything is not fixable by the
@@ -388,16 +388,16 @@ _COLOR_FAMILIES: dict[str, frozenset[str]] = {
 
 #: How much further than the nearest palette entry another one may sit and
 #: still describe the same swatch. A margin, not a distance cutoff: it asks
-#: "is this classification ambiguous?", never "is this colour close?".
+#: "is this classification ambiguous?", never "is this color close?".
 #:
-#: Saturated colours are unambiguous at any margin here — teal resolves to
+#: Saturated colors are unambiguous at any margin here — teal resolves to
 #: teal alone, its runner-up 21 away — so a SEARCH always asks for exactly
-#: one colour. Only muted swatches come out ambiguous, which is honest: a
+#: one color. Only muted swatches come out ambiguous, which is honest: a
 #: slate really is somewhere between charcoal and teal.
 FAMILY_AMBIGUITY_MARGIN = 5.0
 
 #: Below this chroma a swatch's nearest-name is decided by lightness rather
-#: than by colour, so the hue fallback applies. Above it, the name is trusted.
+#: than by color, so the hue fallback applies. Above it, the name is trusted.
 NAME_UNRELIABLE_CHROMA = CHROMATIC_CHROMA
 
 #: A swatch needs at least this much chroma for its hue angle to mean
@@ -405,7 +405,7 @@ NAME_UNRELIABLE_CHROMA = CHROMATIC_CHROMA
 #: admitting it is how a grey hat starts matching pink.
 MIN_HUE_CHROMA = 6.0
 
-#: How far apart two hue angles may be and still be the same colour.
+#: How far apart two hue angles may be and still be the same color.
 MAX_HUE_DELTA = 25.0
 
 #: Families the hue fallback must never bridge, whatever the angle says.
@@ -413,7 +413,7 @@ MAX_HUE_DELTA = 25.0
 #: CIELAB's hue angle is famously non-linear through the blue region —
 #: straight lines bend toward purple — so a navy and a purple can land within
 #: a few degrees of each other while looking nothing alike. This is a defect
-#: of the colour space, not a judgement call, and it is the same defect that
+#: of the color space, not a judgement call, and it is the same defect that
 #: put palette blue ΔE 16.5 from purple under the old cutoff.
 _INCOMPATIBLE_FAMILIES: frozenset[frozenset[str]] = frozenset({
     frozenset({"blue", "purple"}),
@@ -421,7 +421,7 @@ _INCOMPATIBLE_FAMILIES: frozenset[frozenset[str]] = frozenset({
 
 
 def color_family(name: str | None) -> frozenset[str]:
-    """The basic colour words for a palette name; empty if it isn't one.
+    """The basic color words for a palette name; empty if it isn't one.
 
     Empty means "not a curated name" — treated as unknown rather than as a
     family of its own, so unrecognised values never silently group together.
@@ -430,10 +430,10 @@ def color_family(name: str | None) -> frozenset[str]:
 
 
 def families_of_lab(lab: tuple[float, float, float]) -> frozenset[str]:
-    """Every basic colour word that could reasonably describe this colour.
+    """Every basic color word that could reasonably describe this color.
 
     Classifies against the curated palette and keeps every entry within
-    `FAMILY_AMBIGUITY_MARGIN` of the nearest, so a colour the palette cannot
+    `FAMILY_AMBIGUITY_MARGIN` of the nearest, so a color the palette cannot
     decide about is reported as belonging to all its candidates rather than
     to whichever one happened to win by half a unit.
     """
@@ -468,7 +468,7 @@ def is_same_color(
     swatch_lab: tuple[float, float, float],
     swatch_name: str | None = None,
 ) -> bool:
-    """Whether a swatch is the colour being searched for.
+    """Whether a swatch is the color being searched for.
 
     Membership, decided categorically — see the long note in
     `search_service` for why no distance threshold can do this job.
@@ -494,7 +494,7 @@ def is_same_color(
     if chroma_of(target_lab) < CHROMATIC_CHROMA:
         return False  # a muted target claims nothing about a muted swatch
     # The chroma RATIO decides whether this swatch has enough of the target's
-    # colour to be a muted version of it rather than a neutral near it. It is
+    # color to be a muted version of it rather than a neutral near it. It is
     # the same test, and the same constant, that keeps a blue-grey from
     # matching purple — and it is what separates the two cases the hue angle
     # alone cannot: a dark teal holds 41% of teal's chroma, a blue-grey 20%

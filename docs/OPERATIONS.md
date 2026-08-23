@@ -226,6 +226,42 @@ same disk.
 Local backups still share one disk (the SD card) with the database. Two ways to
 push each backup off the box:
 
+**A0. From the UI — Settings → Upkeep → Off-site backup.** Pick a provider,
+give it a destination, press **Test now**. The card carries the host-side setup
+steps for whichever provider you choose, reports whether that provider's binary
+is actually present in the container, and tracks upload successes and failures
+separately from local-backup health — a local backup can succeed nightly while
+the off-box copy has been failing for a month, and only the second means the
+archive exists nowhere but the card it is protecting against.
+
+| Provider | Destination | Needs |
+|---|---|---|
+| Cloud storage (rclone) | `box:Headroom-Backups` | `rclone config` on the host + the rclone overlay |
+| rsync over SSH | `pi@nas.local:/volume1/backups/headroom` | an SSH key + the rsync overlay |
+| Synology NAS (rsync service) | `backup@nas.local::NetBackup/headroom` | DSM's rsync service + `HEADROOM_BACKUP_RSYNC_PASSWORD` |
+
+`rsync` and `ssh` ship **in the image**; rclone is ~50 MB and stays a bind
+mount. The browser never sends a command — it sends a provider name and a
+destination, and the argv is assembled from a template the server owns, so no
+input can add a flag, change the binary, or reach a shell.
+
+The two rsync destinations differ by **one colon and that is the whole
+transport**: `host:/path` is rsync over SSH, `host::module/path` connects
+straight to an rsync daemon on port 873 and reads the first segment as a module
+name. The validator keeps them apart per provider, because a destination that
+silently switched transport would fail with credentials nobody configured and
+look like a broken NAS.
+
+**Synology, without enabling SSH:** Control Panel → File Services → rsync →
+*Enable rsync service* (DSM creates the `NetBackup` shared folder), then add an
+rsync account under the same page — it is separate from your DSM login. Allow
+port 873 if the NAS firewall is on. Put that account's password in `.env` as
+`HEADROOM_BACKUP_RSYNC_PASSWORD`; it is read from the host at upload time,
+mapped to rsync's own `RSYNC_PASSWORD`, and never stored by Headroom or
+returned by the API. It applies to **daemon mode only** — rsync ignores it over
+SSH, which is why the SSH provider carries no secret rather than one that would
+look set and do nothing.
+
 **A. Native upload hook (no separate cron).** Set `HEADROOM_BACKUP_UPLOAD_CMD`
 and Headroom runs it after every scheduled backup, passing the new tarball.
 Placeholders: `{path}` (full path), `{dir}`, `{name}`. It's parsed as an argv

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -12,6 +13,7 @@ from headroom.database import get_db
 from headroom.schemas.admin import (
     BackupHealthRead,
     BackupInfo,
+    BackupUploadProvider,
     BackupUploadStatus,
     BackupUploadTestResult,
     BackupUploadUpdate,
@@ -125,7 +127,23 @@ async def _upload_status(db: AsyncSession) -> BackupUploadStatus:
         provider=provider,
         destination=destination,
         from_environment=bool(env_cmd),
-        available_providers=sorted(backup_service.UPLOAD_PROVIDERS),
+        available_providers=[
+            BackupUploadProvider(
+                name=p.name,
+                label=p.label,
+                destination_hint=p.destination_hint,
+                example=p.example,
+                setup=list(p.setup),
+                secret_env=p.secret_env,
+                binary=p.binary,
+                # Resolved per request rather than cached: the binary arrives by
+                # a bind mount, so it can appear or vanish between restarts
+                # without anything in this process changing.
+                binary_available=backup_service.provider_binary_available(p.name) or False,
+            )
+            for p in sorted(backup_service.UPLOAD_PROVIDERS.values(), key=lambda p: p.label)
+        ],
+        binary_available=backup_service.provider_binary_available(provider or ""),
         last_upload_at=h.last_upload_at,
         last_upload_ok=h.last_upload_ok,
         last_upload_error=h.last_upload_error,
@@ -156,7 +174,7 @@ async def set_backup_upload(
             detail=f"Unknown provider. Available: {sorted(backup_service.UPLOAD_PROVIDERS)}",
         )
     try:
-        destination = backup_service.validate_destination(data.destination)
+        destination = backup_service.validate_destination(data.destination, data.provider)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
 
@@ -204,6 +222,19 @@ async def test_backup_upload(db: AsyncSession = Depends(get_db)):
     argv = await backup_service.resolve_upload_argv(db, backups[0])
     if not argv:
         return BackupUploadTestResult(ok=False, detail="No off-box upload is configured.")
+    # Say which of the two it is. "No such file or directory" from a subprocess
+    # is a true statement about argv[0] that reads as a problem with the
+    # destination, and the fix — mount the binary, use the matching compose
+    # overlay — is nowhere in that message.
+    if shutil.which(argv[0]) is None:
+        return BackupUploadTestResult(
+            ok=False,
+            detail=(
+                f"'{argv[0]}' is not available inside the container, so no upload "
+                "can run. See the setup steps for this provider — it arrives by a "
+                "bind mount from the matching docker-compose overlay."
+            ),
+        )
 
     before = backup_service.health().upload_failures
     await backup_service._run_upload_hook(backups[0], argv=argv)

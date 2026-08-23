@@ -8,16 +8,20 @@ import {
  * The off-box copy of the backups.
  *
  * The most consequential unknown on a single-box deployment: rolling backups
- * on the same SD card protect against corruption, not against the card. Until
- * this card existed the feature was configurable only through `.env`, and
- * whether it had ever actually run was answerable only by reading container
- * logs.
+ * on the same SD card protect against corruption, not against the card.
  *
  * **This form does not accept a command, and that is the point.** The hook
  * runs an argv unattended, as the app user, after every backup — a free-text
  * command field would turn a stolen session into command execution. The
  * browser sends a provider and a destination; the server assembles the argv
- * from a template it owns and rejects anything that isn't `remote:path`.
+ * from a template it owns and rejects anything that isn't the shape that
+ * provider documents.
+ *
+ * The setup steps are rendered from the server's own description of each
+ * provider rather than written here, because they are claims about what the
+ * server will run. Every one of them is host-side work that "configured"
+ * cannot tell you is missing — which is why the card also reports whether the
+ * binary is actually present, and why Test now runs the real thing.
  */
 export function OffsiteBackupCard() {
   const qc = useQueryClient();
@@ -26,6 +30,7 @@ export function OffsiteBackupCard() {
   const [provider, setProvider] = useState('rclone');
   const [error, setError] = useState<string | null>(null);
   const [tested, setTested] = useState<{ ok: boolean; detail: string } | null>(null);
+  const [showSetup, setShowSetup] = useState(false);
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['admin', 'backup-upload'] });
 
@@ -43,6 +48,9 @@ export function OffsiteBackupCard() {
   });
 
   const s = status.data;
+  const providers = s?.available_providers ?? [];
+  const chosen = providers.find(p => p.name === provider);
+  const pink = { color: 'var(--neon-pink, #ff4fa3)' };
 
   return (
     <div className="card mb-3">
@@ -57,7 +65,7 @@ export function OffsiteBackupCard() {
         {s && (
           <div className="mb-3">
             {!s.configured ? (
-              <p className="small mb-0" style={{ color: 'var(--neon-pink, #ff4fa3)' }}>
+              <p className="small mb-0" style={pink}>
                 Not configured &mdash; your only copies are on this machine.
               </p>
             ) : (
@@ -69,6 +77,15 @@ export function OffsiteBackupCard() {
                     <span className="text-muted"> (set by HEADROOM_BACKUP_UPLOAD_CMD)</span>
                   )}
                 </p>
+                {/* Configured but the binary is missing is the failure mode that
+                    otherwise only shows up as an upload that silently never
+                    runs. Worth its own line, in the colour of a problem. */}
+                {s.binary_available === false && (
+                  <p className="small mb-1" style={pink}>
+                    That provider&rsquo;s command isn&rsquo;t available inside the
+                    container, so no upload can run. See the setup steps below.
+                  </p>
+                )}
                 <p className="text-secondary small mb-0">
                   {s.last_upload_at ? (
                     <>
@@ -98,17 +115,17 @@ export function OffsiteBackupCard() {
         {!s?.from_environment && (
           <>
             <label className="form-label" style={{ fontSize: '0.8rem' }} htmlFor="upload-provider">
-              Provider
+              Where to
             </label>
             <select
               id="upload-provider"
               aria-label="Upload provider"
               className="form-control mb-2"
               value={provider}
-              onChange={e => setProvider(e.target.value)}
+              onChange={e => { setProvider(e.target.value); setError(null); }}
             >
-              {(s?.available_providers ?? ['rclone']).map(p => (
-                <option key={p} value={p}>{p}</option>
+              {providers.map(p => (
+                <option key={p.name} value={p.name}>{p.label}</option>
               ))}
             </select>
 
@@ -119,18 +136,52 @@ export function OffsiteBackupCard() {
               id="upload-dest"
               aria-label="Upload destination"
               className="form-control mb-1"
-              placeholder={s?.destination ?? 'box:Headroom'}
+              placeholder={chosen?.example ?? s?.destination ?? 'box:Headroom'}
               value={destination}
               maxLength={200}
               onChange={e => { setDestination(e.target.value); setError(null); }}
             />
-            <p className="text-muted small mb-3" style={{ fontSize: '0.72rem' }}>
-              An rclone remote and path, e.g. <code>box:Headroom</code>. Configure the
-              remote itself with <code>rclone config</code> on the host &mdash; this
-              field names it, it does not hold your credentials.
-            </p>
+            {chosen && (
+              <p className="text-muted small mb-2" style={{ fontSize: '0.72rem' }}>
+                Shape: <code>{chosen.destination_hint}</code> &mdash; for example{' '}
+                <code>{chosen.example}</code>. This field names the destination; it
+                never holds your credentials.
+              </p>
+            )}
 
-            {error && <p className="small mb-2" style={{ color: 'var(--neon-pink, #ff4fa3)' }}>{error}</p>}
+            {chosen && (
+              <div className="mb-3">
+                <button
+                  type="button"
+                  className="btn btn-sm btn-outline-primary mb-2"
+                  aria-expanded={showSetup}
+                  onClick={() => setShowSetup(v => !v)}
+                >
+                  {showSetup ? 'Hide setup steps' : `How to finish setting up ${chosen.label}`}
+                </button>
+                {showSetup && (
+                  <>
+                    <ol className="text-secondary small mb-2" style={{ paddingLeft: '1.1rem' }}>
+                      {chosen.setup.map(step => (
+                        <li key={step} className="mb-1">{step}</li>
+                      ))}
+                    </ol>
+                    <p className="text-muted small mb-0" style={{ fontSize: '0.72rem' }}>
+                      Needs <code>{chosen.binary}</code> in the container:{' '}
+                      {chosen.binary_available
+                        ? <span>present.</span>
+                        : <span style={pink}>not found &mdash; the steps above add it.</span>}
+                      {chosen.secret_env && (
+                        <> Password comes from <code>{chosen.secret_env}</code> in your{' '}
+                        <code>.env</code>, read on the host and never stored here.</>
+                      )}
+                    </p>
+                  </>
+                )}
+              </div>
+            )}
+
+            {error && <p className="small mb-2" style={pink}>{error}</p>}
 
             <div className="d-flex gap-2 flex-wrap">
               <button
@@ -167,10 +218,7 @@ export function OffsiteBackupCard() {
               same credentials. A dry run would only prove the form was filled in.
             </p>
             {tested && (
-              <p
-                className="small mb-0 mt-1"
-                style={{ color: tested.ok ? undefined : 'var(--neon-pink, #ff4fa3)' }}
-              >
+              <p className="small mb-0 mt-1" style={tested.ok ? undefined : pink}>
                 {tested.detail}
               </p>
             )}

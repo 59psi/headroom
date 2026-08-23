@@ -8,9 +8,9 @@ valuation.
 
 Grouping is on the IDENTITY fields, never the photo. Two shots of one hat look
 different enough to defeat naive image comparison, and two genuinely different
-hats in the same colourway look nearly identical — so pixels are the wrong
+hats in the same colorway look nearly identical — so pixels are the wrong
 signal in both directions. What a person actually uses is "same model, same
-colourway, same size", which is exactly what these fields hold.
+colorway, same size", which is exactly what these fields hold.
 
 Nothing is deleted here. This reports candidates; disposing or deleting stays a
 deliberate act, because a real pair — the same cap bought twice, one kept new
@@ -31,8 +31,8 @@ from headroom.services.vocabulary import _fold
 
 # A group whose members agree on every identity field we have. Reported first.
 EXACT = "exact"
-# Same model and size, but the colourway differs or is missing on one side.
-# Worth surfacing — an unanalysed twin usually has no colourway yet.
+# Same model and size, but the colorway differs or is missing on one side.
+# Worth surfacing — an unanalysed twin usually has no colorway yet.
 LIKELY = "likely"
 
 
@@ -64,7 +64,7 @@ def _is_identifiable(hat: Hat) -> bool:
 
     Without this, every un-analysed hat matches every other un-analysed hat on
     "same size, same style" and the report is one enormous useless group. A
-    model name — or a brand plus a colourway — is the least that makes two rows
+    model name — or a brand plus a colorway — is the least that makes two rows
     meaningfully the same thing.
     """
     return bool(hat.model_name) or bool(hat.brand and hat.colorway)
@@ -115,8 +115,8 @@ async def find_duplicates(db: AsyncSession) -> list[DuplicateGroup]:
         )
 
     # Second, looser pass over what the first didn't claim: same model and
-    # size, colourway not agreeing. Usually a twin that hasn't been analysed
-    # yet, so it has the model but no colourway.
+    # size, colorway not agreeing. Usually a twin that hasn't been analysed
+    # yet, so it has the model but no colorway.
     loose: dict[tuple, list[Hat]] = {}
     for hat in candidates:
         if hat.id in grouped_ids or not hat.model_name:
@@ -126,12 +126,12 @@ async def find_duplicates(db: AsyncSession) -> list[DuplicateGroup]:
     for key, members in loose.items():
         if len(members) < 2:
             continue
-        # Only when the colourways don't actively disagree. Two hats that each
-        # name a DIFFERENT colourway are two hats someone deliberately owns —
+        # Only when the colorways don't actively disagree. Two hats that each
+        # name a DIFFERENT colorway are two hats someone deliberately owns —
         # grouping "Trenches Icon Black" with "Trenches Icon Navy" would report
         # every collector's normal shelf as a mistake, which is the fastest way
         # to make a report like this get ignored. At most one distinct
-        # colourway means the rest simply haven't been analysed yet.
+        # colorway means the rest simply haven't been analysed yet.
         stated = {_norm(h.colorway) for h in members if h.colorway}
         if len(stated) > 1:
             continue

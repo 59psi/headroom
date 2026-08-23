@@ -58,6 +58,121 @@ async def test_a_leading_dash_is_called_out_as_a_flag():
         backup_service.validate_destination("--config=/etc/x")
 
 
+# ---- rsync and the NAS ------------------------------------------------ #
+#
+# One colon is a path on a host reached over SSH; TWO colons make rsync open a
+# direct TCP connection to a daemon on port 873 and read the first segment as a
+# MODULE name. They are different transports with different credentials, so the
+# validator keeps them apart rather than accepting both under one pattern where
+# a typo would silently switch which one runs.
+
+
+async def test_an_ssh_destination_is_accepted_for_rsync():
+    assert backup_service.validate_destination(
+        "pi@nas.local:/volume1/backups/headroom", "rsync"
+    ) == "pi@nas.local:/volume1/backups/headroom"
+
+
+async def test_a_daemon_destination_is_accepted_for_synology():
+    assert backup_service.validate_destination(
+        "backup@synology.local::NetBackup/headroom", "synology"
+    ) == "backup@synology.local::NetBackup/headroom"
+
+
+async def test_a_daemon_destination_is_refused_for_plain_rsync():
+    """The typo that matters.
+
+    `user@host::module` under the SSH provider would have rsync talk to a
+    daemon that expects an rsync-account password nobody configured, and the
+    failure looks like a broken NAS rather than a wrong destination.
+    """
+    with pytest.raises(ValueError):
+        backup_service.validate_destination("pi@nas.local::NetBackup/x", "rsync")
+
+
+async def test_an_ssh_destination_is_refused_for_synology():
+    with pytest.raises(ValueError):
+        backup_service.validate_destination("pi@nas.local:/volume1/x", "synology")
+
+
+async def test_an_rclone_remote_is_refused_for_rsync():
+    """Each provider's pattern is its own; a remote name is not a host."""
+    with pytest.raises(ValueError):
+        backup_service.validate_destination("box:Headroom", "rsync")
+
+
+@pytest.mark.parametrize("bad", [
+    "-e ssh",                       # rsync's remote-shell flag
+    "--rsh=/bin/sh",
+    "pi@nas:/path; rm -rf /",
+    "pi@nas:/path && curl evil",
+])
+async def test_rsync_refuses_flags_and_metacharacters(bad):
+    with pytest.raises(ValueError):
+        backup_service.validate_destination(bad, "rsync")
+
+
+async def test_an_unknown_provider_is_refused_by_the_validator():
+    with pytest.raises(ValueError, match="Unknown provider"):
+        backup_service.validate_destination("pi@nas:/x", "bash")
+
+
+async def test_the_rsync_argv_never_preserves_owner():
+    """A NAS maps its own users and this container is uid 1000.
+
+    Asking to preserve owner/group either errors or fills the log with
+    warnings about an identity the destination was never going to honour.
+    """
+    for name in ("rsync", "synology"):
+        argv = backup_service.UPLOAD_PROVIDERS[name].argv
+        assert "--no-owner" in argv and "--no-group" in argv
+
+
+async def test_the_destination_is_the_last_argv_slot_for_every_provider():
+    """The safety property, restated across all three transports."""
+    for spec in backup_service.UPLOAD_PROVIDERS.values():
+        assert spec.argv.count("{dest}") == 1
+        assert spec.argv[-1] == "{dest}"
+
+
+# ---- the daemon password ---------------------------------------------- #
+
+
+async def test_no_rsync_password_means_the_environment_is_inherited_unchanged(monkeypatch):
+    monkeypatch.delenv("HEADROOM_BACKUP_RSYNC_PASSWORD", raising=False)
+    assert backup_service.upload_env() is None
+
+
+async def test_the_rsync_password_is_mapped_to_the_name_rsync_reads(monkeypatch):
+    """rsync reads `RSYNC_PASSWORD`, not ours.
+
+    Ours is namespaced so it can live in the same `.env` as everything else;
+    the mapping is what makes it do anything.
+    """
+    monkeypatch.setenv("HEADROOM_BACKUP_RSYNC_PASSWORD", "hunter2")
+
+    env = backup_service.upload_env()
+
+    assert env is not None
+    assert env["RSYNC_PASSWORD"] == "hunter2"
+
+
+async def test_the_password_is_never_returned_by_the_api(client, monkeypatch):
+    """A NAS password is not something this app should hand back over the wire.
+
+    It is read from the host at upload time and deliberately never stored, so
+    there is nothing here that could leak it.
+    """
+    monkeypatch.setenv("HEADROOM_BACKUP_RSYNC_PASSWORD", "hunter2")
+
+    body = (await client.get("/api/admin/backups/upload")).json()
+
+    assert "hunter2" not in str(body)
+    # The variable is NAMED so the card can tell you what to set.
+    syn = next(p for p in body["available_providers"] if p["name"] == "synology")
+    assert syn["secret_env"] == "HEADROOM_BACKUP_RSYNC_PASSWORD"
+
+
 # ---- argv assembly ---------------------------------------------------- #
 
 
@@ -148,7 +263,36 @@ async def test_the_status_endpoint_reports_unconfigured_on_a_fresh_install(clien
     body = (await client.get("/api/admin/backups/upload")).json()
 
     assert body["configured"] is False
-    assert body["available_providers"] == ["rclone"]
+    assert {p["name"] for p in body["available_providers"]} == {
+        "rclone", "rsync", "synology",
+    }
+
+
+async def test_every_provider_ships_setup_steps(client):
+    """The gap between "configured" and "working" is always host-side work.
+
+    A card that can only say "not configured" leaves the operator to find the
+    rsync account, the shared folder and the firewall rule on their own — and
+    the failure when they miss one is an unattended upload that never runs.
+    """
+    body = (await client.get("/api/admin/backups/upload")).json()
+
+    for p in body["available_providers"]:
+        assert p["setup"], f"{p['name']} has no setup instructions"
+        assert p["example"], f"{p['name']} has no example destination"
+        assert p["destination_hint"], f"{p['name']} has no destination shape"
+
+
+async def test_the_status_reports_whether_the_binary_is_actually_present(client):
+    """None of these binaries are in the base image.
+
+    Reporting it is the difference between a card that says "configured" while
+    every upload fails, and one that names the missing piece.
+    """
+    body = (await client.get("/api/admin/backups/upload")).json()
+
+    for p in body["available_providers"]:
+        assert isinstance(p["binary_available"], bool)
 
 
 async def test_setting_a_destination_round_trips(client):

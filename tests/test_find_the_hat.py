@@ -33,7 +33,7 @@ async def test_color_distance_orders_perceptually():
     light blue was nearer to navy than to red — hue-family reasoning, and true
     under ΔE*76. Under CIEDE2000 it is false (55.8 vs 52.0), because a pale
     sky blue and a near-black navy are 58 points apart in lightness while the
-    red is only 29. That is the correct answer to "are these the same colour",
+    red is only 29. That is the correct answer to "are these the same color",
     and it is the whole reason a light-blue search stopped returning navies.
     Both sit far beyond MAX_MATCH_SCORE, so their relative order decides
     nothing a user ever sees.
@@ -130,12 +130,12 @@ async def test_color_search_matches_secondary_colors(client, db_session):
     assert results[0]["matched_rank"] == 2
 
 
-async def test_a_hat_that_IS_the_colour_outranks_one_that_merely_accents_it(
+async def test_a_hat_that_IS_the_color_outranks_one_that_merely_accents_it(
     client, db_session
 ):
     """The bug this whole weighting exists for.
 
-    A melin hat is a dark neutral crown with a bright logo, so a search colour
+    A melin hat is a dark neutral crown with a bright logo, so a search color
     that appears as somebody's logo appears on half the collection. Scoring a
     hat on the MINIMUM distance across its swatches made a green hat with a
     pink logo score 0.00 — identical to a hat that is actually pink, listed
@@ -152,7 +152,7 @@ async def test_a_hat_that_IS_the_colour_outranks_one_that_merely_accents_it(
         [
             ("forest", "forest green", "#2f4739"),
             ("grey", "gray", "#6b6f70"),
-            ("pink logo", "pink", "#c86fa8"),  # exactly the search colour
+            ("pink logo", "pink", "#c86fa8"),  # exactly the search color
         ],
     )
 
@@ -168,17 +168,17 @@ async def test_a_hat_that_IS_the_colour_outranks_one_that_merely_accents_it(
 async def test_the_rank_penalty_is_a_distance_budget_not_just_a_tiebreak(
     client, db_session
 ):
-    """The same swatch is a match as a hat's main colour and not as its accent.
+    """The same swatch is a match as a hat's main color and not as its accent.
 
     #a04a80 is 14.3 from the target — a recognisably different pink. On the
-    hat that IS that colour, that is close enough to answer "show me the pink
-    ones". As a logo on an otherwise green hat it is neither the colour asked
+    hat that IS that color, that is close enough to answer "show me the pink
+    ones". As a logo on an otherwise green hat it is neither the color asked
     for nor even a match for it, and returning it is how the list filled up
     with things the eye rejects instantly.
     """
-    its_main_colour = await _hat(client)
+    its_main_color = await _hat(client)
     only_its_logo = await _hat(client)
-    await _set_colors(db_session, its_main_colour, [("dusky", "pink", "#a04a80")])
+    await _set_colors(db_session, its_main_color, [("dusky", "pink", "#a04a80")])
     await _set_colors(
         db_session,
         only_its_logo,
@@ -190,7 +190,7 @@ async def test_the_rank_penalty_is_a_distance_budget_not_just_a_tiebreak(
     )
 
     results = (await client.get("/api/search/color", params={"hex": "c86fa8"})).json()
-    assert [r["id"] for r in results] == [its_main_colour]
+    assert [r["id"] for r in results] == [its_main_color]
 
 
 async def test_a_grey_hat_is_never_a_purple_hat(client, db_session):
@@ -231,7 +231,7 @@ async def test_the_guard_is_about_hue_not_the_size_of_the_chroma_gap(
     The first fix attempted here was a penalty on the chroma difference, which
     killed grey-vs-purple correctly and killed navy-vs-blue and red-vs-maroon
     along with it — those are the dark and bright versions of one hue, exactly
-    what a colour search should find. What makes grey different is not the
+    what a color search should find. What makes grey different is not the
     size of the gap but that it has no hue at all to be a darker version of.
     """
     navy = await _hat(client)
@@ -247,10 +247,10 @@ async def test_the_guard_is_about_hue_not_the_size_of_the_chroma_gap(
     assert maroon in [r["id"] for r in red_hits], "a maroon hat is a red hat"
 
 
-async def test_a_muted_colour_is_still_that_colour(client, db_session):
+async def test_a_muted_color_is_still_that_color(client, db_session):
     """The false negative an absolute chroma floor would have shipped.
 
-    "How much colour counts as some colour" depends on the colour. Teal is
+    "How much color counts as some color" depends on the color. Teal is
     itself only C=27 where red is C=73, so a slate teal at C=10.5 holds a real
     share of teal's chroma — 39% — while the blue-grey that must NOT match
     purple holds 20% of its C=59. An absolute floor cannot tell those apart:
@@ -277,7 +277,7 @@ async def test_neutral_searches_still_work_in_both_directions(client, db_session
     Black, charcoal, grey, silver and white are all near-achromatic, so a rule
     phrased carelessly ("reject low-chroma swatches") would refuse to match
     any of them against any other — breaking search for most of this
-    collection, which is overwhelmingly exactly these colours.
+    collection, which is overwhelmingly exactly these colors.
     """
     charcoal = await _hat(client)
     white = await _hat(client)
@@ -297,8 +297,8 @@ async def test_a_neutral_search_no_longer_matches_the_entire_collection(
     """CIEDE2000 puts a low-chroma neutral moderately near everything.
 
     Every hat here owns a grey swatch, so at the old cutoff of 30 a grey was
-    within range of 17 of the 25 other palette colours — red, orange, purple
-    and pink included — and every colour search returned every hat, bunched at
+    within range of 17 of the 25 other palette colors — red, orange, purple
+    and pink included — and every color search returned every hat, bunched at
     distances that made them all look equally relevant.
 
     Searching pink must not return grey hats. Searching grey still must.
@@ -509,7 +509,7 @@ async def test_navy_shades_read_as_closer_than_navy_to_slate():
     assert color_distance(navy, other_navy) < color_distance(navy, slate)
 
 
-# ------------------------ colour-search cutoff ------------------------- #
+# ------------------------ color-search cutoff ------------------------- #
 
 
 async def _hat_with_color(client, db_session, hex_value: str):
@@ -570,12 +570,12 @@ async def test_cutoff_is_applied_before_the_limit(client, db_session):
     assert [m.hat.id for m in ranked] == [near]
 
 
-async def test_a_colour_search_does_not_return_the_whole_collection(
+async def test_a_color_search_does_not_return_the_whole_collection(
     client, db_session
 ):
     """The complaint, as a test: "you get every color every time".
 
-    One hat per curated palette colour, then search for each of them. Under
+    One hat per curated palette color, then search for each of them. Under
     the distance cutoff this replaced, a search matched a median of most of
     the shelf — black came back for navy, silver for beige, white for cream —
     because ΔE 26 is an enormous distance and 51 cross-family palette pairs
@@ -600,16 +600,16 @@ async def test_a_colour_search_does_not_return_the_whole_collection(
         assert hits, f"searching {chip['name']} found nothing at all"
 
     assert worst <= len(chips) // 3, (
-        f"a colour search returned {worst} of {len(chips)} hats"
+        f"a color search returned {worst} of {len(chips)} hats"
     )
 
 
-async def test_every_palette_colour_finds_itself_first(client, db_session):
-    """Whatever else it returns, the exact colour must rank top.
+async def test_every_palette_color_finds_itself_first(client, db_session):
+    """Whatever else it returns, the exact color must rank top.
 
     Cheap to assert and it catches the failure mode a family taxonomy can
     have that a distance threshold cannot: a name filed under the wrong word
-    would make a colour unfindable by its own chip.
+    would make a color unfindable by its own chip.
     """
 
     ids = {}

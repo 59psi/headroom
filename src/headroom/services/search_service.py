@@ -19,7 +19,7 @@ def _in_room(room_id: int):
     """A hat is in a room two ways, and both count.
 
     Via its case, or directly since 2.33 (a shelf, a hook, a stand). One
-    definition because the plain search and the colour search both filter on
+    definition because the plain search and the color search both filter on
     it, and `Hat.room_id` is a Python `@property` that cannot appear in a
     `WHERE` clause — so each caller would otherwise write the disjunction out
     and one of them would eventually forget half of it.
@@ -31,7 +31,7 @@ def _in_room(room_id: int):
 
 
 def _color_rank_clause(scope: str):
-    """The dominance-rank restriction for a colour term, as WHERE args.
+    """The dominance-rank restriction for a color term, as WHERE args.
 
     Returns a tuple so the caller can splat it — `all` contributes nothing
     rather than a `True` literal SQLAlchemy would render into the SQL.
@@ -47,21 +47,21 @@ def _color_rank_clause(scope: str):
     return (HatColor.dominance_rank <= MAJOR_COLOR_RANK,)
 
 
-#: Colours at this dominance rank or better are what the hat IS; anything
+#: Colors at this dominance rank or better are what the hat IS; anything
 #: deeper is an accent — a logo, a piping, an underbrim.
 #:
 #: Searching "pink" used to return a black cap with a pink embroidered logo
 #: alongside actual pink hats, because the clause matched ANY row in
 #: `hat_colors`. Every melin hat is a dark crown with a bright mark on it, so
-#: that made colour terms close to useless: the accent colours are precisely
+#: that made color terms close to useless: the accent colors are precisely
 #: the ones that vary.
 #:
-#: Keyed on `dominance_rank`, not `tier`, for the same reason the colour-
+#: Keyed on `dominance_rank`, not `tier`, for the same reason the color-
 #: similarity ranking is: `tier` arrives from the client on the manual-edit
 #: path and can disagree with the position the row is actually stored at.
 MAJOR_COLOR_RANK = 2
 
-#: Which swatches a colour term is allowed to match.
+#: Which swatches a color term is allowed to match.
 #:
 #: `accent` is not merely the complement of the default — it is its own useful
 #: question. "Which of my hats has pink on it somewhere" is exactly how you
@@ -131,7 +131,7 @@ async def search_hats(
             Hat.style.ilike(pattern),
             Hat.brand.ilike(pattern),
             Hat.model_name.ilike(pattern),
-            # Major colours only unless asked otherwise — see
+            # Major colors only unless asked otherwise — see
             # `MAJOR_COLOR_RANK`. A hat is not "pink" because its logo is.
             Hat.id.in_(
                 select(HatColor.hat_id).where(
@@ -210,7 +210,7 @@ _DEEPER_RANK_PENALTY = 18.0
 
 #: How far from the target a swatch at each rank may sit and still count.
 #:
-#: `None` for rank 1: a hat's MAIN colour being the right colour is the whole
+#: `None` for rank 1: a hat's MAIN color being the right color is the whole
 #: question, and light blue sits ΔE 55.8 from navy while both are plainly
 #: blue — so any number here would throw away true matches. Accents get a
 #: budget because "the hat with the pink brim" has to actually be pink.
@@ -240,19 +240,19 @@ _DEEPER_RANK_BUDGET = 12.0
 #
 # Membership is now decided by `color_family`, on the curated names, where the
 # question has an exact answer. Distance keeps the job it is genuinely good
-# at: ORDERING hats that are already the right colour, nearest first, with the
+# at: ORDERING hats that are already the right color, nearest first, with the
 # rank penalty below still deciding that a hat which IS pink outranks one with
 # a pink brim. `limit` bounds the list, as it always did.
 
 
 @dataclass(frozen=True)
 class ColorMatch:
-    """One hat's best swatch against a search colour."""
+    """One hat's best swatch against a search color."""
 
     hat: Hat
     hex_value: str  # the swatch that matched
     distance: float  # raw CIEDE2000 from the target to that swatch
-    rank: int  # its dominance_rank — 1 is the hat's main colour
+    rank: int  # its dominance_rank — 1 is the hat's main color
     score: float  # distance + rank penalty; what the ordering uses
 
 
@@ -266,17 +266,17 @@ async def search_hats_by_color(
     """Rank active hats by perceptual closeness to `hex_value`, nearest first.
 
     A hat is scored on its best swatch, where "best" weighs perceptual
-    distance against how much of the hat wears that colour: a hat whose
-    SECONDARY colour matches still surfaces — that is the "find something
-    light blue" job — but it ranks below a hat whose main colour does, which
+    distance against how much of the hat wears that color: a hat whose
+    SECONDARY color matches still surfaces — that is the "find something
+    light blue" job — but it ranks below a hat whose main color does, which
     is what min-across-swatches got wrong.
 
-    Membership is decided by COLOUR FAMILY, not by distance — a hat is
-    returned when one of its swatches is the same colour as the target, in
+    Membership is decided by COLOR FAMILY, not by distance — a hat is
+    returned when one of its swatches is the same color as the target, in
     the plain-speech sense the curated palette names. Distance cannot decide
     whether a grey hat is purple, and no threshold ever could: within-family
     distances reach ΔE 55.8 while cross-family ones start at 15.4, so the two
-    ranges invert. Distance ranks what is already the right colour.
+    ranges invert. Distance ranks what is already the right color.
 
     Hat counts are hundreds, not millions: loading candidates and ranking in
     Python beats teaching SQLite color science.
@@ -312,17 +312,17 @@ async def search_hats_by_color(
                 continue
             # MEMBERSHIP IS CATEGORICAL. A grey hat is not a dark purple and
             # a navy one is not black, at any distance — they are not near
-            # each other by a lot or a little, they are different colours.
+            # each other by a lot or a little, they are different colors.
             #
             # Prefer the stored palette name, which is what the hat is
             # recorded as being; fall back to snapping the hex for swatches
-            # that predate colour normalisation.
+            # that predate color normalisation.
             if not is_same_color(target_lab, swatch_lab, color.general_color):
                 continue
             rank = color.dominance_rank
             # A per-rank DISTANCE BUDGET, stated directly rather than emerging
-            # from a penalty meeting a global cutoff. Being the right colour
-            # family is enough for a hat's main colour; an accent has to also
+            # from a penalty meeting a global cutoff. Being the right color
+            # family is enough for a hat's main color; an accent has to also
             # be a close match, or "show me the pink ones" fills up with hats
             # that merely have a pinkish logo. Same intent the rank penalty
             # had when there was a cutoff for it to work against — now that

@@ -50,8 +50,8 @@ async def search(
     color_scope: str = Query(
         "major",
         description=(
-            "Which swatches a colour term may match: 'major' (the hat's own"
-            " colours, the default), 'accent' (logos, piping, underbrims), or"
+            "Which swatches a color term may match: 'major' (the hat's own"
+            " colors, the default), 'accent' (logos, piping, underbrims), or"
             " 'all'."
         ),
     ),

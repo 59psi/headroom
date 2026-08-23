@@ -63,7 +63,7 @@ export function DuplicatesPage() {
                     title={
                       group.confidence === 'exact'
                         ? 'Every identity field matches'
-                        : 'Same model and size; one of these has no colourway recorded yet'
+                        : 'Same model and size; one of these has no colorway recorded yet'
                     }
                   >
                     {group.confidence === 'exact' ? 'exact match' : 'likely'}

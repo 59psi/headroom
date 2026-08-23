@@ -456,6 +456,7 @@ async def _run_upload_hook(path: Path, argv: list[str] | None = None) -> None:
             *argv,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
+            env=upload_env(),
         )
         try:
             _out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
@@ -662,42 +663,170 @@ def backup_keep() -> int:
     return env_int("HEADROOM_BACKUP_RETENTION_DAYS", 5)
 
 
-#: Upload providers the UI may configure, as argv TEMPLATES this module owns.
-#:
-#: The point is that a browser never supplies a command. It supplies a
-#: destination, which lands in exactly one argv slot of a template chosen from
-#: this dict — so there is no arrangement of user input that adds a flag,
-#: changes the binary, or reaches a shell.
-UPLOAD_PROVIDERS: dict[str, list[str]] = {
-    "rclone": ["rclone", "copy", "{path}", "{dest}"],
-}
+#: `-a` preserves times and symlinks; owner and group are deliberately NOT
+#: preserved. This container runs as uid 1000 and a NAS maps its own users, so
+#: asking for them either fails outright or fills the log with warnings about
+#: an identity the destination was never going to honour.
+_RSYNC_ARGV = ("rsync", "-a", "--no-owner", "--no-group", "{path}", "{dest}")
 
-#: `remote:path` and nothing else. Anchored, and `-` is excluded from the
-#: first character on purpose: `--config=/somewhere` is a perfectly good
-#: "destination" that turns a copy into an arbitrary-config rclone run, which
-#: is flag injection wearing an argument's clothes.
-_DESTINATION_RE = re.compile(r"^[A-Za-z0-9_-]+:[A-Za-z0-9_./ -]*$")
+
+@dataclass(frozen=True)
+class UploadProvider:
+    """One way to get a backup off this box.
+
+    A single frozen record drives the argv, the validation, the UI copy and the
+    preflight check, so adding a transport is one entry here rather than four
+    edits that can disagree — the same shape `settings_service.KeyProvider`
+    uses for the external API keys.
+    """
+
+    name: str
+    label: str
+    #: argv TEMPLATE this module owns. The browser never supplies a command; it
+    #: supplies a destination, which lands in exactly one slot — so no
+    #: arrangement of user input can add a flag, change the binary, or reach a
+    #: shell.
+    argv: tuple[str, ...]
+    #: Anchored, and per-provider because the shapes are genuinely different:
+    #: a single colon is a path on a host, a double colon is an rsync DAEMON
+    #: module. Accepting both under one pattern would let a typo silently
+    #: switch transport.
+    destination_re: re.Pattern[str]
+    destination_hint: str
+    example: str
+    #: Checked with `shutil.which` at status time. The whole class of bug this
+    #: guards is a feature whose runtime prerequisite is not in the image —
+    #: which is exactly how the CA-certificate endpoint shipped broken.
+    binary: str
+    #: Env var carrying the secret, where the transport accepts one
+    #: non-interactively. Read from the host environment and never stored in
+    #: the database: a NAS password is not something this app should hold, and
+    #: certainly not something it should be able to hand back over the wire.
+    secret_env: str | None
+    #: What the operator still has to do. Shown in the Settings card, because
+    #: "configured" and "working" are different states and the gap between
+    #: them is always host-side setup.
+    setup: tuple[str, ...]
+
+
+UPLOAD_PROVIDERS: dict[str, UploadProvider] = {
+    "rclone": UploadProvider(
+        name="rclone",
+        label="Cloud storage (rclone)",
+        argv=("rclone", "copy", "{path}", "{dest}"),
+        # `-` is excluded from the FIRST character on purpose: `--config=/x` is
+        # a perfectly good "destination" that turns a copy into an
+        # arbitrary-config rclone run — flag injection wearing an argument's
+        # clothes.
+        destination_re=re.compile(r"^[A-Za-z0-9_-]+:[A-Za-z0-9_./ -]*$"),
+        destination_hint="remote:path",
+        example="box:Headroom-Backups",
+        binary="rclone",
+        secret_env=None,
+        setup=(
+            "On the Pi, run `rclone config` and create a remote "
+            "(Box, S3, Backblaze B2, Google Drive, Dropbox…).",
+            "Headless? Run `rclone authorize \"box\"` on a laptop and paste the "
+            "token back.",
+            "`chmod 644 ~/.config/rclone/rclone.conf` so the container user can "
+            "read it.",
+            "Bring the stack up with the rclone overlay: "
+            "`-f docker-compose.backup-rclone.yml`.",
+            "Put the remote name and path in the field above, then press Test now.",
+        ),
+    ),
+    "rsync": UploadProvider(
+        name="rsync",
+        label="rsync over SSH",
+        argv=_RSYNC_ARGV,
+        # One colon, and the path may not contain another — so a destination
+        # meant for SSH cannot quietly become a daemon-mode `::` target.
+        destination_re=re.compile(r"^[A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+:[A-Za-z0-9_./ -]*$"),
+        destination_hint="user@host:/path",
+        example="pi@nas.local:/volume1/backups/headroom",
+        binary="rsync",
+        secret_env=None,
+        setup=(
+            "Create an SSH key for the backup on the Pi: "
+            "`ssh-keygen -t ed25519 -f ~/.ssh/headroom-backup -N \"\"`.",
+            "Authorise it on the destination: "
+            "`ssh-copy-id -i ~/.ssh/headroom-backup.pub user@host`.",
+            "Connect once by hand so the host key is recorded — an unknown host "
+            "key makes the upload hang, not fail.",
+            "Bring the stack up with the rsync overlay: "
+            "`-f docker-compose.backup-rsync.yml` (it mounts the key and "
+            "known_hosts read-only).",
+            "Put the destination above, then press Test now.",
+        ),
+    ),
+    "synology": UploadProvider(
+        name="synology",
+        label="Synology NAS (rsync service)",
+        argv=_RSYNC_ARGV,
+        # DOUBLE colon: rsync connects straight to the daemon on port 873 and
+        # the first path segment is a MODULE name, not a directory.
+        destination_re=re.compile(r"^[A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+::[A-Za-z0-9_./ -]+$"),
+        destination_hint="user@host::module/path",
+        example="backup@synology.local::NetBackup/headroom",
+        binary="rsync",
+        # noqa S106: this is the NAME of an environment variable, not a
+        # password. The value is read from the host at upload time and is
+        # deliberately never stored, logged, or returned by the API.
+        secret_env="HEADROOM_BACKUP_RSYNC_PASSWORD",  # noqa: S106
+        setup=(
+            "On the NAS: Control Panel → File Services → rsync → "
+            "**Enable rsync service**. DSM creates the `NetBackup` shared "
+            "folder when you do.",
+            "Control Panel → File Services → rsync → rsync Account: add an "
+            "account and password. This is a separate rsync account, not your "
+            "DSM login.",
+            "If the NAS firewall is on, allow port 873.",
+            "On the Pi, put that account's password in `.env` as "
+            "`HEADROOM_BACKUP_RSYNC_PASSWORD=…` and restart the stack. It is "
+            "read from the host environment and never stored by Headroom.",
+            "Destination above uses TWO colons — `user@host::NetBackup/folder` "
+            "— which is what selects the rsync service rather than SSH.",
+        ),
+    ),
+}
 
 UPLOAD_PROVIDER_KEY = "backup_upload_provider"
 UPLOAD_DESTINATION_KEY = "backup_upload_destination"
 
 
-def validate_destination(dest: str) -> str:
-    """Return a cleaned `remote:path`, or raise ValueError.
+def provider_binary_available(provider: str) -> bool | None:
+    """Is the transport's binary actually in this container?
+
+    None when the provider is unknown. Worth surfacing rather than discovering
+    at 3am: none of these binaries are in the base image, and a missing one
+    fails every unattended upload while the card still reads "configured".
+    """
+    p = UPLOAD_PROVIDERS.get(provider or "")
+    if p is None:
+        return None
+    return shutil.which(p.binary) is not None
+
+
+def validate_destination(dest: str, provider: str = "rclone") -> str:
+    """Return a cleaned destination for `provider`, or raise ValueError.
 
     Deliberately strict rather than clever. This value becomes an argument to
     a subprocess that runs unattended on every backup, so the safe move is to
-    accept only the shape rclone documents and reject everything else.
+    accept only the shape the transport documents and reject everything else.
     """
+    spec = UPLOAD_PROVIDERS.get(provider or "")
+    if spec is None:
+        raise ValueError(f"Unknown provider. Available: {sorted(UPLOAD_PROVIDERS)}")
     cleaned = (dest or "").strip()
     if not cleaned:
-        raise ValueError("Destination is required, e.g. box:Headroom")
+        raise ValueError(f"Destination is required, e.g. {spec.example}")
     if cleaned.startswith("-"):
         raise ValueError("Destination may not start with '-' (that is a flag, not a remote).")
-    if not _DESTINATION_RE.match(cleaned):
+    if not spec.destination_re.match(cleaned):
         raise ValueError(
-            "Destination must look like remote:path — letters, digits, "
-            "'_', '-', '.', '/' and spaces only."
+            f"Destination must look like {spec.destination_hint} "
+            f"(e.g. {spec.example}) — letters, digits, '_', '-', '.', '/' "
+            "and spaces only."
         )
     return cleaned
 
@@ -724,17 +853,38 @@ async def resolve_upload_argv(db, path: Path) -> list[str] | None:
 
     provider = await settings_service.get_setting(db, UPLOAD_PROVIDER_KEY)
     dest = await settings_service.get_setting(db, UPLOAD_DESTINATION_KEY)
-    template = UPLOAD_PROVIDERS.get(provider or "")
-    if not template or not dest:
+    spec = UPLOAD_PROVIDERS.get(provider or "")
+    if spec is None or not dest:
         return None
     try:
-        dest = validate_destination(dest)
+        # Re-validated against THIS provider's pattern, not the one it was
+        # saved under: switching provider without re-entering the destination
+        # would otherwise carry an SSH path into daemon mode, or the reverse.
+        dest = validate_destination(dest, spec.name)
     except ValueError as exc:
         # A stored value that no longer validates is a configuration error, not
         # a reason to run something unexpected.
         logger.error("Stored backup destination is invalid, upload skipped: %s", exc)
         return None
-    return [tok.replace("{path}", str(path)).replace("{dest}", dest) for tok in template]
+    return [tok.replace("{path}", str(path)).replace("{dest}", dest) for tok in spec.argv]
+
+
+def upload_env() -> dict[str, str] | None:
+    """Extra environment for the upload subprocess, or None to inherit as-is.
+
+    `RSYNC_PASSWORD` is rsync's documented way to authenticate to a DAEMON
+    (`host::module`) without a terminal. It does **not** apply to rsync over
+    SSH — rsync ignores it there — which is why the SSH provider carries no
+    secret at all rather than one that would look set and do nothing.
+
+    Keyed on the environment rather than the provider because the value is
+    inert to every other binary here, and threading the provider name through
+    the hook to gate an ignored variable would buy nothing.
+    """
+    password = os.environ.get("HEADROOM_BACKUP_RSYNC_PASSWORD", "").strip()
+    if not password:
+        return None
+    return {**os.environ, "RSYNC_PASSWORD": password}
 
 
 def backup_upload_cmd() -> str:

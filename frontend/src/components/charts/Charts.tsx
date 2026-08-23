@@ -4,7 +4,7 @@
  * Hand-rolled rather than pulled from a charting library, for the same reason
  * this app has no UI framework: the whole visual identity is a small set of
  * tokens, and every charting library arrives with its own opinions about
- * colour, type and spacing that then have to be fought. These are a few dozen
+ * color, type and spacing that then have to be fought. These are a few dozen
  * lines each and read the tokens directly.
  *
  * Mobile-first throughout. `BarList` is HTML rather than SVG specifically so
@@ -14,7 +14,7 @@
  */
 import type { ReactNode } from 'react';
 
-/** Series colours, in assignment order. Distinguishable on a dark canvas. */
+/** Series colors, in assignment order. Distinguishable on a dark canvas. */
 export const SERIES_COLORS = [
   'var(--neon-pink)',
   'var(--neon-cyan)',
@@ -57,7 +57,7 @@ export function BarList({
   /** Scale ceiling. Defaults to the largest value present. */
   max?: number;
   emptyText?: string;
-  /** Give each row its own series colour instead of one accent for all. */
+  /** Give each row its own series color instead of one accent for all. */
   colorize?: boolean;
 }) {
   if (!data.length) {

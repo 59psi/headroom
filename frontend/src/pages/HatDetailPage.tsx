@@ -221,7 +221,7 @@ export function HatDetailPage() {
                   <div
                     className="text-secondary small"
                     style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6 }}
-                    title="A mark was actually visible in the photo — this is evidence, not an inference from shape or colourway"
+                    title="A mark was actually visible in the photo — this is evidence, not an inference from shape or colorway"
                   >
                     <span aria-hidden="true">◉</span>
                     <span>Logo: {data.logo_detected}</span>
@@ -255,13 +255,13 @@ export function HatDetailPage() {
                 {/* Up here with the other primary actions, not only at the foot
                     of the page. Correcting a misidentification is the most
                     common thing you do right after reading one, and the copy of
-                    this button below sits under the colours and disposition
+                    this button below sits under the colors and disposition
                     sections — on a phone that is most of a screen of scrolling
                     away from the wrong answer you are looking at. */}
                 <Link
                   to={`/hats/${data.id}/edit`}
                   className="btn btn-outline-secondary"
-                  title="Correct the brand, model, construction, collection or colours"
+                  title="Correct the brand, model, construction, collection or colors"
                 >
                   ✎ Edit
                 </Link>
@@ -508,9 +508,9 @@ export function HatDetailPage() {
               set from the style on every write), so the sheet spent a quarter
               of itself printing one fact twice.
 
-              Construction and colourway are what actually separate two hats
+              Construction and colorway are what actually separate two hats
               of the same style, and neither was here: construction appeared
-              only as a badge by the title, and colourway appeared nowhere on
+              only as a badge by the title, and colorway appeared nowhere on
               this page at all, despite a catalog and a purchase matcher whose
               whole job is filling it in. */}
           <div className="row g-2">
