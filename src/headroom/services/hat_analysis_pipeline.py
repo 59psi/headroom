@@ -414,28 +414,34 @@ _NON_ANSWERS = frozenset({"standard", "none", "n/a", "na", "unknown", "regular"}
 
 
 def _apply_construction(hat: Hat, construction: str | None) -> None:
-    """Fill in the construction only when nobody has stated one.
+    """Never write a construction from analysis. Construction is owner-only.
 
-    Claude never overwrites a construction that is already recorded. It was
-    briefly allowed to — the idea being that naming a fabric is a positive
-    identification and should correct a stale value — but in practice it reads
-    HYDRO and HYDROLite off a photo unreliably (the distinguishing features are
-    bonded seams, a gel-welded logo and a sweatband, none of which survive a
-    single front-on shot), so "correcting" mostly meant replacing a right answer
-    from the person holding the hat with a wrong one from a photo.
+    This used to fill the field whenever it was empty, on the reasoning that a
+    blank is not an answer worth protecting. That was wrong, and the function's
+    own previous docstring said why without following it through: Claude reads
+    HYDRO and HYDROLite off a photo **unreliably** — the distinguishing
+    features are bonded seams, a gel-welded logo and a sweatband, none of which
+    survive a single front-on shot. It was already established that letting it
+    *correct* a stated value replaced right answers with wrong ones. Letting it
+    fill a blank is the same coin toss; the only difference is that there was
+    no prior value to notice being lost.
 
-    The owner always wins. Clearing the field makes it eligible again, which is
-    the deliberate way to ask for a re-identification.
+    Two things since made a wrong guess expensive rather than cosmetic:
 
-    `_NON_ANSWERS` exists because the old tool schema was an enum whose "I
-    can't tell" member was the literal string "standard". A model still
-    answering that way — a cached prompt, a fine-tune, a future edit that
-    reinstates it — must not get "standard" written down as if it were a fabric.
+    * **It moves money.** `retail_pricing` prices HYDRO at $79 and HYDROLite at
+      $99, so a guess that skews HYDROLite over-prices the hat by $20 and the
+      collection by that times however many.
+    * **It hides hats.** Construction became a filter, so a mislabelled hat is
+      absent from the filtered view rather than merely wrong in a detail pane.
+
+    An empty construction is an honest "nobody has looked yet". A guessed one
+    is indistinguishable from a fact the owner entered, and there is no column
+    recording which it was. So: blank stays blank until a person fills it in.
+
+    Kept as a function rather than deleting the call, so the one place this
+    decision lives is greppable and the reasoning travels with it.
     """
-    if hat.construction:
-        return
-    if construction and construction.strip().casefold() not in _NON_ANSWERS:
-        hat.set_construction(construction)
+    return
 
 
 def _strip_contradicting_construction(
@@ -460,9 +466,34 @@ def _strip_contradicting_construction(
 
     Word boundaries matter: "HYDRO" must NOT match inside "HYDROLite", or a
     genuine HYDROLite hat would be left reading "Coronado Lite".
+
+    **With no construction stated, every construction is stripped.** melin
+    names read "<line> <construction>", so leaving Claude's name intact would
+    park its guess in `model_name` — the field a person actually reads — and
+    this function's early return meant a blank construction protected nothing.
+    Analysis no longer decides construction (see `_apply_construction`); a name
+    asserting one is that same decision wearing a different column, and it is
+    the one that gets quoted to somebody.
+
+    Same principle as above: remove, don't substitute. "A-Game" is less
+    specific than "A-Game HYDROLite" and, unlike it, known to be true. State
+    the construction and re-analyse and the full name comes back.
     """
-    if not model_name or not construction:
+    if not model_name:
         return model_name
+
+    if not construction:
+        # Nothing confirmed, so nothing may be claimed.
+        cleaned = model_name
+        for known in KNOWN_CONSTRUCTIONS:
+            cleaned = re.sub(rf"\b{re.escape(known)}\b", " ", cleaned, flags=re.IGNORECASE)
+        cleaned = " ".join(cleaned.split())
+        if cleaned != model_name:
+            logger.info(
+                "Model name %r asserted a construction nobody stated; corrected to %r",
+                model_name, cleaned or None,
+            )
+        return cleaned or None
 
     own = construction.casefold()
     cleaned = model_name

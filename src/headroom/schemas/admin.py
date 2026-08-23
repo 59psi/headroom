@@ -156,3 +156,25 @@ class CatalogRefreshStarted(BaseModel):
 
     started: bool = True
     detail: str = "Catalog refresh running in the background — check back shortly."
+
+
+class ConstructionAuditRow(BaseModel):
+    """One construction value on record, and what depends on it."""
+
+    construction: str
+    hat_count: int
+    #: Hats whose retail price came from the price table — i.e. derived from
+    #: this construction rather than checked by a person.
+    priced_from_table: int
+
+
+class ConstructionClearResult(BaseModel):
+    """What clearing a construction did, or would do under `dry_run`."""
+
+    construction: str
+    dry_run: bool
+    hats_cleared: int
+    model_names_corrected: int
+    prices_cleared: int
+    manual_prices_kept: int
+    samples: list[str]

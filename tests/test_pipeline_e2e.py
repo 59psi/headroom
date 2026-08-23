@@ -90,7 +90,12 @@ async def test_upload_persists_full_claude_analysis(client, stub_claude):
     assert data["brand"] == "Melin"
     # Records what was SEEN, separately from `brand`, which may be inferred.
     assert data["logo_detected"] == "Melin — M monogram, front panel"
-    assert data["model_name"] == "A-Game Hydro"
+    # "A-Game Hydro" comes back as "A-Game": the fixture states no construction,
+    # and analysis is no longer allowed to assert one — in `construction` or,
+    # as here, inside the model name. Stating HYDRO and re-analysing restores
+    # the full name.
+    assert data["model_name"] == "A-Game"
+    assert data["construction"] is None, "analysis decided a construction"
     assert data["model_confidence"] == "high"
     assert data["style_descriptor"] == "fitted snapback"
     assert data["estimated_new_price"] == 60.0
@@ -171,38 +176,48 @@ async def test_claude_error_marks_hat_status_error(client, monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_claude_fills_an_empty_construction_and_never_overwrites_one(client):
-    """The owner's answer wins. Analysis only fills a blank.
+async def test_analysis_never_writes_a_construction_at_all(client):
+    """Construction is owner-only. Analysis does not get a vote.
 
-    2.11 briefly let a named fabric overwrite what was on record, reasoning
-    that a positive identification should correct a stale value. In practice
-    Claude reads HYDRO vs HYDROLite off one photo unreliably — the tells are
-    bonded seams, a gel-welded logo and a sweatband, none of which survive a
-    front-on shot — so "correcting" meant replacing a right answer from the
-    person holding the hat with a wrong one from a picture.
+    2.11 let a named fabric overwrite what was on record and that was reverted,
+    because Claude reads HYDRO vs HYDROLite off one photo unreliably — the
+    tells are bonded seams, a gel-welded logo and a sweatband, none of which
+    survive a front-on shot. What survived that revert was permission to fill a
+    *blank*, which is the same coin toss with nothing prior to notice being
+    lost.
+
+    Two things made that expensive rather than cosmetic: `retail_pricing`
+    prices HYDRO at $79 and HYDROLite at $99, so a guess skewing HYDROLite
+    over-prices the hat; and construction became a filter, so a mislabelled hat
+    is absent from a filtered view rather than merely wrong in a detail pane.
+
+    A blank construction is an honest "nobody has looked yet". A guessed one is
+    indistinguishable from one the owner typed.
     """
     from headroom.models.hat import Hat
     from headroom.services.hat_analysis_pipeline import _apply_construction
 
-    # Empty: analysis is welcome to fill it in.
+    # Empty stays empty — this is the change.
     blank = Hat()
     _apply_construction(blank, "HYDROLite")
-    assert blank.construction == "HYDROLite"
-    assert blank.hydrolite is True
+    assert blank.construction is None, "analysis decided a construction"
+    # `not`, not `is False`: column defaults are applied on flush, so an
+    # unsaved Hat() carries None here rather than False.
+    assert not blank.hydrolite
+    assert not blank.hydro
 
-    # Already stated: untouchable, even by a confident, differing answer.
+    # Already stated: still untouchable.
     owned = Hat()
     owned.set_construction("Waxed Canvas")
     _apply_construction(owned, "HYDRO")
     assert owned.construction == "Waxed Canvas", "analysis overrode the owner"
     assert owned.hydro is False
 
-    # Null and the old enum's "standard" are both non-answers either way.
+    # Non-answers were never written and still aren't.
     empty = Hat()
     _apply_construction(empty, None)
-    assert empty.construction is None
     _apply_construction(empty, "standard")
-    assert empty.construction is None, "'standard' is a non-answer, not a fabric"
+    assert empty.construction is None
 
 
 @pytest.mark.anyio
@@ -419,8 +434,15 @@ async def test_a_rescan_repairs_a_model_name_that_contradicts_the_construction(c
     # HYDROLite hat would end up reading "Coronado Lite".
     assert _strip_contradicting_construction("Coronado HYDROLite", "Waxed Canvas") == "Coronado"
 
-    # Nothing to compare against leaves the name alone.
-    assert _strip_contradicting_construction("A-Game HYDROLite", None) == "A-Game HYDROLite"
+    # Nothing stated means nothing may be claimed. This used to leave the name
+    # alone, which quietly parked Claude's construction guess in `model_name` —
+    # the field a person actually reads — while `construction` stayed blank.
+    # Analysis no longer decides construction at all, and a name asserting one
+    # is that same decision in a different column.
+    assert _strip_contradicting_construction("A-Game HYDROLite", None) == "A-Game"
+    assert _strip_contradicting_construction("Trenches Icon Hydro", None) == "Trenches Icon"
+    # A name carrying no construction is untouched either way.
+    assert _strip_contradicting_construction("Coronado Rope", None) == "Coronado Rope"
     assert _strip_contradicting_construction(None, "Thermal") is None
 
     # And it runs on the analysis path, so a rescan fixes stored rows even when

@@ -47,6 +47,10 @@ vi.mock('../api/settings', () => ({
     example_url: 'http://tags.example:9000/t/h/1',
   })),
   setTagBase: vi.fn(), clearTagBase: vi.fn(),
+  auditConstructions: vi.fn(async () => [
+    { construction: 'HYDROLite', hat_count: 12, priced_from_table: 9 },
+  ]),
+  clearConstruction: vi.fn(),
 }));
 
 vi.mock('../api/auth', () => ({
@@ -79,6 +83,7 @@ const CARD_TITLES = [
   'Share the collection',
   'Backups',
   'Site Logo',
+  'Construction audit',
   'Colorway Catalog',
   'Purchase History',
   'Account',

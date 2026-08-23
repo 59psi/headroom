@@ -16,6 +16,7 @@ import { PurchasesCard } from '../components/settings/PurchasesCard';
 import { AccountCard } from '../components/settings/AccountCard';
 import { ShareLinksCard } from '../components/settings/ShareLinksCard';
 import { TagsCard } from '../components/settings/TagsCard';
+import { ConstructionAuditCard } from '../components/settings/ConstructionAuditCard';
 
 /**
  * Composition root only — every card owns its own queries, mutations and local
@@ -41,6 +42,7 @@ export function SettingsPage() {
       <CollectionExportCard />
       <BackupsCard />
       <LogoCard />
+      <ConstructionAuditCard />
       <ColorwayCatalogCard />
       <PurchasesCard />
       <AccountCard />
