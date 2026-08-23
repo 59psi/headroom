@@ -6,6 +6,41 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.44.0] — 2026-08-23
+
+### Added
+- **An off-site backup card in Settings.** The feature has existed since 2.38
+  and was configurable only by editing `.env` and restarting, with no way to
+  learn whether it had ever actually run short of reading container logs. That
+  is the wrong shape for the one thing standing between a dead SD card and
+  losing the collection.
+
+  The card answers three questions: is a copy configured, did the last one
+  work, and does it work *right now* — the last via a **Test now** button that
+  performs the real upload against your newest backup. Same command, same
+  credentials. A dry run would only prove the form had been filled in.
+
+  **The form does not accept a command, deliberately.** The hook runs an argv
+  unattended, as the app user, after every backup, so a free-text command
+  field would turn a stolen session into command execution inside the
+  container. The browser sends a provider name and a destination; the argv is
+  assembled from a template the server owns, and the destination must match
+  `remote:path` — a leading `-` is rejected by name, because `--config=…` is
+  flag injection wearing an argument's clothes.
+
+  `HEADROOM_BACKUP_UPLOAD_CMD` still works and now **wins** over anything set
+  in the UI, which is the opposite precedence to the API keys. That variable
+  is settable only with host access; letting a browser override a host-level
+  decision about what executes would erase the boundary that makes the raw
+  command form acceptable at all. When it is set, the card goes read-only and
+  says so.
+
+- **Upload outcomes are recorded** — last attempt, whether it succeeded, the
+  error, and running success/failure counts — separately from the backup's own
+  health. The two fail independently: a local backup can succeed every night
+  while the off-box copy has been failing for a month, and only the second
+  means the archive exists nowhere but the card it is protecting against.
+
 ## [2.43.0] — 2026-08-23
 
 A test-coverage audit, and the bug it found.

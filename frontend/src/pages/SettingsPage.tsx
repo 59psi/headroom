@@ -10,6 +10,7 @@ import { ActivityLogCard } from '../components/settings/ActivityLogCard';
 import { ShareTargetCard } from '../components/settings/ShareTargetCard';
 import { InventoryReportCard } from '../components/settings/InventoryReportCard';
 import { CollectionExportCard } from '../components/settings/CollectionExportCard';
+import { OffsiteBackupCard } from '../components/settings/OffsiteBackupCard';
 import { BackupsCard } from '../components/settings/BackupsCard';
 import { LogoCard } from '../components/settings/LogoCard';
 import { ColorwayCatalogCard } from '../components/settings/ColorwayCatalogCard';
@@ -75,7 +76,7 @@ const SECTIONS = [
     id: 'maintenance',
     label: 'Upkeep',
     blurb: 'Making sure you still have all of this tomorrow.',
-    cards: [BackupsCard, ActivityLogCard],
+    cards: [BackupsCard, OffsiteBackupCard, ActivityLogCard],
   },
 ] as const;
 

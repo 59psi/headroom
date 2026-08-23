@@ -9,8 +9,14 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.database import get_db
-from headroom.schemas.admin import BackupHealthRead, BackupInfo
-from headroom.services import activity_service, backup_service
+from headroom.schemas.admin import (
+    BackupHealthRead,
+    BackupInfo,
+    BackupUploadStatus,
+    BackupUploadTestResult,
+    BackupUploadUpdate,
+)
+from headroom.services import activity_service, backup_service, settings_service
 
 router = APIRouter()
 
@@ -90,3 +96,124 @@ async def list_scheduled_backups():
         )
         for p in paths
     ]
+
+
+# ---- off-box upload -------------------------------------------------- #
+#
+# Registered before any `/backups/{...}` path would shadow them, same reason
+# `/backups/health` is.
+#
+# There is deliberately NO endpoint that accepts a command. The browser sends
+# a provider name and a destination; the argv is assembled from a template
+# this app owns (`backup_service.UPLOAD_PROVIDERS`), so no combination of
+# input can change the binary, add a flag, or reach a shell. That matters more
+# than usual here: whatever this configures runs unattended, as the app user,
+# after every backup.
+
+
+async def _upload_status(db: AsyncSession) -> BackupUploadStatus:
+    h = backup_service.health()
+    env_cmd = backup_service.backup_upload_cmd()
+    provider = await settings_service.get_setting(
+        db, backup_service.UPLOAD_PROVIDER_KEY
+    )
+    destination = await settings_service.get_setting(
+        db, backup_service.UPLOAD_DESTINATION_KEY
+    )
+    return BackupUploadStatus(
+        configured=bool(env_cmd) or bool(provider and destination),
+        provider=provider,
+        destination=destination,
+        from_environment=bool(env_cmd),
+        available_providers=sorted(backup_service.UPLOAD_PROVIDERS),
+        last_upload_at=h.last_upload_at,
+        last_upload_ok=h.last_upload_ok,
+        last_upload_error=h.last_upload_error,
+        upload_successes=h.upload_successes,
+        upload_failures=h.upload_failures,
+    )
+
+
+@router.get("/backups/upload", response_model=BackupUploadStatus)
+async def get_backup_upload(db: AsyncSession = Depends(get_db)):
+    """Is an off-box copy configured, and is it working?
+
+    The most consequential unknown on a single-box deployment: local rolling
+    backups on the same card protect against corruption, not against the card.
+    """
+    return await _upload_status(db)
+
+
+@router.put("/backups/upload", response_model=BackupUploadStatus)
+async def set_backup_upload(
+    data: BackupUploadUpdate, db: AsyncSession = Depends(get_db)
+):
+    from fastapi import HTTPException  # noqa: PLC0415
+
+    if data.provider not in backup_service.UPLOAD_PROVIDERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown provider. Available: {sorted(backup_service.UPLOAD_PROVIDERS)}",
+        )
+    try:
+        destination = backup_service.validate_destination(data.destination)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    await settings_service.set_setting(
+        db, backup_service.UPLOAD_PROVIDER_KEY, data.provider
+    )
+    await settings_service.set_setting(
+        db, backup_service.UPLOAD_DESTINATION_KEY, destination
+    )
+    await activity_service.log_activity(
+        db, kind="backup.upload_configured", entity_type="system", entity_id=None,
+        summary=f"Off-box backup upload set to {data.provider} → {destination}",
+    )
+    await db.commit()
+    return await _upload_status(db)
+
+
+@router.delete("/backups/upload", response_model=BackupUploadStatus)
+async def clear_backup_upload(db: AsyncSession = Depends(get_db)):
+    await settings_service.set_setting(db, backup_service.UPLOAD_PROVIDER_KEY, "")
+    await settings_service.set_setting(db, backup_service.UPLOAD_DESTINATION_KEY, "")
+    await activity_service.log_activity(
+        db, kind="backup.upload_cleared", entity_type="system", entity_id=None,
+        summary="Off-box backup upload turned off",
+    )
+    await db.commit()
+    return await _upload_status(db)
+
+
+@router.post("/backups/upload/test", response_model=BackupUploadTestResult)
+async def test_backup_upload(db: AsyncSession = Depends(get_db)):
+    """Actually run the configured upload against the newest backup.
+
+    The whole point of the feature is that it works unattended, which means
+    nobody finds out it is broken until the day they need it. A button that
+    performs the real thing — same argv, same binary, same credentials — is
+    the only check worth having; a dry run would prove the form was filled in.
+    """
+    backups = await backup_service.list_backups()
+    if not backups:
+        return BackupUploadTestResult(
+            ok=False,
+            detail="No backup on disk to upload yet. One is written after the next change.",
+        )
+    argv = await backup_service.resolve_upload_argv(db, backups[0])
+    if not argv:
+        return BackupUploadTestResult(ok=False, detail="No off-box upload is configured.")
+
+    before = backup_service.health().upload_failures
+    await backup_service._run_upload_hook(backups[0], argv=argv)
+    h = backup_service.health()
+    ok = h.upload_failures == before and h.last_upload_ok is True
+    return BackupUploadTestResult(
+        ok=ok,
+        detail=(
+            f"Uploaded {backups[0].name} with {argv[0]}."
+            if ok
+            else (h.last_upload_error or "Upload failed — see the container log.")
+        ),
+    )
