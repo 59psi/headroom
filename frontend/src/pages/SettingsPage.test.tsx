@@ -170,7 +170,7 @@ describe('SettingsPage', () => {
     const { container } = renderWithProviders(<SettingsPage />);
     await screen.findByText('Claude API Key');
 
-    await user.click(screen.getByRole('tab', { name: 'Maintenance' }));
+    await user.click(screen.getByRole('tab', { name: 'Upkeep' }));
 
     expect(renderedCards(container)).toEqual(SECTION_CARDS.maintenance);
   });

@@ -28,10 +28,13 @@ The remainder of the archaeology report, plus build-time work.
   codes had been written to an authority that was never installed.
 
 ### Fixed
-- **The Settings tabs no longer scroll off a phone screen.** Five labels are
-  wider than a 360px viewport, and as a horizontal scroller the tabs past the
-  fold were invisible — no scrollbar on touch, last pill flush with the gutter,
-  so nothing on screen said "Maintenance" existed. They wrap now.
+- **The Settings tabs fit a phone, on one line.** As a horizontal scroller the
+  tabs past the fold were invisible — no scrollbar on touch, last pill flush
+  with the gutter — so nothing on screen said the last section existed. The
+  real constraint turned out to be the LABELS, not the layout: five names have
+  to share ~320px, which "Collection data" and "This device" never could. They
+  are **Data**, **Device** and **Upkeep** now, in five equal columns, one row,
+  no scrolling and no ellipsis. The 44px tap target is unchanged.
 - **Stats, Valuation and Home gate on `isError`.** `?? []` turned a failed
   fetch into "$0 across 0 hats" — a confident wrong answer, and precisely what
   `valueHat` returns `null` rather than 0 to avoid.
