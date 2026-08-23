@@ -19,8 +19,7 @@ export function AddHatPage() {
   const [basics, setBasics] = useState<HatBasics>({
     ...DEFAULT_HAT_BASICS,
     caseId: searchParams.get('caseId') || '',
-    // Same as caseId: the Rooms page can link straight into "add a hat here".
-    roomId: searchParams.get('roomId') || '',
+    roomId: '',
     dateLastWorn: '',
     purchasePrice: '',
     purchasedAt: '',

@@ -112,7 +112,10 @@ export function EditHatPage() {
       // Placement goes through `assign`, not the PUT: it is the one path that
       // validates capacity and keeps case and room mutually exclusive.
       const newCaseId = basics.caseId ? Number(basics.caseId) : null;
-      const newRoomId = basics.caseId || !basics.roomId ? null : Number(basics.roomId);
+      // A case wins over a room, and no room means null — spelled out rather
+      // than as a precedence-dependent double negative.
+      const inACase = Boolean(basics.caseId);
+      const newRoomId = !inACase && basics.roomId ? Number(basics.roomId) : null;
       const oldCaseId = hat.data?.case_id ?? null;
       const oldRoomId = hat.data?.direct_room_id ?? null;
       if (newCaseId !== oldCaseId || newRoomId !== oldRoomId) {

@@ -208,3 +208,66 @@ async def test_limited_edition_survives_an_unrelated_edit(client):
 
     assert body["limited_edition"] is True
     assert body["model_name"] == "Coronado"
+
+
+# ------------------------------- finding them ------------------------------- #
+
+
+async def test_search_by_room_finds_caseless_hats(client):
+    """The regression the room filter had: `Hat.case.has(...)` is NULL for a
+    caseless hat, so filtering through the case excluded exactly the hats this
+    feature adds — and silently, because the Hats page filters `room_id`
+    client-side and kept showing them, leaving the two room filters
+    disagreeing about the same collection.
+    """
+    attic = await _room(client, "Attic")
+    await _hat(client, room_id=attic["id"], model_name="Shelfbound")
+
+    hits = (await client.get(f"/api/search?q=Shelfbound&room_id={attic['id']}")).json()
+
+    assert [h["model_name"] for h in hits] == ["Shelfbound"]
+
+
+async def test_searching_a_room_name_finds_caseless_hats(client):
+    attic = await _room(client, "Attic")
+    await _hat(client, room_id=attic["id"], model_name="Shelfbound")
+
+    hits = (await client.get("/api/search?q=Attic")).json()
+
+    assert [h["model_name"] for h in hits] == ["Shelfbound"]
+
+
+async def test_a_room_filter_still_excludes_other_rooms(client):
+    """The fix widens the filter, so check it didn't widen it to everything."""
+    attic = await _room(client, "Attic")
+    cellar = await _room(client, "Cellar")
+    await _hat(client, room_id=attic["id"], model_name="Upstairs")
+    await _hat(client, room_id=cellar["id"], model_name="Downstairs")
+
+    hits = (await client.get(f"/api/search?q=classic&room_id={attic['id']}")).json()
+
+    assert [h["model_name"] for h in hits] == ["Upstairs"]
+
+
+async def test_cased_hats_are_still_found_by_room(client):
+    """The other half of the disjunction must keep working."""
+    display = await _room(client, "Display")
+    case = await _case(client, room_id=display["id"])
+    await _hat(client, case_id=case["id"], model_name="Boxed")
+
+    hits = (await client.get(f"/api/search?q=Boxed&room_id={display['id']}")).json()
+
+    assert [h["model_name"] for h in hits] == ["Boxed"]
+
+
+async def test_creating_with_an_unknown_room_is_rejected(client):
+    """`assign_hat` checked this and `create_hat` did not. The migration adds
+    `direct_room_id` with no FK clause (SQLite cannot add one to an existing
+    table), so an unknown id was accepted and the hat ended up "in" a room that
+    does not exist — reporting no room at all, which looks like the placement
+    simply didn't take."""
+    resp = await client.post(
+        "/api/hats",
+        json={"condition": "new", "size": "classic", "style": "a_game", "room_id": 9999},
+    )
+    assert resp.status_code == 404

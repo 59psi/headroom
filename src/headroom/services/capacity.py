@@ -31,6 +31,13 @@ MAX_BEANIE = 8
 # "I am telling you the limit".
 OVERFILL_ALLOWANCE = 1
 
+# Beanies get NO allowance. The regular allowance exists because 3 is melin's
+# *name* for the case — a "3 Hat Travel Case" — and a fourth demonstrably fits,
+# so the number to be lenient about was never a measurement. 8 is the opposite:
+# it is what the owner fits in one, counted by packing it. Adding slack on top
+# of a measured maximum asserts a ninth fits, which nobody has claimed.
+BEANIE_OVERFILL_ALLOWANCE = 0
+
 
 @dataclass(frozen=True)
 class Acceptance:
@@ -74,8 +81,9 @@ def evaluate(
     # note on OVERFILL_ALLOWANCE. A zero capacity holds nothing either way:
     # the allowance is slack on a real capacity, not a way in.
     allowance = 0 if stated else OVERFILL_ALLOWANCE
+    beanie_allowance = 0 if stated else BEANIE_OVERFILL_ALLOWANCE
     limit_regular = max_regular + allowance if max_regular > 0 else 0
-    limit_beanie = max_beanie + allowance if max_beanie > 0 else 0
+    limit_beanie = max_beanie + beanie_allowance if max_beanie > 0 else 0
 
     # Type exclusivity: a case holds beanies OR regular hats, never both.
     has_beanies = beanie_count > 0

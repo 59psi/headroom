@@ -15,6 +15,21 @@ from headroom.services.color_extraction import (
 )
 
 
+def _in_room(room_id: int):
+    """A hat is in a room two ways, and both count.
+
+    Via its case, or directly since 2.33 (a shelf, a hook, a stand). One
+    definition because the plain search and the colour search both filter on
+    it, and `Hat.room_id` is a Python `@property` that cannot appear in a
+    `WHERE` clause — so each caller would otherwise write the disjunction out
+    and one of them would eventually forget half of it.
+    """
+    return or_(
+        Hat.case.has(Case.room_id == room_id),
+        Hat.direct_room_id == room_id,
+    )
+
+
 async def search_hats(
     db: AsyncSession,
     query: str,
@@ -37,6 +52,7 @@ async def search_hats(
 
     stmt = select(Hat).options(
         selectinload(Hat.case).selectinload(Case.room),
+        selectinload(Hat.direct_room),
         selectinload(Hat.colors),
     )
 
@@ -44,7 +60,11 @@ async def search_hats(
     stmt = stmt.where(Hat.disposed_at.is_(None))
 
     if room_id is not None:
-        stmt = stmt.where(Hat.case.has(Case.room_id == room_id))
+        # A hat is in a room via its case OR directly (2.33). Filtering only
+        # through the case excluded exactly the hats room-storage adds — and
+        # silently, because the Hats page filters `room_id` client-side and so
+        # kept showing them, leaving the two room filters disagreeing.
+        stmt = stmt.where(_in_room(room_id))
 
     color_field = HatColor.color_name if exact_colors else HatColor.general_color
 
@@ -66,7 +86,11 @@ async def search_hats(
             Hat.id.in_(
                 select(HatColor.hat_id).where(color_field.ilike(pattern))
             ),
-            Hat.case.has(Case.room.has(Room.name.ilike(pattern))),
+            # Same reasoning as `room_id` above: both ways of being in a room.
+            or_(
+                Hat.case.has(Case.room.has(Room.name.ilike(pattern))),
+                Hat.direct_room.has(Room.name.ilike(pattern)),
+            ),
         ]
         # HYDRO / HYDROLite also have boolean columns, derived from the text
         # above. They used to be values of `style`, and USAGE still promised
@@ -183,12 +207,13 @@ async def search_hats_by_color(
         select(Hat)
         .options(
             selectinload(Hat.case).selectinload(Case.room),
+            selectinload(Hat.direct_room),
             selectinload(Hat.colors),
         )
         .where(Hat.disposed_at.is_(None))
     )
     if room_id is not None:
-        stmt = stmt.where(Hat.case.has(Case.room_id == room_id))
+        stmt = stmt.where(_in_room(room_id))
     result = await db.execute(stmt)
 
     # Convert the target once, not once per stored swatch: this loop runs

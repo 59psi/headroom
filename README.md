@@ -72,7 +72,9 @@ result, and three independent price signals per hat.
 - **Insurance-grade inventory report** — print-friendly HTML → Save as PDF.
 
 **🧢 Live with it**
-- **Rooms → Cases → Hats** with per-case capacity (Melin cases hold 3–4),
+- **Rooms → Cases → Hats**, or a hat straight in a room with no case —
+  Caddies and Aviators don't fit a travel case. Per-case capacity (3 hats, or
+  8 beanies),
   type-exclusive cases, auto-sequenced display IDs.
 - **3D-printable case rack** — a modular, stackable, supports-free rack that
   gives each Melin travel case its own slide-in bay. OpenSCAD source + STLs in
@@ -590,7 +592,8 @@ frontend/src/
 └── test/                        # Vitest setup + renderWithProviders
 ```
 
-**Data model**: Rooms → Cases → Hats. Cases are type-exclusive (regular or
+**Data model**: Rooms → Cases → Hats, plus Rooms → Hats for anything kept
+out of a case. Cases are type-exclusive (regular or
 beanie) with per-case capacity. Exactly one room is the **default** — new cases
 go there and orphaned cases land there — so it's the only one that can't be
 deleted; designate another room as default to free it up. Disposed hats keep

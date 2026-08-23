@@ -516,6 +516,7 @@ export function HatDetailPage() {
           <div className="row g-2">
             {([
               ['Style', data.style.replace(/_/g, ' ')],
+              ['Limited edition', data.limited_edition ? 'Yes' : null],
               ['Size', data.size.replace(/_/g, ' ')],
               ['Construction', data.construction],
               ['Colorway', data.colorway],
@@ -557,9 +558,20 @@ export function HatDetailPage() {
               </div>
               <Link to={`/cases/${data.case_display_id}`} className="btn btn-outline-primary btn-sm">View Case</Link>
             </div>
+          ) : data.direct_room_id ? (
+            /* In a room with no case — a shelf, a hook, a stand. Not a
+               warning state: it is where the hat lives. Caddies and Aviators
+               don't fit a travel case at all. */
+            <div className="d-flex justify-content-between align-items-center gap-2 flex-wrap">
+              <div>
+                <span className="badge bg-info">{data.room_name}</span>
+                <div className="text-secondary small mt-1">Kept here, not in a case</div>
+              </div>
+              <Link to={`/hats/${data.id}/edit`} className="btn btn-outline-secondary btn-sm">Move</Link>
+            </div>
           ) : (
             <div className="d-flex justify-content-between align-items-center gap-2 flex-wrap">
-              <div style={{ color: 'var(--neon-yellow)' }}>Not assigned to a case</div>
+              <div style={{ color: 'var(--neon-yellow)' }}>Not in a case or a room</div>
               <Link to={`/hats/${data.id}/edit`} className="btn btn-outline-warning btn-sm">Assign</Link>
             </div>
           )}

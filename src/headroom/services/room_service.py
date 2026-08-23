@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from headroom.models.case import Case
+from headroom.models.hat import Hat
 from headroom.models.room import Room
 from headroom.schemas.room import RoomCreate, RoomUpdate
 from headroom.services.activity_service import log_and_commit
@@ -135,6 +136,11 @@ async def delete_room(db: AsyncSession, room_id: int) -> None:
             select(func.count(Case.id)).where(Case.room_id == room_id)
         )
     ).scalar() or 0
+    moved_hats = (
+        await db.execute(
+            select(func.count(Hat.id)).where(Hat.direct_room_id == room_id)
+        )
+    ).scalar() or 0
     # Reassign cases to the default room via bulk update to avoid cascade issues
     await db.execute(
         update(Case).where(Case.room_id == room_id).values(room_id=fallback_id)
@@ -143,8 +149,6 @@ async def delete_room(db: AsyncSession, room_id: int) -> None:
     # any case, so the case sweep above misses them entirely — and left behind
     # they would point at a deleted room, which reads as the hat vanishing from
     # every room view while still existing.
-    from headroom.models.hat import Hat
-
     await db.execute(
         update(Hat)
         .where(Hat.direct_room_id == room_id)
@@ -158,5 +162,8 @@ async def delete_room(db: AsyncSession, room_id: int) -> None:
     await db.commit()
     await log_and_commit(
         db, kind="room.deleted", entity_type="room", entity_id=room_id,
-        summary=f"Room '{name}' deleted · {moved} case(s) moved to the default room",
+        summary=(
+            f"Room '{name}' deleted · {moved} case(s) and {moved_hats} "
+            f"caseless hat(s) moved to the default room"
+        ),
     )

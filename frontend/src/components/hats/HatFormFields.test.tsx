@@ -4,6 +4,13 @@ import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../../test/utils';
 import { useHatFormOptions, HatBasicsCard, NEW_CASE_VALUE, type HatBasics } from './HatFormFields';
 
+// Deliberately NOT 'Closet': that is the case fixture's room name, and the
+// room <select> would then make every `getByText('Closet')` ambiguous between
+// two legitimate controls rather than pinning the one under test.
+vi.mock('../../api/rooms', () => ({
+  getRoomOptions: vi.fn(async () => [{ value: '1', label: 'Loft' }]),
+}));
+
 vi.mock('../../api/hats', () => ({
   // `is_beanie` is served by the API, not derived from the value — it decides
   // which cases the picker offers, and a second definition client-side would
@@ -28,7 +35,7 @@ vi.mock('../../api/cases', () => ({
       // Real payload shape: the picker renders occupancy from
       // `nominal_capacity`, not `used + free`, so omitting it here would
       // silently render "2" instead of "2/3".
-      overfull: false, nominal_capacity: 3,
+      overfull: false, nominal_capacity: 3, nominal_regular: 3, nominal_beanie: 8,
       created_at: '2026-08-01T00:00:00', updated_at: '2026-08-01T00:00:00',
     },
   ]),

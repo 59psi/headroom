@@ -146,6 +146,15 @@ async def create_hat(db: AsyncSession, data: HatCreate) -> Hat:
             raise HTTPException(status_code=404, detail="Case not found")
         await _validate_capacity(db, data.case_id, is_beanie)
         position = await _get_next_position(db, data.case_id)
+    elif data.room_id is not None:
+        # Checked for the same reason `assign_hat` checks it, and it was
+        # missing here: the migration adds `direct_room_id` without a FK clause
+        # (SQLite cannot add one to an existing table), so an unknown id is
+        # accepted by the database and the hat ends up "in" a room that does
+        # not exist — reporting no room at all, which looks like the placement
+        # simply didn't take.
+        if not await db.get(Room, data.room_id):
+            raise HTTPException(status_code=404, detail="Room not found")
 
     hat = Hat(
         case_id=data.case_id,

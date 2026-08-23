@@ -81,7 +81,7 @@ class CaseRead(BaseModel):
     #: than nominal, so a full three-hat case displayed "3/4", and 6 silently
     #: became wrong the day beanie capacity moved to 8.
     nominal_regular: int
-    nominal_beanie: int = 0
+    nominal_beanie: int
     created_at: datetime
     updated_at: datetime
 

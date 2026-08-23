@@ -32,12 +32,28 @@ All notable changes are documented here. This project follows
   you.
 
 ### Changed
-- **Beanie case capacity is 8, up from 6.** They have no brim and squash flat,
-  so far more fit in the same shell than the three the case is named for. The
-  overfill allowance is unchanged, so a ninth is accepted and reported as
-  overfull and a tenth is refused.
+- **Beanie case capacity is 8, up from 6**, and 8 is a *hard* ceiling. They have
+  no brim and squash flat, so far more fit in the same shell than the three the
+  case is named for. Beanies get **no overfill allowance**: the regular one
+  exists because 3 is melin's *name* for the case and a fourth demonstrably
+  fits, so the number to be lenient about was never a measurement. 8 is the
+  opposite — it is what fits, counted by packing it — and slack on top would
+  assert a ninth fits, which nobody has claimed.
 
 ### Fixed
+- **Search by room could not see room-stored hats** — caught by review before
+  release, and the worst kind of bug: `Hat.case.has(Case.room_id == …)` is NULL
+  for a caseless hat, so the API filter excluded exactly the hats the feature
+  adds, while the Hats page (which filters client-side on the resolved
+  `room_id`) kept showing them. Two room filters, disagreeing about the same
+  collection. Searching a room by *name* had it too. `search_service._in_room()`
+  is now the one disjunction both call sites use — `Hat.room_id` is a Python
+  `@property` and cannot appear in a `WHERE`, so each caller would otherwise
+  write it out and one would forget half.
+- **Creating a hat in a nonexistent room was accepted.** `assign_hat` checked;
+  `create_hat` didn't. The migration adds `direct_room_id` without a foreign key
+  (SQLite cannot add one to an existing table), so the bad id persisted and the
+  hat reported no room at all — looking like the placement simply hadn't taken.
 - **The case detail page showed the wrong capacity, twice.** It computed its
   own `capacity ?? 4` / `?? 6` — a second copy of a rule `services/capacity.py`
   owns. `4` is the *overfill limit* rather than nominal, so a full three-hat

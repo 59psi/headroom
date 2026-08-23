@@ -37,17 +37,17 @@ async def test_beanie_capacity_limit(client):
     full = (await client.get(f"/api/cases/{case['display_id']}")).json()
     assert full["free_beanie"] == 0
     assert full["overfull"] is False, "eight is full, not overfull"
+    assert full["accepts_beanie"] is False, "eight is the measured maximum"
 
-    # The 9th is the overfill allowance — accepted, and reported as overfull.
-    resp = await _create_hat(client, case_id=case["id"], style="beanie")
-    assert resp.status_code == 201
-    over = (await client.get(f"/api/cases/{case['display_id']}")).json()
-    assert over["overfull"] is True
-
-    # The 10th is refused.
+    # The 9th is refused. Beanies get NO overfill allowance: the regular one
+    # exists because 3 is melin's NAME for the case and a 4th demonstrably
+    # fits, so the number to be lenient about was never a measurement. 8 is
+    # the opposite — it is what fits, counted by packing it — and adding slack
+    # on top would assert a 9th fits, which nobody has claimed.
     resp = await _create_hat(client, case_id=case["id"], style="beanie")
     assert resp.status_code == 409
     assert "beanie capacity" in resp.json()["detail"]
+    assert "(8)" in resp.json()["detail"], "the refusal must quote the real ceiling"
 
 
 @pytest.mark.anyio
