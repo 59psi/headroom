@@ -6,6 +6,38 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.36.1] — 2026-08-22
+
+### Fixed
+- **"Re-analyse every hat" was re-analysing a fraction of them** — 45 of 234 in
+  a real collection.
+
+  A checkbox above the button read *"Leave hand-entered prices alone"* and was
+  **on by default**. It mapped to a server filter, `only_priced_by_claude`,
+  which restricted the run to hats whose price source was `Claude Vision`.
+
+  Before 2.27 that was very nearly every hat, so the option looked harmless and
+  the label looked true. **2.27 moved the majority onto the retail table**
+  (`source = "melin retail"`), and the same filter then matched only the
+  remainder Claude still prices — Thermal, the Mill straw line, anything the
+  table can't name. Nothing announced the change in meaning; the button still
+  said "every hat".
+
+  The filter was **redundant from the start**. A Manual price is protected
+  unconditionally: `retail_pricing.resolve_retail` returns it untouched, and
+  the pipeline bails on `resale_price_scope == "manual"` in two places. So it
+  never spared anything that wasn't already safe — it only shrank the run.
+
+  Removed. Re-analysis now covers **every hat with a photo**; disposed hats
+  remain the only exclusion, because re-pricing them spends Claude calls on
+  inventory you no longer own.
+
+- **The queue's "waiting" count was capped at 50.** `pending_count` was
+  `len(hats)` over a list deliberately bounded to 50 for display, so a deeper
+  backlog always reported 50 — a count read off a limited feed, the same
+  mistake as sizing the colourway catalog from its autocomplete endpoint. The
+  list stays bounded; the count is now a `COUNT`.
+
 ## [2.36.0] — 2026-08-22
 
 ### Added

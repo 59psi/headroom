@@ -12,7 +12,7 @@ old one, and watching it drain is exactly what the queue view is for.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -51,9 +51,15 @@ async def analysis_queue_status(db: AsyncSession = Depends(get_db)):
     picked up but not finished. They differ by design and both are useful: a
     non-empty `pending` with `worker_alive: false` means nothing is draining.
     """
-    # Bounded to 50 — this is a backlog list, not a report.
+    # The LIST is bounded to 50 — this is a backlog preview, not a report.
+    # The COUNT is not: `pending_count` used to be `len(hats)`, which silently
+    # capped the number at 50 no matter how deep the queue really was. Same
+    # mistake as reading a collection size off a limited autocomplete feed.
     hats = await hat_service.list_by_analysis_status(
         db, analysis_queue.PENDING, limit=50
+    )
+    pending_total = await hat_service.count_by_analysis_status(
+        db, analysis_queue.PENDING
     )
 
     current = await analysis_job_service.current_job(db)
@@ -64,7 +70,7 @@ async def analysis_queue_status(db: AsyncSession = Depends(get_db)):
         queued=analysis_queue.queue_depth(),
         current_job=_job_read(current) if current else None,
         recent_jobs=[_job_read(p) for p in recent],
-        pending_count=len(hats),
+        pending_count=pending_total,
         pending=[
             PendingHat(
                 id=h.id,
@@ -79,16 +85,7 @@ async def analysis_queue_status(db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/analysis/reanalyze-all", response_model=ReanalyzeAllResult)
-async def reanalyze_all(
-    db: AsyncSession = Depends(get_db),
-    only_priced_by_claude: bool = Query(
-        False,
-        description=(
-            "Limit to hats whose price came from Claude, leaving hand-entered"
-            " prices alone."
-        ),
-    ),
-):
+async def reanalyze_all(db: AsyncSession = Depends(get_db)):
     """Re-run analysis for every hat that has a photo.
 
     The reason this exists is retroactive correction: the pricing anchors added
@@ -101,11 +98,11 @@ async def reanalyze_all(
     rather than blocking the request.
 
     Disposed hats are excluded: they're gone, and re-pricing them spends
-    Claude calls on inventory you no longer own.
+    Claude calls on inventory you no longer own. That is the ONLY exclusion —
+    see `hat_service.ids_for_reanalysis` for the filter that used to sit here
+    and quietly cut a 234-hat collection down to 45.
     """
-    hat_ids = await hat_service.ids_for_reanalysis(
-        db, only_priced_by_claude=only_priced_by_claude
-    )
+    hat_ids = await hat_service.ids_for_reanalysis(db)
     if not hat_ids:
         return ReanalyzeAllResult(queued=0, worker_alive=analysis_queue.worker_alive())
 

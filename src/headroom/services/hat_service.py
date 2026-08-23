@@ -517,21 +517,32 @@ async def list_by_analysis_status(
     return list(result.scalars().all())
 
 
-async def ids_for_reanalysis(
-    db: AsyncSession, only_priced_by_claude: bool = False
-) -> list[int]:
-    """Ids of every hat a bulk re-analysis should cover.
+async def ids_for_reanalysis(db: AsyncSession) -> list[int]:
+    """Ids of EVERY hat a bulk re-analysis covers: any hat with a photo.
 
     Ids rather than entities: the caller hands these to a queue, and the
     routes↔worker boundary passes identifiers so a worker never holds an ORM
     object from someone else's session.
 
     Disposed hats are excluded — they are gone, and re-pricing them spends
-    Claude calls on inventory that is no longer owned.
+    Claude calls on inventory that is no longer owned. That is the only
+    exclusion.
+
+    There used to be an `only_priced_by_claude` filter, exposed as a checkbox
+    reading "Leave hand-entered prices alone" and defaulting to ON. It was
+    already redundant — a Manual price is protected unconditionally, by
+    `retail_pricing.resolve_retail` and by the two `resale_price_scope ==
+    "manual"` guards in the pipeline — so it never spared anything that was not
+    already safe.
+
+    What it did do was silently shrink the run. Before 2.27 nearly every hat
+    was priced by Claude, so "only the Claude-priced ones" was very nearly all
+    of them and the option looked harmless. 2.27 moved the majority to the
+    retail table (`source = "melin retail"`), and the same filter then matched
+    only the remainder Claude still prices — 45 hats out of 234 in a real
+    collection — under a button that says "Re-analyse every hat".
     """
     stmt = select(Hat.id).where(Hat.photo_path.is_not(None), Hat.disposed_at.is_(None))
-    if only_priced_by_claude:
-        stmt = stmt.where(Hat.estimated_new_price_source == "Claude Vision")
     return list((await db.execute(stmt.order_by(Hat.id))).scalars().all())
 
 
