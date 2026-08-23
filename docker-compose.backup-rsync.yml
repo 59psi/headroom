@@ -1,0 +1,38 @@
+# Off-site scheduled backups over rsync — to another Linux box, or to a
+# Synology with SSH enabled.
+#
+# `rsync` and `ssh` are already in the image; the only thing this overlay adds
+# is the CREDENTIAL, which cannot be baked in. Stacks as an extra -f alongside
+# your front-door overlay:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.backup-rsync.yml \
+#     -f docker-compose.https-lan.yml up -d --build
+#
+# Then set provider "rsync over SSH" in Settings → Upkeep → Off-site backup and
+# give it a destination like pi@nas.local:/volume1/backups/headroom.
+#
+# One-time host setup:
+#   ssh-keygen -t ed25519 -f ~/.ssh/headroom-backup -N ""
+#   ssh-copy-id -i ~/.ssh/headroom-backup.pub user@host
+#   ssh -i ~/.ssh/headroom-backup user@host true   # records the host key
+#
+# That last line is not optional. rsync inherits ssh's behaviour for an unknown
+# host key, which is to PROMPT — and a prompt on a backup that runs unattended
+# is a hang, not an error, until the upload timeout kills it.
+#
+# Backing up to a Synology WITHOUT enabling SSH? Use the "Synology NAS (rsync
+# service)" provider instead. It talks to DSM's rsync daemon on port 873 and
+# authenticates with an rsync account password, so it needs no key and no
+# overlay — only HEADROOM_BACKUP_RSYNC_PASSWORD in your .env.
+services:
+  headroom:
+    environment:
+      # rsync runs as the container user (uid 1000), whose home is
+      # /home/headroom — so this is where ssh looks for a config and keys.
+      HEADROOM_BACKUP_UPLOAD_TIMEOUT: "1800"
+    volumes:
+      # Read-only, and pointing at a key made FOR this: do not mount your
+      # everyday id_ed25519. A key the container can read is a key anything
+      # running in the container can use.
+      - "${HEADROOM_BACKUP_SSH_KEY:-${HOME}/.ssh/headroom-backup}:/home/headroom/.ssh/id_ed25519:ro"
+      - "${HEADROOM_BACKUP_KNOWN_HOSTS:-${HOME}/.ssh/known_hosts}:/home/headroom/.ssh/known_hosts:ro"

@@ -6,6 +6,77 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.46.0] — 2026-08-23
+
+### Added
+- **The app now watches its own HTTPS certificate.** `GET /api/settings/tls`
+  opens a TLS connection to the app's own origin and reports what is actually
+  being **served** — expiry, days remaining, whether the certificate covers the
+  name it is served under, and the SHA-256 of the CA this install hands out.
+  Surfaced in **Settings → This device → Trust this device**.
+
+  Written because the real deployment served a certificate that had expired
+  **37 days earlier** and nothing noticed. Caddy's stored leaf key had vanished,
+  so its renewal queued every ten minutes and never completed. The container was
+  healthy, the app answered, backups ran — every signal was green, because
+  nothing here had ever looked at the certificate in front of it.
+
+  It measures the served chain rather than reading Caddy's storage, because
+  those disagree: that failure had a valid certificate **on disk** and an
+  expired one in Caddy's memory, so a file check would have reported everything
+  fine while browsers refused the connection.
+
+  It is reported, never enforced. The certificate belongs to Caddy, so failing
+  readiness on it would restart-loop the app without fixing anything.
+
+- **The CA fingerprint is published**, because a name is not an identity.
+  Caddy names every root `Caddy Local Authority - <year> ECC Root`, so two
+  installs produce two **different** roots with the **same** name. A browser
+  matching by name picks whichever it has and reports *"Peer's certificate has
+  an invalid signature"* on a chain that verifies perfectly at the server —
+  and nothing in the name, dates or issuer separates them. The card now shows
+  the fingerprint and the command to list what a Mac actually trusts.
+
+- **Off-site backups to rsync and Synology.** Three providers now, each a single
+  frozen record driving the argv, the validation, the UI copy and the preflight
+  check — so adding a transport is one entry rather than four edits that can
+  disagree.
+
+  | Provider | Destination | Needs |
+  |---|---|---|
+  | Cloud storage (rclone) | `box:Headroom-Backups` | `rclone config` + the rclone overlay |
+  | rsync over SSH | `pi@nas.local:/volume1/backups/headroom` | an SSH key + the rsync overlay |
+  | Synology NAS (rsync service) | `backup@nas.local::NetBackup/headroom` | DSM's rsync service + `HEADROOM_BACKUP_RSYNC_PASSWORD` |
+
+  The two rsync destinations differ by **one colon, and that is the whole
+  transport**: `host:/path` is rsync over SSH, `host::module/path` connects
+  straight to a daemon on port 873 and reads the first segment as a module
+  name. Validation is per provider so a typo cannot silently switch transport
+  and fail with credentials nobody configured, looking like a broken NAS.
+
+  `rsync` and `openssh-client` now ship **in the image** (~3 MB). rclone is
+  ~50 MB and stays a bind mount. Requiring an overlay whose only job was to
+  supply a binary the image could have carried made the two most ordinary
+  destinations — another Linux box, a NAS — needlessly hard.
+
+- **The off-site backup card explains how to finish setting up.** Each provider
+  carries its host-side steps, its destination shape, an example, and whether
+  its binary is actually present in the container. "Configured" and "working"
+  are different states and everything between them is host-side work the card
+  previously could not name. **Test now** also says outright when the binary is
+  missing, instead of surfacing a subprocess's "No such file or directory" —
+  a true statement about `argv[0]` that reads as a problem with the destination.
+
+### Fixed
+- **The macOS trust instructions**, which stopped at "double-click the file".
+  That lands it in whichever keychain Keychain Access last had selected; the
+  **iCloud** keychain cannot hold certificates and rejects the import with
+  `Error: -26276`, which reads like a bad file rather than a wrong destination.
+  Both the card and the README now lead with `security add-trusted-cert`, and
+  note that a browser's own export button always hands you the leaf or the
+  intermediate and **never** the root — a root is self-signed and never sent
+  during a handshake, so it can only come from the server.
+
 ## [2.45.0] — 2026-08-23
 
 ### Fixed

@@ -1,4 +1,6 @@
+import asyncio
 import tempfile
+from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
@@ -13,6 +15,7 @@ from headroom.schemas.settings import (
     ApiKeyTestResult,
     ApiKeyUpdate,
     MdnsStatus,
+    TlsStatusRead,
     ModelStatus,
     ModelUpdate,
     GuestViewStatus,
@@ -24,6 +27,7 @@ from headroom.services import (
     activity_service,
     guest_view_service,
     mdns_service,
+    tls_health,
     settings_service,
     tag_service,
 )
@@ -172,7 +176,22 @@ async def test_api_key(db: AsyncSession = Depends(get_db)):
     return ApiKeyTestResult(ok=ok, detail=detail)
 
 
-# ---------------------------- mDNS status ---------------------------- #
+# ------------------------ TLS / mDNS status -------------------------- #
+
+
+@router.get("/tls", response_model=TlsStatusRead)
+async def get_tls_status():
+    """What certificate the HTTPS front door is actually serving.
+
+    Opens a TLS connection to the app's own origin rather than reading Caddy's
+    storage, because those can disagree: the failure this was written for had a
+    valid certificate on disk and an expired one in Caddy's memory, and only
+    the served chain is what a browser sees.
+
+    Run off the event loop — it is a network round trip, short but not free.
+    """
+    status = await asyncio.to_thread(tls_health.check_certificate)
+    return TlsStatusRead(**asdict(status))
 
 
 @router.get("/mdns", response_model=MdnsStatus)

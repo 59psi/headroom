@@ -55,11 +55,17 @@ FROM python:3.14-slim-trixie AS base
 # which would empty the cache we are trying to fill. Neither mount lands in
 # the layer, so the image is no bigger and the explicit `rm -rf` this replaces
 # is no longer needed to keep it small.
+# `rsync` + `openssh-client` are here for the off-site backup upload, and they
+# are in the IMAGE rather than bind-mounted from the host on purpose. rclone is
+# ~50 MB and mounted by its overlay; these two are ~3 MB together, and mounting
+# them meant the two most ordinary destinations — another Linux box, a Synology
+# — could not work without an overlay whose only job was to supply a binary the
+# image could have carried all along.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     rm -f /etc/apt/apt.conf.d/docker-clean \
     && apt-get update && apt-get install -y --no-install-recommends \
-        libgl1 libglib2.0-0 libheif1 tini
+        libgl1 libglib2.0-0 libheif1 tini rsync openssh-client
 
 FROM base AS python-base
 ENV UV_LINK_MODE=copy \

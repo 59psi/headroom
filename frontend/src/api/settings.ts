@@ -2,6 +2,7 @@ import { apiFetch } from './client';
 import type {
   ActivityRow, AnalysisJobRead, AnalysisQueueStatus, ApiKeyStatus, ApiKeyTestResult,
   BackupHealth, BackupInfo, BackupUploadStatus, EbayCredsStatus, ImportJob, MdnsStatus, ModelStatus,
+  TlsStatus,
   RecentError, TagBaseStatus, ConstructionAuditRow, ConstructionClearResult,
 } from '../types';
 
@@ -68,6 +69,10 @@ export function getModel() {
 
 export function getMdnsStatus() {
   return apiFetch<MdnsStatus>('/api/settings/mdns');
+}
+
+export function getTlsStatus() {
+  return apiFetch<TlsStatus>('/api/settings/tls');
 }
 
 export function setModel(model_id: string) {
