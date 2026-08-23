@@ -97,10 +97,17 @@ export function updateHatColors(id: number, colors: ColorTag[]) {
   });
 }
 
-export function assignHat(id: number, caseId: number | null) {
+/**
+ * Put a hat in a case, in a room with no case, or nowhere.
+ *
+ * The two placements are mutually exclusive — the server clears one when it
+ * sets the other, because a cased hat's room IS its case's room and a second
+ * stored answer is one that can disagree.
+ */
+export function assignHat(id: number, caseId: number | null, roomId: number | null = null) {
   return apiFetch<HatRead>(`/api/hats/${id}/assign`, {
     method: 'PATCH',
-    body: JSON.stringify({ case_id: caseId }),
+    body: JSON.stringify({ case_id: caseId, room_id: roomId }),
   });
 }
 

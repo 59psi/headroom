@@ -7,6 +7,7 @@ from sqlalchemy.orm import selectinload
 
 from headroom.models.case import Case
 from headroom.models.hat import Hat
+from headroom.models.room import Room
 from headroom.schemas.hat import (
     KNOWN_CONSTRUCTIONS,
     HatCreate,
@@ -37,6 +38,7 @@ def _hat_loads():
     """
     return (
         selectinload(Hat.case).selectinload(Case.room),
+        selectinload(Hat.direct_room),
         selectinload(Hat.colors),
     )
 
@@ -148,6 +150,9 @@ async def create_hat(db: AsyncSession, data: HatCreate) -> Hat:
     hat = Hat(
         case_id=data.case_id,
         position_in_case=position,
+        # Only meaningful with no case — a cased hat's room is its case's.
+        direct_room_id=None if data.case_id is not None else data.room_id,
+        limited_edition=data.limited_edition,
         condition=data.condition,
         size=data.size,
         style=data.style,
@@ -324,7 +329,22 @@ async def delete_hat(db: AsyncSession, hat_id: int) -> None:
     )
 
 
-async def assign_hat(db: AsyncSession, hat_id: int, case_id: int | None) -> Hat:
+async def assign_hat(
+    db: AsyncSession,
+    hat_id: int,
+    case_id: int | None,
+    room_id: int | None = None,
+) -> Hat:
+    """Put a hat in a case, in a room with no case, or nowhere.
+
+    A case and a direct room are mutually exclusive, and this is the one place
+    that holds that: a cased hat's room IS its case's room, so keeping a second
+    answer alongside it is keeping something that can disagree. Setting either
+    clears the other.
+
+    `case_id` wins if both arrive — it is the more specific placement, and a
+    caller sending both has not said which they meant.
+    """
     hat = await get_hat(db, hat_id)
 
     if case_id is not None:
@@ -335,14 +355,26 @@ async def assign_hat(db: AsyncSession, hat_id: int, case_id: int | None) -> Hat:
         position = await _get_next_position(db, case_id)
         hat.case_id = case_id
         hat.position_in_case = position
+        hat.direct_room_id = None
+        where = f"assigned to case {case_id}"
+    elif room_id is not None:
+        room = await db.get(Room, room_id)
+        if not room:
+            raise HTTPException(status_code=404, detail="Room not found")
+        hat.case_id = None
+        hat.position_in_case = None
+        hat.direct_room_id = room_id
+        where = f"placed in room {room_id} with no case"
     else:
         hat.case_id = None
         hat.position_in_case = None
+        hat.direct_room_id = None
+        where = "unassigned"
 
     await db.commit()
     await log_and_commit(
         db, kind="hat.assigned", entity_type="hat", entity_id=hat_id,
-        summary=f"Hat #{hat_id} {'assigned to case ' + str(case_id) if case_id else 'unassigned'}",
+        summary=f"Hat #{hat_id} {where}",
     )
     return await _reload_hat(db, hat_id)
 

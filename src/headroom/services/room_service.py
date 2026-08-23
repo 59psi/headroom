@@ -139,6 +139,17 @@ async def delete_room(db: AsyncSession, room_id: int) -> None:
     await db.execute(
         update(Case).where(Case.room_id == room_id).values(room_id=fallback_id)
     )
+    # Hats kept in this room with NO case move too. They are not reachable via
+    # any case, so the case sweep above misses them entirely — and left behind
+    # they would point at a deleted room, which reads as the hat vanishing from
+    # every room view while still existing.
+    from headroom.models.hat import Hat
+
+    await db.execute(
+        update(Hat)
+        .where(Hat.direct_room_id == room_id)
+        .values(direct_room_id=fallback_id)
+    )
     await db.flush()
     # Expire to clear stale relationship data before delete
     db.expire_all()

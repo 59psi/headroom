@@ -75,6 +75,12 @@ _HAT_COLUMN_DDL: dict[str, str] = {
     "resale_checked_at": "ALTER TABLE hats ADD COLUMN resale_checked_at DATETIME",
     # v2.19 — "manual" | "model" | "category": what resale_price is a price OF.
     "resale_price_scope": "ALTER TABLE hats ADD COLUMN resale_price_scope VARCHAR(20)",
+    # v2.33 — a hat kept in a room with no case (a shelf, a hook, a stand).
+    # No FK clause: SQLite cannot add a column with a REFERENCES constraint to
+    # an existing table, and the app enforces the relationship anyway.
+    "direct_room_id": "ALTER TABLE hats ADD COLUMN direct_room_id INTEGER",
+    # v2.33 — special/limited runs, stated by the owner.
+    "limited_edition": "ALTER TABLE hats ADD COLUMN limited_edition BOOLEAN NOT NULL DEFAULT 0",
     "analysis_status": "ALTER TABLE hats ADD COLUMN analysis_status VARCHAR(20)",
     "analysis_stage": "ALTER TABLE hats ADD COLUMN analysis_stage VARCHAR(20)",
     "analysis_job_id": "ALTER TABLE hats ADD COLUMN analysis_job_id INTEGER",

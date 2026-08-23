@@ -164,6 +164,10 @@ def construction_from_flags(hydrolite: bool | None, hydro: bool | None) -> str |
 
 class HatCreate(BaseModel):
     case_id: int | None = None
+    # Put the hat straight in a room, with no case. Ignored when `case_id` is
+    # given — a cased hat takes its case's room.
+    room_id: int | None = None
+    limited_edition: bool = False
     condition: HatCondition
     size: HatSize
     style: HatStyle
@@ -198,6 +202,7 @@ class HatCreate(BaseModel):
 
 
 class HatUpdate(BaseModel):
+    limited_edition: bool | None = None
     condition: HatCondition | None = None
     size: HatSize | None = None
     style: HatStyle | None = None
@@ -236,6 +241,9 @@ class HatRead(BaseModel):
     id: int
     case_id: int | None
     position_in_case: int | None
+    #: True when the hat sits in a room with no case.
+    direct_room_id: int | None = None
+    limited_edition: bool = False
     display_id: str | None
     case_display_id: str | None
     case_type: str | None
@@ -328,7 +336,16 @@ class ColorsUpdate(BaseModel):
 
 
 class HatAssign(BaseModel):
-    case_id: int | None
+    """Where a hat lives: a case, a room, or nowhere.
+
+    The two are mutually exclusive by construction — `hat_service.assign_hat`
+    clears one when it sets the other — because a cased hat's room is its
+    case's room, and storing a second answer is storing something that can
+    disagree.
+    """
+
+    case_id: int | None = None
+    room_id: int | None = None
 
 
 class WearCreate(BaseModel):

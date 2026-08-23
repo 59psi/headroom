@@ -35,6 +35,8 @@ vi.mock('../../api/cases', () => ({
 }));
 
 const BASICS: HatBasics = {
+  roomId: '',
+  limitedEdition: false,
   style: 'a_game', size: 'classic', condition: 'new', construction: '', artistSeries: '',
   caseId: '', dateLastWorn: '', purchasePrice: '', purchasedAt: '',
 };
@@ -73,7 +75,11 @@ describe('HatBasicsCard', () => {
 
     await user.click(screen.getByLabelText('Case Assignment'));
     await user.click(await screen.findByRole('option', { name: /A-001/ }));
-    expect(onChange).toHaveBeenLastCalledWith('caseId', '4');
+    expect(onChange).toHaveBeenCalledWith('caseId', '4');
+    // Picking a case also clears any room, so this is no longer the LAST call.
+    // A case and a direct room are mutually exclusive server-side; leaving a
+    // stale room selected underneath would show a placement the save drops.
+    expect(onChange).toHaveBeenCalledWith('roomId', '');
 
     await user.type(screen.getByLabelText('Date Last Worn'), '2026-08-04');
     expect(onChange).toHaveBeenLastCalledWith('dateLastWorn', '2026-08-04');

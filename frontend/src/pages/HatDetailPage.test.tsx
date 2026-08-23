@@ -7,33 +7,22 @@
 import { describe, expect, it } from 'vitest';
 import { screen } from '@testing-library/react';
 import { renderWithProviders } from '../test/utils';
+import { hatFixture } from '../test/fixtures';
 import { HatHeadingId } from './HatDetailPage';
 import type { HatRead } from '../types';
 
+/** The shared fixture, narrowed to a hat that IS in a case — this file is
+ *  about the case breadcrumb in the heading. */
 function hat(over: Partial<HatRead> = {}): HatRead {
-  return {
+  return hatFixture({
     id: 12, case_id: 3, position_in_case: 1,
     display_id: 'A-029-01', case_display_id: 'A-029', case_type: 'daily_wear',
-    photo_path: null, original_path: null, thumb_path: null,
-    condition: 'new_with_tags', date_last_worn: null, wear_count: 0,
-    size: 'classic', style: 'compass', is_beanie: false, colors: [],
+    condition: 'new_with_tags', style: 'compass',
     room_id: 1, room_name: "Brandon's Closet", brand: 'Melin',
-    logo_detected: null, artist_series: null, construction: 'HYDRO',
-    hydrolite: false, hydro: true, model_name: 'Compass Hydro', colorway: null,
-    purchase_price: null, purchased_at: null, model_confidence: null,
-    style_descriptor: null, design_notes: null, estimated_new_price: null,
-    owner_notes: null,
-    estimated_new_price_source: null, resale_price: null,
-    resale_price_source: null, resale_price_url: null, resale_checked_at: null,
-    resale_price_scope: null, analysis_status: 'ok', analysis_stage: null,
-    analysis_job_id: null, analysis_error: null, analyzed_at: null,
-    disposed_at: null, disposed_via: null, disposed_price: null,
-    disposed_to: null, disposed_notes: null, ebay_avg_price: null,
-    ebay_median_price: null, ebay_listing_count: null, ebay_search_url: null,
-    ebay_checked_at: null, created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
+    construction: 'HYDRO', hydro: true, model_name: 'Compass Hydro',
+    analysis_status: 'ok',
     ...over,
-  };
+  });
 }
 
 describe('HatHeadingId', () => {

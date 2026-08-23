@@ -17,7 +17,7 @@ import type { HatRead } from '../types';
 /** A hat with nothing priced. Tests set only the fields they're about. */
 function hat(over: Partial<HatRead> = {}): HatRead {
   return {
-    id: 1,
+    id: 1, direct_room_id: null, limited_edition: false,
     case_id: null,
     position_in_case: null,
     display_id: 'A-001-01',

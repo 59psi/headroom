@@ -27,19 +27,24 @@ async def test_regular_hat_capacity_limit(client):
 
 @pytest.mark.anyio
 async def test_beanie_capacity_limit(client):
+    """Eight beanies to a case. They have no brim and squash flat, so far more
+    fit in the same shell than the three the case is named for."""
     case = await _create_case(client)
-    for _ in range(6):
+    for i in range(8):
         resp = await _create_hat(client, case_id=case["id"], style="beanie")
-        assert resp.status_code == 201
+        assert resp.status_code == 201, f"beanie {i + 1} of 8 was refused"
 
-    # The 7th is the overfill allowance — accepted, and the case reports
-    # itself overfull.
+    full = (await client.get(f"/api/cases/{case['display_id']}")).json()
+    assert full["free_beanie"] == 0
+    assert full["overfull"] is False, "eight is full, not overfull"
+
+    # The 9th is the overfill allowance — accepted, and reported as overfull.
     resp = await _create_hat(client, case_id=case["id"], style="beanie")
     assert resp.status_code == 201
     over = (await client.get(f"/api/cases/{case['display_id']}")).json()
     assert over["overfull"] is True
 
-    # The 8th is refused.
+    # The 10th is refused.
     resp = await _create_hat(client, case_id=case["id"], style="beanie")
     assert resp.status_code == 409
     assert "beanie capacity" in resp.json()["detail"]

@@ -41,11 +41,14 @@ export function CaseDetailPage() {
 
   const typeLabel = data.case_type === 'archive' ? 'Archive' : 'Daily Wear';
 
-  // A per-case `capacity` overrides both type defaults server-side
-  // (`hat_service._validate_capacity`). Showing the defaults regardless meant a
-  // case limited to 3 read "3/4" and invited an add the API then rejected.
-  const maxBeanies = data.capacity ?? 6;
-  const maxRegular = data.capacity ?? 4;
+  // Served, never restated here. These were `data.capacity ?? 6` and
+  // `?? 4` — a second copy of a rule `services/capacity.py` owns, and wrong
+  // twice: 4 is the OVERFILL limit rather than nominal capacity, so a full
+  // three-hat case displayed "3/4" and invited an add the API would accept
+  // only as overfull; and the hardcoded 6 became wrong the moment beanie
+  // capacity moved to 8.
+  const maxBeanies = data.nominal_beanie;
+  const maxRegular = data.nominal_regular;
 
   let capacityDisplay: React.ReactNode;
   if (data.hat_count === 0) {

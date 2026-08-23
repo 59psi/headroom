@@ -14,10 +14,11 @@ from dataclasses import dataclass
 
 # Nominal capacity when a case carries no explicit `capacity` — what "full"
 # means. The physical article is a three-hat case; melin's own order lines
-# call it a "3 Hat Travel Case". Beanies pack smaller, so more fit in the same
-# shell.
+# call it a "3 Hat Travel Case". Beanies have no brim and squash flat, so far
+# more fit in the same shell — eight, measured by the owner packing them, not
+# derived from the three-hat figure.
 MAX_REGULAR = 3
-MAX_BEANIE = 6
+MAX_BEANIE = 8
 
 # How far past nominal a DEFAULT case may be crammed. A fourth hat does go in,
 # it just isn't how the case is meant to be loaded — so it's allowed on write
