@@ -56,19 +56,23 @@ def _image_name(hat: Hat) -> str | None:
     return f"{hat.id}.webp"
 
 
-def _export_image_path(hat: Hat) -> Path | None:
-    """The 800px WebP for this hat, generating and caching it if needed.
+def _export_image_path(source_rel: str) -> Path | None:
+    """The 800px WebP for one photo, generating and caching it if needed.
 
-    Cached on disk beside the thumbnails rather than rebuilt every time: a
-    few hundred full-resolution PNG decodes is a minute of Pi CPU, which is a
-    long time to hold an HTTP request open and an absurd cost to pay twice for
-    an unchanged photo. Keyed on the canonical photo's own filename and
-    invalidated by mtime, so a re-cut regenerates without anything having to
-    remember to clear it.
+    Normally a cache hit: the derivative is written when the photo is
+    processed, and a boot-time sweep covers hats that predate that. This is
+    the fallback for a photo that has somehow never been through either —
+    kept because the alternative is silently omitting a hat from the zip.
+
+    Keyed on the canonical photo's own filename and invalidated by mtime, so a
+    re-cut regenerates itself without anything having to remember to clear it.
+
+    Runs on a worker thread (see `_resolve_images`). It decodes a
+    full-resolution photo and re-encodes at WebP `method=6`; doing that on the
+    event loop, once per hat, is what made a first export of a few hundred
+    hats several minutes of an app that answered nothing — and produced a
+    download that appeared to do nothing at all.
     """
-    source_rel = hat.photo_path or hat.thumb_path
-    if not source_rel:
-        return None
     source = settings.upload_dir / source_rel
     if not source.exists():
         return None
@@ -80,6 +84,34 @@ def _export_image_path(hat: Hat) -> Path | None:
     except OSError:
         pass
     return make_export_image(source, cache.with_suffix(""))
+
+
+def _resolve_images(sources: list[tuple[int, str]]) -> dict[int, Path]:
+    """Resolve every hat's export image, on ONE worker thread.
+
+    Takes plain ids and relative paths, never ORM objects: touching a
+    SQLAlchemy instance from another thread is how you discover a lazy load at
+    the worst possible moment.
+
+    Logs progress, because on a cold cache this is the slow part and a silent
+    minute is indistinguishable from a hang — which is precisely the
+    complaint that produced this function.
+    """
+    resolved: dict[int, Path] = {}
+    misses = 0
+    for index, (hat_id, source_rel) in enumerate(sources, start=1):
+        path = _export_image_path(source_rel)
+        if path is None or not path.exists():
+            misses += 1
+            continue
+        resolved[hat_id] = path
+        if index % 25 == 0:
+            logger.info("Export: prepared %d/%d images", index, len(sources))
+    if misses:
+        # One line for the batch, not one per hat: a collection with a hundred
+        # un-photographed hats should not bury the progress lines it needs.
+        logger.info("Export: %d of %d hat(s) had no usable photo", misses, len(sources))
+    return resolved
 
 
 def _hat_card(hat: Hat, image_name: str | None, include_values: bool) -> str:
@@ -200,13 +232,21 @@ async def build_export(
     """Return (zip_bytes, filename).
 
     Built in memory: 800px WebP images are tens of KB each, so a few hundred
-    hats lands in the low tens of MB — small enough that streaming from a temp
+    hats lands in single-digit MB — small enough that streaming from a temp
     file would add moving parts for no benefit. Revisit at thousands of hats.
 
-    The image work runs in a thread. Re-encoding N full-resolution photos is
-    genuinely CPU-bound, and on a Pi it is the difference between a responsive
-    app and one that stops answering for a minute while somebody downloads
-    their collection.
+    Three phases, in this order for a reason: resolve the images on a worker
+    thread, render the HTML on the loop (it needs live ORM objects), then zip
+    on a worker thread. The middle phase is pure string formatting and cheap;
+    both others are CPU-bound and must not touch the event loop.
+
+    That ordering is the fix for a real complaint — the export took far longer
+    than a full database backup and appeared to produce nothing. It was
+    generating every hat's 800px derivative inline, on the loop, which on a Pi
+    is minutes of an app that answers no requests at all, with a
+    full-resolution decode resident alongside rembg's model in a 1 GB
+    container. Derivatives are now written when the photo is processed and
+    swept in at boot, so this is normally a zip of files that already exist.
     """
     stmt = (
         select(Hat)
@@ -217,17 +257,24 @@ async def build_export(
         stmt = stmt.where(Hat.disposed_at.is_(None))
     hats = list((await db.execute(stmt)).scalars().all())
 
-    # Rendered here, on the loop, while the ORM objects are still attached and
-    # their relationships loaded. Only plain strings and paths cross into the
-    # thread — touching a SQLAlchemy object from another thread is how you
-    # discover a lazy load at the worst possible moment.
+    # Image work first, all of it on one worker thread. This used to run on
+    # the event loop inside the card-rendering loop — one full-resolution
+    # decode and slow WebP encode per hat — so a first export stopped the
+    # whole app for minutes and the download produced nothing for the
+    # duration. Only ids and relative paths cross the boundary.
+    sources = [
+        (hat.id, hat.photo_path or hat.thumb_path)
+        for hat in hats
+        if (hat.photo_path or hat.thumb_path)
+    ]
+    resolved = await asyncio.to_thread(_resolve_images, sources)
+
+    # Cards second, on the loop, while the ORM objects are still attached and
+    # their relationships loaded. Fast: string formatting only.
     cards: list[tuple[str, Path | None, str]] = []
     for hat in hats:
-        name = _image_name(hat)
-        path = _export_image_path(hat) if name else None
-        if name and path is None:
-            logger.info("Export: no usable photo for hat %s", hat.id)
-            name = None
+        path = resolved.get(hat.id)
+        name = _image_name(hat) if path is not None else None
         cards.append((_hat_card(hat, name, include_values), path, name or ""))
 
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%d")

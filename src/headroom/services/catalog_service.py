@@ -252,14 +252,26 @@ async def _units_to_add(
     price = item.get("price")
     size = normalize_size(item.get("size"))
     key = (item.get("order_ref"), title, price, size)
-    existing = len((await db.execute(
-        select(Purchase).where(
-            Purchase.item_title == title,
-            Purchase.order_ref == item.get("order_ref"),
-            Purchase.price == price,
-            Purchase.size.is_(None) if size is None else Purchase.size == size,
-        )
-    )).scalars().all())
+    # `no_autoflush` because this SELECT and `staged` count the same rows.
+    #
+    # `import_purchases` adds a Purchase per unit as it walks the batch, and
+    # those sit pending in the session. Any query autoflushes them first — so
+    # rows this very batch just staged came back as `existing` AND were
+    # counted again in `staged`, and the line was subtracted twice. It needs
+    # two lines of one order sharing order_ref, title, price and size, which
+    # carts usually merge; when it did happen the import silently wrote fewer
+    # hats than the preview promised. Preview and import share this function
+    # precisely so they cannot disagree, and an incidental flush was quietly
+    # making them disagree anyway.
+    with db.no_autoflush:
+        existing = len((await db.execute(
+            select(Purchase).where(
+                Purchase.item_title == title,
+                Purchase.order_ref == item.get("order_ref"),
+                Purchase.price == price,
+                Purchase.size.is_(None) if size is None else Purchase.size == size,
+            )
+        )).scalars().all())
     wanted = max(quantity - existing - staged.get(key, 0), 0)
     staged[key] = staged.get(key, 0) + wanted
     return wanted, price, size

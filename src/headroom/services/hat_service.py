@@ -270,11 +270,16 @@ async def update_hat(db: AsyncSession, hat_id: int, data: HatUpdate) -> Hat:
                 known=KNOWN_CONSTRUCTIONS,
             )
         )
-    if update_data.get("artist_series"):
-        update_data["artist_series"] = await vocabulary.canonicalize(
-            db, Hat.artist_series, update_data["artist_series"]
-        )
     elif legacy_sent:
+        # `elif` on the CONSTRUCTION test, which is the thing it is an
+        # alternative to: an explicit `construction` wins, and the flags are
+        # the fallback for a client too old to send one.
+        #
+        # It used to hang off the `artist_series` branch below — so any legacy
+        # client that sent a hydro flag *alongside* an artist series had the
+        # flag silently dropped, and one that sent it alone happened to work.
+        # Two unrelated fields, one `elif`, and a bug that only appears in
+        # combination.
         wants_lite = hat.hydrolite if hydrolite is None else hydrolite
         wants_hydro = hat.hydro if hydro is None else hydro
         legacy_text = construction_from_flags(wants_lite, wants_hydro)
@@ -287,6 +292,11 @@ async def update_hat(db: AsyncSession, hat_id: int, data: HatUpdate) -> Hat:
         # replaced it.
         if legacy_text is not None or hat.hydro or hat.hydrolite:
             hat.set_construction(legacy_text)
+
+    if update_data.get("artist_series"):
+        update_data["artist_series"] = await vocabulary.canonicalize(
+            db, Hat.artist_series, update_data["artist_series"]
+        )
 
     # A resale price that arrived in a PUT came from a person, and that is the
     # one thing valuation must not discount or let a later analysis overwrite.
@@ -495,6 +505,60 @@ async def backfill_thumbnails(db: AsyncSession, limit: int = 5000) -> int:
             made += 1
     if made:
         await db.commit()
+    return made
+
+
+async def backfill_export_images(db: AsyncSession, limit: int = 5000) -> int:
+    """Generate the 800px export derivative for hats that predate it.
+
+    The companion to generating it at upload time. Without this, the first
+    export after upgrading still pays for every hat already in the collection
+    — which on a few hundred hats is the several-minute stall the change was
+    meant to remove, just moved to a slightly later date.
+
+    Writes no database column: the file's existence IS the record, and
+    `export_derivative_path` derives its name from the photo's. That makes the
+    sweep naturally idempotent and resumable, so a restart mid-run costs
+    nothing, and it means a re-cut photo regenerates on its own (the export's
+    mtime check sees a newer source).
+
+    Deliberately does NOT hold a write transaction: it only reads hat rows and
+    writes files, so nothing here can block another writer on SQLite's single
+    write lock while it grinds through hundreds of images.
+    """
+    from headroom.config import settings as cfg  # noqa: PLC0415
+    from headroom.utils.photo import (  # noqa: PLC0415
+        export_derivative_path,
+        make_export_image_async,
+    )
+
+    rows = (
+        (
+            await db.execute(
+                select(Hat).where(Hat.photo_path.is_not(None)).limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    # Snapshot the paths and let go of the ORM objects. The loop below is
+    # minutes of image work; holding a session open across it for no reason is
+    # how an incidental lazy load turns into a lock nobody expected.
+    photos = [h.photo_path for h in rows if h.photo_path]
+
+    made = 0
+    for photo_rel in photos:
+        source = cfg.upload_dir / photo_rel
+        if not source.exists():
+            continue
+        cache = export_derivative_path(cfg.upload_dir, photo_rel)
+        try:
+            if cache.exists() and cache.stat().st_mtime >= source.stat().st_mtime:
+                continue
+        except OSError:
+            pass
+        if await make_export_image_async(source, cache) is not None:
+            made += 1
     return made
 
 

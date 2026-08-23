@@ -9,7 +9,7 @@ from headroom.models.hat import Hat
 from headroom.models.hat_color import HatColor
 from headroom.models.room import Room
 from headroom.services.color_extraction import (
-    is_neutral_mismatch,
+    is_same_color,
     lab_distance,
     lab_of,
 )
@@ -208,37 +208,41 @@ async def search_hats(
 _RANK_PENALTY: dict[int, float] = {1: 0.0, 2: 8.0, 3: 14.0}
 _DEEPER_RANK_PENALTY = 18.0
 
-# How bad a match score may be and still be called a match.
+#: How far from the target a swatch at each rank may sit and still count.
+#:
+#: `None` for rank 1: a hat's MAIN colour being the right colour is the whole
+#: question, and light blue sits ΔE 55.8 from navy while both are plainly
+#: blue — so any number here would throw away true matches. Accents get a
+#: budget because "the hat with the pink brim" has to actually be pink.
+_RANK_DISTANCE_BUDGET: dict[int, float] = {1: float("inf"), 2: 18.0}
+_DEEPER_RANK_BUDGET = 12.0
+
+# THERE IS NO DISTANCE CUTOFF ANY MORE, and removing it is the fix.
 #
-# There was no ceiling at all before 2.20, only `limit`: every active hat was
-# ranked and the nearest N returned however far away they were, so searching a
-# specific teal in a collection of a hundred returned thirty hats — six teal,
-# and twenty-four presented identically beside them.
+# The history is four attempts at one number. Before 2.20 there was no ceiling
+# at all, so a teal search returned thirty hats — six teal and twenty-four
+# presented identically beside them. 2.20 set 30, 2.22 cut it to 22, 2.23
+# relaxed it to 26. Every one of those was the same mistake, and the comment
+# sitting here already said so: a distance threshold cannot answer "is this
+# hat purple?", and tuning it will never make it.
 #
-# This number was then tuned twice, downward, chasing a problem it could never
-# have fixed. 2.20 set it to 30 against the curated palette; 2.22 cut it to 22
-# against the neutrals. Both were the same mistake — trying to separate "grey"
-# from "purple" with a distance threshold, when CIEDE2000 places a mid grey
-# ~17 from a saturated purple and two genuinely different purples ~33 apart.
-# No single cutoff exists that admits the second and rejects the first. That
-# is now `is_neutral_mismatch`'s job, and it does it on the right axis.
+# The measurement that ends the argument. Across the curated palette:
 #
-# With the guard carrying that load the cutoff goes back to being about what
-# it should always have measured — is this the same colour — and can relax to
-# 26, which is where the palette says two named colours stop being versions of
-# each other. Against 17 same-family pairs that must match and 12 cross-family
-# pairs that must not:
+#     within-family distances    up to ΔE 55.8   (light blue → navy)
+#     cross-family distances     down to ΔE 15.4 (black → navy)
 #
-#     cutoff   same-family kept   cross-family leaked
-#       22          15/17             gold/lime, brown/olive
-#       26          17/17             gold/lime, brown/olive     <- here
-#       28          17/17             + navy/maroon
+# The ranges do not overlap, they INVERT. No threshold can keep light blue and
+# navy together while separating black from navy, because the pair that must
+# match is three and a half times further apart than the pair that must not.
+# At 26 there were 51 cross-family pairs matching — black/navy, silver/beige,
+# white/cream, charcoal/dark brown — which is why every search came back
+# looking like the whole collection.
 #
-# 26 is the first value that keeps every same-family pair (navy/blue at 23.3
-# and charcoal/gray at 25.3 were both casualties of 22). The two survivors are
-# arguable rather than wrong — gold and lime are both yellows, brown and olive
-# both dark earth tones. 28 admits navy/maroon, which is not arguable.
-MAX_MATCH_SCORE = 26.0
+# Membership is now decided by `color_family`, on the curated names, where the
+# question has an exact answer. Distance keeps the job it is genuinely good
+# at: ORDERING hats that are already the right colour, nearest first, with the
+# rank penalty below still deciding that a hat which IS pink outranks one with
+# a pink brim. `limit` bounds the list, as it always did.
 
 
 @dataclass(frozen=True)
@@ -258,7 +262,6 @@ async def search_hats_by_color(
     *,
     room_id: int | None = None,
     limit: int = 30,
-    max_score: float = MAX_MATCH_SCORE,
 ) -> list[ColorMatch]:
     """Rank active hats by perceptual closeness to `hex_value`, nearest first.
 
@@ -266,13 +269,14 @@ async def search_hats_by_color(
     distance against how much of the hat wears that colour: a hat whose
     SECONDARY colour matches still surfaces — that is the "find something
     light blue" job — but it ranks below a hat whose main colour does, which
-    is what min-across-swatches got wrong. Anything scoring beyond `max_score`
-    is dropped rather than padding the list out to `limit`.
+    is what min-across-swatches got wrong.
 
-    Swatches failing `is_neutral_mismatch` are not scored at all. Distance
-    cannot decide whether a grey hat is purple, so nothing here tries: the
-    hue question is answered first, and only then does distance rank what is
-    left.
+    Membership is decided by COLOUR FAMILY, not by distance — a hat is
+    returned when one of its swatches is the same colour as the target, in
+    the plain-speech sense the curated palette names. Distance cannot decide
+    whether a grey hat is purple, and no threshold ever could: within-family
+    distances reach ΔE 55.8 while cross-family ones start at 15.4, so the two
+    ranges invert. Distance ranks what is already the right colour.
 
     Hat counts are hundreds, not millions: loading candidates and ranking in
     Python beats teaching SQLite color science.
@@ -296,6 +300,7 @@ async def search_hats_by_color(
     if target_lab is None:
         return []
 
+
     ranked: list[ColorMatch] = []
     for hat in result.scalars().all():
         best: ColorMatch | None = None
@@ -305,15 +310,26 @@ async def search_hats_by_color(
             swatch_lab = lab_of(color.hex_value)
             if swatch_lab is None:
                 continue
-            # A grey hat is not a dark purple, at any distance. Checked
-            # before scoring rather than folded into it, because there is no
-            # penalty large enough to be principled here — the two colours
-            # are not near each other by a lot or a little, they are simply
-            # not the same kind of thing.
-            if is_neutral_mismatch(target_lab, swatch_lab):
+            # MEMBERSHIP IS CATEGORICAL. A grey hat is not a dark purple and
+            # a navy one is not black, at any distance — they are not near
+            # each other by a lot or a little, they are different colours.
+            #
+            # Prefer the stored palette name, which is what the hat is
+            # recorded as being; fall back to snapping the hex for swatches
+            # that predate colour normalisation.
+            if not is_same_color(target_lab, swatch_lab, color.general_color):
                 continue
             rank = color.dominance_rank
+            # A per-rank DISTANCE BUDGET, stated directly rather than emerging
+            # from a penalty meeting a global cutoff. Being the right colour
+            # family is enough for a hat's main colour; an accent has to also
+            # be a close match, or "show me the pink ones" fills up with hats
+            # that merely have a pinkish logo. Same intent the rank penalty
+            # had when there was a cutoff for it to work against — now that
+            # membership is categorical, the budget has to say so itself.
             distance = lab_distance(target_lab, swatch_lab)
+            if distance > _RANK_DISTANCE_BUDGET.get(rank, _DEEPER_RANK_BUDGET):
+                continue
             score = distance + _RANK_PENALTY.get(rank, _DEEPER_RANK_PENALTY)
             if best is None or score < best.score:
                 best = ColorMatch(
@@ -326,7 +342,7 @@ async def search_hats_by_color(
         # Thresholded on the unrounded score: a match at 22.004 is not
         # meaningfully different from one at 21.996, but rounding first would
         # let the displayed number and the cutoff disagree at the boundary.
-        if best is not None and best.score <= max_score:
+        if best is not None:
             ranked.append(best)
 
     ranked.sort(key=lambda match: match.score)

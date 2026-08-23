@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
 import { createCase } from '../api/cases';
 import { listRooms } from '../api/rooms';
+import { CAPACITY_PLACEHOLDER } from '../lib/capacity';
 
 export function NewCasePage() {
   const [caseType, setCaseType] = useState('archive');
@@ -57,7 +58,7 @@ export function NewCasePage() {
               className="form-control"
               min={1}
               max={50}
-              placeholder="Default: 4 regular / 6 beanies"
+              placeholder={CAPACITY_PLACEHOLDER}
               value={capacity}
               onChange={e => setCapacity(e.target.value)}
             />

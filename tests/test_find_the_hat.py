@@ -568,3 +568,63 @@ async def test_cutoff_is_applied_before_the_limit(client, db_session):
 
     ranked = await search_hats_by_color(db_session, "#8cb9e1", limit=1)
     assert [m.hat.id for m in ranked] == [near]
+
+
+async def test_a_colour_search_does_not_return_the_whole_collection(
+    client, db_session
+):
+    """The complaint, as a test: "you get every color every time".
+
+    One hat per curated palette colour, then search for each of them. Under
+    the distance cutoff this replaced, a search matched a median of most of
+    the shelf — black came back for navy, silver for beige, white for cream —
+    because ΔE 26 is an enormous distance and 51 cross-family palette pairs
+    sat inside it.
+
+    The bound is deliberately generous (a third of the collection). This is
+    not pinning an exact result set, it is pinning that the feature
+    discriminates at all, which for three releases it did not.
+    """
+    from headroom.services.color_extraction import palette
+
+    chips = palette()
+    for chip in chips:
+        hat_id = await _hat(client)
+        await _set_colors(db_session, hat_id, [(chip["name"], chip["name"], chip["hex"])])
+
+    worst = 0
+    for chip in chips:
+        hits = (await client.get(
+            "/api/search/color", params={"hex": chip["hex"].lstrip("#")}
+        )).json()
+        worst = max(worst, len(hits))
+        assert hits, f"searching {chip['name']} found nothing at all"
+
+    assert worst <= len(chips) // 3, (
+        f"a colour search returned {worst} of {len(chips)} hats"
+    )
+
+
+async def test_every_palette_colour_finds_itself_first(client, db_session):
+    """Whatever else it returns, the exact colour must rank top.
+
+    Cheap to assert and it catches the failure mode a family taxonomy can
+    have that a distance threshold cannot: a name filed under the wrong word
+    would make a colour unfindable by its own chip.
+    """
+    from headroom.services.color_extraction import palette
+
+    ids = {}
+    for chip in palette():
+        ids[chip["name"]] = await _hat(client)
+        await _set_colors(
+            db_session, ids[chip["name"]], [(chip["name"], chip["name"], chip["hex"])]
+        )
+
+    for chip in palette():
+        hits = (await client.get(
+            "/api/search/color", params={"hex": chip["hex"].lstrip("#")}
+        )).json()
+        assert hits[0]["id"] == ids[chip["name"]], (
+            f"{chip['name']} did not rank itself first"
+        )

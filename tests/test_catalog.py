@@ -611,3 +611,38 @@ async def test_catalog_stats_counts_the_catalog_not_a_page_of_autocomplete(
 
     body = (await client.get("/api/admin/colorways/status")).json()
     assert body["models"] == 40
+
+
+async def test_the_preview_predicts_a_multi_line_import_exactly(client):
+    """Preview and import share `_units_to_add` so they cannot disagree.
+
+    An incidental autoflush was making them disagree anyway, and only in the
+    import. `import_purchases` adds a Purchase per unit as it walks the batch;
+    the dedupe SELECT autoflushed those pending rows, so units this very batch
+    had just staged came back as `existing` AND were counted again in
+    `staged` — subtracting the line twice. `preview_import` writes nothing, so
+    it had no pending rows to flush and stayed correct.
+
+    Two lines sharing (order_ref, title, price, size) with DIFFERENT
+    quantities is what exposes it: with equal quantities the double
+    subtraction clamps to zero and lands on the right answer by accident,
+    which is why this went unnoticed.
+    """
+    items = [
+        {"item_title": "A-Game Hydro - Coronado", "order_ref": "M900",
+         "price": 79.0, "quantity": 1},
+        {"item_title": "A-Game Hydro - Coronado", "order_ref": "M900",
+         "price": 79.0, "quantity": 2},
+    ]
+
+    preview = (await client.post(
+        "/api/admin/purchases/import?dry_run=true", json={"items": items}
+    )).json()
+    imported = (await client.post(
+        "/api/admin/purchases/import", json={"items": items}
+    )).json()
+
+    assert imported["imported"] == preview["would_import"], (
+        "the import disagreed with its own preview"
+    )
+    assert imported["imported"] == 2, "a unit of the second line was dropped"

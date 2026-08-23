@@ -190,6 +190,29 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     thumbs_task = asyncio.create_task(_backfill_thumbs())
 
+    async def _backfill_exports():
+        """Warm the export cache for hats that predate it.
+
+        Runs after the thumbnail sweep for a reason: thumbnails are what every
+        grid in the app renders, so they are user-visible work and go first.
+        The export derivative is only needed the moment somebody downloads the
+        collection — but it has to be ready BEFORE they do, because building a
+        few hundred of them inside that request is what made the download look
+        broken.
+        """
+        try:
+            await thumbs_task
+            async with async_session() as db:
+                made = await hat_service.backfill_export_images(db)
+            if made:
+                logger.info("Generated %d missing export image(s)", made)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — cache warming; never fatal
+            logger.warning("Export image backfill failed: %s", exc)
+
+    exports_task = asyncio.create_task(_backfill_exports())
+
     # mDNS LAN discovery (headroom.local) — best-effort, disabled in tests.
     # zeroconf probes for ~1s before registering; keep it off the boot path.
     mdns_task = asyncio.create_task(mdns_service.start_mdns())
@@ -223,7 +246,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     try:
         yield
     finally:
-        for task in (backup_task, prune_task, mdns_task, thumbs_task):
+        for task in (backup_task, prune_task, mdns_task, thumbs_task, exports_task):
             if task is not None:
                 task.cancel()
                 try:

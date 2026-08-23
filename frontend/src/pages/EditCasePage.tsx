@@ -4,6 +4,7 @@ import { useParams, useNavigate } from 'react-router';
 import { getCase, updateCase } from '../api/cases';
 import { listRooms } from '../api/rooms';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
+import { CAPACITY_PLACEHOLDER } from '../lib/capacity';
 
 export function EditCasePage() {
   const { displayId } = useParams<{ displayId: string }>();
@@ -83,7 +84,7 @@ export function EditCasePage() {
                 className="form-control"
                 min={1}
                 max={50}
-                placeholder="Default: 4 regular / 6 beanies"
+                placeholder={CAPACITY_PLACEHOLDER}
                 value={capacity}
                 onChange={e => setCapacity(e.target.value)}
               />

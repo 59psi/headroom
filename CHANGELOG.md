@@ -6,6 +6,74 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.41.0] — 2026-08-23
+
+### Fixed
+- **Colour search returned most of the collection whatever you asked for.**
+  It ranked hats by CIEDE2000 distance and kept everything under a cutoff of
+  26 — and ΔE 26 is an enormous distance. At that threshold **51 pairs of
+  curated palette colours matched each other**: black with navy, silver with
+  beige, white with cream, charcoal with dark brown. Three releases were spent
+  moving that number (30, then 22, then 26) and the file's own comment already
+  had the answer: a distance threshold cannot answer "is this hat purple?",
+  and tuning it will never make it.
+
+  The measurement that ends the argument: within-family distances run up to
+  **ΔE 55.8** (light blue to navy, both plainly blue) while cross-family ones
+  start at **15.4** (black to navy). The ranges do not overlap, they *invert*
+  — the pair that must match is three and a half times further apart than the
+  pair that must not, so no threshold exists that separates them.
+
+  Membership is now categorical, decided on the curated palette names where
+  the question has an exact answer. Distance keeps the job it is good at:
+  ordering hats that are already the right colour. Searching purple returns
+  purples and lavenders; searching pink returns pinks.
+
+  Two refinements earn their place. A swatch too muted for its name to be
+  trustworthy is classified by **hue angle** instead — a dark teal sits
+  nearest *charcoal* by ΔE because it is dark, but its hue is 197°, the same
+  as a mid teal's — with the existing chroma-*ratio* guard separating the case
+  that must match (a dark teal holds 41% of teal's chroma) from the one that
+  must not (a blue-grey holds 20% of blue's), since their absolute chromas are
+  11.1 and 11.7 and nothing else tells them apart. And blue/purple can never
+  be bridged by hue at all, because CIELAB's hue angle is non-linear through
+  the blue region — a defect of the colour space, not a judgement call.
+
+  A colour chip now honours major colours the same way a typed colour term has
+  since 2.39, with a per-rank distance budget so "the hat with the pink brim"
+  still works but a pinkish logo no longer counts as a pink hat.
+
+- **The collection export took longer than a full backup and produced
+  nothing.** It generated every hat's 800px derivative inline, in the
+  card-rendering loop, **on the event loop** — a full-resolution decode and a
+  slow WebP encode each. A few hundred hats is minutes during which the app
+  answers no request at all, with a decoded full-res image resident alongside
+  rembg's 179 MB model in a 1 GB container.
+
+  Derivatives are now written when the photo is processed, swept in at boot
+  for hats that predate the change, and whatever is left resolves on a worker
+  thread with progress logging. The export is a zip of files that already
+  exist.
+
+- **A legacy hydro/hydrolite flag was dropped when sent with another field.**
+  The `elif` handling pre-2.11 clients hung off the `artist_series` test
+  rather than the `construction` test, so a flag sent *alongside* an artist
+  series was silently ignored while one sent alone worked. Two unrelated
+  fields, one `elif`.
+
+- **The purchase importer disagreed with its own preview.** `import_purchases`
+  adds a row per unit as it walks a batch, and the dedupe query autoflushed
+  those pending rows — so units the batch had just staged were counted as
+  already-existing *and* as staged, subtracting the line twice. `preview_import`
+  writes nothing, so it had nothing to flush and stayed correct. Equal
+  quantities clamp to the right answer by accident, which is why it went
+  unnoticed.
+
+- **The case forms advertised the wrong capacity, in both digits.** They read
+  "Default: 4 regular / 6 beanies"; a default case is **3 regular (4 at a
+  squeeze) / 8 beanies**. Now built from the constants and pinned by a parity
+  test, the mechanism this repo already had for exactly this.
+
 ## [2.40.0] — 2026-08-23
 
 The three failures this deployment was structurally unable to notice, plus
