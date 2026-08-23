@@ -30,9 +30,9 @@ class SearchResult(BaseModel):
 class ColorSearchResult(SearchResult):
     """A SearchResult ranked by perceptual color closeness.
 
-    `distance` is the raw CIEDE2000 between the search colour and the swatch
+    `distance` is the raw CIEDE2000 between the search color and the swatch
     that matched — it is NOT the value the list is sorted by, because a match
-    on a hat's accent counts for less than one on its main colour. Ordering
+    on a hat's accent counts for less than one on its main color. Ordering
     comes from the server; `matched_rank` is what lets the UI say why a nearer
     number sits below a further one.
     """
@@ -46,8 +46,8 @@ class DuplicateGroupRead(BaseModel):
     """A set of hats that look like the same hat entered more than once.
 
     `confidence` is "exact" when every identity field agrees, "likely" when the
-    model and size match but the colourway doesn't — usually a twin that hasn't
-    been analysed yet, so it has no colourway to compare.
+    model and size match but the colorway doesn't — usually a twin that hasn't
+    been analysed yet, so it has no colorway to compare.
     """
 
     key: str

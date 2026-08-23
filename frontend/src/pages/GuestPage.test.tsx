@@ -50,7 +50,7 @@ describe('GuestPage', () => {
     await user.type(screen.getByLabelText('Search the collection'), 'hydro');
     await user.click(screen.getByRole('button', { name: 'Search' }));
 
-    // Second arg is the colour scope — which swatches a colour term may match.
+    // Second arg is the color scope — which swatches a color term may match.
     expect(mocked.getGuestCollection).toHaveBeenLastCalledWith('hydro', 'major');
   });
 

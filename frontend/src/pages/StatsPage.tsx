@@ -213,7 +213,7 @@ export function StatsPage() {
   const colors = useMemo(() => {
     const counts = new Map<string, { count: number; hex: string }>();
     for (const h of hats) {
-      // One vote per hat per colour name, so a hat tagged with three shades of
+      // One vote per hat per color name, so a hat tagged with three shades of
       // blue doesn't outvote three separate blue hats.
       const seen = new Set<string>();
       for (const c of h.colors ?? []) {
@@ -407,8 +407,8 @@ export function StatsPage() {
         />
       </ChartCard>
 
-      <ChartCard title="Colours" subtitle="One vote per hat per colour. Tap to search that shade.">
-        <BarList data={colors} emptyText="No colours detected yet." />
+      <ChartCard title="Colors" subtitle="One vote per hat per color. Tap to search that shade.">
+        <BarList data={colors} emptyText="No colors detected yet." />
       </ChartCard>
 
       {/* ===== Where it all lives ===== */}

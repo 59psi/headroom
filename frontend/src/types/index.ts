@@ -195,7 +195,7 @@ export interface ColorSearchResult extends SearchResult {
   matched_hex: string;
   /** Raw CIEDE2000 to the matched swatch — NOT the sort key. See matched_rank. */
   distance: number;
-  /** dominance_rank of the matched swatch. 1 is the hat's main colour. */
+  /** dominance_rank of the matched swatch. 1 is the hat's main color. */
   matched_rank: number;
 }
 
@@ -382,8 +382,8 @@ export interface BackupUploadStatus {
 export interface DuplicateGroup {
   key: string;
   /** "exact" — every identity field agrees. "likely" — same model and size,
-   *  with the colourway missing on at least one side (usually an unanalysed
-   *  twin). Colourways that actively disagree are never grouped. */
+   *  with the colorway missing on at least one side (usually an unanalysed
+   *  twin). Colorways that actively disagree are never grouped. */
   confidence: 'exact' | 'likely';
   label: string;
   hats: SearchResult[];

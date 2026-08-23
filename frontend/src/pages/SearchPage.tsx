@@ -13,8 +13,8 @@ import {
 import type { ColorSearchResult, SearchResult } from '../types';
 
 /**
- * How to describe the swatch a colour search matched on, or '' for the hat's
- * main colour (which needs no explanation).
+ * How to describe the swatch a color search matched on, or '' for the hat's
+ * main color (which needs no explanation).
  *
  * Derived from `matched_rank` rather than from the swatch's own `tier` string:
  * rank is assigned positionally by every writer on the server, while `tier`
@@ -30,15 +30,15 @@ export function matchedRankLabel(rank: number): string {
 
 export function SearchPage() {
   // `?q=` and `?color=` let other pages hand off a search — the stats page's
-  // colour bars link straight to the ranked results for that shade. Initial
+  // color bars link straight to the ranked results for that shade. Initial
   // value only; the controls own the state from then on.
   const [searchParams] = useSearchParams();
   const initialQuery = searchParams.get('q') ?? '';
   const [query, setQuery] = useState(initialQuery);
   const [searchTerm, setSearchTerm] = useState(initialQuery);
   const [exactColors, setExactColors] = useState(false);
-  // Which swatches a colour term may match. Default is the hat's own
-  // colours — a hat is not "pink" because its logo is.
+  // Which swatches a color term may match. Default is the hat's own
+  // colors — a hat is not "pink" because its logo is.
   const [colorScope, setColorScope] = useState('major');
   const [colorHex, setColorHex] = useState<string | null>(
     () => searchParams.get('color'),
@@ -129,11 +129,11 @@ export function SearchPage() {
           </label>
         </div>
 
-        {/* Which swatches a colour term may match. Shown next to the exact-name
+        {/* Which swatches a color term may match. Shown next to the exact-name
             toggle because they answer adjacent questions: that one is "which
             NAME", this is "which SWATCH". */}
         <div className="d-flex align-items-center gap-2 mt-2 flex-wrap">
-          <span className="small text-secondary">Colour terms match:</span>
+          <span className="small text-secondary">Color terms match:</span>
           <ColorScopePicker value={colorScope} onChange={setColorScope} />
         </div>
       </form>
@@ -214,7 +214,7 @@ export function SearchPage() {
 
           {filteredData.length === 0 ? (
             <div className="text-center py-5 text-secondary">
-              {/* A colour search returning nothing now means "nothing close
+              {/* A color search returning nothing now means "nothing close
                   enough", not "no hats" — before the distance cutoff it
                   always filled to the limit, so empty was impossible and
                   "No hats found" was never wrong. It would be now. */}
@@ -222,12 +222,12 @@ export function SearchPage() {
                 {activeFilterCount > 0
                   ? 'No results match your filters'
                   : colorHex
-                    ? 'No hats are close to that colour'
+                    ? 'No hats are close to that color'
                     : 'No hats found'}
               </p>
               {colorHex && activeFilterCount === 0 && (
                 <p className="small text-muted mb-0">
-                  Only genuinely similar shades are shown. Try a nearby colour,
+                  Only genuinely similar shades are shown. Try a nearby color,
                   or a palette swatch above.
                 </p>
               )}
@@ -268,8 +268,8 @@ export function SearchPage() {
                         }} />
                         <span className="font-mono">Δ{(hat as ColorSearchResult).distance.toFixed(0)}</span>
                         {/* Without this, the ordering looks broken: a hat whose
-                            ACCENT is exactly your colour shows Δ0 and still sits
-                            below a hat whose main colour is Δ5, because the
+                            ACCENT is exactly your color shows Δ0 and still sits
+                            below a hat whose main color is Δ5, because the
                             server weighs a match by how much of the hat wears
                             it. The label is what makes that legible. */}
                         {matchedRankLabel((hat as ColorSearchResult).matched_rank) && (

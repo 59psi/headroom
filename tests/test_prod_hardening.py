@@ -66,7 +66,7 @@ async def test_put_colors_derives_general_color_from_hex_when_left_blank(client)
     assert resp.status_code == 200, resp.text
     color = resp.json()["colors"][0]
     # Nothing to honour, so the hex decides — keeps the value on the palette
-    # vocabulary the colour-chip search matches against.
+    # vocabulary the color-chip search matches against.
     assert color["general_color"] == normalize_hex_name("#ff0000", "heather slate")
 
 
@@ -75,7 +75,7 @@ async def test_put_colors_keeps_a_hand_typed_general_color(client):
 
     This previously asserted the opposite — that the hex always won — on
     searchability grounds. That was wrong in the case the field exists for:
-    correcting a MIS-DETECTED colour. The stored hex is part of what's wrong, so
+    correcting a MIS-DETECTED color. The stored hex is part of what's wrong, so
     re-deriving from it discarded the fix and silently restored the bad value
     (type "green" over a mis-detected grey, get "gray" back).
     """
@@ -103,7 +103,7 @@ async def test_put_colors_keeps_a_hand_typed_general_color(client):
 async def test_put_colors_renumbers_ranks_densely(client):
     """Ranks come back dense and unique no matter what the client sent.
 
-    The UI edits and removes a colour BY rank, so a duplicate makes one tap hit
+    The UI edits and removes a color BY rank, so a duplicate makes one tap hit
     two rows, and a gap invites one — the add path picks `colors.length + 1`,
     which collides as soon as ranks aren't dense (ranks [1,3] + length 2 → 3).
     Storing client ranks verbatim let that state persist between requests.

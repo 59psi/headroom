@@ -340,15 +340,15 @@ async def _hat_with_colors(client, model_name, colors):
 
 
 @pytest.mark.anyio
-async def test_colour_search_ignores_accents_by_default(client):
+async def test_color_search_ignores_accents_by_default(client):
     """A hat is not "pink" because its logo is.
 
     Every melin hat is a dark crown with a bright mark on it, so matching any
-    row in `hat_colors` made colour terms close to useless — the accent colours
+    row in `hat_colors` made color terms close to useless — the accent colors
     are precisely the ones that vary.
     """
     # Names deliberately free of the search term: `model_name` is also
-    # searched, so calling them "PinkLogo" would match whatever the colour
+    # searched, so calling them "PinkLogo" would match whatever the color
     # clause did and the test would prove nothing.
     await _hat_with_colors(client, "Coronado", ["pink", "black"])
     await _hat_with_colors(client, "Odysea", ["black", "grey", "pink"])
@@ -381,8 +381,8 @@ async def test_all_scope_returns_both(client):
 
 
 @pytest.mark.anyio
-async def test_secondary_colours_still_count_as_major(client):
-    """Rank 2 is the hat's other real colour — a two-tone crown — not an
+async def test_secondary_colors_still_count_as_major(client):
+    """Rank 2 is the hat's other real color — a two-tone crown — not an
     accent. Excluding it would make a black/white cap unfindable as "white"."""
     await _hat_with_colors(client, "TwoTone", ["black", "white"])
 
@@ -392,7 +392,7 @@ async def test_secondary_colours_still_count_as_major(client):
 
 
 @pytest.mark.anyio
-async def test_an_unknown_colour_scope_falls_back_to_the_default(client):
+async def test_an_unknown_color_scope_falls_back_to_the_default(client):
     """It arrives from a query string. The safe reading of a typo is the
     default — not a 500, and not a silently wider search."""
     await _hat_with_colors(client, "Odysea", ["black", "grey", "pink"])

@@ -349,9 +349,9 @@ async def test_reimporting_a_multi_buy_adds_nothing(client, db_session):
 
 
 async def test_an_explicit_colorway_beats_one_parsed_from_the_title(client, db_session):
-    """Order lines carry the colourway separately, and plenty of titles have
+    """Order lines carry the colorway separately, and plenty of titles have
     no " - " to split on — "Odysea Hydro Indigo Depth" parses to a model with
-    no colourway at all, which can then disambiguate nothing."""
+    no colorway at all, which can then disambiguate nothing."""
     hat_id = await _hat_with(
         client, db_session, size="classic", model="Odysea Hydro Indigo Depth",
         colorway="Indigo Depth",
@@ -417,7 +417,7 @@ async def test_same_model_and_price_in_two_sizes_both_import(client, db_session)
 # Matching had no undo at all: it mutates hats, runs over years of imported
 # order history in one call, and `match_purchases_to_hats` only ever considers
 # purchases with a NULL hat_id — so a wrong link was permanent AND invisible,
-# because the hat still ended up with *a* price and *a* colourway.
+# because the hat still ended up with *a* price and *a* colorway.
 
 
 async def _import_one(client, **over):
@@ -462,7 +462,7 @@ async def test_unmatch_leaves_values_edited_since_alone(client, db_session):
     resp = await client.post(f"/api/admin/purchases/{purchase['id']}/unmatch")
     assert "purchase_price" not in resp.json()["cleared"]
     assert (await client.get(f"/api/hats/{hat_id}")).json()["purchase_price"] == 55.0
-    # The colourway was untouched since the match, so it still reverts.
+    # The colorway was untouched since the match, so it still reverts.
     assert "colorway" in resp.json()["cleared"]
 
 
@@ -542,7 +542,7 @@ async def test_one_failing_category_does_not_abandon_the_rest(db_session, monkey
         calls.append(cat)
         if cat == "coronado":
             raise MelinRecapError("502 from the marketplace")
-        return [{"attributes": {"title": f"{cat} Hydro - Colour"}}]
+        return [{"attributes": {"title": f"{cat} Hydro - Color"}}]
 
     monkeypatch.setattr("headroom.services.catalog_service.query_listings", flaky)
     async def _no_sleep(_delay):  # the retry backoff, minus the waiting
@@ -596,8 +596,8 @@ async def test_catalog_stats_counts_the_catalog_not_a_page_of_autocomplete(
 
     for i in range(40):
         db_session.add(ColorwayEntry(
-            title=f"Model{i} Hydro - Colour{i}", model_name=f"Model{i} Hydro",
-            colorway=f"Colour{i}", category="aGame", listing_count=1,
+            title=f"Model{i} Hydro - Color{i}", model_name=f"Model{i} Hydro",
+            colorway=f"Color{i}", category="aGame", listing_count=1,
         ))
     await db_session.commit()
 

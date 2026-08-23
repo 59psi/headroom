@@ -87,7 +87,7 @@ class Hat(Base):
 
     # Analysis bookkeeping
     # What logo/wordmark the analyser actually SAW, and whose it is — kept apart
-    # from `brand` because that can be inferred from shape, colourway or a hang
+    # from `brand` because that can be inferred from shape, colorway or a hang
     # tag with no logo in frame at all. This one answers "was a mark visible,
     # and who owns it", which is the difference between a guess and evidence.
     # What the hat is BUILT from, free-form. Construction is orthogonal to the

@@ -52,7 +52,7 @@ export function GuestViewCard() {
         </div>
 
         <p className="text-secondary small mb-0">
-          Guests see photos, brand, model, style, colours and where a hat lives.
+          Guests see photos, brand, model, style, colors and where a hat lives.
           They do <strong>not</strong> see prices, what you paid, what anything
           sold for, your notes, or anything you've disposed of — those aren't
           hidden in the page, they're never sent. Guests cannot change anything.

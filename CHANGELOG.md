@@ -207,10 +207,10 @@ The remainder of the archaeology report, plus build-time work.
 ## [2.41.0] — 2026-08-23
 
 ### Fixed
-- **Colour search returned most of the collection whatever you asked for.**
+- **Color search returned most of the collection whatever you asked for.**
   It ranked hats by CIEDE2000 distance and kept everything under a cutoff of
   26 — and ΔE 26 is an enormous distance. At that threshold **51 pairs of
-  curated palette colours matched each other**: black with navy, silver with
+  curated palette colors matched each other**: black with navy, silver with
   beige, white with cream, charcoal with dark brown. Three releases were spent
   moving that number (30, then 22, then 26) and the file's own comment already
   had the answer: a distance threshold cannot answer "is this hat purple?",
@@ -224,7 +224,7 @@ The remainder of the archaeology report, plus build-time work.
 
   Membership is now categorical, decided on the curated palette names where
   the question has an exact answer. Distance keeps the job it is good at:
-  ordering hats that are already the right colour. Searching purple returns
+  ordering hats that are already the right color. Searching purple returns
   purples and lavenders; searching pink returns pinks.
 
   Two refinements earn their place. A swatch too muted for its name to be
@@ -235,9 +235,9 @@ The remainder of the archaeology report, plus build-time work.
   must not (a blue-grey holds 20% of blue's), since their absolute chromas are
   11.1 and 11.7 and nothing else tells them apart. And blue/purple can never
   be bridged by hue at all, because CIELAB's hue angle is non-linear through
-  the blue region — a defect of the colour space, not a judgement call.
+  the blue region — a defect of the color space, not a judgement call.
 
-  A colour chip now honours major colours the same way a typed colour term has
+  A color chip now honours major colors the same way a typed color term has
   since 2.39, with a per-rank distance budget so "the hat with the pink brim"
   still works but a pinkish logo no longer counts as a pink hat.
 
@@ -376,13 +376,13 @@ backups that stop restating themselves.
   `.d-flex` is `!important` so flex cards still win. This was latent in five
   other places that already put `.card` on a `<Link>`.
 
-- **A hat is not "pink" because its logo is.** Colour terms matched ANY row in
+- **A hat is not "pink" because its logo is.** Color terms matched ANY row in
   `hat_colors`, so searching "pink" returned every black cap with a pink
-  embroidered mark. On this collection that made colour search close to
+  embroidered mark. On this collection that made color search close to
   useless: a melin hat is a dark crown with a bright logo, and the accent
-  colours are exactly the ones that vary. Colour terms now match **major
-  colours only** by default — dominance rank 1–2, which is the hat's own
-  colour and its second, not its trim.
+  colors are exactly the ones that vary. Color terms now match **major
+  colors only** by default — dominance rank 1–2, which is the hat's own
+  color and its second, not its trim.
 
 - **The guest search didn't survive going to a hat and back.** The term lived
   in component state, which a re-mount discards, so Back returned you to the
@@ -392,7 +392,7 @@ backups that stop restating themselves.
   top of a list that was still loading.
 
 ### Added
-- **A colour-match toggle: Main colours / Accents only / Any.** "Accents only"
+- **A color-match toggle: Main colors / Accents only / Any.** "Accents only"
   is its own question rather than the leftovers of the default — *which of my
   hats has pink on it somewhere* is how you look for a collab mark or a
   contrast underbrim. On the Search page and the guest page; on the latter it
@@ -434,7 +434,7 @@ backups that stop restating themselves.
 
 ### Added
 - **Guests can open a hat.** Tiles in the guest view are now links to
-  `/guest/hat/:id`, showing the photo, name, style, colours and — given the
+  `/guest/hat/:id`, showing the photo, name, style, colors and — given the
   most room, because it is the question a guest actually has — **which room and
   which case** it lives in. A caseless hat says so and still names its room.
 
@@ -481,7 +481,7 @@ Findings from a two-axis review of 2.34–2.36.1.
 - **Guest search reported a capped count.** The response's `hat_count` is its
   own length, and search was bounded to 50 — so a search matching 200 said "50
   hats". The third instance of the same `len()`-of-a-capped-list mistake, after
-  the colourway catalog and the analysis queue. Guest search uses its own,
+  the colorway catalog and the analysis queue. Guest search uses its own,
   higher bound.
 - **The case-valuation rule was stated a third time**, inside
   `report_service`, where `tests/test_valuation_parity.py` cannot see it — and
@@ -531,7 +531,7 @@ Findings from a two-axis review of 2.34–2.36.1.
 - **The queue's "waiting" count was capped at 50.** `pending_count` was
   `len(hats)` over a list deliberately bounded to 50 for display, so a deeper
   backlog always reported 50 — a count read off a limited feed, the same
-  mistake as sizing the colourway catalog from its autocomplete endpoint. The
+  mistake as sizing the colorway catalog from its autocomplete endpoint. The
   list stays bounded; the count is now a `COUNT`.
 
 ## [2.36.0] — 2026-08-22
@@ -553,7 +553,7 @@ Findings from a two-axis review of 2.34–2.36.1.
   disabling it, for the same reason.
 
   **No pricing, and not by hiding it.** Guests get the same `SharedHat`
-  projection share links use: photos, brand, model, style, colours and where a
+  projection share links use: photos, brand, model, style, colors and where a
   hat lives. Prices, purchase history, disposition, wear counts, analysis state
   and owner notes are *never sent* — returning the full model and trusting the
   frontend not to render the rest is exactly how that leaks. Disposed hats are
@@ -1005,7 +1005,7 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
   straw line runs $99–$180 — so those fall through to Claude's estimate, which
   is still labelled as a guess. And the table never pulls a *higher* estimate
   down: the base is what a plain example costs, and collabs, artist series and
-  premium colourways genuinely exceed it. That is the "some hats are $89" case.
+  premium colorways genuinely exceed it. That is the "some hats are $89" case.
 
 - **An entered retail price is now permanent.** Typing one marks it `Manual`,
   and no analysis, re-analysis or backfill may overwrite it — the same
@@ -1080,7 +1080,7 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
 ### Changed
 - **CLAUDE.md audited end to end and 15 claims corrected.** The case-photo line
   was not an isolated slip. Also wrong: the rank-penalty budgets (stale since
-  the colour cutoff moved to 26), "three single-file photo routes" (two), the
+  the color cutoff moved to 26), "three single-file photo routes" (two), the
   path-traversal description (one shared helper now, not two copies), the
   flicker animation (~5s, not 18s), `protected_namespaces`, `_RETENTION_DAYS`
   (does not exist), the lifespan list (omitted the analysis worker), `auth.py`
@@ -1127,7 +1127,7 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
   rebuilt what `Hat.room_name` / `Hat.case_display_id` / `Hat.display_id`
   already provide.
 - **Three unlabelled `<select>`s got their `aria-label`** — Case Type,
-  Disposition Type, and colour Tier. The visible labels carry no `htmlFor`, so
+  Disposition Type, and color Tier. The visible labels carry no `htmlFor`, so
   nothing else associated them.
 - **The purchase-import dedupe is defined once.** Import and preview each had a
   byte-identical copy, so "the preview predicts the import exactly" was a claim
@@ -1147,7 +1147,7 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
 ### Added
 - **Download the collection as a zip.** `index.html` plus an `images/` folder:
   open it in any browser, works offline, nothing to host, no login. Every hat
-  gets its photo, colours, where it lives, and your notes.
+  gets its photo, colors, where it lives, and your notes.
 
   A zip rather than one self-contained HTML file with base64 images — that is
   neat until it is several MB of base64 no mail client will preview.
@@ -1164,7 +1164,7 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
   opened the zip on a laptop. WebP, which is open and royalty-free rather
   than proprietary, and has worked everywhere since Safari 14 in 2020. The
   alternatives were measured, not assumed: lossless PNG is 137 KB an image
-  (40 MB for 300 hats), 256-colour PNG is 26 KB but softens the cutout's
+  (40 MB for 300 hats), 256-color PNG is 26 KB but softens the cutout's
   anti-aliased edge, and JPEG is 31 KB with **no alpha at all** — the hats
   would stop floating. AVIF came in at 13.5 KB against WebP's 13.9 on
   photographic content, a few percent rather than the ~30% it manages on flat
@@ -1202,14 +1202,14 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
   fact that **eBay and melinrecap only run after Claude succeeds** — both
   fallback paths return early, because without a model name there is nothing
   to look comparables up *for*.
-- **The colour-search description was two releases stale**, still describing
+- **The color-search description was two releases stale**, still describing
   plain "ΔE in LAB space" after 2.20 moved to CIEDE2000 and 2.22/2.23 added
   dominance weighting and the hue guard.
 
 ## [2.23.0] — 2026-08-18
 
 ### Fixed
-- **Colour search: a grey hat is no longer a purple hat.** Searching purple
+- **Color search: a grey hat is no longer a purple hat.** Searching purple
   returned **22 of 22** hats, every one matched on a grey swatch at Δ13–19.
   2.22.0 did not fix this and neither would a third attempt at the same
   approach, because the approach was wrong.
@@ -1225,7 +1225,7 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
   changed nothing that mattered.
 
   The hue question is now answered **before** distance, not with it. A swatch
-  with essentially no hue is never matched against a colour with plenty of
+  with essentially no hue is never matched against a color with plenty of
   one, at any distance.
 
   Deliberately **not** a general penalty on the chroma gap — that was tried
@@ -1235,7 +1235,7 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
   that it has no hue to be a darker version *of*.
 
   The test is a **ratio** rather than an absolute chroma floor, because how
-  much colour counts as *some* colour depends on the colour. Teal is itself
+  much color counts as *some* color depends on the color. Teal is itself
   only C=27 where red is C=73, so a slate teal at C=10.5 holds **39%** of
   teal's chroma and is a teal, while the blue-grey that must not match purple
   holds **20%** of its C=59 and is a grey. An absolute floor cannot tell those
@@ -1262,32 +1262,32 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
 ## [2.22.0] — 2026-08-18
 
 ### Fixed
-- **Colour search stops returning the whole collection.** Searching a colour
+- **Color search stops returning the whole collection.** Searching a color
   came back with everything, bunched at near-identical distances — four hats
   all reading "Δ15", the top three matched on grey and the fourth, a green
   hat, matched on its pink logo. Two causes, both mine:
 
   **A hat was scored on the closest of ALL its swatches, with nothing
   weighting them.** A logo counted exactly as much as the crown, and a hat
-  with four colours got four chances to match anything. Every melin hat is a
+  with four colors got four chances to match anything. Every melin hat is a
   dark neutral crown with a bright accent, so searching pink ranked a green
   hat with a pink logo **equal first** — 0.00, identical to a hat that is
   actually pink — with nothing on screen explaining why.
 
   A hat now scores on `distance + penalty(dominance_rank)`: +0 for its main
-  colour, +8 for its secondary, +14 for anything deeper. Additive, because a
+  color, +8 for its secondary, +14 for anything deeper. Additive, because a
   multiplier leaves an exact accent match at 0.00 and breaks no tie. Accent
   matches still surface — "find the hat with the pink brim" is the point of
-  the feature — but they never outrank a hat that IS the colour, and the
+  the feature — but they never outrank a hat that IS the color, and the
   penalty doubles as a budget: a secondary must land within 14 of the target,
   an accent within 8.
 
   **The Δ30 cutoff was calibrated against the wrong distribution.** It was
-  measured on the 26-colour palette, whose entries are deliberately spread
+  measured on the 26-color palette, whose entries are deliberately spread
   around the wheel. A hat collection is not: these are overwhelmingly black,
   charcoal, navy and grey, and CIEDE2000 places a low-chroma neutral
   moderately near *everything*. At 30, grey was a "match" for **17 of the
-  other 25 palette colours** — red, orange, purple and pink included. Every
+  other 25 palette colors** — red, orange, purple and pink included. Every
   hat owns a grey swatch, so every search returned every hat.
 
   Re-calibrated on the neutrals, where the problem lives, to **22**:
@@ -1300,7 +1300,7 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
   | red      | 6         | 1         |
 
   Saturated searches barely notice — they were never the complaint. Shades of
-  one colour still match comfortably: a real grey crown is 8.0 from the grey
+  one color still match comfortably: a real grey crown is 8.0 from the grey
   chip, well inside.
 
 ### Added
@@ -1365,16 +1365,16 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
   field exists for a case you don't want to cram, so quietly allowing one more
   than the number you stated would defeat the only reason to set it.
 
-- **Colour search is much tighter.** Two separate problems:
+- **Color search is much tighter.** Two separate problems:
 
   *No cutoff.* Only the result limit bounded it, so every hat was ranked and
   the nearest 30 came back however far away they were — searching a specific
   teal in a collection of a hundred returned thirty hats, six teal and
   twenty-four presented identically beside them. A list that always fills to
   the same length says nothing about whether anything matched. Now capped,
-  calibrated against the curated palette so shades of one colour still find
+  calibrated against the curated palette so shades of one color still find
   each other while unrelated ones drop out. An empty result is now possible
-  and the page says "no hats are close to that colour" rather than "no hats".
+  and the page says "no hats are close to that color" rather than "no hats".
 
   *Crude metric.* Distance was ΔE\*76 — plain Euclidean in LAB, which is
   least uniform among saturated blues, i.e. most of this collection. Two
@@ -1389,8 +1389,8 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
 - **The hat spec sheet showed the wrong things.** "Type" reported Beanie or
   Regular, which is derived entirely from Style directly above it — a quarter
   of the sheet printing one fact twice. Meanwhile **construction** appeared
-  only as a badge beside the title, and **colourway** appeared nowhere on the
-  hat page at all, despite a colourway catalog and a purchase matcher whose
+  only as a badge beside the title, and **colorway** appeared nowhere on the
+  hat page at all, despite a colorway catalog and a purchase matcher whose
   job is filling it in. Specs now lists Style, Size, Construction, Colorway,
   Collection and Last Worn — the fields that actually tell two hats apart.
 
@@ -1400,13 +1400,13 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
 
 ### Added
 - **Stats page (`/stats`).** Everything the collection is, as numbers and
-  charts: totals, condition/style/size/brand/construction/colourway splits,
-  colour distribution, hats and value by room, case fill levels, acquisitions
+  charts: totals, condition/style/size/brand/construction/colorway splits,
+  color distribution, hats and value by room, case fill levels, acquisitions
   and spend over time, and leaderboards for most valuable, most expensive,
   most worn and best cost-per-wear. Reachable from the home page's stat rail
   and from Valuation. Charts are hand-rolled SVG/CSS for the same reason this
   app has no UI framework — a charting library brings its own opinions about
-  colour and type to argue with.
+  color and type to argue with.
 - **Price-paid tracking end to end.** `purchase_price` and `purchased_at` are
   now settable when you *add* a hat, not only when editing one — the receipt
   is in hand at that moment, and it was previously unreachable for anything
@@ -1485,7 +1485,7 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
   database first. Own the same model in two sizes and a Small could be handed
   a Classic's price, with nothing downstream looking wrong because both hats
   ended up with *a* cost basis. Matching now scores candidates — size
-  outranks colourway, a stated field that disagrees rules a hat out, and a
+  outranks colorway, a stated field that disagrees rules a hat out, and a
   genuine tie is reported rather than resolved by coin flip.
 - **A multi-buy line now prices every hat it bought.** "× 2" is two hats and a
   purchase matches one hat, so one row per line meant the second hat of every
@@ -1498,14 +1498,14 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
   shelf is now slightly wrong".
 - An explicit `colorway` in the payload now beats one parsed out of the title.
   Plenty of titles have no `" - "` to split on — "Odysea Hydro Indigo Depth"
-  yields a model and no colourway, which can then disambiguate nothing.
+  yields a model and no colorway, which can then disambiguate nothing.
 - **Matching can be undone.** `POST /api/admin/purchases/{id}/unmatch` breaks
   one link and `POST /api/admin/purchases/unmatch-all` breaks every link,
   returning those purchases to the matching pool. Previously there was no undo
   of any kind: matching mutates hats, runs over years of order history in a
   single call, and only ever reconsiders purchases with no hat — so a wrong
   link was permanent *and* invisible, because the hat still came out with a
-  price and a colourway, just the wrong ones. Fixing it meant editing the
+  price and a colorway, just the wrong ones. Fixing it meant editing the
   database by hand.
 
   Reverting clears `purchase_price`, `purchased_at` and `colorway` only where
@@ -1585,12 +1585,12 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
 
   Grouped on identity fields, never pixels: two shots of one hat look different
   enough to defeat image comparison, and two genuinely different hats in the
-  same colourway look nearly identical, so photos are the wrong signal in both
+  same colorway look nearly identical, so photos are the wrong signal in both
   directions. `exact` means every identity field agrees; `likely` means same
-  model and size with the colourway missing on one side, which is the usual
+  model and size with the colorway missing on one side, which is the usual
   shape of an unanalysed twin.
 
-  Colourways that actively **disagree** are never grouped — "Trenches Black"
+  Colorways that actively **disagree** are never grouped — "Trenches Black"
   and "Trenches Navy" are two hats somebody deliberately owns, and reporting
   every normal shelf as a mistake is the fastest way to make a report like this
   get ignored. Reports only: nothing is deleted or merged.
@@ -1912,7 +1912,7 @@ only from a backup.
 - **The analysis badge shows the step name again**, alongside the counter:
   `2/4 · Identifying`, one word so it still fits a phone.
 - **Edit is in the top action row** on a hat, not only at the foot of the page
-  below the colours and disposition sections.
+  below the colors and disposition sections.
 - A legacy client sending `hydro: false` no longer wipes a construction the
   booleans cannot express (a "Waxed Canvas" hat has both flags false already).
 
@@ -2269,9 +2269,9 @@ was reported from use.
 
 - **`GET /api/rooms` loaded the entire collection to produce a case count.**
   `selectinload(Room.cases)` cascades through mapper-level eager loads into
-  every hat, colour and wear-log row — measured 30ms vs 0.3ms for the COUNT that
+  every hat, color and wear-log row — measured 30ms vs 0.3ms for the COUNT that
   replaces it, on a machine several times faster than a Pi.
-- Colour search converted the target colour to LAB once per stored swatch
+- Color search converted the target color to LAB once per stored swatch
   instead of once per search.
 
 ### Changed
@@ -2370,7 +2370,7 @@ is nothing to re-cut from.
   draining the queue the route runs the pipeline inline rather than dropping it.
 - **`logo_detected` field.** Claude Vision now records the mark it actually SAW
   and the brand that owns it ("Melin — M monogram, front panel"), kept apart
-  from `brand`, which can be inferred from shape, colourway or a hang tag with
+  from `brand`, which can be inferred from shape, colorway or a hang tag with
   no logo in frame. The Google Vision fallback fills it too — LOGO_DETECTION
   only fires on a visible mark, so that path is evidence by construction. Shown
   under Identification on the hat page.
@@ -2420,15 +2420,15 @@ is nothing to re-cut from.
   confined to that card's slot in the page order and any later card covered it.
   All four modals now render through a `<body>` portal, which also immunises
   them against the `overflow: hidden` and `transform` containing-block traps.
-- **Editing a mis-detected colour silently reverted.** Typing "green" over a
-  colour Claude had read as grey saved "gray": `PUT /api/hats/{id}/colors`
+- **Editing a mis-detected color silently reverted.** Typing "green" over a
+  color Claude had read as grey saved "gray": `PUT /api/hats/{id}/colors`
   re-derived `general_color` from the stored hex whenever one was present, so
   the correction was overwritten by the very value being corrected. An
   explicitly-typed name now wins and is snapped to the palette's spelling (so
   chip search still matches); the hex is consulted only when the field is blank.
-- **Colour ranks are renumbered server-side.** `PUT /api/hats/{id}/colors`
+- **Color ranks are renumbered server-side.** `PUT /api/hats/{id}/colors`
   stored the client's `dominance_rank` verbatim. The UI edits and removes a
-  colour BY rank, so a duplicate made one tap hit two rows — and a gap invited
+  color BY rank, so a duplicate made one tap hit two rows — and a gap invited
   one, since the add path picks `colors.length + 1` (ranks `[1,3]` + length 2 →
   3). Ranks now follow submitted position, so they are always dense and unique.
 - **The SQLite write lock was held across the whole analysis.** Setting

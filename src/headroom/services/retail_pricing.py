@@ -26,7 +26,7 @@ Two things this table deliberately does NOT do:
   Anything absent falls through to Claude's estimate, which is a guess clearly
   labelled as one.
 * It does not model the premium tier. Some hats are $89 rather than $79 —
-  collabs, artist series, particular colourways — and there is no field that
+  collabs, artist series, particular colorways — and there is no field that
   reliably predicts which. The base is what a plain example costs; a hat that
   cost more is corrected per-hat, and that correction now STICKS (see
   `estimated_new_price_source == "Manual"`).
@@ -113,7 +113,7 @@ def resolve_retail(
     3. **Claude's estimate**, kept as-is and labelled as a guess.
 
     Note that (2) never pulls a KNOWN-higher price down: if the estimate
-    exceeds the base — a collab, an artist series, a premium colourway — the
+    exceeds the base — a collab, an artist series, a premium colorway — the
     higher figure is kept, because the base is what a plain example costs and
     the table has no way to see which hats are the exceptions.
     """
