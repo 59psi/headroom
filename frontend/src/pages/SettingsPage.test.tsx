@@ -29,6 +29,14 @@ vi.mock('../api/settings', () => ({
   })),
   reanalyzeAll: vi.fn(),
   listBackups: vi.fn(async () => []),
+  // The real payload shape, defaults included — pydantic serialises every
+  // field, so a mock that returns only the interesting ones type-checks and
+  // then diverges from the server.
+  getBackupHealth: vi.fn(async () => ({
+    enabled: true, running: true,
+    last_attempt_at: null, last_success_at: null, last_success_derived: false,
+    last_error: null, last_skip_reason: null, consecutive_failures: 0,
+  })),
   backupDownloadUrl: vi.fn(() => '/api/admin/backup'),
   getActivityLog: vi.fn(async () => []),
   getEbayCreds: vi.fn(async () => ({ configured: false, marketplace: 'EBAY_US' })),

@@ -51,14 +51,29 @@ async def scheduled_backup_health(request: Request):
     """
     h = backup_service.health()
     task = getattr(request.app.state, "backup_task", None)
+
+    # Fall back to the newest backup's mtime when this process has not yet
+    # recorded a run of its own. The in-memory record is process-local, and on
+    # this deployment restarts are routine — so the endpoint named health was
+    # the one that forgot, and a null here reads as "never succeeded" rather
+    # than "not since boot". Flagged as derived rather than substituted
+    # silently: a file proves a backup was written, not that anything is still
+    # scheduled to write the next one.
+    last_success, derived = h.last_success_at, False
+    if last_success is None:
+        last_success = await backup_service.newest_backup_at()
+        derived = last_success is not None
+
     return BackupHealthRead(
         enabled=backup_service.backup_enabled(),
         # A cancelled/finished task means no further backups will be written,
         # whatever the last attempt's outcome was.
         running=task is not None and not task.done(),
         last_attempt_at=h.last_attempt_at,
-        last_success_at=h.last_success_at,
+        last_success_at=last_success,
+        last_success_derived=derived,
         last_error=h.last_error,
+        last_skip_reason=h.last_skip_reason,
         consecutive_failures=h.consecutive_failures,
     )
 

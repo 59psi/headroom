@@ -41,10 +41,18 @@ def _instant_sleep(monkeypatch):
 
 
 async def _run_briefly(coro_fn, ticks: int = 3):
-    """Run the loop, let it turn over a few times, then cancel it."""
+    """Run the loop, let it turn over a few times, then cancel it.
+
+    Yields real time rather than `sleep(0)`. A bare zero-sleep only hands
+    control back to the event loop, which is enough for a coroutine and not
+    enough for `asyncio.to_thread` — and the loop now takes the data
+    fingerprint on a worker thread. With a zero yield the cycle never got past
+    that await, so every assertion here silently became "the loop did
+    nothing", which is indistinguishable from the bug the file exists to catch.
+    """
     task = asyncio.create_task(coro_fn())
     for _ in range(ticks * 10):
-        await _REAL_SLEEP(0)
+        await _REAL_SLEEP(0.002)
     task.cancel()
     try:
         await task
@@ -56,7 +64,7 @@ async def test_a_failing_backup_does_not_kill_the_scheduler(monkeypatch):
     """The whole point: attempt N+1 must still happen after attempt N raises."""
     attempts = 0
 
-    async def boom(retention):
+    async def boom(keep, fingerprint=None):
         nonlocal attempts
         attempts += 1
         raise OSError("read-only file system")
@@ -67,7 +75,7 @@ async def test_a_failing_backup_does_not_kill_the_scheduler(monkeypatch):
     )
     _instant_sleep(monkeypatch)
 
-    await _run_briefly(lambda: backup_service.scheduled_backup_loop(24.0, 7))
+    await _run_briefly(lambda: backup_service.scheduled_backup_loop(24.0, 5))
 
     assert attempts > 1, "the loop died on the first failure instead of retrying"
     assert backup_service.health().consecutive_failures > 1
@@ -85,7 +93,7 @@ async def test_a_failure_at_startup_does_not_kill_the_scheduler(monkeypatch):
     def exploding_age_check():
         raise PermissionError("/data not writable")
 
-    async def ok(retention):
+    async def ok(keep, fingerprint=None):
         nonlocal attempts
         attempts += 1
 
@@ -95,7 +103,7 @@ async def test_a_failure_at_startup_does_not_kill_the_scheduler(monkeypatch):
     monkeypatch.setattr(backup_service, "write_scheduled_backup", ok)
     _instant_sleep(monkeypatch)
 
-    await _run_briefly(lambda: backup_service.scheduled_backup_loop(24.0, 7))
+    await _run_briefly(lambda: backup_service.scheduled_backup_loop(24.0, 5))
 
     assert attempts > 0, "a boot-time failure permanently disabled backups"
 
@@ -104,7 +112,7 @@ async def test_recovery_clears_the_failure_state(monkeypatch):
     """A scheduler that recovers must stop reporting itself as broken."""
     calls = 0
 
-    async def fail_once_then_work(retention):
+    async def fail_once_then_work(keep, fingerprint=None):
         nonlocal calls
         calls += 1
         if calls == 1:
@@ -121,7 +129,7 @@ async def test_recovery_clears_the_failure_state(monkeypatch):
     )
     _instant_sleep(monkeypatch)
 
-    await _run_briefly(lambda: backup_service.scheduled_backup_loop(24.0, 7))
+    await _run_briefly(lambda: backup_service.scheduled_backup_loop(24.0, 5))
 
     health = backup_service.health()
     assert health.consecutive_failures == 0
@@ -133,7 +141,7 @@ async def test_startup_skips_a_backup_when_a_recent_one_exists(monkeypatch):
     """Restart loops must not spam same-hour backups — the old history bug."""
     attempts = 0
 
-    async def count(retention):
+    async def count(keep, fingerprint=None):
         nonlocal attempts
         attempts += 1
 
@@ -143,7 +151,7 @@ async def test_startup_skips_a_backup_when_a_recent_one_exists(monkeypatch):
     )
     monkeypatch.setattr(backup_service, "write_scheduled_backup", count)
 
-    task = asyncio.create_task(backup_service.scheduled_backup_loop(24.0, 7))
+    task = asyncio.create_task(backup_service.scheduled_backup_loop(24.0, 5))
     for _ in range(20):
         await _REAL_SLEEP(0)
     task.cancel()
@@ -189,7 +197,7 @@ async def test_a_failed_backup_is_reported_as_a_failure(monkeypatch):
     )
     _instant_sleep(monkeypatch)
 
-    await _run_briefly(lambda: backup_service.scheduled_backup_loop(24.0, 7))
+    await _run_briefly(lambda: backup_service.scheduled_backup_loop(24.0, 5))
 
     health = backup_service.health()
     assert health.consecutive_failures > 0, "a failing backup reported success"

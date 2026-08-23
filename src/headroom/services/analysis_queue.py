@@ -30,6 +30,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select
 
+from headroom.config import env_flag
 from headroom.config import settings as config_settings
 from headroom.database import async_session
 from headroom.models.hat import Hat
@@ -49,6 +50,16 @@ _worker_task: asyncio.Task | None = None
 def worker_alive() -> bool:
     """True if the background analysis worker exists and is still running."""
     return _worker_task is not None and not _worker_task.done()
+
+
+def worker_expected() -> bool:
+    """Whether this deployment is supposed to be running the worker at all.
+
+    `worker_alive()` is False both for a worker that died and for one that was
+    never started; readiness needs to alarm on the first and stay quiet about
+    the second. See the twin in `import_service`.
+    """
+    return env_flag("HEADROOM_ANALYSIS_WORKER_ENABLED")
 
 
 def enqueue(hat_id: int) -> bool:
@@ -216,6 +227,7 @@ __all__ = [
     "start_worker",
     "stop_worker",
     "worker_alive",
+    "worker_expected",
     "mark_failed",
     "stamp_failure",
     "queue_depth",

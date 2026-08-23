@@ -18,6 +18,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from headroom.config import env_flag
 from headroom.config import settings as config_settings
 from headroom.database import async_session
 from headroom.models.hat import Hat
@@ -116,15 +117,21 @@ async def create_job(
     )
     await db.commit()
 
-    # Enqueue each queued item
-    if _queue is None:
-        # No worker running (disabled by env, or start_worker never ran). The
-        # items are safe — they stay 'queued' on disk and `start_worker`'s boot
-        # sweep re-enqueues them — but until then the job sits at 0% with no
-        # explanation, which reads as a hang. Bulk import cannot fall back to
-        # running inline the way `analysis_queue` does; a batch takes minutes
-        # and would hold the request open. So the honest fix is to say so.
-        logger.warning(
+    # Enqueue each queued item.
+    #
+    # Gated on the WORKER, not on the queue object. A queue with nothing
+    # draining it accepts `put_nowait` happily and silently — which is the
+    # worse of the two failures, because the job then looks enqueued. The
+    # worker dying mid-run leaves `_queue` non-None, so testing the queue
+    # detected only the disabled case and missed the crashed one entirely.
+    if not worker_alive():
+        # The items are safe — they stay 'queued' on disk and `start_worker`'s
+        # boot sweep re-enqueues them — but until then the job sits at 0% with
+        # no explanation, which reads as a hang. Bulk import cannot fall back
+        # to running inline the way `analysis_queue` does; a batch takes
+        # minutes and would hold the request open. So the honest fix is to say
+        # so, at ERROR: work was accepted that nothing is going to do.
+        logger.error(
             "Import job #%s queued with no worker running — items will not be "
             "processed until restart (HEADROOM_IMPORT_WORKER_ENABLED?).",
             job.id,
@@ -346,6 +353,17 @@ def worker_alive() -> bool:
     return _worker_task is not None and not _worker_task.done()
 
 
+def worker_expected() -> bool:
+    """Whether this deployment is supposed to be running the worker at all.
+
+    `worker_alive()` is False both for a worker that died and for one that was
+    never started, and readiness cannot tell those apart from that alone — the
+    test suite and any deliberately-degraded deployment would report unhealthy
+    forever. Dead-when-expected is the condition worth alarming on.
+    """
+    return env_flag("HEADROOM_IMPORT_WORKER_ENABLED")
+
+
 async def _recover_on_boot() -> None:
     """Heal jobs left mid-flight by a crash/OOM/restart before draining.
 
@@ -400,7 +418,11 @@ async def start_worker() -> None:
 
 
 async def stop_worker() -> None:
-    global _worker_task
+    # Clears `_queue` as well as the task, matching `analysis_queue.stop_worker`.
+    # Leaving a queue object behind after the worker is gone is what let
+    # `create_job` believe work had been accepted: the put succeeds, nothing
+    # drains it, and the items sit in a queue that no longer has a consumer.
+    global _queue, _worker_task
     if _worker_task is not None:
         _worker_task.cancel()
         try:
@@ -408,3 +430,4 @@ async def stop_worker() -> None:
         except asyncio.CancelledError:
             pass
         _worker_task = None
+    _queue = None

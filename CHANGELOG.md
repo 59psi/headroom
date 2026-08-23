@@ -6,6 +6,99 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.40.0] — 2026-08-23
+
+The three failures this deployment was structurally unable to notice, plus
+backups that stop restating themselves.
+
+### Changed
+- **Backups are written only when the data has changed**, and retention is now
+  a **count** (`HEADROOM_BACKUP_KEEP`, default 5) rather than an age. On an
+  untouched collection a daily tarball re-read every photo, wore the SD card,
+  and evicted a genuine historical snapshot from a fixed-size window to store
+  a restatement of the newest one.
+
+  The two changes are one change. Age-based pruning combined with
+  change-gating has a steady state of **zero backups** on an idle system: the
+  last one ages out and nothing is written to replace it. Counting cannot do
+  that. `HEADROOM_BACKUP_RETENTION_DAYS` is still read — as a count — so an
+  existing `.env` keeps meaning something instead of silently reverting.
+
+  Change is judged from the size and mtime of the database, **its WAL
+  sidecar** (a commit in WAL mode can leave the main file untouched, so
+  watching it alone would call a day of edits "no changes"), and every file
+  under uploads. The marker recording the last backed-up state is a file in
+  `backups/` and deliberately not a row in the database — the database is part
+  of what it measures, so a marker stored there would invalidate itself every
+  time it was written.
+
+### Added
+- **The app can see the disk filling up.** There was no free-space check
+  anywhere, and readiness proved the volume was writable by writing two bytes
+  — which succeeds with 8 KB free, while the next backup tarball fails, SQLite
+  starts raising `disk I/O error`, and photo uploads stop. Two thresholds,
+  because there are two things to say: a warning in the log below 15%, and
+  readiness failure below a hard floor of 500 MB. The floor is an absolute
+  size rather than a percentage because what matters is whether the next
+  backup fits.
+- **Readiness fails when a background worker has died.** The Docker
+  healthcheck is anonymous and worker liveness was authenticated-only detail,
+  so the container could not go unhealthy for a dead analysis or import worker
+  — leaving `restart: unless-stopped`, the only automated recovery here, blind
+  to the two failures most likely to develop over weeks. Gated on whether the
+  worker is *expected* to be running, so a deliberately disabled one is not
+  reported as a fault.
+- **The Backups card now says whether the scheduler is working.** The endpoint
+  that answers this shipped in 2.26 and nothing ever rendered it. It
+  distinguishes running-and-idle-because-nothing-changed from failing from not
+  running at all — a distinction that matters much more now that an old
+  newest-backup is a normal, correct state.
+- **Unhandled errors become activity-log rows.** A 500 previously left exactly
+  one trace: a stack trace on stdout, inside a container, on a Pi. The one
+  in-app error surface queries hats whose analysis failed, so a route 500
+  appeared nowhere in the app at all. The traceback still reaches the log —
+  the row joins it rather than replacing it.
+
+### Fixed
+- **Security headers were missing from every 401.** `add_middleware` prepends,
+  so the last one added is outermost — and `SecurityHeadersMiddleware` was
+  added first, which put it behind the auth gate. The gate short-circuits an
+  unauthenticated `/api/*` request with its own 401, and that response never
+  reached the header middleware: no CSP, no `nosniff`, no `X-Frame-Options`,
+  on precisely the responses a stranger is most likely to receive. The test
+  named for this invariant asserted against `/health`, which the gate lets
+  through — the one path where it already held.
+- **`last_success_at` no longer forgets on restart.** The health record is
+  process-local, and on this deployment restarts are routine, so the endpoint
+  named *health* was the one that forgot — and `null` reads as "never
+  succeeded". It falls back to the newest backup's mtime, flagged as derived,
+  because a file proves a backup was written and not that anything is still
+  scheduled to write the next one.
+- **A 20 MB JSON body no longer costs ~300 MB of RAM.** Every upload path was
+  careful; nothing else was, so the cheapest denial of service against a 1 GB
+  Pi was one unauthenticated curl at the login page. Non-multipart bodies over
+  2 MB are refused with 413 before the auth gate spends a database lookup on
+  them. Multipart is exempt — those routes stream to disk under their own,
+  much larger, deliberate caps.
+- **A rejected password is no longer echoed back in the 422.** Pydantic puts
+  the offending `input` into every validation error and FastAPI serialises the
+  list straight into the response body, so a password refused for being too
+  short came back in clear text — into the browser's network tab and any proxy
+  log on the way. The field and the reason stay; the value was the one part
+  the caller already had.
+- **The Google Vision API key is no longer printed to the container log.** It
+  travelled as `?key=`, and httpx logs the full request URL at INFO on every
+  call. It goes in the `X-Goog-Api-Key` header now, which is what Google
+  documents it for.
+- **A bulk import with no worker running says so at ERROR**, and the check is
+  now on the worker rather than on the queue object — a queue with nothing
+  draining it accepts work silently, so the old test caught the disabled case
+  and missed the crashed one. `stop_worker` clears the queue to match
+  `analysis_queue`. Scheduled-backup and upload-hook failures were promoted to
+  ERROR as well: nothing in 75 logging call sites was ever logged at ERROR, so
+  the disaster-recovery feature failing sat at the same severity as "mDNS: no
+  LAN address found".
+
 ## [2.39.0] — 2026-08-22
 
 ### Fixed

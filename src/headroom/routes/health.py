@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from headroom.config import settings
 from headroom.database import get_db
 from headroom.services import analysis_queue, import_service, settings_service
+from headroom.utils import disk
 
 router = APIRouter()
 
@@ -27,11 +28,17 @@ async def health():
 
 @router.get("/health/ready")
 async def ready(request: Request, db: AsyncSession = Depends(get_db)):
-    """Readiness — verifies DB, uploads dir, and (informationally) the API key.
+    """Readiness — DB, uploads dir, free space, workers, and the API key.
 
-    Returns 200 only if DB is reachable and uploads/ is writable. API-key
-    presence is reported but does NOT cause a non-ready response (the app is
-    intentionally usable without one).
+    Returns 200 only if the DB is reachable, uploads/ is writable, there is
+    room left on the volume, and every worker this deployment expects to be
+    running still is. API-key presence is reported but does NOT cause a
+    non-ready response (the app is intentionally usable without one).
+
+    The last two gates are what make the Docker healthcheck worth having: it
+    is the only automated observer this system has, and it previously could
+    not fail for a full disk or a dead background worker — the two conditions
+    most likely to develop over weeks of unattended running.
 
     This endpoint is unauthenticated (the Docker healthcheck polls it), so for
     anonymous callers it returns booleans ONLY — no raw exception strings, no
@@ -59,7 +66,29 @@ async def ready(request: Request, db: AsyncSession = Depends(get_db)):
         up_ok, up_err = False, str(exc)
         overall_ok = False
 
-    # 3. API key (informational — not a readiness gate)
+    # 3. Room to keep going. The probe above writes two bytes, and two bytes
+    # fit on a volume with 8 KB free — while the next backup tarball does not,
+    # SQLite starts raising `disk I/O error`, and uploads stop. Writable and
+    # not-full are different questions.
+    space = disk.check(upload_dir)
+    if not space.ok:
+        overall_ok = False
+
+    # 4. Are the background workers actually running? This is the ONLY check
+    # here that the container healthcheck can act on, and until it existed the
+    # container could not go unhealthy because the analysis or import worker
+    # had died — so `restart: unless-stopped`, the one piece of automated
+    # recovery in the system, was blind to the two failures most likely across
+    # weeks of unattended running. Gated on `worker_expected()` so a worker
+    # switched off on purpose is not reported as a fault.
+    workers_ok = not (
+        (import_service.worker_expected() and not import_service.worker_alive())
+        or (analysis_queue.worker_expected() and not analysis_queue.worker_alive())
+    )
+    if not workers_ok:
+        overall_ok = False
+
+    # 5. API key (informational — not a readiness gate)
     api_key, source = await settings_service.get_anthropic_key(db)
 
     # Detailed view only for an authenticated caller; anonymous callers (incl.
@@ -75,20 +104,40 @@ async def ready(request: Request, db: AsyncSession = Depends(get_db)):
                 **({"error": up_err} if up_err else {}),
             },
             "anthropic_key": {"ok": True, "configured": bool(api_key), "source": source},
-            "import_worker": {"ok": import_service.worker_alive()},
+            "disk": {
+                "ok": space.ok,
+                "low": space.low,
+                "free_bytes": space.free_bytes,
+                "total_bytes": space.total_bytes,
+                "free_pct": space.free_pct,
+                "min_free_mb": disk.min_free_mb(),
+                **({"error": space.error} if space.error else {}),
+            },
+            "import_worker": {
+                "ok": import_service.worker_alive(),
+                "expected": import_service.worker_expected(),
+            },
             # Depth alongside liveness: a live worker with a growing backlog is
             # a different problem from a dead one, and both show up to a user as
             # "my hat says Analyzing…". Authenticated-only, like import_worker —
             # queue depth is operational detail.
             "analysis_worker": {
                 "ok": analysis_queue.worker_alive(),
+                "expected": analysis_queue.worker_expected(),
                 "queued": analysis_queue.queue_depth(),
             },
         }
     else:
+        # Booleans only. `disk` and `workers` are here because they GATE
+        # readiness and an anonymous 503 with no reason is a worse artefact
+        # than one that names which check failed — but "the disk is low" and
+        # "a worker is down" carry no filesystem path, no capacity figure and
+        # no queue depth, which is where the operational detail actually is.
         checks = {
             "database": {"ok": db_ok},
             "uploads_writable": {"ok": up_ok},
+            "disk": {"ok": space.ok, "low": space.low},
+            "workers": {"ok": workers_ok},
             "anthropic_key": {"ok": True, "configured": bool(api_key)},
         }
 

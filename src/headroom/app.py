@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -155,7 +156,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         backup_task = asyncio.create_task(
             backup_service.scheduled_backup_loop(
                 interval_hours=backup_service.backup_interval_hours(),
-                retention=backup_service.backup_retention(),
+                keep=backup_service.backup_keep(),
             )
         )
     # Published so the admin API can report whether the scheduler is still
@@ -266,6 +267,8 @@ def _safe_spa_path(full_path: str) -> Path | None:
 
 def create_app() -> FastAPI:
     from headroom.auth import AuthGateMiddleware, SecurityHeadersMiddleware
+    from headroom.error_handler import log_unhandled, validation_error
+    from headroom.limits import BodySizeLimitMiddleware
 
     app = FastAPI(title="Headroom", lifespan=lifespan)
 
@@ -273,7 +276,15 @@ def create_app() -> FastAPI:
     # their own in-memory database.
     app.state.session_factory = async_session
 
-    app.add_middleware(SecurityHeadersMiddleware)
+    # ORDER IS LOAD-BEARING. `add_middleware` PREPENDS, so the last one added
+    # is the outermost and the first to see a response on the way out.
+    #
+    # SecurityHeadersMiddleware must therefore be added LAST. Added first — as
+    # it was — it ends up innermost, behind the auth gate, and the gate's 401
+    # short-circuits before ever reaching it: an unauthenticated GET /api/hats
+    # came back with exactly two headers, content-type and content-length. No
+    # CSP, no nosniff, no X-Frame-Options, on precisely the responses an
+    # unauthenticated caller is most likely to receive.
     app.add_middleware(AuthGateMiddleware)
     app.add_middleware(
         CORSMiddleware,
@@ -282,6 +293,21 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_middleware(SecurityHeadersMiddleware)
+
+    # Outermost of all: an oversize body should be refused before anything
+    # else has spent memory on it, including the auth gate's DB lookup.
+    app.add_middleware(BodySizeLimitMiddleware)
+
+    # Every unhandled exception becomes a row in the activity log. Starlette
+    # sends this handler's response and then re-raises, so the traceback still
+    # reaches the container log — this adds a durable record, it does not
+    # replace one.
+    app.add_exception_handler(Exception, log_unhandled)
+
+    # 422s stop echoing the value that failed validation — which on the setup
+    # and login routes is a password.
+    app.add_exception_handler(RequestValidationError, validation_error)
 
     app.include_router(api_router)
 
