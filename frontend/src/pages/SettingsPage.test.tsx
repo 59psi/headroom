@@ -38,6 +38,12 @@ vi.mock('../api/settings', () => ({
     last_error: null, last_skip_reason: null, consecutive_failures: 0,
   })),
   backupDownloadUrl: vi.fn(() => '/api/admin/backup'),
+  getBackupUpload: vi.fn(async () => ({
+    configured: false, provider: null, destination: null, from_environment: false,
+    available_providers: ['rclone'], last_upload_at: null, last_upload_ok: null,
+    last_upload_error: null, upload_successes: 0, upload_failures: 0,
+  })),
+  setBackupUpload: vi.fn(), clearBackupUpload: vi.fn(), testBackupUpload: vi.fn(),
   getActivityLog: vi.fn(async () => []),
   getEbayCreds: vi.fn(async () => ({ configured: false, marketplace: 'EBAY_US' })),
   setEbayCreds: vi.fn(), deleteEbayCreds: vi.fn(), testEbayCreds: vi.fn(),
@@ -117,7 +123,7 @@ const SECTION_CARDS: Record<string, string[]> = {
     'Share Photos to Headroom',
   ],
   device: ['Account', 'LAN Discovery (mDNS)', 'Site Logo'],
-  maintenance: ['Backups', 'Recent Activity'],
+  maintenance: ['Backups', 'Off-site backup', 'Recent Activity'],
 };
 
 /** Cards visible in a section, scoped to `.card-title` — card *bodies* mention
@@ -147,7 +153,7 @@ describe('SettingsPage', () => {
     // no section renders nowhere and nothing else notices.
     const all = Object.values(SECTION_CARDS).flat();
     expect(new Set(all).size).toBe(all.length);
-    expect(all).toHaveLength(20);
+    expect(all).toHaveLength(21);
   });
 
   it('defaults to the first section when no tab is named', async () => {
