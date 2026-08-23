@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.config import settings
 from headroom.database import get_db
-from headroom.schemas.share import SharedCollection
+from headroom.schemas.share import SharedCollection, SharedHat
 from headroom.services import guest_view_service, share_link_service
 from headroom.utils.paths import safe_file
 
@@ -75,3 +75,27 @@ async def guest_photo(hat_id: int, db: AsyncSession = Depends(get_db)):
     if photo is None:
         raise _NOT_FOUND
     return FileResponse(photo)
+
+
+@router.get("/hat/{hat_id}", response_model=SharedHat)
+async def guest_hat(hat_id: int, db: AsyncSession = Depends(get_db)):
+    """One hat, as an outside viewer sees it.
+
+    Same projection as the listing — so this adds no field the grid did not
+    already carry. It exists for the deep link: "where does this one live" is
+    the question a guest actually has, and answering it should survive being
+    sent to somebody.
+
+    Disposed hats 404 here as they do everywhere else on this surface; the id
+    arrives straight from the URL, so `shared_hat` re-checks rather than
+    trusting that the caller came from the listing.
+    """
+    await _require_enabled(db)
+
+    hat = await share_link_service.shared_hat(db, hat_id)
+    if hat is None:
+        raise _NOT_FOUND
+
+    return share_link_service.to_shared_hat(
+        hat, f"/api/public/guest/photo/{hat.id}" if hat.photo_path else None
+    )

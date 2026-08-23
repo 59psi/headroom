@@ -314,3 +314,105 @@ async def test_guest_search_count_is_not_capped(client, anon_client):
 
     assert body["hat_count"] == 55
     assert len(body["hats"]) == 55
+
+
+# ------------------------------- hat detail --------------------------------- #
+
+
+async def test_a_guest_can_open_one_hat(client, anon_client):
+    """"Where does this one live" is the question a guest actually has, and it
+    should survive being sent to somebody — hence a deep link rather than a
+    detail rendered only from the listing payload."""
+    room = (await client.post("/api/rooms", json={"name": "Study"})).json()
+    case = (await client.post(
+        "/api/cases", json={"case_type": "archive", "room_id": room["id"]}
+    )).json()
+    hat = await _hat(client, model_name="Coronado", case_id=case["id"])
+    await _enable(client)
+
+    body = (await anon_client.get(f"/api/public/guest/hat/{hat['id']}")).json()
+
+    assert body["model_name"] == "Coronado"
+    assert body["case"] == case["display_id"]
+    assert body["room"] == "Study"
+
+
+async def test_a_room_stored_hat_reports_its_room(client, anon_client):
+    """A caseless hat has a location too — via `direct_room`, not a case."""
+    room = (await client.post("/api/rooms", json={"name": "Shelf"})).json()
+    hat = await _hat(client, model_name="Loose", room_id=room["id"])
+    await _enable(client)
+
+    body = (await anon_client.get(f"/api/public/guest/hat/{hat['id']}")).json()
+
+    assert body["case"] is None
+    assert body["room"] == "Shelf"
+
+
+async def test_hat_detail_carries_no_more_than_the_listing(client, anon_client):
+    """The detail view must not become a wider projection than the grid.
+
+    A per-hat endpoint is exactly where someone would reach for "just one more
+    field" — and this is the surface where that costs the most.
+    """
+    hat = await _hat(
+        client, model_name="Coronado", purchase_price=89.0, owner_notes="secret"
+    )
+    await _enable(client)
+
+    body = (await anon_client.get(f"/api/public/guest/hat/{hat['id']}")).json()
+
+    assert set(body) == {
+        "id", "display_id", "brand", "model_name", "style",
+        "photo_url", "colors", "case", "room",
+    }
+    for leak in ("purchase_price", "owner_notes", "secret", "89"):
+        assert leak not in (await anon_client.get(
+            f"/api/public/guest/hat/{hat['id']}"
+        )).text
+
+
+async def test_a_photoless_hat_still_has_a_detail_page(client, anon_client):
+    """`shared_hat` used to require a photo, because its only caller was the
+    photo route. A hat plainly listed on the page you clicked from must not
+    404 when you click it."""
+    hat = await _hat(client, model_name="Unphotographed")
+    await _enable(client)
+
+    body = (await anon_client.get(f"/api/public/guest/hat/{hat['id']}")).json()
+
+    assert body["model_name"] == "Unphotographed"
+    assert body["photo_url"] is None
+
+
+async def test_a_disposed_hat_has_no_detail_page(client, anon_client):
+    hat = await _hat(client, model_name="Departed")
+    await client.post(f"/api/hats/{hat['id']}/dispose", json={"via": "sold"})
+    await _enable(client)
+
+    assert (await anon_client.get(
+        f"/api/public/guest/hat/{hat['id']}"
+    )).status_code == 404
+
+
+async def test_hat_detail_is_gated_like_everything_else(client, anon_client):
+    hat = await _hat(client)
+    await _enable(client, False)
+
+    resp = await anon_client.get(f"/api/public/guest/hat/{hat['id']}")
+
+    assert resp.status_code == 404
+    assert "guest" not in resp.text.lower()
+
+
+async def test_share_link_photos_still_require_a_photo(client, anon_client):
+    """Relaxing `shared_hat` must not make the photo route serve a hat that
+    hasn't got one."""
+    hat = await _hat(client, model_name="Unphotographed")
+    token = (await client.post(
+        "/api/share-links", json={"label": "Mine"}
+    )).json()["token"]
+
+    resp = await anon_client.get(f"/api/public/share/{token}/photo/{hat['id']}")
+
+    assert resp.status_code == 404

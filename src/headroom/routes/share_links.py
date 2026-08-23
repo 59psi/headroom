@@ -112,7 +112,10 @@ async def public_photo(token: str, hat_id: int, db: AsyncSession = Depends(get_d
         raise HTTPException(status_code=404, detail="Photo not found") from None
 
     hat = await share_link_service.shared_hat(db, hat_id)
-    if hat is None:
+    # `photo_path` checked here rather than inside `shared_hat`: that helper
+    # answers "may an outsider see this hat", which is a different question
+    # from "does it have a photo to serve".
+    if hat is None or not hat.photo_path:
         raise HTTPException(status_code=404, detail="Photo not found")
     # `photo_path` is app-generated, but it reaches the filesystem here on an
     # unauthenticated route, so it goes through the same containment check as

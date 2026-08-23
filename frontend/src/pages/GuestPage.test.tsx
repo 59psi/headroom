@@ -78,6 +78,17 @@ describe('GuestPage', () => {
     expect(mocked.getGuestCollection).toHaveBeenLastCalledWith('a&b c');
   });
 
+  it('makes each hat openable', async () => {
+    // "Where does this one live" is the question; a grid you cannot click
+    // leaves it unanswered.
+    mocked.getGuestCollection.mockResolvedValue(collection(['Coronado']));
+
+    renderWithProviders(<GuestPage />);
+
+    const tile = await screen.findByRole('link', { name: /Melin Coronado/ });
+    expect(tile).toHaveAttribute('href', '/guest/hat/1');
+  });
+
   it('offers a way back to signing in', async () => {
     mocked.getGuestCollection.mockResolvedValue(collection([]));
     renderWithProviders(<GuestPage />);
