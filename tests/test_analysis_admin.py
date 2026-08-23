@@ -73,20 +73,28 @@ async def test_reanalyze_all_skips_disposed_hats(client):
     assert resp.json()["queued"] == 0
 
 
-async def test_reanalyze_all_can_spare_hand_entered_prices(client):
-    """`only_priced_by_claude` exists so a manual correction isn't overwritten."""
+async def test_a_hand_entered_price_is_spared_without_skipping_the_hat(client):
+    """Manual prices are protected by the WRITE path, not by exclusion.
+
+    This used to assert the opposite: that `only_priced_by_claude=true` queued
+    zero hats, i.e. protected a manual price by refusing to analyse the hat at
+    all. That was never necessary — `retail_pricing.resolve_retail` returns a
+    Manual price untouched, and the pipeline bails on
+    `resale_price_scope == "manual"` in two places — and it was actively
+    harmful: the same filter, wired to a default-ON checkbox, cut a 234-hat
+    re-analysis down to 45 once 2.27 moved most hats onto the retail table.
+
+    So the hat IS analysed, and the price survives anyway.
+    """
     hat_id = await _hat_with_photo(client)
-    # No Claude key in tests, so the pipeline never sets the source — stand in
-    # for a hand-entered price by leaving it unset.
     await client.put(f"/api/hats/{hat_id}", json={"estimated_new_price": 120.0})
 
-    spared = await client.post(
-        "/api/admin/analysis/reanalyze-all?only_priced_by_claude=true"
-    )
-    assert spared.json()["queued"] == 0, "a price Claude didn't set must be left alone"
+    body = (await client.post("/api/admin/analysis/reanalyze-all")).json()
+    assert body["queued"] == 1, "the hat must not be skipped"
 
-    everything = await client.post("/api/admin/analysis/reanalyze-all")
-    assert everything.json()["queued"] == 1
+    read = (await client.get(f"/api/hats/{hat_id}")).json()
+    assert read["estimated_new_price"] == 120.0
+    assert read["estimated_new_price_source"] == "Manual"
 
 
 async def test_queue_endpoints_require_auth(anon_client):
@@ -180,3 +188,104 @@ async def test_recent_jobs_are_newest_first(client):
 
     recent = (await client.get("/api/admin/analysis/queue")).json()["recent_jobs"]
     assert [j["id"] for j in recent][:2] == [second["id"], first["id"]]
+
+
+@pytest.mark.anyio
+async def test_reanalyze_all_covers_every_hat_with_a_photo(client, monkeypatch):
+    """The reported bug: 234 hats, 45 queued.
+
+    A checkbox reading "Leave hand-entered prices alone", ON by default, mapped
+    to a filter for hats priced by Claude. Before 2.27 nearly every hat WAS
+    priced by Claude, so the filter matched almost everything and looked
+    harmless. 2.27 moved the majority onto the retail table, and the same
+    filter then matched only the remainder — under a button that says
+    "Re-analyse every hat".
+
+    The filter was redundant anyway: a Manual price is protected
+    unconditionally by `resolve_retail` and the two `resale_price_scope ==
+    "manual"` guards, so it never spared anything that wasn't already safe.
+    """
+    from sqlalchemy import select
+
+    from headroom.models.hat import Hat
+    from tests.conftest import test_session_factory
+
+    ids = []
+    for _ in range(5):
+        resp = await client.post(
+            "/api/hats", json={"condition": "new", "size": "classic", "style": "a_game"}
+        )
+        ids.append(resp.json()["id"])
+
+    # Give them photos and a spread of price sources, the way a real
+    # collection looks after 2.27: mostly table-priced, a few Claude, one
+    # manual, one unpriced.
+    sources = ["melin retail", "melin retail", "Claude Vision", "Manual", None]
+    async with test_session_factory() as db:
+        for hat_id, source in zip(ids, sources):
+            hat = (await db.execute(select(Hat).where(Hat.id == hat_id))).scalar_one()
+            hat.photo_path = f"hats/{hat_id}.png"
+            hat.estimated_new_price_source = source
+            hat.estimated_new_price = 79.0 if source else None
+        await db.commit()
+
+    body = (await client.post("/api/admin/analysis/reanalyze-all")).json()
+
+    assert body["queued"] == 5, "the run was filtered down by price source"
+    assert body["job"]["total"] == 5
+
+
+@pytest.mark.anyio
+async def test_reanalyze_all_still_skips_photoless_and_disposed(client):
+    """The only two exclusions, and both are deliberate."""
+    from sqlalchemy import select
+
+    from headroom.models.hat import Hat
+    from tests.conftest import test_session_factory
+
+    async def _hat():
+        r = await client.post(
+            "/api/hats", json={"condition": "new", "size": "classic", "style": "a_game"}
+        )
+        return r.json()["id"]
+
+    with_photo, no_photo, disposed = await _hat(), await _hat(), await _hat()
+    async with test_session_factory() as db:
+        for hat_id in (with_photo, disposed):
+            hat = (await db.execute(select(Hat).where(Hat.id == hat_id))).scalar_one()
+            hat.photo_path = f"hats/{hat_id}.png"
+        await db.commit()
+    await client.post(f"/api/hats/{disposed}/dispose", json={"via": "sold"})
+
+    body = (await client.post("/api/admin/analysis/reanalyze-all")).json()
+
+    assert body["queued"] == 1, f"expected only #{with_photo}"
+    assert no_photo and disposed  # named for the reader
+
+
+@pytest.mark.anyio
+async def test_pending_count_is_not_capped_by_the_preview_list(client):
+    """`pending_count` was `len(hats)` over a list bounded to 50, so a deep
+    queue always reported 50 — a count read off a limited feed, the same
+    mistake as sizing the colourway catalog from its autocomplete endpoint."""
+    from sqlalchemy import select
+
+    from headroom.models.hat import Hat
+    from tests.conftest import test_session_factory
+
+    ids = []
+    for _ in range(55):
+        r = await client.post(
+            "/api/hats", json={"condition": "new", "size": "classic", "style": "a_game"}
+        )
+        ids.append(r.json()["id"])
+    async with test_session_factory() as db:
+        for hat_id in ids:
+            hat = (await db.execute(select(Hat).where(Hat.id == hat_id))).scalar_one()
+            hat.analysis_status = "pending"
+        await db.commit()
+
+    body = (await client.get("/api/admin/analysis/queue")).json()
+
+    assert body["pending_count"] == 55, "the count was capped by the preview list"
+    assert len(body["pending"]) == 50, "the preview list itself stays bounded"

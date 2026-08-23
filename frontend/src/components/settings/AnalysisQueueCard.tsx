@@ -35,7 +35,6 @@ function since(iso: string): string {
 
 export function AnalysisQueueCard() {
   const qc = useQueryClient();
-  const [sparePrices, setSparePrices] = useState(true);
   const [confirming, setConfirming] = useState(false);
 
   const queue = useQuery({
@@ -52,7 +51,7 @@ export function AnalysisQueueCard() {
   });
 
   const rerun = useMutation({
-    mutationFn: () => reanalyzeAll(sparePrices),
+    mutationFn: () => reanalyzeAll(),
     onSuccess: () => {
       setConfirming(false);
       qc.invalidateQueries({ queryKey: ['admin', 'analysis-queue'] });
@@ -169,21 +168,16 @@ export function AnalysisQueueCard() {
 
         <hr />
 
-        <label className="d-flex align-items-center gap-2 mb-2" style={{ cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            aria-label="Leave hand-entered prices alone"
-            checked={sparePrices}
-            onChange={e => setSparePrices(e.target.checked)}
-            style={{ width: 20, height: 20, flexShrink: 0 }}
-          />
-          <span>
-            Leave hand-entered prices alone
-            <span className="text-secondary small d-block">
-              Only re-analyse hats whose price came from Claude
-            </span>
-          </span>
-        </label>
+        {/* The checkbox that used to sit here ("Leave hand-entered prices
+            alone", ON by default) mapped to a filter for Claude-priced hats.
+            It spared nothing — a Manual price is protected unconditionally —
+            and after 2.27 moved most hats onto the retail table it silently
+            cut the run to a fraction, under a button reading "Re-analyse
+            every hat". */}
+        <p className="text-secondary small mb-2">
+          Covers every hat with a photo. Prices you entered by hand are kept —
+          nothing here can overwrite them.
+        </p>
 
         {!confirming ? (
           <button

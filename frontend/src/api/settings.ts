@@ -181,9 +181,11 @@ export function getAnalysisQueue() {
   return apiFetch<AnalysisQueueStatus>('/api/admin/analysis/queue');
 }
 
-export function reanalyzeAll(onlyPricedByClaude: boolean) {
+/** Re-analyse every hat with a photo. Manual prices are protected server-side,
+ *  so there is nothing to opt out of. */
+export function reanalyzeAll() {
   return apiFetch<{ queued: number; worker_alive: boolean; job: AnalysisJobRead | null }>(
-    `/api/admin/analysis/reanalyze-all?only_priced_by_claude=${onlyPricedByClaude}`,
+    '/api/admin/analysis/reanalyze-all',
     { method: 'POST' },
   );
 }
