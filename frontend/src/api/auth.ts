@@ -1,6 +1,9 @@
 import { apiFetch } from './client';
 
 export interface AuthStatus {
+  /** Whether to offer "browse as a guest" on the login screen. Rides along on
+   *  the one unauthenticated call the page already makes. */
+  guest_view_enabled?: boolean;
   needs_setup: boolean;
   authenticated: boolean;
   username: string | null;

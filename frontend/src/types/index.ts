@@ -238,6 +238,27 @@ export interface RoomDetail extends RoomRead {
   cases: CaseRead[];
 }
 
+/** One hat as an outside viewer sees it — the server's narrowed projection.
+ *  No prices, purchase history, disposition, wear counts or notes: they are
+ *  not in the payload, so they cannot be rendered by accident. */
+export interface SharedHat {
+  id: number;
+  display_id: string | null;
+  brand: string | null;
+  model_name: string | null;
+  style: string;
+  photo_url: string | null;
+  colors: { name: string; hex: string | null }[];
+  case: string | null;
+  room: string | null;
+}
+
+export interface SharedCollection {
+  label: string;
+  hat_count: number;
+  hats: SharedHat[];
+}
+
 export interface ApiKeyStatus {
   configured: boolean;
   source: string | null;

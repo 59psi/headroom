@@ -74,3 +74,13 @@ class TagBaseUpdate(BaseModel):
         if not cleaned.startswith(("http://", "https://")):
             raise ValueError("must start with http:// or https://")
         return cleaned
+
+
+class GuestViewStatus(BaseModel):
+    """Whether the collection is browsable without an account."""
+
+    enabled: bool
+
+
+class GuestViewUpdate(BaseModel):
+    enabled: bool

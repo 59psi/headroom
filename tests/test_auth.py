@@ -21,13 +21,20 @@ async def _setup_owner(anon_client):
 
 async def test_status_reports_needs_setup_then_authenticated(anon_client):
     resp = await anon_client.get("/api/auth/status")
-    assert resp.json() == {"needs_setup": True, "authenticated": False, "username": None}
+    # Exact equality, deliberately: this payload is served to anyone who can
+    # reach the login screen, so a field appearing here should have to be
+    # written down rather than slipping in.
+    assert resp.json() == {
+        "needs_setup": True, "authenticated": False, "username": None,
+        "guest_view_enabled": False,
+    }
 
     await _setup_owner(anon_client)  # sets the session cookie on the client
 
     resp = await anon_client.get("/api/auth/status")
     assert resp.json() == {
         "needs_setup": False, "authenticated": True, "username": "brandon",
+        "guest_view_enabled": False,
     }
 
 
