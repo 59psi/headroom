@@ -246,7 +246,7 @@ async def recut_hat(hat_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(
             status_code=400,
             detail=(
-                "No original was kept for this hat — it was analysed before"
+                "No original was kept for this hat — it was analyzed before"
                 " originals were retained. Re-upload the photo instead."
             ),
         )

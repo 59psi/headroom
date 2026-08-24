@@ -118,7 +118,7 @@ export function TagLandingPage() {
 function NotFound({ detail }: { detail: string }) {
   return (
     <div className="hr-tag-landing">
-      <h1 className="hr-tag-name">Tag not recognised</h1>
+      <h1 className="hr-tag-name">Tag not recognized</h1>
       <p className="hr-tag-sub">{detail}</p>
       <Link to="/hats" className="btn btn-outline-primary">Browse hats</Link>
     </div>

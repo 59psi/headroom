@@ -24,7 +24,7 @@ make the printed label and the URL disagree for no benefit.
 **Tags point at `/t/...`, not at the real page.** One level of indirection that
 costs nothing today and cannot be added later. `/cases/AH-01` is a routing
 detail of the current SPA; `/t/c/AH-01` is a promise. If the route table is
-ever reorganised, the landing route absorbs it and forty stickers keep working.
+ever reorganized, the landing route absorbs it and forty stickers keep working.
 """
 
 from __future__ import annotations

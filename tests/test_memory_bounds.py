@@ -67,7 +67,7 @@ class _ConcurrencyProbe:
         return output_path.with_suffix(".png")
 
 
-async def test_inference_is_serialised_across_all_callers(monkeypatch, tmp_path):
+async def test_inference_is_serialized_across_all_callers(monkeypatch, tmp_path):
     """Both workers reach this function and nothing else stops them colliding.
 
     A 179MB model plus a full-resolution decode, twice at once, on a 1GB Pi is

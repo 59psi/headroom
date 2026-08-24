@@ -166,7 +166,7 @@ async def query_listings(params: dict) -> list[dict]:
 
 # Marketplace condition vocabulary -> the app's three conditions.
 # Anything not listed (good, fair, and whatever gets added later) is worn:
-# an unrecognised condition is certainly not new, and guessing "new" would
+# an unrecognized condition is certainly not new, and guessing "new" would
 # quietly inflate every valuation that used it.
 _CONDITION_MAP: dict[str, str] = {
     "new_with_tags": "new_with_tags",
@@ -198,7 +198,7 @@ def _listing_facts(li: dict) -> tuple[str, float, str | None, str | None] | None
     return (
         attrs.get("title", ""),
         amount / 100,
-        # A condition that is STATED but unrecognised falls to "worn": the
+        # A condition that is STATED but unrecognized falls to "worn": the
         # marketplace's two "new" grades are the ones enumerated above, so a
         # value outside that set is some flavour of used. Defaulting the other
         # way would let a vocabulary addition quietly inflate valuations.

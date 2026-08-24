@@ -97,7 +97,7 @@ async def test_upload_keeps_the_original_and_makes_a_thumbnail(client, fake_cuto
 
 
 async def test_recut_requires_an_original(client):
-    """Hats analysed before originals were kept must say so, not fail obscurely."""
+    """Hats analyzed before originals were kept must say so, not fail obscurely."""
     created = await client.post(
         "/api/hats", json={"condition": "new", "size": "classic", "style": "eagle"}
     )

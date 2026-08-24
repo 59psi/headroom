@@ -78,7 +78,7 @@ export function AnalysisQueueCard() {
         {data?.current_job && (
           <div className="mb-3">
             <div className="d-flex justify-content-between align-items-baseline mb-1">
-              <span>Re-analysing all hats</span>
+              <span>Re-analyzing all hats</span>
               <span className="font-mono small">
                 {data.current_job.done} / {data.current_job.total}
               </span>
@@ -129,7 +129,7 @@ export function AnalysisQueueCard() {
 
             {backlog === 0 && (
               <div className="text-secondary small mb-3">
-                Nothing waiting — every hat with a photo has been analysed.
+                Nothing waiting — every hat with a photo has been analyzed.
               </div>
             )}
 
@@ -172,7 +172,7 @@ export function AnalysisQueueCard() {
             alone", ON by default) mapped to a filter for Claude-priced hats.
             It spared nothing — a Manual price is protected unconditionally —
             and after 2.27 moved most hats onto the retail table it silently
-            cut the run to a fraction, under a button reading "Re-analyse
+            cut the run to a fraction, under a button reading "Re-analyze
             every hat". */}
         <p className="text-secondary small mb-2">
           Covers every hat with a photo. Prices you entered by hand are kept —
@@ -184,7 +184,7 @@ export function AnalysisQueueCard() {
             type="button"
             className="btn btn-outline-primary w-100"
             onClick={() => setConfirming(true)}
-          >Re-analyse every hat</button>
+          >Re-analyze every hat</button>
         ) : (
           <div className="alert alert-warning mb-0">
             <div className="mb-2">
@@ -198,7 +198,7 @@ export function AnalysisQueueCard() {
                 className="btn btn-primary"
                 disabled={rerun.isPending}
                 onClick={() => rerun.mutate()}
-              >{rerun.isPending ? 'Queueing…' : 'Yes, re-analyse'}</button>
+              >{rerun.isPending ? 'Queueing…' : 'Yes, re-analyze'}</button>
               <button
                 type="button"
                 className="btn btn-outline-secondary"

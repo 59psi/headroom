@@ -121,7 +121,7 @@ async def test_the_rsync_argv_never_preserves_owner():
     """A NAS maps its own users and this container is uid 1000.
 
     Asking to preserve owner/group either errors or fills the log with
-    warnings about an identity the destination was never going to honour.
+    warnings about an identity the destination was never going to honor.
     """
     for name in ("rsync", "synology"):
         argv = backup_service.UPLOAD_PROVIDERS[name].argv
@@ -283,16 +283,23 @@ async def test_every_provider_ships_setup_steps(client):
         assert p["destination_hint"], f"{p['name']} has no destination shape"
 
 
-async def test_the_status_reports_whether_the_binary_is_actually_present(client):
+async def test_the_status_reports_whether_the_binary_is_actually_present(client, monkeypatch):
     """None of these binaries are in the base image.
 
     Reporting it is the difference between a card that says "configured" while
     every upload fails, and one that names the missing piece.
     """
+    # Asserting the type only proved pydantic works. Drive the real lookup to
+    # both answers and check each one actually reaches the payload — otherwise
+    # a hardcoded `True` would pass, and a card reading "configured" while
+    # every upload fails is the exact thing this field exists to prevent.
+    monkeypatch.setattr(backup_service, "binary_available", lambda _b: False)
     body = (await client.get("/api/admin/backups/upload")).json()
+    assert all(p["binary_available"] is False for p in body["available_providers"])
 
-    for p in body["available_providers"]:
-        assert isinstance(p["binary_available"], bool)
+    monkeypatch.setattr(backup_service, "binary_available", lambda _b: True)
+    body = (await client.get("/api/admin/backups/upload")).json()
+    assert all(p["binary_available"] is True for p in body["available_providers"])
 
 
 async def test_setting_a_destination_round_trips(client):

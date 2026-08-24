@@ -186,7 +186,7 @@ export function getAnalysisQueue() {
   return apiFetch<AnalysisQueueStatus>('/api/admin/analysis/queue');
 }
 
-/** Re-analyse every hat with a photo. Manual prices are protected server-side,
+/** Re-analyze every hat with a photo. Manual prices are protected server-side,
  *  so there is nothing to opt out of. */
 export function reanalyzeAll() {
   return apiFetch<{ queued: number; worker_alive: boolean; job: AnalysisJobRead | null }>(

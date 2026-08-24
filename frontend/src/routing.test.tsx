@@ -3,7 +3,7 @@
  *
  * Added with the react-router v7 -> v8 upgrade. v8's breaking changes are
  * concentrated in framework mode (loaders, middleware, RSC, `meta`), none of
- * which this app uses — it is declarative mode only. This pins the behaviour
+ * which this app uses — it is declarative mode only. This pins the behavior
  * it *does* rely on so "the breaking changes don't apply to us" is a checked
  * claim rather than an assumption.
  *

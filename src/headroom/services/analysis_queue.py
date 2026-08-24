@@ -9,7 +9,7 @@ signal to the browser, which reads as a hang.
 
 Now the route saves the photo, marks the hat `analysis_status='pending'`, and
 hands the id to this queue. One worker drains it — the same single-consumer
-shape as `import_service`, and for the same reason: rembg and Claude serialise
+shape as `import_service`, and for the same reason: rembg and Claude serialize
 anyway, so extra workers buy nothing and multiply the failure modes.
 
 Deliberately mirrors `import_service`'s durability rules, because the failure
@@ -106,7 +106,7 @@ async def _process_hat(hat_id: int) -> None:
         # reset the hat to 'pending' and re-queued it — so committing now would
         # write this run's stale photo_path and analysis over theirs, and the
         # re-queued run would then bail on the `!= PENDING` guard above. The new
-        # photo would be orphaned on disk and never analysed. Read the committed
+        # photo would be orphaned on disk and never analyzed. Read the committed
         # row through a second session, because this one holds the pending write.
         if await _photo_replaced_since(hat_id, photo_at_start):
             logger.info(
@@ -121,7 +121,7 @@ async def _process_hat(hat_id: int) -> None:
 
 
 async def _photo_replaced_since(hat_id: int, photo_path: str | None) -> bool:
-    """True if the hat's committed photo is no longer the one we analysed.
+    """True if the hat's committed photo is no longer the one we analyzed.
 
     Also true when the hat was deleted mid-run, which wants the same handling:
     throw the result away.

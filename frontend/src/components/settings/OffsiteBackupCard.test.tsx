@@ -33,7 +33,7 @@ const PROVIDERS = [
   aProvider({
     name: 'rsync', label: 'rsync over SSH', destination_hint: 'user@host:/path',
     example: 'pi@nas.local:/volume1/backups/headroom', binary: 'rsync',
-    setup: ['Create an SSH key.', 'Authorise it on the destination.'],
+    setup: ['Create an SSH key.', 'Authorize it on the destination.'],
   }),
   aProvider({
     name: 'synology', label: 'Synology NAS (rsync service)',

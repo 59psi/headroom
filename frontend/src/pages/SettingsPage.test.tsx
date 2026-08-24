@@ -22,7 +22,7 @@ vi.mock('../api/settings', () => ({
     enabled: true, advertising: true, hostname: 'headroom.local', port: 8000,
     ip: '192.168.1.20', url: 'http://headroom.local:8000',
   })),
-  // Mock the real payload shape: pydantic serialises every field, including
+  // Mock the real payload shape: pydantic serializes every field, including
   // the ones with defaults, so a partial literal here would be a fiction the
   // component is never handed in production.
   getTlsStatus: vi.fn(async () => ({
@@ -38,7 +38,7 @@ vi.mock('../api/settings', () => ({
   })),
   reanalyzeAll: vi.fn(),
   listBackups: vi.fn(async () => []),
-  // The real payload shape, defaults included — pydantic serialises every
+  // The real payload shape, defaults included — pydantic serializes every
   // field, so a mock that returns only the interesting ones type-checks and
   // then diverges from the server.
   getBackupHealth: vi.fn(async () => ({
@@ -278,7 +278,7 @@ describe('ClaudeModelCard', () => {
   });
 
   it('falls back to a custom-id box for a model it has never heard of', async () => {
-    // Models ship faster than this app does, so an unrecognised id must stay
+    // Models ship faster than this app does, so an unrecognized id must stay
     // editable rather than being silently replaced by a listed one.
     const select = await renderWithStoredModel('claude-from-the-future-9');
     expect(select.value).toBe('__other__');

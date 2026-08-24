@@ -147,7 +147,7 @@ async def test_find_comps_returns_a_deep_link_when_credentials_are_unset(client)
 
 
 async def test_find_comps_does_not_search_for_the_word_hat(client):
-    """An unanalysed hat has no brand and no model.
+    """An unanalyzed hat has no brand and no model.
 
     Searching eBay for "hat" returns a price for the concept of hats, which
     would then be written onto the row as this hat's comparable value.
@@ -170,7 +170,7 @@ async def test_a_vision_http_error_becomes_the_services_own_error(monkeypatch, t
     The pipeline catches `GoogleVisionError` specifically and carries on; a
     bare `httpx.ConnectError` would escape that handler and take the whole
     fallback analysis down — on the path whose entire job is to salvage
-    something when the primary analyser is already unavailable.
+    something when the primary analyzer is already unavailable.
     """
     photo = tmp_path / "hat.png"
     photo.write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 64)

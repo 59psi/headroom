@@ -13,7 +13,7 @@ import { useLocation, useNavigationType } from 'react-router';
  * the app mounts a plain `<BrowserRouter>` — so this is the hook version of the
  * same idea.
  *
- * POP is deliberately excluded: that is Back/Forward, where the right behaviour
+ * POP is deliberately excluded: that is Back/Forward, where the right behavior
  * is to return to where you were, not to the top. The browser's own
  * `history.scrollRestoration` handles those, and forcing a scroll would break
  * the far more common "back to the list I was halfway down".

@@ -184,7 +184,7 @@ async def test_hydro_search_matches_the_family_but_hydrolite_stays_precise(clien
 
 
 async def test_collection_can_be_set_when_adding(client):
-    """The owner knows the collection while holding the box; the analyser
+    """The owner knows the collection while holding the box; the analyzer
     cannot see it in a photo of the hat. Withholding this until the Edit form
     meant typing it twice or hoping Claude guessed."""
     hat = await _add(client, artist_series="Piña", model_name="Trenches")

@@ -149,7 +149,7 @@ async def test_the_deprecated_days_variable_is_read_as_a_count(monkeypatch):
     """An existing `.env` should keep meaning something rather than reverting.
 
     The unit changed, so the name is deprecated — but silently ignoring a
-    value someone deliberately set is worse than honouring it under its new
+    value someone deliberately set is worse than honoring it under its new
     meaning and saying so in the docs.
     """
     monkeypatch.delenv("HEADROOM_BACKUP_KEEP", raising=False)

@@ -171,7 +171,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Photo-analysis worker — drains queued single-hat uploads so the upload
     # request returns immediately. Off means the upload route runs the pipeline
-    # inline (the pre-queue behaviour), never silently skips it.
+    # inline (the pre-queue behavior), never silently skips it.
     if env_flag("HEADROOM_ANALYSIS_WORKER_ENABLED"):
         await analysis_queue.start_worker()
 

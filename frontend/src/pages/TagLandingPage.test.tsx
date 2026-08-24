@@ -76,12 +76,12 @@ describe('TagLandingPage', () => {
 
   it('explains itself when the tag names a hat that no longer exists', async () => {
     renderTag(new Error('404'));
-    expect(await screen.findByText(/tag not recognised/i)).toBeInTheDocument();
+    expect(await screen.findByText(/tag not recognized/i)).toBeInTheDocument();
   });
 
   it('does not call the API for a tag with a non-numeric id', async () => {
     renderTag(hatFixture(), 'nonsense' as unknown as number);
-    expect(await screen.findByText(/tag not recognised/i)).toBeInTheDocument();
+    expect(await screen.findByText(/tag not recognized/i)).toBeInTheDocument();
     expect(mocked.getHat).not.toHaveBeenCalled();
   });
 });

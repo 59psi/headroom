@@ -35,7 +35,7 @@
  * 4. `category` — median ask across every listing in the style category. This
  *                 is the price level of "an Odysea", not the value of this
  *                 Odysea; used only when there is nothing else, and reported
- *                 separately so a total resting on it can be recognised.
+ *                 separately so a total resting on it can be recognized.
  * 5. `none`     — nothing supports a number. Counted, never guessed at, and
  *                 never quietly treated as $0 inside an average.
  */
@@ -155,7 +155,7 @@ export function valueHat(h: HatRead): HatValuation {
   return {
     value: null,
     basis: 'none',
-    explanation: 'No price data yet — analyse the photo or enter a price to include it.',
+    explanation: 'No price data yet — analyze the photo or enter a price to include it.',
   };
 }
 

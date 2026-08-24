@@ -47,7 +47,7 @@ class DuplicateGroupRead(BaseModel):
 
     `confidence` is "exact" when every identity field agrees, "likely" when the
     model and size match but the colorway doesn't — usually a twin that hasn't
-    been analysed yet, so it has no colorway to compare.
+    been analyzed yet, so it has no colorway to compare.
     """
 
     key: str

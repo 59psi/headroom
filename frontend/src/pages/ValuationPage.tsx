@@ -411,7 +411,7 @@ export function ValuationPage() {
         ) : (
           <p className="text-muted small mb-0">
             No hats have a value estimate yet. Add a Claude API key in{' '}
-            <Link to="/settings">Settings</Link> and analyse a photo, or enter
+            <Link to="/settings">Settings</Link> and analyze a photo, or enter
             prices by hand.
           </p>
         )}

@@ -20,7 +20,7 @@ describe('matchedRankLabel', () => {
   });
 
   it('calls anything past the third color an accent too', () => {
-    // Colors are capped at three by the analyser but not by the manual
+    // Colors are capped at three by the analyzer but not by the manual
     // editor, and "quaternary" is not a word anyone wants on a search result.
     expect(matchedRankLabel(4)).toBe('accent');
     expect(matchedRankLabel(9)).toBe('accent');

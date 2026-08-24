@@ -86,7 +86,7 @@ class Hat(Base):
     resale_price_scope: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     # Analysis bookkeeping
-    # What logo/wordmark the analyser actually SAW, and whose it is — kept apart
+    # What logo/wordmark the analyzer actually SAW, and whose it is — kept apart
     # from `brand` because that can be inferred from shape, colorway or a hang
     # tag with no logo in frame at all. This one answers "was a mark visible,
     # and who owns it", which is the difference between a guess and evidence.

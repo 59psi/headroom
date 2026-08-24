@@ -77,7 +77,7 @@ async def test_a_get_is_never_body_checked(anon_client, monkeypatch):
 async def test_a_rejected_password_is_not_echoed_back(anon_client):
     """Pydantic puts the offending `input` in every validation error.
 
-    FastAPI serialises that list straight into the body, so a password
+    FastAPI serializes that list straight into the body, so a password
     rejected for being too short came back in clear text — into the browser's
     network tab, and into any proxy log on the way.
     """

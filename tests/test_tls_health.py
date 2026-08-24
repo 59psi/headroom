@@ -156,7 +156,7 @@ async def test_a_healthy_certificate_is_not_flagged(front_door, tmp_path):
     # Comfortably past RENEWAL_GRACE_DAYS rather than exactly on it: a cert
     # valid for exactly the grace window trips the check microseconds later,
     # which makes the test fail for a reason that has nothing to do with the
-    # behaviour it describes.
+    # behavior it describes.
     now = datetime.now(timezone.utc)
     cert, key = _self_signed(
         "localhost", now - timedelta(hours=1), now + timedelta(days=400), tmp_path
@@ -216,6 +216,80 @@ async def test_nothing_listening_is_an_error_not_a_crash(monkeypatch):
     assert status.applicable is True
     assert status.error is not None
     assert status.not_after is None
+
+
+async def test_an_ip_san_counts_as_covering_an_ip_host(front_door, tmp_path):
+    """Since 2.49 an install can serve on a bare address.
+
+    Caddy puts it in the certificate as an `IPAddress` SAN. Checking only DNS
+    SANs found nothing and reported "doesn't cover this host, browsers will
+    refuse it" about a perfectly good certificate — a false alarm on the one
+    card people read when TLS is already confusing them.
+    """
+    import ipaddress as ipaddr
+
+    from cryptography import x509 as x
+
+    now = datetime.now(timezone.utc)
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x.Name([x.NameAttribute(NameOID.COMMON_NAME, "127.0.0.1")])
+    cert = (
+        x.CertificateBuilder()
+        .subject_name(name).issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x.random_serial_number())
+        .not_valid_before(now - timedelta(hours=1))
+        .not_valid_after(now + timedelta(days=400))
+        .add_extension(
+            x.SubjectAlternativeName([x.IPAddress(ipaddr.ip_address("127.0.0.1"))]),
+            critical=False,
+        )
+        .sign(key, hashes.SHA256())
+    )
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    cert_path, key_path = tmp_path / "c.pem", tmp_path / "k.pem"
+    cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    key_path.write_bytes(key.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ))
+    front_door(cert_path, key_path, host="127.0.0.1")
+
+    status = tls_health.check_certificate()
+
+    assert status.hostname_ok is True, "an IP SAN must cover the IP it is served on"
+
+
+async def test_a_dns_only_certificate_does_not_cover_an_ip_host(front_door, tmp_path):
+    """The other direction, so the fix isn't just "always true"."""
+    now = datetime.now(timezone.utc)
+    cert, key = _self_signed(
+        "headroom.local", now - timedelta(hours=1), now + timedelta(days=400), tmp_path
+    )
+    front_door(cert, key, host="127.0.0.1")
+
+    assert tls_health.check_certificate().hostname_ok is False
+
+
+async def test_every_dataclass_field_survives_into_the_schema():
+    """`TlsStatusRead(**asdict(status))` drops unknown keys SILENTLY.
+
+    Pydantic's default is `extra='ignore'`, so adding a field to `TlsStatus`
+    and forgetting the schema loses it with no error anywhere — the API just
+    stops reporting something. Same class of failure the Hat-column DDL test
+    exists for.
+    """
+    import dataclasses
+
+    from headroom.schemas.settings import TlsStatusRead
+
+    dataclass_fields = {f.name for f in dataclasses.fields(tls_health.TlsStatus)}
+    schema_fields = set(TlsStatusRead.model_fields)
+
+    assert dataclass_fields == schema_fields, (
+        "TlsStatus and TlsStatusRead have drifted; the extra dataclass fields "
+        "are silently dropped by the API"
+    )
 
 
 # ---- the Safari ceiling ------------------------------------------------ #

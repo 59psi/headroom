@@ -324,7 +324,7 @@ async def test_it_widens_rather_than_answering_from_one_listing(monkeypatch):
 
 
 async def test_an_unknown_marketplace_condition_counts_as_worn(monkeypatch):
-    """An unrecognised condition is certainly not new. Guessing "new" would
+    """An unrecognized condition is certainly not new. Guessing "new" would
     quietly inflate every valuation that used it."""
     from headroom.services.melin_recap import fetch_resale_stats
 
@@ -339,7 +339,7 @@ async def test_an_unknown_marketplace_condition_counts_as_worn(monkeypatch):
 
 
 async def test_no_condition_given_still_works(monkeypatch):
-    """Back-compat: a caller that states no condition gets the old behaviour."""
+    """Back-compat: a caller that states no condition gets the old behavior."""
     from headroom.services.melin_recap import fetch_resale_stats
 
     _stub_query(monkeypatch, [

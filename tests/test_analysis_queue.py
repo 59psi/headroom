@@ -147,7 +147,7 @@ async def test_boot_recovery_requeues_hats_stranded_pending(client, monkeypatch)
     hat = (await client.post(
         "/api/hats", json={"condition": "new", "size": "classic", "style": "a_game"}
     )).json()
-    # Simulate the pre-crash state: photo saved, marked pending, never analysed.
+    # Simulate the pre-crash state: photo saved, marked pending, never analyzed.
     await client.put(f"/api/hats/{hat['id']}", json={})
     from headroom.models.hat import Hat
     async with test_session_factory() as db:

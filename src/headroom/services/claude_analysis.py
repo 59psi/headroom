@@ -309,7 +309,7 @@ def _owner_context(
     gel-welded logo and a sweatband, none of which reliably survive a front-on
     shot, so an unguided guess is close to a coin toss.
 
-    Construction was previously not sent at all. The analyser could not
+    Construction was previously not sent at all. The analyzer could not
     contradict the stored value (the pipeline stopped applying it), but it
     still folded its own guess into `model_name` — so a hat the owner recorded
     as Thermal came back named "A-Game HYDROLite", which reads as the app
@@ -318,7 +318,7 @@ def _owner_context(
     `known_series` is different in kind: not ground truth about THIS hat, but
     what the collection already contains. It is sent because a series name is
     not something a photo reliably shows — a collab is often identifiable only
-    by a small woven label or an embroidery style — so an analyser recalling
+    by a small woven label or an embroidery style — so an analyzer recalling
     them unaided misses most of them, and the ones it does catch come back in
     whatever spelling it chose. Passing the names the owner has already
     curated turns recall into recognition and pins the spelling.
@@ -402,7 +402,7 @@ async def analyze_hat_image(
     the analysis identifies a variant *within* them rather than proposing a
     rival answer. `known_series` are the collaboration/artist-series names the
     collection already uses, sent so a series the owner has already named
-    elsewhere is recognised rather than recalled, and comes back in the
+    elsewhere is recognized rather than recalled, and comes back in the
     spelling already on record. Raises ClaudeAnalysisError on any recoverable failure (auth,
     parse, etc.).
     """

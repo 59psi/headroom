@@ -170,7 +170,7 @@ async def test_the_rank_penalty_is_a_distance_budget_not_just_a_tiebreak(
 ):
     """The same swatch is a match as a hat's main color and not as its accent.
 
-    #a04a80 is 14.3 from the target — a recognisably different pink. On the
+    #a04a80 is 14.3 from the target — a recognizably different pink. On the
     hat that IS that color, that is close enough to answer "show me the pink
     ones". As a logo on an otherwise green hat it is neither the color asked
     for nor even a match for it, and returning it is how the list filled up
@@ -213,7 +213,7 @@ async def test_a_grey_hat_is_never_a_purple_hat(client, db_session):
     blue-grey hat surfacing for teal is a fair answer — teal IS a desaturated
     blue-green and those are its real neighbours — where a charcoal hat
     surfacing for purple never was. Claiming otherwise here would be asserting
-    a behaviour the rule does not have and should not.
+    a behavior the rule does not have and should not.
     """
     for hexv in ("#6b7078", "#4a4f55", "#3a3f45", "#5a6472", "#6b7a8c"):
         await _set_colors(db_session, await _hat(client), [("grey", "gray", hexv)])

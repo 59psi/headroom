@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import shutil
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -136,9 +135,10 @@ async def _upload_status(db: AsyncSession) -> BackupUploadStatus:
                 setup=list(p.setup),
                 secret_env=p.secret_env,
                 binary=p.binary,
-                # Resolved per request rather than cached: the binary arrives by
-                # a bind mount, so it can appear or vanish between restarts
-                # without anything in this process changing.
+                # Resolved per request rather than cached. rclone arrives by a
+                # bind mount, so it can appear or vanish between restarts
+                # without anything in this process changing; rsync and ssh ship
+                # in the image and only change when it is rebuilt.
                 binary_available=backup_service.provider_binary_available(p.name) or False,
             )
             for p in sorted(backup_service.UPLOAD_PROVIDERS.values(), key=lambda p: p.label)
@@ -168,11 +168,9 @@ async def set_backup_upload(
 ):
     from fastapi import HTTPException  # noqa: PLC0415
 
-    if data.provider not in backup_service.UPLOAD_PROVIDERS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unknown provider. Available: {sorted(backup_service.UPLOAD_PROVIDERS)}",
-        )
+    # No membership check here: `validate_destination` already rejects an
+    # unknown provider with the same message, and stating it twice is two
+    # places for the wording — and the list of providers — to drift apart.
     try:
         destination = backup_service.validate_destination(data.destination, data.provider)
     except ValueError as exc:
@@ -226,13 +224,15 @@ async def test_backup_upload(db: AsyncSession = Depends(get_db)):
     # is a true statement about argv[0] that reads as a problem with the
     # destination, and the fix — mount the binary, use the matching compose
     # overlay — is nowhere in that message.
-    if shutil.which(argv[0]) is None:
+    if not backup_service.binary_available(argv[0]):
         return BackupUploadTestResult(
             ok=False,
             detail=(
                 f"'{argv[0]}' is not available inside the container, so no upload "
-                "can run. See the setup steps for this provider — it arrives by a "
-                "bind mount from the matching docker-compose overlay."
+                "can run. rsync and ssh ship in the image, so a missing one means "
+                "the image predates 2.46 — rebuild. rclone is bind-mounted, so a "
+                "missing one means docker-compose.backup-rclone.yml is not in "
+                "your compose command."
             ),
         )
 

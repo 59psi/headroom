@@ -79,7 +79,7 @@ async def test_there_is_no_case_photo_route(client):
     # is, it matches this path for GET — so an unmatched POST becomes "method
     # not allowed" instead of "not found". A dev box that has run a build gets
     # 405; CI, which builds the frontend in a separate job, gets 404. Asserting
-    # either one alone pins the harness, not the behaviour.
+    # either one alone pins the harness, not the behavior.
     assert resp.status_code in (404, 405), (
         f"the case-photo upload route is back (got {resp.status_code})"
     )

@@ -6,7 +6,7 @@ holding things up. `/health/ready` carried a depth number, but that endpoint is
 a healthcheck, not a UI.
 
 Bulk re-analysis lives here because it is the thing that fills the queue: it is
-how a prompt or pricing change is applied to hats that were analysed under the
+how a prompt or pricing change is applied to hats that were analyzed under the
 old one, and watching it drain is exactly what the queue view is for.
 """
 
@@ -86,7 +86,7 @@ async def reanalyze_all(db: AsyncSession = Depends(get_db)):
     """Re-run analysis for every hat that has a photo.
 
     The reason this exists is retroactive correction: the pricing anchors added
-    in 2.8.0 only affect hats analysed *after* them, so without this a
+    in 2.8.0 only affect hats analyzed *after* them, so without this a
     collection keeps whatever estimates it was given under the old prompt.
 
     Cheap enough to be worth it — background removal is skipped for a stored

@@ -65,7 +65,7 @@ async def test_put_colors_derives_general_color_from_hex_when_left_blank(client)
     )
     assert resp.status_code == 200, resp.text
     color = resp.json()["colors"][0]
-    # Nothing to honour, so the hex decides — keeps the value on the palette
+    # Nothing to honor, so the hex decides — keeps the value on the palette
     # vocabulary the color-chip search matches against.
     assert color["general_color"] == normalize_hex_name("#ff0000", "heather slate")
 

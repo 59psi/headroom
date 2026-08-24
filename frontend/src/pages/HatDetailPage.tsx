@@ -277,7 +277,7 @@ export function HatDetailPage() {
                   </button>
                 )}
                 {/* Only offered when there is an original to cut from. Hats
-                    analysed before originals were retained have none, and the
+                    analyzed before originals were retained have none, and the
                     stored cutout can never be re-segmented — doing so eats the
                     alpha and trims the bill a little more each pass. */}
                 {data.original_path && (

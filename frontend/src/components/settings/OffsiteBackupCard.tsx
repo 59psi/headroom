@@ -79,7 +79,7 @@ export function OffsiteBackupCard() {
                 </p>
                 {/* Configured but the binary is missing is the failure mode that
                     otherwise only shows up as an upload that silently never
-                    runs. Worth its own line, in the colour of a problem. */}
+                    runs. Worth its own line, in the color of a problem. */}
                 {s.binary_available === false && (
                   <p className="small mb-1" style={pink}>
                     That provider&rsquo;s command isn&rsquo;t available inside the

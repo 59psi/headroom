@@ -146,7 +146,7 @@ async def test_normalize_size_maps_order_line_spellings():
     # Not a hat size — travel cases ship as "One Size".
     assert normalize_size("One Size") is None
     assert normalize_size(None) is None
-    # An unrecognised spelling must return None, not a guess: a wrong size
+    # An unrecognized spelling must return None, not a guess: a wrong size
     # actively BLOCKS the correct match, where None merely fails to sharpen it.
     assert normalize_size("Toddler") is None
 

@@ -78,7 +78,7 @@ Upload → resized/HEIC-converted → **the request returns straight away**. The
 slow part — background removal (the hat becomes a transparent PNG floating on
 the synthwave canvas), Claude identification, then pricing — is handed to a
 background worker, so you can keep adding hats while earlier ones are still
-analysing. The hat page polls until the analysis reaches a final state.
+analyzing. The hat page polls until the analysis reaches a final state.
 
 The status pill on the hat page tells you where a hat is:
 
@@ -114,8 +114,8 @@ directly on the Add Hat or Edit Hat form. Valuation lists the hats still
 missing a price so the gap is visible rather than assumed.
 
 **Import order matters.** Matching sets a hat's price *and* fills its
-colorway, and a hat that hasn't been analysed yet will accept any colorway
-of the right model and size. So add and analyse your hats *first*, then
+colorway, and a hat that hasn't been analyzed yet will accept any colorway
+of the right model and size. So add and analyze your hats *first*, then
 import once — otherwise a purchase can attach to a stand-in hat and stamp the
 wrong colorway on it. Add `?dry_run=true` to the import to see every proposed
 match without writing anything.
@@ -220,7 +220,7 @@ model when known), and **where it lives** ("📍 Case A-012 · Office"):
   model, colorway, size — never on the photos, since two shots of one hat look
   different and two different hats in one colorway look the same. **exact**
   means everything matches; **likely** means same model and size with a
-  colorway missing on one side, which is what an unanalysed twin looks like.
+  colorway missing on one side, which is what an unanalyzed twin looks like.
   Two hats naming *different* colorways are never grouped. Nothing is deleted
   — open a hat and dispose of it, or leave it if you really do own two.
 - **Search by color** — tap a palette swatch (or pick any color with the
@@ -334,7 +334,7 @@ Every hat has a **Your notes** box on its page: where you got it, who you wore
 it with, why you kept it.
 
 It is the one free-text field on a hat that **nothing automatic ever writes**.
-Re-analysing a hat rewrites its colors, model name and design notes; it never
+Re-analyzing a hat rewrites its colors, model name and design notes; it never
 touches this. Notes travel with the hat into the zip export above.
 
 ---
