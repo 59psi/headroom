@@ -59,6 +59,15 @@ services:
     command: caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
     environment:
       HEADROOM_MDNS_HOSTNAME: "${HEADROOM_MDNS_HOSTNAME:-headroom}"
+      # Defaults to the mDNS name alone. Add the LAN IP (or a VPN hostname) to
+      # reach it from anywhere `.local` cannot resolve — over Teleport,
+      # Tailscale, WireGuard, or a different subnet:
+      #
+      #   HEADROOM_SITE_ADDRESSES="headroom.local, 10.0.111.4"
+      #
+      # Caddy then serves that address AND puts it in the certificate, signed
+      # by the same root, so already-trusting devices need no reinstall.
+      HEADROOM_SITE_ADDRESSES: "${HEADROOM_SITE_ADDRESSES:-${HEADROOM_MDNS_HOSTNAME:-headroom}.local}"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

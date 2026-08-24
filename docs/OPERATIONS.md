@@ -104,6 +104,7 @@ fleet-default, the UI is the per-install override.
 | `HEADROOM_MDNS_HOSTNAME` | `headroom` | mDNS host label — the app resolves as `<label>.local` |
 | `HEADROOM_MDNS_PORT` | `8000` | Port the mDNS advertisement points at |
 | `HEADROOM_MDNS_INTERFACE` | _(detected LAN IP)_ | Which interface the responder binds. Defaults to the detected LAN address so a host-net container doesn't leak onto `docker0`/`veth`; an IP pins a specific NIC, `all` restores zeroconf's all-interfaces mode |
+| `HEADROOM_SITE_ADDRESSES` | `<HEADROOM_MDNS_HOSTNAME>.local` | **LAN HTTPS overlay only.** Comma-separated list of every name and address Caddy answers on, and every name that goes in the certificate. Add the LAN IP or a VPN hostname to reach it where `.local` can't resolve — `"headroom.local, 10.0.111.4"`. Caddy rejects a TLS connection whose SNI matches nothing here, so an address not listed fails the handshake outright. Passkeys still only work on `HEADROOM_ORIGIN` |
 
 ---
 

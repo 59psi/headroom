@@ -6,6 +6,74 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.49.0] — 2026-08-23
+
+The LAN HTTPS front door can answer on more than the `.local` name, so the app
+is reachable over a VPN instead of looking like it is down.
+
+### Fixed
+- **Over Teleport the app was unreachable in a way that read as an outage, and
+  the server was fine the whole time.** Three separate causes stacked up, each
+  of which alone is enough to break it:
+
+  1. **`headroom.local` is mDNS, and mDNS is link-local multicast.** It cannot
+     cross a VPN, a tunnel, or a routed subnet. Over Teleport the name simply
+     does not resolve, and there is nothing to fix in DNS because no DNS is
+     involved — no server holds that record, and no forwarder can be pointed at
+     one.
+  2. **Connecting by IP failed the TLS handshake outright.** Caddy rejects a
+     connection whose SNI matches no configured site, and only
+     `headroom.local` was configured. The measurement that separates the two:
+     `curl --resolve headroom.local:443:10.0.111.4 https://headroom.local/`
+     returns **HTTP 200**, while `curl https://10.0.111.4/` returns **HTTP
+     000** — no response at all — even with `-k`. The IP was always routable;
+     it just was not a site.
+  3. **Even had it matched, the certificate would not have.** It carries
+     `DNS:headroom.local` and no IP SAN, so the name check fails. `-k` hides
+     that one and nothing else.
+
+  What turned this from "does not work" into "the server is down" is Caddy's
+  automatic HTTP→HTTPS redirect: `http://10.0.111.4/` answers with a **308 to
+  `https://10.0.111.4/`**, which is precisely the address that cannot complete
+  a handshake. The one URL a person tries when HTTPS is failing hands them back
+  the URL that fails.
+
+  The site address list is now **configurable** —
+  `HEADROOM_SITE_ADDRESSES`, comma-separated — and defaults to
+  `{HEADROOM_MDNS_HOSTNAME}.local`, so existing installs are byte-identical to
+  what they served before. Adding the LAN IP (or a Tailscale/WireGuard name)
+  makes Caddy serve it *and* puts it in the certificate as an IP SAN signed by
+  **the same root**, so devices that already trust the CA trust the new address
+  with no reinstall and no second profile:
+
+  ```bash
+  HEADROOM_SITE_ADDRESSES="headroom.local, 10.0.111.4" \
+    docker compose -f docker-compose.yml -f docker-compose.https-lan.yml up -d
+  ```
+
+  **Passkeys still only work on the origin in `HEADROOM_ORIGIN`.** WebAuthn
+  credentials are bound to an origin, so one registered at
+  `https://headroom.local` is not offered at `https://10.0.111.4`. That is
+  WebAuthn working correctly, not a misconfiguration, and it is not something
+  a certificate can fix. Password login works on both.
+
+  **There is also a zero-config remote path that needed none of this:**
+  `http://<ip>:8000` reaches uvicorn directly, bypassing Caddy entirely — SPA,
+  assets and API all answer 200 over the VPN today. It is plain HTTP, so it is
+  not a secure context and passkeys are unavailable there either; it is the
+  fallback worth knowing about when the front door is the thing being
+  diagnosed.
+
+### Added
+- `HEADROOM_SITE_ADDRESSES` documented in the operations environment table and
+  in the README's HTTPS section, with a troubleshooting entry for the exact
+  presentation — *works on the LAN, dead over the VPN* — since the symptom
+  points at the server and the cause is name resolution.
+- A test asserting the Caddyfile's site line is env-driven and still defaults
+  to a `.local` name. It sits beside the lifetime tests and reads the Caddyfile
+  for the same reason they do: a constant in this repo would agree with itself
+  while the deployed configuration said something else.
+
 ## [2.48.0] — 2026-08-24
 
 The LAN HTTPS certificate now lasts 820 days instead of twelve hours.

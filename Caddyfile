@@ -34,7 +34,32 @@
 	}
 }
 
-{$HEADROOM_MDNS_HOSTNAME:headroom}.local {
+# Every name and address this server answers on, comma-separated.
+#
+# Defaults to just `headroom.local`, which is enough on the LAN and nowhere
+# else: `.local` is mDNS, and mDNS is link-local multicast that cannot cross a
+# VPN, a tunnel, or a routed subnet. Reach the box through Teleport, Tailscale
+# or WireGuard and the name simply does not resolve — there is nothing to fix
+# in DNS, because no DNS is involved.
+#
+# The IP is not a fallback either, for two compounding reasons. Caddy rejects
+# the TLS handshake outright when the SNI matches no site here, and even if it
+# did not, the certificate carries `DNS:headroom.local` and no IP SAN, so the
+# name check fails. Worse, Caddy's automatic HTTP->HTTPS redirect sends
+# `http://<ip>/` to `https://<ip>/`, which is precisely the address that cannot
+# work — a dead end that looks like the server is down.
+#
+# Adding the address here fixes all of it at once: it becomes a site Caddy
+# serves, and Caddy puts it in the certificate as an IP SAN signed by the same
+# root, so devices that already trust the CA trust it immediately.
+#
+#   HEADROOM_SITE_ADDRESSES="headroom.local, 10.0.111.4"
+#
+# Passkeys still only work on the name in HEADROOM_ORIGIN. WebAuthn credentials
+# are bound to an origin, so one registered at https://headroom.local is not
+# offered at https://10.0.111.4 — that is WebAuthn working correctly, not a
+# misconfiguration. Password login works on both.
+{$HEADROOM_SITE_ADDRESSES:headroom.local} {
 	# `issuer internal { ... }`, not `tls internal { ... }` — the latter is
 	# shorthand that accepts no options, and Caddy rejects `lifetime` inside it.
 	tls {
