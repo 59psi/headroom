@@ -80,16 +80,19 @@ describe('TrustCertCard', () => {
   });
 
   it('warns before expiry too, because renewal stopping is the real signal', async () => {
-    // These live twelve hours and renew themselves. Hours remaining means
-    // renewal has stopped, not that expiry is merely approaching.
+    // Certificates here are issued for 820 days (see ./Caddyfile) and Caddy
+    // renews at a third of that remaining, so being inside the grace window
+    // means renewal has stopped — not that expiry is merely approaching. The
+    // warning has to name the real number of days: "expires within hours" was
+    // true of the old twelve-hour certificates and is now off by a month.
     mocked.apiFetch.mockResolvedValue('cert');
     tlsApi.getTlsStatus.mockResolvedValue(
-      tls({ expired: false, needs_attention: true, days_remaining: 0.2 }),
+      tls({ expired: false, needs_attention: true, days_remaining: 11.4 }),
     );
 
     renderWithProviders(<TrustCertCard />);
 
-    expect(await screen.findByText(/expires within hours/i)).toBeInTheDocument();
+    expect(await screen.findByText(/expires in 11 days/i)).toBeInTheDocument();
   });
 
   it('flags a certificate that does not cover the name it is served under', async () => {

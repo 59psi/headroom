@@ -34,10 +34,15 @@ from cryptography.hazmat.primitives import hashes
 
 logger = logging.getLogger(__name__)
 
-#: Warn this far ahead. Caddy's internal leaf certificates live twelve hours
-#: and renew continuously, so anything inside a day means renewal has stopped
-#: rather than that expiry is merely approaching.
-RENEWAL_GRACE_DAYS = 2
+#: Warn this far ahead.
+#:
+#: Tuned to the 820-day certificates this deployment now issues (see
+#: ./Caddyfile), not to Caddy's twelve-hour default. Under that default a
+#: two-day warning was generous; against an 820-day cert it would fire two days
+#: before an outage, which is a fire alarm that rings as the roof falls in.
+#: Thirty days is enough notice to act without the warning becoming background
+#: noise, and it still catches a stalled renewal long before anything breaks.
+RENEWAL_GRACE_DAYS = 30
 
 DEFAULT_TIMEOUT = 5.0
 

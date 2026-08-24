@@ -14,10 +14,12 @@ performed the handshake at all, and a mocked handshake tests the wrong half.
 
 from __future__ import annotations
 
+import re
 import socket
 import ssl
 import threading
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 from cryptography import x509
@@ -151,9 +153,13 @@ async def test_an_expired_certificate_is_reported(front_door, tmp_path):
 
 
 async def test_a_healthy_certificate_is_not_flagged(front_door, tmp_path):
+    # Comfortably past RENEWAL_GRACE_DAYS rather than exactly on it: a cert
+    # valid for exactly the grace window trips the check microseconds later,
+    # which makes the test fail for a reason that has nothing to do with the
+    # behaviour it describes.
     now = datetime.now(timezone.utc)
     cert, key = _self_signed(
-        "localhost", now - timedelta(hours=1), now + timedelta(days=30), tmp_path
+        "localhost", now - timedelta(hours=1), now + timedelta(days=400), tmp_path
     )
     front_door(cert, key)
 
@@ -162,20 +168,16 @@ async def test_a_healthy_certificate_is_not_flagged(front_door, tmp_path):
     assert status.expired is False
     assert status.needs_attention is False
     assert status.hostname_ok is True
-    assert status.days_remaining is not None and status.days_remaining > 29
+    assert status.days_remaining is not None and status.days_remaining > 399
 
 
 async def test_a_certificate_about_to_expire_is_flagged_before_it_does(
     front_door, tmp_path
 ):
-    """Caddy's internal leaves live 12 hours and renew continuously.
-
-    Inside the grace window means renewal has STOPPED, not that expiry is
-    merely approaching — which is why the threshold is days, not weeks.
-    """
+    """Warn with time left to act, not as the outage starts."""
     now = datetime.now(timezone.utc)
     cert, key = _self_signed(
-        "localhost", now - timedelta(hours=1), now + timedelta(hours=6), tmp_path
+        "localhost", now - timedelta(hours=1), now + timedelta(days=3), tmp_path
     )
     front_door(cert, key)
 
@@ -214,6 +216,77 @@ async def test_nothing_listening_is_an_error_not_a_crash(monkeypatch):
     assert status.applicable is True
     assert status.error is not None
     assert status.not_after is None
+
+
+# ---- the Safari ceiling ------------------------------------------------ #
+#
+# These read the Caddyfile rather than a constant in this repo's Python,
+# because the Caddyfile is what Caddy actually issues from. A constant here
+# would agree with itself while the deployed lifetime said something else.
+
+
+#: Safari's limit for a server certificate under a USER-ADDED root. The
+#: widely-quoted 398 days is a different rule covering only Apple's
+#: preinstalled roots. Verified by binary search: 825 accepted, 826 rejected.
+SAFARI_MAX_VALIDITY_DAYS = 825
+
+#: Caddy's default root lifetime, which this repo does not change.
+CADDY_ROOT_LIFETIME_DAYS = 3600
+
+#: Caddy's default `renewal_window_ratio`: an issued certificate's lifetime
+#: must be under this share of its issuer's, or the CA refuses to start.
+RENEWAL_WINDOW_RATIO = 1 / 3
+
+CADDYFILE = Path(__file__).resolve().parent.parent / "Caddyfile"
+
+
+def _caddyfile_days(directive: str) -> int:
+    """Read `<directive> <N>d` out of the Caddyfile.
+
+    `^\\s*lifetime` deliberately will not match `intermediate_lifetime` — the
+    leading anchor means the two directives read independently.
+    """
+    pattern = rf"^\s*{directive}\s+(\d+)d\s*$"
+    match = re.search(pattern, CADDYFILE.read_text(), re.MULTILINE)
+    assert match, f"no `{directive} <N>d` in the Caddyfile — did the blocks change?"
+    return int(match.group(1))
+
+
+async def test_the_caddyfile_leaf_lifetime_is_under_the_safari_ceiling():
+    """The one that breaks iPhones and nothing else.
+
+    Safari rejects a TLS server certificate whose validity exceeds 825 days,
+    even when it chains to a manually installed root.
+
+    Chrome and Firefox impose no limit here at all, which is precisely the
+    trap: raising this to "10 years" because a laptop is happy produces a
+    setup that fails on every iPhone in the house, with a certificate error
+    that looks like the trust store rather than the lifetime.
+    """
+    days = _caddyfile_days("lifetime")
+
+    assert days < SAFARI_MAX_VALIDITY_DAYS, (
+        f"leaf lifetime {days}d exceeds Safari's {SAFARI_MAX_VALIDITY_DAYS}-day "
+        "limit — this works in Chrome and fails on every iPhone"
+    )
+
+
+async def test_the_intermediate_outlives_the_leaf_by_caddys_required_margin():
+    """Caddy refuses to start if this is wrong, so catch it here instead.
+
+    Getting it wrong is invisible until a deploy, where it presents as a
+    sidecar that will not come up rather than as a bad number in a file.
+    """
+    leaf = _caddyfile_days("lifetime")
+    intermediate = _caddyfile_days("intermediate_lifetime")
+
+    assert leaf < intermediate * RENEWAL_WINDOW_RATIO, (
+        f"leaf {leaf}d needs an intermediate over {leaf * 3}d; it is {intermediate}d"
+    )
+    assert intermediate < CADDY_ROOT_LIFETIME_DAYS, (
+        f"intermediate {intermediate}d must stay under the "
+        f"{CADDY_ROOT_LIFETIME_DAYS}d root"
+    )
 
 
 # ---- the endpoint ------------------------------------------------------ #
