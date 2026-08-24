@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from headroom.config import env_flag, settings
-from headroom.database import async_session, init_db
+from headroom.database import async_session, checkpoint_wal, init_db
 from headroom.routes import api_router
 from headroom.utils.paths import safe_join
 from headroom.services import (
@@ -269,6 +269,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             import_service.stop_worker,
             analysis_queue.stop_worker,
             mdns_service.stop_mdns,
+            # LAST, deliberately: the workers above still commit as they wind
+            # down, so checkpointing before them would leave exactly the writes
+            # made during shutdown sitting in the WAL — the ones a power cut
+            # immediately after a `compose down` would find.
+            checkpoint_wal,
         ):
             try:
                 await stop()

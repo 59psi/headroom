@@ -27,7 +27,12 @@ export function OffsiteBackupCard() {
   const qc = useQueryClient();
   const status = useQuery({ queryKey: ['admin', 'backup-upload'], queryFn: getBackupUpload });
   const [destination, setDestination] = useState('');
-  const [provider, setProvider] = useState('rclone');
+  // NOT initialised to a literal. Hardcoding 'rclone' meant that after
+  // configuring Synology, reopening Settings showed rclone selected and
+  // rclone's setup steps — so the instructions for the provider actually in
+  // use were in the payload but unreachable, which reads as "the instructions
+  // are gone". `null` means "follow whatever is saved" until a choice is made.
+  const [picked, setPicked] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tested, setTested] = useState<{ ok: boolean; detail: string } | null>(null);
   const [showSetup, setShowSetup] = useState(false);
@@ -49,6 +54,9 @@ export function OffsiteBackupCard() {
 
   const s = status.data;
   const providers = s?.available_providers ?? [];
+  // Saved provider wins until the user picks another, so the steps on screen
+  // always describe the transport that is actually configured.
+  const provider = picked ?? s?.provider ?? 'rclone';
   const chosen = providers.find(p => p.name === provider);
   const pink = { color: 'var(--neon-pink, #ff4fa3)' };
 
@@ -122,7 +130,7 @@ export function OffsiteBackupCard() {
               aria-label="Upload provider"
               className="form-control mb-2"
               value={provider}
-              onChange={e => { setProvider(e.target.value); setError(null); }}
+              onChange={e => { setPicked(e.target.value); setError(null); }}
             >
               {providers.map(p => (
                 <option key={p.name} value={p.name}>{p.label}</option>

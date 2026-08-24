@@ -6,6 +6,66 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.52.0] — 2026-08-24
+
+### Fixed
+- **SQLite committed transactions were not durable.** `PRAGMA synchronous` was
+  `NORMAL` — SQLite's own recommendation for WAL, and safe from *corruption*,
+  which is what most guidance means by "safe". It is not safe from *loss*: the
+  WAL is synced at a checkpoint rather than at commit, so a committed
+  transaction "might roll back following a power loss", and the default
+  1000-page threshold means what is at risk is **every write since the last
+  checkpoint**, not the last one.
+
+  This is not theoretical here. An unclean shutdown on the deployment destroyed
+  Caddy's stored private key and a lock file on the same SD card — written,
+  never fsynced, gone — and broke HTTPS for 37 days. The database sits on that
+  card, under the same power, with durability switched off.
+
+  Now `FULL`, which fsyncs the WAL on every commit. It costs one fsync per
+  commit; for a personal inventory doing a handful of writes per interaction
+  that is not a close call. `HEADROOM_SQLITE_SYNCHRONOUS` overrides it, and
+  anything outside the whitelist falls back to `FULL` rather than through —
+  the value is spliced into a PRAGMA, which cannot take a bound parameter, so
+  a typo must not quietly disable durability. `checkpoint_wal()` also truncates
+  the WAL on graceful shutdown, and runs **last**, because the workers above it
+  still commit as they stop.
+
+- **The off-site backup card showed the wrong provider's instructions.** The
+  dropdown was `useState('rclone')`, hardcoded and never synced to the saved
+  provider — so after configuring Synology, reopening Settings showed *rclone*
+  selected with *rclone's* setup steps. The Synology instructions were in the
+  payload but unreachable, which reads exactly like they had been removed.
+
+- **Purchase matching missed over half of what it could match.** Model names
+  had to be string-equal, and that fails structurally: a hat's `model_name`
+  comes from Claude Vision reading a **photo**, which cannot show the sub-line,
+  so it lands on the generic family (`odysea hydro`, `trenches thermal`,
+  `a-game hydro`). The order email states the full product (`Odysea Packable
+  Hydro`, `Trenches Icon Infinite Thermal`, `A-Game Icon Hydro`). None of those
+  meet under equality.
+
+  A hat now also matches when its model tokens are a **subset** of the
+  purchase's — the photo saw less than the receipt knew, which is the expected
+  relationship. Scored well below an exact hit, so an exact candidate always
+  wins and this only picks up hats nothing better claimed. The direction is
+  deliberately asymmetric: a hat named *more* specifically than the receipt
+  does not match, because that would let one generic line claim any specific
+  hat in the family.
+
+  Measured against a real 294-unit order history: **matched units went 41 → 142
+  (19% → 66% of hat units)**, unmatched 253 → 152 — of which 78 are travel
+  cases that correctly never match a hat.
+
+### Added
+- **The app enumerates rsync modules instead of telling you to.** An
+  `@ERROR: Unknown module` failure now lists what the daemon actually offers,
+  because DSM derives modules from your shared folders and the real list is
+  install-specific — it cannot be documented, only discovered. Anonymous, since
+  module listing precedes authentication.
+
+**775 backend + 181 frontend tests pass.**
+
 ## [2.51.0] — 2026-08-23
 
 Reported from a real NAS: `@ERROR: Unknown module 'NetBackup'`. The setup steps

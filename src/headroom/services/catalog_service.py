@@ -481,6 +481,58 @@ def _looks_like_headwear(purchase: Purchase, hats: list[Hat]) -> bool:
     return (purchase.model_name or "").lower() in known_models or bool(purchase.size)
 
 
+#: Exact model-name agreement.
+MODEL_EXACT = 8
+#: The hat's model name is a token-SUBSET of the purchase's. Weaker, and
+#: deliberately below every exact match, but a real signal.
+MODEL_CONTAINED = 2
+
+
+def _model_tokens(name: str | None) -> frozenset[str]:
+    """Model name as a bag of comparable words.
+
+    Hyphens split because "A-Game" and "a game" are the same product line, and
+    a bare "-" is dropped so "Trenches Thermal - Camo" tokenizes like
+    "Trenches Thermal Camo".
+    """
+    raw = (name or "").lower().replace("-", " ")
+    return frozenset(t for t in raw.split() if t)
+
+
+def _model_tier(hat_model: str | None, purchase_model: str) -> int | None:
+    """How well two model names agree, or None if they don't.
+
+    Exact equality is not enough, and the reason is structural rather than a
+    data-quality accident. A hat's `model_name` comes from Claude Vision
+    reading a PHOTO, which cannot show the sub-line — so it lands on the
+    generic family: "odysea hydro", "trenches thermal", "a-game hydro". The
+    order email states the full product: "Odysea Packable Hydro", "Trenches
+    Icon Infinite Thermal", "A-Game Icon Hydro". Under string equality none of
+    those meet, and on this collection that was ~120 purchase units — over half
+    the genuinely matchable ones — silently left with no cost basis.
+
+    So a hat also matches when its tokens are a SUBSET of the purchase's: the
+    photo saw less than the receipt knew, which is exactly the expected
+    relationship. It scores far below an exact hit, so an exact candidate
+    always wins and this only ever picks up hats nothing better claimed.
+
+    The subset direction matters and is not symmetric. A hat named MORE
+    specifically than the purchase ("Trenches Icon Mill Pinya" vs a receipt
+    reading "Trenches Icon") would mean the photo knew something the receipt
+    did not, which does not happen — and allowing it would let one generic
+    receipt line claim any specific hat in the family.
+    """
+    hat_tokens = _model_tokens(hat_model)
+    purchase_tokens = _model_tokens(purchase_model)
+    if not hat_tokens or not purchase_tokens:
+        return None
+    if hat_tokens == purchase_tokens:
+        return MODEL_EXACT
+    if hat_tokens < purchase_tokens:
+        return MODEL_CONTAINED
+    return None
+
+
 def _match_score(purchase: Purchase, hat: Hat) -> int | None:
     """How well one hat fits one purchase. Higher is better; None = no match.
 
@@ -494,10 +546,12 @@ def _match_score(purchase: Purchase, hat: Hat) -> int | None:
     """
     if not purchase.model_name:
         return None
-    if (hat.model_name or "").lower() != purchase.model_name.lower():
+
+    tier = _model_tier(hat.model_name, purchase.model_name)
+    if tier is None:
         return None
 
-    score = 1
+    score = tier
 
     pc = (purchase.colorway or "").lower()
     hc = (hat.colorway or "").lower()
