@@ -271,6 +271,35 @@ async def test_the_caddyfile_leaf_lifetime_is_under_the_safari_ceiling():
     )
 
 
+async def test_the_site_addresses_are_env_driven_and_default_to_the_local_name():
+    """Reachability off the LAN is a config value, not a hardcoded name.
+
+    `.local` is mDNS — link-local multicast — so it does not resolve over a
+    VPN, a tunnel, or a routed subnet. Connecting by IP instead fails the
+    handshake outright, because Caddy rejects an SNI matching no site here,
+    and the certificate has no IP SAN even if it did. Listing the address
+    fixes both at once: Caddy serves it and signs it into the cert.
+
+    The default must stay a `.local` name, since changing it silently changes
+    what every existing install serves — and the addresses are also the
+    certificate's SANs, so a wrong default is a certificate error, not a 404.
+    """
+    site_line = re.search(
+        r"^\{\$HEADROOM_SITE_ADDRESSES:(?P<default>[^}]+)\} \{$",
+        CADDYFILE.read_text(),
+        re.MULTILINE,
+    )
+
+    assert site_line, (
+        "no `{$HEADROOM_SITE_ADDRESSES:<default>} {` site line in the Caddyfile "
+        "— a hardcoded address cannot be reached from off the LAN"
+    )
+    assert site_line.group("default").endswith(".local"), (
+        f"default site address is {site_line.group('default')!r}; it must stay "
+        "the mDNS name or existing installs change what they serve"
+    )
+
+
 async def test_the_intermediate_outlives_the_leaf_by_caddys_required_margin():
     """Caddy refuses to start if this is wrong, so catch it here instead.
 

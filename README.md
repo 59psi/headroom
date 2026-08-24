@@ -356,8 +356,38 @@ and no warning. The Settings page's **LAN Discovery** card shows the exact
 URL being advertised. Then add a passkey under **Settings → Account** and
 sign in with Face ID.
 
+**Reaching it from off the LAN** (Teleport, Tailscale, WireGuard, another
+subnet): `headroom.local` will not resolve out there. `.local` is mDNS, which
+is link-local multicast — no server holds that record, so there is no DNS to
+point at it. Give Caddy the address you *will* connect on:
+
+```bash
+HEADROOM_SITE_ADDRESSES="headroom.local, 10.0.111.4" \
+  docker compose -f docker-compose.yml -f docker-compose.https-lan.yml up -d
+```
+
+Caddy then serves that address **and** puts it in the certificate (an IP SAN,
+signed by the same root), so devices that already trust the CA need no
+reinstall. Without it, connecting by IP fails the handshake before the
+certificate is even considered — Caddy rejects an SNI matching no site here.
+
+Two caveats. **Passkeys still only work on the origin in `HEADROOM_ORIGIN`** —
+WebAuthn credentials are bound to an origin, so one registered at
+`https://headroom.local` isn't offered at `https://10.0.111.4`. That's WebAuthn
+working correctly; password login works on both. And if you just want in from a
+VPN with no configuration at all, **`http://<ip>:8000` already works** — that's
+uvicorn directly, bypassing Caddy. Plain HTTP, so no padlock and no passkeys.
+
 **If something's off:**
 
+- *Works on the LAN, dead over the VPN* — `headroom.local` is mDNS and mDNS
+  cannot cross a VPN, a tunnel or a routed subnet, so the name doesn't resolve
+  and nothing is wrong with the server. The IP isn't a fallback either: Caddy
+  rejects a TLS connection whose SNI matches no site, and the certificate has
+  no IP SAN. Worse, `http://<ip>/` gets a **308 redirect to `https://<ip>/`** —
+  the one address that can't work — which is what makes this look like an
+  outage. Add the address to `HEADROOM_SITE_ADDRESSES` (above), or use
+  `http://<ip>:8000` to bypass Caddy entirely.
 - *Name doesn't resolve* — Linux clients need `avahi-daemon` + `libnss-mdns`;
   everything else resolves `.local` natively. Check the LAN Discovery card
   (or `docker compose logs | grep -i mdns`) to confirm the app is advertising.
