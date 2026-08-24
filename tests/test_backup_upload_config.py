@@ -405,3 +405,53 @@ async def test_a_successful_upload_is_recorded(tmp_path):
     assert h.upload_successes == 1
     assert h.last_upload_ok is True
     assert h.last_upload_error is None
+
+
+# ---- explaining a failure whose cause is elsewhere --------------------- #
+#
+# Reported from a real NAS: `@ERROR: Unknown module 'NetBackup'`. rsync's
+# message is accurate and still leaves you stuck, because DSM has TWO rsync
+# checkboxes and only "Enable network backup service" defines modules — the
+# other is rsync over SSH. The setup steps said the wrong one.
+
+
+async def test_an_unknown_module_is_explained_not_just_relayed():
+    """Module names resolve BEFORE the password, so this is not credentials."""
+    from headroom.routes.admin.backups import _explain
+
+    out = _explain("exit 5: @ERROR: Unknown module 'NetBackup'")
+
+    assert "Unknown module" in out, "the original error must survive"
+    assert "network backup service" in out.lower()
+    assert "not a credentials problem" in out.lower()
+
+
+async def test_an_auth_failure_points_at_the_rsync_account():
+    from headroom.routes.admin.backups import _explain
+
+    out = _explain("@ERROR: auth failed on module NetBackup")
+
+    assert "separate from your DSM login" in out
+
+
+async def test_an_unrecognized_failure_is_passed_through_untouched():
+    """No hint is better than a wrong hint."""
+    from headroom.routes.admin.backups import _explain
+
+    assert _explain("some novel disaster") == "some novel disaster"
+
+
+async def test_the_synology_setup_names_the_right_checkbox():
+    """The documentation bug that produced the report.
+
+    'Enable rsync service' is SSH and defines no modules; only 'Enable network
+    backup service' creates `NetBackup`. Getting this wrong sends someone to a
+    checkbox that cannot work.
+    """
+    steps = " ".join(backup_service.UPLOAD_PROVIDERS["synology"].setup).lower()
+
+    # Must tell the operator to LOOK, not assert a module name: DSM exposes
+    # shared folders as modules, so the name varies per install.
+    assert "do not assume it" in steps
+    assert "enable network backup service" in steps
+    assert "openrsync" in steps, "macOS rsync cannot do daemon syntax"

@@ -6,6 +6,43 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.51.0] — 2026-08-23
+
+Reported from a real NAS: `@ERROR: Unknown module 'NetBackup'`. The setup steps
+were wrong, and the app relayed rsync's message without explaining it.
+
+### Fixed
+- **The Synology setup steps asserted a module name that often doesn't exist.**
+  They said to tick *"Enable rsync service"* and that DSM creates a `NetBackup`
+  shared folder. Both halves misled: that checkbox is rsync **over SSH** and
+  defines no modules at all, and `NetBackup` only exists if you separately
+  enable **network backup service** — a different checkbox on the same page.
+
+  Worse, the steps told you a module name instead of telling you to look one
+  up. DSM exposes your **shared folders** as modules, so a real install lists
+  things like `home`, `homes`, `photo`, `video`, `docker`. The name varies per
+  NAS and cannot be documented, only discovered. The steps now lead with
+  `rsync rsync://HOST/` to enumerate them.
+
+- **macOS can't run that check.** `rsync` on macOS 15+ is **openrsync**
+  (protocol 29, "rsync 2.6.9 compatible"), which does not parse
+  `user@host::module` and reports the whole string as an unresolvable hostname
+  — `could not resolve hostname backup@10.0.111.10`. That reads like a DNS or
+  NAS fault and is neither. The steps now say to use GNU rsync, and note the
+  container has 3.4.1.
+
+### Added
+- **Upload failures whose cause is somewhere else now explain themselves.**
+  Relaying rsync's own words is correct but not always enough: an operator
+  reading *"Unknown module"* has no way to know DSM has two rsync checkboxes,
+  or that module names resolve **before** the password — so it is not a
+  credentials problem, however much it looks like one. `Test now` appends
+  guidance for unknown-module, auth-failed, connection-refused and
+  permission-denied, and passes anything unrecognized through untouched,
+  because no hint beats a wrong hint.
+
+**748 backend + 180 frontend tests pass.**
+
 ## [2.50.0] — 2026-08-23
 
 A two-axis review of 2.44–2.49, and the two shipped bugs it found. Both were
