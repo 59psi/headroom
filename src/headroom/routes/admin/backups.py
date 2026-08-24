@@ -240,11 +240,53 @@ async def test_backup_upload(db: AsyncSession = Depends(get_db)):
     await backup_service._run_upload_hook(backups[0], argv=argv)
     h = backup_service.health()
     ok = h.upload_failures == before and h.last_upload_ok is True
+    if ok:
+        return BackupUploadTestResult(
+            ok=True, detail=f"Uploaded {backups[0].name} with {argv[0]}."
+        )
     return BackupUploadTestResult(
-        ok=ok,
-        detail=(
-            f"Uploaded {backups[0].name} with {argv[0]}."
-            if ok
-            else (h.last_upload_error or "Upload failed — see the container log.")
-        ),
+        ok=False,
+        detail=_explain(h.last_upload_error or "Upload failed — see the container log."),
     )
+
+
+#: Failures whose message is accurate but whose CAUSE is somewhere else, mapped
+#: to the thing to actually go and do. Relaying rsync's own words is correct but
+#: not always enough — an operator reading "Unknown module" has no way to know
+#: that DSM has two rsync checkboxes and only one of them defines modules.
+_FAILURE_HINTS: tuple[tuple[str, str], ...] = (
+    (
+        "unknown module",
+        "The daemon answered but has no module by that name. On a Synology, tick "
+        "Control Panel → File Services → rsync → **Enable network backup "
+        "service** — NOT 'Enable rsync service', which is rsync over SSH and "
+        "defines no modules. Run `rsync USER@HOST::` to list what it does offer. "
+        "Module names resolve BEFORE the password, so this is not a credentials "
+        "problem.",
+    ),
+    (
+        "auth failed",
+        "The module exists but the rsync account or password was rejected. That "
+        "account is separate from your DSM login, and the password comes from "
+        "HEADROOM_BACKUP_RSYNC_PASSWORD in the host's .env.",
+    ),
+    (
+        "connection refused",
+        "Nothing is listening on the rsync port. Check the service is enabled and "
+        "that port 873 is open on the NAS firewall.",
+    ),
+    (
+        "permission denied",
+        "Reached the destination but could not write. For rsync over SSH, check "
+        "the key is authorized and the path exists; the container runs as uid 1000.",
+    ),
+)
+
+
+def _explain(error: str) -> str:
+    """Append guidance for failures whose real cause is elsewhere."""
+    lowered = error.lower()
+    for needle, hint in _FAILURE_HINTS:
+        if needle in lowered:
+            return f"{error}\n\n{hint}"
+    return error

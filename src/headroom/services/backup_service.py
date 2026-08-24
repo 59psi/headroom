@@ -774,9 +774,16 @@ UPLOAD_PROVIDERS: dict[str, UploadProvider] = {
         # deliberately never stored, logged, or returned by the API.
         secret_env="HEADROOM_BACKUP_RSYNC_PASSWORD",  # noqa: S106
         setup=(
-            "On the NAS: Control Panel → File Services → rsync → "
-            "**Enable rsync service**. DSM creates the `NetBackup` shared "
-            "folder when you do.",
+            "**Find your module name first — do not assume it.** Run "
+            "`rsync rsync://HOST/` (GNU rsync, e.g. from inside this "
+            "container) to list what the daemon offers. DSM exposes your "
+            "SHARED FOLDERS as modules, so a real NAS lists things like "
+            "`home`, `homes`, `photo`, `video`, `docker` — the name varies per "
+            "install. Guessing gives `@ERROR: Unknown module '…'`.",
+            "`NetBackup` exists only if you tick Control Panel → File "
+            "Services → rsync → **Enable network backup service**, which is a "
+            "DIFFERENT checkbox from 'Enable rsync service'. Either enable it, "
+            "or point at a shared folder you already have.",
             "Control Panel → File Services → rsync → rsync Account: add an "
             "account and password. This is a separate rsync account, not your "
             "DSM login.",
@@ -784,8 +791,12 @@ UPLOAD_PROVIDERS: dict[str, UploadProvider] = {
             "On the Pi, put that account's password in `.env` as "
             "`HEADROOM_BACKUP_RSYNC_PASSWORD=…` and restart the stack. It is "
             "read from the host environment and never stored by Headroom.",
+            "Note for macOS: `rsync` there is **openrsync** (protocol 29), "
+            "which does not parse `user@host::module` and reports the whole "
+            "thing as an unresolvable hostname. Use GNU rsync — the one in "
+            "this container is 3.4.1.",
             "Destination above uses TWO colons — `user@host::NetBackup/folder` "
-            "— which is what selects the rsync service rather than SSH.",
+            "— which is what selects the network backup service rather than SSH.",
         ),
     ),
 }
