@@ -33,8 +33,12 @@ COPY frontend/package.json frontend/package-lock.json* ./
 # `--prefer-offline` makes it use those cached tarballs instead of revalidating
 # each one against the registry, which is most of the remaining wall time on a
 # link like that.
+# `--no-audit --no-fund` drop two registry round trips whose output nobody
+# reads during a deploy. `--ignore-scripts` is deliberately NOT here: rolldown
+# and esbuild fetch their platform binary in a postinstall, so skipping scripts
+# produces a build that fails later and further away.
 RUN --mount=type=cache,target=/root/.npm \
-    npm ci --prefer-offline
+    npm ci --prefer-offline --no-audit --no-fund
 COPY frontend/ ./
 # .git never enters the build context, so the footer's build SHA must be
 # injected via this arg (empty → footer hides it).
@@ -80,12 +84,29 @@ ENV UV_LINK_MODE=copy \
 # so the image would build without the supply-chain protection we advertise.
 COPY --from=ghcr.io/astral-sh/uv:0.12.1 /uv /usr/local/bin/uv
 WORKDIR /app
-COPY pyproject.toml uv.lock* ./
-# --frozen only, no fallback: a lock/manifest mismatch must FAIL the release
-# build, not silently resolve fresh unpinned versions (S12). Run `uv lock`
-# and commit uv.lock if this errors.
+# Dependencies install from a VERSION-FREE export of the lock, and that is the
+# single biggest thing in this file.
+#
+# Measured on the Pi this deploys to: a release rebuild took 873s, and 490s of
+# it was reinstalling dependencies that had not changed. Cutting a release
+# edits the `version` field in pyproject.toml — which is the file that used to
+# gate this step — so `COPY pyproject.toml` busted every time, `uv sync` re-ran
+# (237s), and the rembg model layer below it fell with it (149s). The cache
+# mount meant nothing was re-DOWNLOADED, but uv still unpacked and
+# bytecode-compiled thousands of files onto an SD card.
+#
+# `requirements.txt` is `uv export --no-emit-project` — the same locked,
+# hash-pinned set, with the project itself (and therefore its version) left
+# out. It is byte-identical across a version bump, so this layer now survives
+# one. `tests/test_requirements_export.py` fails if it drifts from uv.lock.
+#
+# --require-hashes keeps the supply-chain guarantee `--frozen` gave here: every
+# artifact must match the digest recorded in the lock, so a compromised mirror
+# cannot substitute one.
+COPY requirements.txt ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-install-project --no-dev
+    uv venv /opt/venv \
+ && uv pip install --python /opt/venv --require-hashes -r requirements.txt
 
 # Before COPY src on purpose: this only needs rembg (installed above), so
 # keeping it here means a source edit doesn't re-download ~40s of ONNX weights.
@@ -127,6 +148,12 @@ from rembg import new_session; new_session('${REMBG_MODEL}')" \
       && echo "rembg model ${REMBG_MODEL} cached into the image" ; } \
  || echo "WARNING: could not pre-cache the rembg model — the app will download it on first use"
 
+# The project itself, last: this is the layer that SHOULD bust on every
+# release, and it is cheap (measured 6.5s) because the venv above already
+# satisfies the lock. --frozen only, no fallback: a lock/manifest mismatch must
+# FAIL the release build, not silently resolve fresh unpinned versions (S12).
+# Run `uv lock` and commit uv.lock if this errors.
+COPY pyproject.toml uv.lock* ./
 COPY src ./src
 COPY README.md ./
 RUN --mount=type=cache,target=/root/.cache/uv \
