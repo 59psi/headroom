@@ -17,11 +17,14 @@ from __future__ import annotations
 import asyncio
 
 import logging
+from collections.abc import Sequence
 from datetime import datetime, timezone
+from functools import lru_cache
 
 from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from headroom.models.catalog import ColorwayEntry, Purchase
 from headroom.models.hat import Hat
@@ -379,7 +382,9 @@ async def preview_import(db: AsyncSession, items: list[dict]) -> dict:
     memory and never added to the session.
     """
     hats = (
-        (await db.execute(select(Hat).where(Hat.disposed_at.is_(None))))
+        (await db.execute(
+            select(Hat).options(selectinload(Hat.colors)).where(Hat.disposed_at.is_(None))
+        ))
         .scalars().all()
     )
     claimed = {
@@ -421,7 +426,7 @@ async def preview_import(db: AsyncSession, items: list[dict]) -> dict:
             would_import.append(transient)
 
     proposals: list[dict] = []
-    for purchase in would_import:
+    for purchase in _by_scarcity(would_import, [h for h in hats if h.id not in claimed]):
         candidates = [
             (score, hat)
             for hat in hats
@@ -481,6 +486,79 @@ def _looks_like_headwear(purchase: Purchase, hats: list[Hat]) -> bool:
     return (purchase.model_name or "").lower() in known_models or bool(purchase.size)
 
 
+#: Exact model-name agreement.
+MODEL_EXACT = 8
+#: The hat's model name is a token-SUBSET of the purchase's. Weaker, and
+#: deliberately below every exact match, but a real signal.
+MODEL_CONTAINED = 2
+
+
+@lru_cache(maxsize=4096)
+def _model_tokens(name: str | None) -> frozenset[str]:
+    """Model name as a bag of comparable words.
+
+    Hyphens split because "A-Game" and "a game" are the same product line, and
+    a bare "-" is dropped so "Trenches Thermal - Camo" tokenizes like
+    "Trenches Thermal Camo".
+
+    Cached because matching is quadratic — every purchase is scored against
+    every free hat, twice (once to rank scarcity, once to assign) — over a
+    vocabulary of a few hundred distinct strings. Pure function of its
+    argument, so the cache can only ever return what it would have computed.
+    """
+    raw = (name or "").lower().replace("-", " ")
+    return frozenset(t for t in raw.split() if t)
+
+
+def _color_words(hat: Hat) -> frozenset[str]:
+    """Color words the analyzer read off this hat's own photo.
+
+    Every hat has these (the cutout's dominant colors), where only the matched
+    ones have a `colorway`. They break ties that nothing else can: two
+    otherwise identical Trenches Icon Hydros, one black and one white, against
+    receipts that name the colorway.
+    """
+    words: set[str] = set()
+    for c in hat.colors or []:
+        words |= set(_model_tokens(c.general_color))
+        words |= set(_model_tokens(c.color_name))
+    return frozenset(words)
+
+
+def _model_tier(hat_model: str | None, purchase_model: str) -> int | None:
+    """How well two model names agree, or None if they don't.
+
+    Exact equality is not enough, and the reason is structural rather than a
+    data-quality accident. A hat's `model_name` comes from Claude Vision
+    reading a PHOTO, which cannot show the sub-line — so it lands on the
+    generic family: "odysea hydro", "trenches thermal", "a-game hydro". The
+    order email states the full product: "Odysea Packable Hydro", "Trenches
+    Icon Infinite Thermal", "A-Game Icon Hydro". Under string equality none of
+    those meet, and on this collection that was ~120 purchase units — over half
+    the genuinely matchable ones — silently left with no cost basis.
+
+    So a hat also matches when its tokens are a SUBSET of the purchase's: the
+    photo saw less than the receipt knew, which is exactly the expected
+    relationship. It scores far below an exact hit, so an exact candidate
+    always wins and this only ever picks up hats nothing better claimed.
+
+    The subset direction matters and is not symmetric. A hat named MORE
+    specifically than the purchase ("Trenches Icon Mill Pinya" vs a receipt
+    reading "Trenches Icon") would mean the photo knew something the receipt
+    did not, which does not happen — and allowing it would let one generic
+    receipt line claim any specific hat in the family.
+    """
+    hat_tokens = _model_tokens(hat_model)
+    purchase_tokens = _model_tokens(purchase_model)
+    if not hat_tokens or not purchase_tokens:
+        return None
+    if hat_tokens == purchase_tokens:
+        return MODEL_EXACT
+    if hat_tokens < purchase_tokens:
+        return MODEL_CONTAINED
+    return None
+
+
 def _match_score(purchase: Purchase, hat: Hat) -> int | None:
     """How well one hat fits one purchase. Higher is better; None = no match.
 
@@ -494,10 +572,40 @@ def _match_score(purchase: Purchase, hat: Hat) -> int | None:
     """
     if not purchase.model_name:
         return None
-    if (hat.model_name or "").lower() != purchase.model_name.lower():
-        return None
 
-    score = 1
+    # MODEL is the gate, and only the model. Everything else scores.
+    #
+    # Making series and construction part of the gate was tried and was worse:
+    # a hat recorded as series "CAMO" against a receipt reading "Trenches Icon
+    # Hydro - Camo" has its series word in the COLORWAY half of the title, not
+    # the model half, so requiring containment threw the hat out entirely.
+    # Widening the gate to the whole title would then let any Trenches hat
+    # claim any Trenches line. Gate narrow, score wide.
+    tier = _model_tier(hat.model_name, purchase.model_name)
+    if tier is None:
+        return None
+    score = tier
+
+    # Owner-stated fields — typed in by the person who owns the hat, and so the
+    # most reliable thing on the record. Matched against the WHOLE title,
+    # because melin puts the series in either half ("Trenches Links Hydro" vs
+    # "Trenches Icon Hydro - Camo"). A bonus, never a veto: 102 hats have no
+    # series recorded at all, and absence is not disagreement.
+    title_tokens = _model_tokens(purchase.item_title)
+    for stated in (hat.artist_series, hat.construction):
+        tokens = _model_tokens(stated)
+        if tokens and tokens <= title_tokens:
+            score += 5
+
+    # The colorway the receipt states, against the colors read off this hat's
+    # own photo. Every hat has these, where only matched ones have a colorway,
+    # so this is the one tiebreaker available on an unmatched shelf. Bonus
+    # only: the analyzer names a dominant color ("brown"), melin names a
+    # product colorway ("Bone Brown"), and plenty of pairs are both true
+    # without sharing a word.
+    pcw = _model_tokens(purchase.colorway)
+    if pcw and (pcw & _color_words(hat)):
+        score += 3
 
     pc = (purchase.colorway or "").lower()
     hc = (hat.colorway or "").lower()
@@ -515,6 +623,36 @@ def _match_score(purchase: Purchase, hat: Hat) -> int | None:
     return score
 
 
+def _by_scarcity(purchases: Sequence[Purchase], available: Sequence[Hat]) -> list[Purchase]:
+    """Purchases with the fewest possible hats first.
+
+    Assignment is greedy — each purchase takes the best hat still free — so the
+    ORDER decides what a later purchase has left. In file order, a line with
+    fifty candidates can take the one hat that the next line's only candidate
+    was; that line then matches nothing, though a different order satisfies
+    both. On this collection 196 of 216 hat units had at least one candidate
+    while only 143 matched, and the shortfall was almost entirely hats claimed
+    out from under a purchase with no alternative.
+
+    Serving the scarcest first is the standard heuristic for that. It costs one
+    extra scoring pass, changes nothing about what COUNTS as a match, and stays
+    deterministic because Python's sort is stable, so equal counts keep their
+    original order.
+
+    Shared by the importer and `preview_import` for the same reason `_line_fields`
+    is: a preview that ordered differently from the import would under-report
+    the matches the import then makes, and be wrong in the one direction nobody
+    checks. Keyed on `id(p)` rather than `p.id` — the preview scores TRANSIENT
+    Purchase rows whose primary key is still None, so `p.id` would collide them
+    all onto a single bucket.
+    """
+    counts = {
+        id(p): sum(1 for h in available if _match_score(p, h) is not None)
+        for p in purchases
+    }
+    return sorted(purchases, key=lambda p: counts[id(p)])
+
+
 async def match_purchases_to_hats(db: AsyncSession, *, dry_run: bool = False) -> dict:
     """Link unmatched purchases to hats and set the hat's cost basis.
 
@@ -528,13 +666,17 @@ async def match_purchases_to_hats(db: AsyncSession, *, dry_run: bool = False) ->
         .scalars().all()
     )
     hats = (
-        (await db.execute(select(Hat).where(Hat.disposed_at.is_(None))))
+        (await db.execute(
+            select(Hat).options(selectinload(Hat.colors)).where(Hat.disposed_at.is_(None))
+        ))
         .scalars().all()
     )
     linked_hat_ids = {
         p.hat_id for p in
         (await db.execute(select(Purchase).where(Purchase.hat_id.is_not(None)))).scalars().all()
     }
+
+    purchases = _by_scarcity(purchases, [h for h in hats if h.id not in linked_hat_ids])
 
     matched = 0
     proposals: list[dict] = []

@@ -6,6 +6,106 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.52.0] — 2026-08-24
+
+### Fixed
+- **SQLite committed transactions were not durable.** `PRAGMA synchronous` was
+  `NORMAL` — SQLite's own recommendation for WAL, and safe from *corruption*,
+  which is what most guidance means by "safe". It is not safe from *loss*: the
+  WAL is synced at a checkpoint rather than at commit, so a committed
+  transaction "might roll back following a power loss", and the default
+  1000-page threshold means what is at risk is **every write since the last
+  checkpoint**, not the last one.
+
+  This is not theoretical here. An unclean shutdown on the deployment destroyed
+  Caddy's stored private key and a lock file on the same SD card — written,
+  never fsynced, gone — and broke HTTPS for 37 days. The database sits on that
+  card, under the same power, with durability switched off.
+
+  Now `FULL`, which fsyncs the WAL on every commit. It costs one fsync per
+  commit; for a personal inventory doing a handful of writes per interaction
+  that is not a close call. `HEADROOM_SQLITE_SYNCHRONOUS` overrides it, and
+  anything outside the whitelist falls back to `FULL` rather than through —
+  the value is spliced into a PRAGMA, which cannot take a bound parameter, so
+  a typo must not quietly disable durability. `checkpoint_wal()` also truncates
+  the WAL on graceful shutdown, and runs **last**, because the workers above it
+  still commit as they stop.
+
+- **The off-site backup card showed the wrong provider's instructions.** The
+  dropdown was `useState('rclone')`, hardcoded and never synced to the saved
+  provider — so after configuring Synology, reopening Settings showed *rclone*
+  selected with *rclone's* setup steps. The Synology instructions were in the
+  payload but unreachable, which reads exactly like they had been removed.
+
+- **Purchase matching missed over half of what it could match.** Model names
+  had to be string-equal, and that fails structurally: a hat's `model_name`
+  comes from Claude Vision reading a **photo**, which cannot show the sub-line,
+  so it lands on the generic family (`odysea hydro`, `trenches thermal`,
+  `a-game hydro`). The order email states the full product (`Odysea Packable
+  Hydro`, `Trenches Icon Infinite Thermal`, `A-Game Icon Hydro`). None of those
+  meet under equality.
+
+  A hat now also matches when its model tokens are a **subset** of the
+  purchase's — the photo saw less than the receipt knew, which is the expected
+  relationship. Scored well below an exact hit, so an exact candidate always
+  wins and this only picks up hats nothing better claimed. The direction is
+  deliberately asymmetric: a hat named *more* specifically than the receipt
+  does not match, because that would let one generic line claim any specific
+  hat in the family.
+
+  Two further signals, both scored rather than gating. **Owner-stated fields**
+  — `artist_series` and `construction` are typed in by the person who owns the
+  hat, making them the most reliable columns on the record, and matching on
+  `model_name` alone threw them away. They are compared against the *whole*
+  title, because melin puts the series in either half (`Trenches Links Hydro`
+  but `Trenches Icon Hydro - Camo`). And the **colors the analyzer read off the
+  hat's own photo**, against the colorway the receipt names — every hat has
+  those, where only matched hats have a `colorway`, so it is the one tiebreaker
+  available on an unmatched shelf.
+
+  Both are bonuses and never vetoes: 102 hats have no series recorded, and
+  absence is not disagreement. Putting them in the *gate* was tried and was
+  measurably worse (143 → 105), because a hat whose series is `CAMO` meets a
+  receipt reading `Trenches Icon Hydro - Camo` with that word in the colorway
+  half, and containment threw the hat out.
+
+  **Assignment order turned out to matter more than any of the scoring.**
+  Matching is greedy — each purchase takes the best hat still free — so in file
+  order a line with fifty candidates can take the one hat that the next line's
+  only candidate was. Purchases are now served **most-constrained first**,
+  which is one extra scoring pass and changes nothing about what counts as a
+  match. `preview_import` shares that ordering, or the preview would
+  under-report the matches the import then makes.
+
+  Measured against a real 294-unit order history: **matched units went 41 → 144
+  (19% → 68% of hat units)**. That 144 is not a tuning result — it is the
+  **maximum possible**, confirmed by computing the maximum bipartite matching
+  over every pair the rules allow. Greedy now achieves the optimum, so no
+  further scoring or ordering change can improve it. The remaining unmatched
+  units are contention, not a defect: 73 `Trenches Icon Hydro` purchases
+  contend for 36 such hats, and 78 lines are travel cases that correctly never
+  match a hat. The ceiling moves when more hats are catalogued, not when the
+  matcher is tuned.
+
+### Added
+- **Purchase history can be imported from Settings.** There was no UI path at
+  all — the endpoint existed and could only be reached with a hand-rolled HTTP
+  call, so an order history sat unusable unless someone opened a terminal.
+  Settings → Data → Purchase History now takes a JSON file, and **previews
+  before it writes**: how many lines are new, how many are already on record,
+  how many would match a hat, and how many are ambiguous. Nothing is written
+  until the preview is confirmed, because importing runs the matcher, which
+  writes colorways and cost bases onto hats. **Unlink all** is beside it, since
+  that is the only undo.
+
+- **The app enumerates rsync modules instead of telling you to.** An
+  `@ERROR: Unknown module` failure now lists what the daemon actually offers,
+  because DSM derives modules from your shared folders and the real list is
+  install-specific — it cannot be documented, only discovered. Anonymous, since
+  module listing precedes authentication.
+
+**775 backend + 187 frontend tests pass.**
+
 ## [2.51.0] — 2026-08-23
 
 Reported from a real NAS: `@ERROR: Unknown module 'NetBackup'`. The setup steps

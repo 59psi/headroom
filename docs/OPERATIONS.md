@@ -93,6 +93,7 @@ fleet-default, the UI is the per-install override.
 | `HEADROOM_BACKUP_ENABLED` | `true` | Scheduled backups on/off (on-demand download always works) |
 | `HEADROOM_BACKUP_INTERVAL_HOURS` | `24` | Scheduled backup cadence |
 | `HEADROOM_BACKUP_KEEP` | `5` | Keep the newest N local scheduled backups (a **count**; `HEADROOM_BACKUP_RETENTION_DAYS` is still read, as a count, for existing `.env` files) |
+| `HEADROOM_SQLITE_SYNCHRONOUS` | `FULL` | SQLite durability. **`FULL` fsyncs the WAL on every commit** — committed means committed, even through a power cut. Was `NORMAL`, which is SQLite's own WAL recommendation and safe from *corruption* but **not from loss**: under `NORMAL` the WAL syncs at a checkpoint rather than at commit, so a committed transaction "might roll back following a power loss", and the default 1000-page threshold means what is at risk is every write since the last checkpoint. `FULL` costs one fsync per commit — negligible for this workload, and the reason the default changed after an unclean shutdown destroyed files on the deployment's SD card. Accepts `FULL`/`EXTRA`/`NORMAL`/`OFF`; anything else logs a warning and falls back to `FULL` |
 | `HEADROOM_MAX_BODY_BYTES` | `2097152` | Non-multipart request bodies over this are refused with 413 |
 | `HEADROOM_DISK_MIN_FREE_MB` | `500` | `/health/ready` fails below this — the container goes unhealthy |
 | `HEADROOM_DISK_WARN_PCT` | `15` | Warn in the log below this share of the volume |

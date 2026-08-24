@@ -1,4 +1,5 @@
 import logging
+import os
 from collections.abc import AsyncGenerator
 
 from sqlalchemy import event, inspect, text
@@ -13,6 +14,54 @@ engine = create_async_engine(settings.database_url, echo=False)
 async_session = async_sessionmaker(engine, expire_on_commit=False)
 
 
+#: The only values allowed to reach `PRAGMA synchronous=`.
+#:
+#: A whitelist rather than a validated string, because a PRAGMA cannot take a
+#: bound parameter — the value is interpolated into SQL, so it must come from a
+#: closed set rather than from anything a person can type.
+SYNCHRONOUS_MODES = ("FULL", "EXTRA", "NORMAL", "OFF")
+
+DEFAULT_SYNCHRONOUS = "FULL"
+
+
+def sqlite_synchronous() -> str:
+    """The `synchronous` mode to apply, defaulting to the durable one.
+
+    Anything unrecognized falls back to the default instead of being passed
+    through: a typo in an env var must not silently turn durability off.
+    """
+    raw = os.environ.get("HEADROOM_SQLITE_SYNCHRONOUS", "").strip().upper()
+    if raw in SYNCHRONOUS_MODES:
+        return raw
+    if raw:
+        logger.warning(
+            "Ignoring HEADROOM_SQLITE_SYNCHRONOUS=%r — not one of %s; using %s",
+            raw, ", ".join(SYNCHRONOUS_MODES), DEFAULT_SYNCHRONOUS,
+        )
+    return DEFAULT_SYNCHRONOUS
+
+
+async def checkpoint_wal() -> None:
+    """Fold the WAL back into the main database file.
+
+    Called on graceful shutdown. `synchronous=FULL` already makes each commit
+    durable, so this is not about losing transactions — it is about what a
+    later power cut finds on disk. A truncated WAL means the next boot has
+    nothing to replay, which is one fewer moving part in exactly the situation
+    that started all of this.
+
+    Best-effort: a failure here must not turn a clean shutdown into a crash.
+    """
+    if engine.dialect.name != "sqlite":
+        return
+    try:
+        async with engine.begin() as conn:
+            await conn.exec_driver_sql("PRAGMA wal_checkpoint(TRUNCATE)")
+        logger.info("WAL checkpointed on shutdown")
+    except Exception as exc:  # noqa: BLE001 — never break shutdown
+        logger.warning("WAL checkpoint on shutdown failed: %s", exc)
+
+
 if engine.dialect.name == "sqlite":
 
     @event.listens_for(engine.sync_engine, "connect")
@@ -23,12 +72,40 @@ if engine.dialect.name == "sqlite":
         wait out a lock instead of raising 'database is locked' immediately —
         directly shrinking the transient-lock error class that could otherwise
         surface on the import worker and background loops.
+
+        **`synchronous=FULL`, and that is a deliberate reversal.** This was
+        `NORMAL` — SQLite's own recommendation for WAL, and the setting most
+        guides suggest. Under `NORMAL` the WAL is *not* fsynced when a
+        transaction commits; it is synced at a checkpoint. SQLite's
+        documentation is explicit that this is safe from corruption but not
+        from loss: a transaction committed under `NORMAL` "might roll back
+        following a power loss". The default checkpoint threshold is 1000
+        pages, so what is at risk is not the last write — it is every write
+        since the last checkpoint.
+
+        This deployment established that the risk is not theoretical. An
+        unclean shutdown destroyed Caddy's stored private key and a lock file
+        on the same SD card — written, never synced, gone — which broke HTTPS
+        for 37 days. The database sits on that card, under the same power, with
+        durability switched off. "The database is never corrupted" is small
+        comfort when the missing rows are the hats you photographed that
+        afternoon.
+
+        `FULL` costs one fsync per commit. That is the right trade here and it
+        is not close: this is a personal inventory doing a handful of writes
+        per interaction, not a write-heavy service. The worst case is bulk
+        import at one commit per photo — a hundred extra fsyncs, once.
+
+        `HEADROOM_SQLITE_SYNCHRONOUS` overrides it for anyone whose hardware
+        makes that trade differently, but the default is durable.
         """
         cur = dbapi_conn.cursor()
         try:
             cur.execute("PRAGMA journal_mode=WAL")
             cur.execute("PRAGMA busy_timeout=5000")
-            cur.execute("PRAGMA synchronous=NORMAL")
+            # Whitelisted, not interpolated: this reaches a PRAGMA, which
+            # cannot take a bound parameter.
+            cur.execute(f"PRAGMA synchronous={sqlite_synchronous()}")
         finally:
             cur.close()
 

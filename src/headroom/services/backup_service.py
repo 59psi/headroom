@@ -805,6 +805,40 @@ UPLOAD_PROVIDER_KEY = "backup_upload_provider"
 UPLOAD_DESTINATION_KEY = "backup_upload_destination"
 
 
+async def list_rsync_modules(destination: str, timeout: float = 10.0) -> list[str]:
+    """Module names the rsync daemon behind `destination` actually offers.
+
+    Exists because "Unknown module 'NetBackup'" is a dead end on its own. DSM
+    derives modules from your SHARED FOLDERS, so the real list is
+    install-specific and cannot be documented — only discovered. Telling an
+    operator to go and run `rsync HOST::` themselves is a poor substitute for
+    this container, which already has GNU rsync, simply asking.
+
+    Anonymous: module listing happens before authentication, so no credential
+    is needed and none is passed. Returns [] on any failure — this only ever
+    enriches an error message and must never raise on that path.
+    """
+    host = destination.split("@")[-1].split("::", 1)[0]
+    if not host:
+        return []
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "rsync", f"--contimeout={int(timeout)}", f"rsync://{host}/",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout + 5)
+    except Exception as exc:  # noqa: BLE001 — decoration only
+        logger.info("Could not list rsync modules on %s: %s", host, exc)
+        return []
+    # `name<TAB>comment` per line; the name is all we need.
+    return [
+        line.split("\t", 1)[0].strip()
+        for line in out.decode("utf-8", "replace").splitlines()
+        if line.strip()
+    ]
+
+
 def binary_available(binary: str) -> bool:
     """Is this executable on PATH inside the container?
 
