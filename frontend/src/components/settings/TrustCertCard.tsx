@@ -40,8 +40,9 @@ export function TrustCertCard() {
     queryKey: ['settings', 'tls'],
     queryFn: getTlsStatus,
     retry: false,
-    // Short-lived certificates renew continuously, so a cached answer here
-    // ages badly; this is cheap and only runs while Settings is open.
+    // Short enough that restarting Caddy and reloading shows the new
+    // certificate rather than the cached verdict on the old one — which is
+    // the one thing this card ever asks anybody to do.
     staleTime: 60_000,
   });
 
@@ -67,12 +68,21 @@ export function TrustCertCard() {
             <strong>
               {tls.expired
                 ? 'The certificate being served has EXPIRED.'
-                : 'The certificate being served expires within hours.'}
+                : `The certificate being served expires in ${Math.max(
+                    0,
+                    Math.floor(tls.days_remaining ?? 0),
+                  )} days.`}
             </strong>{' '}
-            {tls.not_after && <>It ran out {new Date(tls.not_after).toLocaleString()}. </>}
-            Installing this CA will not help until it is reissued — these are
-            short-lived certificates that renew themselves, so one this old
-            means renewal has stopped. Restart the Caddy container
+            {tls.not_after && (
+              <>
+                {tls.expired ? 'It ran out' : 'It runs out'}{' '}
+                {new Date(tls.not_after).toLocaleString()}.{' '}
+              </>
+            )}
+            Installing this CA will not help until it is reissued. Caddy renews
+            these long before this point, so a certificate this close to expiry
+            means renewal has stopped rather than that expiry is merely
+            approaching. Restart the Caddy container
             (<code>docker restart headroom-caddy</code>) and reload.
           </p>
         )}

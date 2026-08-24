@@ -1,0 +1,51 @@
+# Caddy config for the LAN-HTTPS overlay.
+#
+# This exists for ONE reason: to stop Caddy issuing twelve-hour certificates.
+#
+# Twelve hours is Caddy's default and it is a fine default — short-lived certs
+# renew themselves and limit the blast radius of a stolen key. What it assumes
+# is that renewal always works. On this deployment it stopped working (an
+# unclean shutdown ate the stored private key), and Caddy then re-queued a
+# renewal every ten minutes for THIRTY-SEVEN DAYS while serving an expired
+# certificate. A cert that outlives the gap between someone noticing and
+# someone fixing it is worth more here than a short blast radius on a LAN.
+#
+# 820 days is not an arbitrary number. Safari — and therefore every iPhone —
+# rejects a TLS server certificate whose validity exceeds **825 days**, even
+# when it chains to a manually installed root. (The widely-quoted 398-day cap
+# applies only to certificates from Apple's PREINSTALLED roots; user-added
+# roots get 825. Chrome and Firefox impose no limit at all here, which is
+# exactly the trap: a longer cert would work on a laptop and fail on the
+# phone.) 820 leaves headroom for clock skew.
+#
+# The ROOT is untouched and still lasts ten years (Caddy's 3600d default),
+# because that is the certificate people actually install on their devices.
+# Changing `intermediate_lifetime` regenerates the intermediate but NOT the
+# root, so devices that already trust this CA keep trusting it — no reinstall.
+{
+	pki {
+		ca local {
+			# Caddy requires the issued lifetime to be under
+			# renewal_window_ratio (default 1/3) x intermediate_lifetime, so an
+			# 820-day leaf needs an intermediate of at least ~2460 days. 3000d
+			# clears that and still sits below the 3600d root.
+			intermediate_lifetime 3000d
+		}
+	}
+}
+
+{$HEADROOM_MDNS_HOSTNAME:headroom}.local {
+	# `issuer internal { ... }`, not `tls internal { ... }` — the latter is
+	# shorthand that accepts no options, and Caddy rejects `lifetime` inside it.
+	tls {
+		issuer internal {
+			lifetime 820d
+		}
+	}
+
+	# Caddy sets X-Forwarded-For/Proto/Host here automatically, which is what
+	# lets the app mark session cookies `secure` behind this proxy. The app
+	# trusts those headers from loopback only (FORWARDED_ALLOW_IPS), so a LAN
+	# client hitting :8000 directly still cannot spoof its address.
+	reverse_proxy localhost:8000
+}

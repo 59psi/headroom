@@ -6,6 +6,86 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.48.0] — 2026-08-24
+
+The LAN HTTPS certificate now lasts 820 days instead of twelve hours.
+
+### Fixed
+- **`https://headroom.local` served a certificate that had expired 37 days
+  earlier, and Caddy spent every one of those days trying to fix it.** Caddy's
+  internal CA issues **twelve-hour** leaf certificates by default. Twelve hours
+  is a good default *if renewal always works* — a short-lived certificate
+  limits the blast radius of a stolen key and needs no attention. Here renewal
+  stopped: an unclean shutdown destroyed Caddy's stored leaf private key, and
+  with no key to sign against, the renewal it queued every ten minutes could
+  never complete. It re-queued that renewal for five weeks while continuing to
+  serve the dead certificate.
+
+  Leaf certificates are now issued for **820 days**. A certificate that
+  outlives the gap between something breaking and somebody noticing is worth
+  more on a LAN than a short blast radius, and 2.46's `tls_health` check exists
+  precisely because nothing here notices quickly.
+
+  **820 is a ceiling, not a preference.** Safari — and therefore every iPhone
+  in the house — rejects a TLS server certificate whose validity exceeds
+  **825 days**, even when it chains to a manually installed root. The
+  widely-quoted 398-day cap is a different rule that applies only to Apple's
+  *preinstalled* roots; user-added roots get 825, verified by binary search
+  (825 accepted, 826 rejected). Chrome and Firefox impose no limit here at all,
+  which is exactly the trap: "make it ten years" produces a setup that works on
+  the laptop you test it from and fails on every phone, with a certificate
+  error that reads like a broken trust store rather than a lifetime. 820 leaves
+  headroom for clock skew.
+
+  **The root is untouched and still lasts ten years**, so nothing needs
+  reinstalling. Raising `intermediate_lifetime` regenerates the *intermediate*,
+  which is presented during the handshake; the root is the self-signed trust
+  anchor sitting in each device's keychain, and it is not reissued. Devices
+  that already trust this CA keep trusting it.
+
+  **This does not repair a device that currently refuses to trust the CA.**
+  That is a separate problem — the root was never installed, iOS's Certificate
+  Trust Settings toggle is off, or the device holds an *older* Caddy root
+  (they all carry the same name, which is why Settings → Trust this device
+  publishes the fingerprint). Deploying this release changes what is served,
+  not what is trusted.
+
+### Changed
+- **The Caddy sidecar runs from a `Caddyfile` instead of `caddy
+  reverse-proxy`.** The CLI form cannot express PKI options at all, so the
+  twelve-hour default was not something the old configuration could have
+  overridden — the file is the only way to say it. New `./Caddyfile`, bind
+  mounted read-only, setting `pki { ca local { intermediate_lifetime 3000d } }`
+  and `tls { issuer internal { lifetime 820d } }`. Caddy requires the issued
+  lifetime to sit under `renewal_window_ratio` (default 1/3) × the
+  intermediate's, so an 820-day leaf needs an intermediate of at least ~2460
+  days; 3000d clears that and still sits below the 3600d root.
+
+  `docker-compose.https.yml` — the internet-facing overlay — deliberately keeps
+  the CLI form. Its certificates come from Let's Encrypt, which sets its own
+  90-day lifetime and renews over the public internet, so there is nothing for
+  this repo to choose there.
+
+- **`tls_health.RENEWAL_GRACE_DAYS` 2 → 30.** Two days was generous against a
+  twelve-hour certificate. Against an 820-day one it is a fire alarm that rings
+  as the roof falls in. Thirty days is enough notice to act without becoming
+  background noise, and a certificate inside thirty days of expiry still means
+  renewal has stopped rather than that expiry is merely approaching.
+
+- The **Trust this device** card and the README's HTTPS troubleshooting both
+  said the certificate "lives twelve hours", and the card's warning read
+  *expires within hours* — copy that was accurate at the old lifetime and off
+  by a month at the new one. The card now names the real number of days
+  remaining, and says *ran out* versus *runs out* correctly rather than using
+  the past tense for a certificate that has not expired yet.
+
+### Added
+- Two tests guarding the ceiling, because the failure mode is invisible on the
+  machine you would test it from. One fails if the Caddyfile's leaf lifetime
+  reaches 825 days; the other checks Caddy's own constraint — issued lifetime
+  under 1/3 of the intermediate, intermediate under the 3600d root — which
+  otherwise surfaces as a sidecar that refuses to start after a deploy.
+
 ## [2.47.0] — 2026-08-23
 
 Build speed. Nothing about the running app changed.

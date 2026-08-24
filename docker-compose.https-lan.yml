@@ -42,15 +42,25 @@ services:
       - caddy-ca:/caddy-ca:ro
 
   # Deliberately self-contained rather than layered on docker-compose.https.yml
-  # (keeps the run command to two -f flags) — keep this block in sync with the
-  # caddy service there.
+  # (keeps the run command to two -f flags). The two caddy blocks are no longer
+  # interchangeable and should not be re-synced: that one gets its certificates
+  # from Let's Encrypt, which sets its own 90-day lifetime and renews over the
+  # public internet, so the CLI form is fine there. Only the INTERNAL CA below
+  # has a lifetime this repo chooses, and choosing it needs a Caddyfile.
   caddy:
     image: caddy:2-alpine
     container_name: headroom-caddy
     restart: unless-stopped
     network_mode: host
-    command: caddy reverse-proxy --from "https://${HEADROOM_MDNS_HOSTNAME:-headroom}.local" --to http://localhost:8000 --internal-certs
+    # A Caddyfile rather than `caddy reverse-proxy`, because the CLI cannot
+    # express PKI options and the default it gives you is a TWELVE-HOUR
+    # certificate. That default assumes renewal always works; here it stopped
+    # working and served an expired cert for 37 days. See ./Caddyfile.
+    command: caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+    environment:
+      HEADROOM_MDNS_HOSTNAME: "${HEADROOM_MDNS_HOSTNAME:-headroom}"
     volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
     depends_on:

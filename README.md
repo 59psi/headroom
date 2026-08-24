@@ -374,11 +374,12 @@ sign in with Face ID.
   in step 3, which never has to guess.
 - *Trusted the root and it is still "Not Secure"* — check **Settings → This
   device → Trust this device**, which now reports the certificate actually
-  being **served**. Caddy's leaf certificates live twelve hours and renew
-  themselves; if renewal stops (a missing stored key will do it) Caddy keeps
-  serving an expired one and re-queues the renewal forever, and trusting the
-  issuer cannot help. `docker restart headroom-caddy` makes it reissue against
-  the same root, so devices that already trust the CA stay trusting.
+  being **served**. Leaf certificates are issued for 820 days (`./Caddyfile`)
+  and Caddy renews them well before that; if renewal stops (a missing stored
+  key will do it) Caddy keeps serving the old one and re-queues the renewal
+  forever, and trusting the issuer cannot help. `docker restart headroom-caddy`
+  makes it reissue against the same root, so devices that already trust the CA
+  stay trusting.
 - *`/api/public/ca-certificate` returns 404 while Caddy is plainly serving
   HTTPS* — the `caddy-ca-export` service isn't running. Recreate the stack;
   see the note in step 2.
