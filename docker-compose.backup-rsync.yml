@@ -16,7 +16,7 @@
 #   ssh-copy-id -i ~/.ssh/headroom-backup.pub user@host
 #   ssh -i ~/.ssh/headroom-backup user@host true   # records the host key
 #
-# That last line is not optional. rsync inherits ssh's behaviour for an unknown
+# That last line is not optional. rsync inherits ssh's behavior for an unknown
 # host key, which is to PROMPT — and a prompt on a backup that runs unattended
 # is a hang, not an error, until the upload timeout kills it.
 #

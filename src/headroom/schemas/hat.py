@@ -175,7 +175,7 @@ class HatCreate(BaseModel):
     construction: str | None = None
     date_last_worn: date | None = None
     # Both accepted at creation because the owner frequently knows them while
-    # the analyser cannot: a collection name is printed on the box or the hang
+    # the analyzer cannot: a collection name is printed on the box or the hang
     # tag, not visible in a photo of the hat. Withholding these until the Edit
     # form meant typing them twice, or hoping Claude guessed.
     artist_series: str | None = None

@@ -104,7 +104,7 @@ async def canonicalize(
 ) -> str | None:
     """Return the spelling already on record for `value`, or `value` as typed.
 
-    Whitespace is always normalised — trailing spaces are never meaningful and
+    Whitespace is always normalized — trailing spaces are never meaningful and
     are invisible in a picker, so " Neon" and "Neon " would otherwise be two
     more variants nobody could tell apart.
 

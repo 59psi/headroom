@@ -53,7 +53,7 @@ describe('AnalysisStatus', () => {
     expect(screen.getByText('Analyzing')).toBeInTheDocument();
   });
 
-  it('falls back to 1/4 rather than 0/4 on an unrecognised stage', () => {
+  it('falls back to 1/4 rather than 0/4 on an unrecognized stage', () => {
     // A newer backend publishing a stage this build doesn't know must not
     // render "0/4", which reads as "nothing is happening".
     render(<AnalysisStatus hat={hat({ analysis_status: 'pending', analysis_stage: 'sizing' })} />);
@@ -70,7 +70,7 @@ describe('AnalysisStatus', () => {
     expect(screen.getByText('Failed').closest('span')).toHaveAttribute('title', 'boom');
   });
 
-  it('renders nothing for a hat that was never analysed', () => {
+  it('renders nothing for a hat that was never analyzed', () => {
     const { container } = render(<AnalysisStatus hat={hat({})} />);
     expect(container).toBeEmptyDOMElement();
   });

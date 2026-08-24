@@ -44,7 +44,7 @@ async def _hat(client, **fields):
 # ------------------------------ the prompt -------------------------------- #
 
 
-async def test_known_series_are_offered_to_the_analyser():
+async def test_known_series_are_offered_to_the_analyzer():
     text = _owner_context("a_game", None, ["Skye Walker", "Jeremy Collins"])
     assert "Skye Walker" in text
     assert "Jeremy Collins" in text
@@ -87,7 +87,7 @@ async def test_owner_facts_are_not_displaced_by_the_series_list():
 
 async def test_a_truncated_list_says_so():
     """No silent caps: a partial list presented as complete would teach the
-    analyser that anything absent from it must be a new series."""
+    analyzer that anything absent from it must be a new series."""
     many = [f"Series {i:03d}" for i in range(MAX_KNOWN_SERIES + 10)]
     text = _known_series_context(many)
     assert "among others" in text
@@ -131,7 +131,7 @@ async def test_an_analysis_written_series_snaps_onto_the_owners_spelling(
     second = await _hat(client)
 
     hat = (await db_session.execute(select(Hat).where(Hat.id == second))).scalar_one()
-    hat.artist_series = "skye walker"  # what an unguided analyser hands back
+    hat.artist_series = "skye walker"  # what an unguided analyzer hands back
     await _canonicalize_analysis_text(db_session, hat)
 
     assert hat.artist_series == "Skye Walker"
@@ -162,7 +162,7 @@ async def test_canonicalising_a_construction_keeps_the_derived_flags_honest(
     hat_id = await _hat(client)
 
     hat = (await db_session.execute(select(Hat).where(Hat.id == hat_id))).scalar_one()
-    hat.set_construction("hydrolite")  # analyser casing
+    hat.set_construction("hydrolite")  # analyzer casing
     await _canonicalize_analysis_text(db_session, hat)
 
     assert hat.construction == "HYDROLite", "curated spelling should win"
@@ -170,7 +170,7 @@ async def test_canonicalising_a_construction_keeps_the_derived_flags_honest(
     assert hat.hydro is False, "HYDRO must not match inside HYDROLite"
 
 
-async def test_canonicalising_is_a_no_op_for_an_unanalysed_hat(client, db_session):
+async def test_canonicalising_is_a_no_op_for_an_unanalyzed_hat(client, db_session):
     hat_id = await _hat(client)
     hat = (await db_session.execute(select(Hat).where(Hat.id == hat_id))).scalar_one()
 

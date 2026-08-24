@@ -98,6 +98,7 @@ fleet-default, the UI is the per-install override.
 | `HEADROOM_DISK_WARN_PCT` | `15` | Warn in the log below this share of the volume |
 | `HEADROOM_BACKUP_UPLOAD_CMD` | _(unset)_ | Command run after each scheduled backup to ship it off-box; `{path}`/`{dir}`/`{name}` substituted (argv, no shell). Best-effort — see §4 |
 | `HEADROOM_BACKUP_UPLOAD_TIMEOUT` | `600` | Seconds before the upload command is killed |
+| `HEADROOM_BACKUP_RSYNC_PASSWORD` | _(unset)_ | Password for the **Synology / rsync-daemon** provider (`user@host::module/path`). Mapped to rsync's own `RSYNC_PASSWORD` at upload time; read from the host, never stored by Headroom and never returned by the API. **Daemon mode only** — rsync ignores it over SSH, which is why the SSH provider takes no secret rather than one that looks set and does nothing. `docker-compose.yml` forwards it into the container explicitly; Compose's `.env` alone would only feed interpolation |
 | `HEADROOM_IMPORT_WORKER_ENABLED` | `true` | Bulk-import background worker |
 | `HEADROOM_ACTIVITY_LOG_RETENTION_DAYS` | `90` | Audit rows pruned daily |
 | `HEADROOM_MDNS_ENABLED` | `true` | Advertise the app on the LAN via mDNS. Docker needs the `docker-compose.mdns.yml` overlay (host networking) for it to reach the LAN |

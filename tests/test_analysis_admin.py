@@ -1,7 +1,7 @@
 """Queue visibility and bulk re-analysis.
 
 Bulk re-analysis is the retroactive half of any prompt change: the pricing
-anchors added in 2.8.0 only affect hats analysed after them, so without this a
+anchors added in 2.8.0 only affect hats analyzed after them, so without this a
 collection keeps whatever estimates the old prompt produced.
 """
 
@@ -53,7 +53,7 @@ async def test_reanalyze_all_queues_every_hat_that_has_a_photo(client):
 
     resp = await client.post("/api/admin/analysis/reanalyze-all")
     assert resp.status_code == 200
-    assert resp.json()["queued"] == 1, "only the hat with a photo can be re-analysed"
+    assert resp.json()["queued"] == 1, "only the hat with a photo can be re-analyzed"
 
     queue = (await client.get("/api/admin/analysis/queue")).json()
     assert queue["pending_count"] == 1
@@ -77,14 +77,14 @@ async def test_a_hand_entered_price_is_spared_without_skipping_the_hat(client):
     """Manual prices are protected by the WRITE path, not by exclusion.
 
     This used to assert the opposite: that `only_priced_by_claude=true` queued
-    zero hats, i.e. protected a manual price by refusing to analyse the hat at
+    zero hats, i.e. protected a manual price by refusing to analyze the hat at
     all. That was never necessary — `retail_pricing.resolve_retail` returns a
     Manual price untouched, and the pipeline bails on
     `resale_price_scope == "manual"` in two places — and it was actively
     harmful: the same filter, wired to a default-ON checkbox, cut a 234-hat
     re-analysis down to 45 once 2.27 moved most hats onto the retail table.
 
-    So the hat IS analysed, and the price survives anyway.
+    So the hat IS analyzed, and the price survives anyway.
     """
     hat_id = await _hat_with_photo(client)
     await client.put(f"/api/hats/{hat_id}", json={"estimated_new_price": 120.0})
@@ -199,7 +199,7 @@ async def test_reanalyze_all_covers_every_hat_with_a_photo(client, monkeypatch):
     priced by Claude, so the filter matched almost everything and looked
     harmless. 2.27 moved the majority onto the retail table, and the same
     filter then matched only the remainder — under a button that says
-    "Re-analyse every hat".
+    "Re-analyze every hat".
 
     The filter was redundant anyway: a Manual price is protected
     unconditionally by `resolve_retail` and the two `resale_price_scope ==

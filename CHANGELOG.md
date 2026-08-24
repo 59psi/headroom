@@ -6,6 +6,111 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.50.0] — 2026-08-23
+
+A two-axis review of 2.44–2.49, and the two shipped bugs it found. Both were
+features that reported themselves as working.
+
+### Fixed
+- **Off-site backups to a Synology could never authenticate — that provider has
+  not worked since it shipped in 2.46.** `docker-compose.yml` carried no
+  passthrough for `HEADROOM_BACKUP_RSYNC_PASSWORD`, and Compose's `.env` file
+  feeds variable **interpolation only**: it does not become the container's
+  environment. So the documented instruction — "put it in `.env`" — was true of
+  the file and false of the process. Inside the container `upload_env()` read
+  nothing, returned no `RSYNC_PASSWORD`, and rsync did what rsync does with a
+  daemon that wants a password and no credential: it prompted. On a non-tty an
+  unattended prompt is a **hang, not an error**, so every scheduled upload sat
+  there until the upload timeout killed it — the same failure mode the SSH
+  provider's setup notes already warn about for host keys.
+
+  The tests could not have caught it. They `monkeypatch.setenv` in-process,
+  where there is no container boundary to cross, so the code was right and the
+  boundary it had to survive was never modeled. `docker-compose.yml` now
+  forwards `HEADROOM_BACKUP_RSYNC_PASSWORD: "${HEADROOM_BACKUP_RSYNC_PASSWORD:-}"`
+  explicitly; the empty default keeps it inert unless you set it, and
+  `upload_env()` already treats empty as "not configured". The variable is now
+  in the environment table in `docs/OPERATIONS.md` as well, which is the other
+  half of it being findable.
+
+- **The certificate card called a valid certificate broken, on exactly the
+  setup 2.49 exists to enable.** `tls_health._covers()` consulted only
+  `DNSName` SANs. Serving on a bare address — the whole point of
+  `HEADROOM_SITE_ADDRESSES` — makes Caddy sign that address in as an
+  **`IPAddress`** SAN, so with `HEADROOM_ORIGIN=https://10.0.111.4` the lookup
+  found no matching DNS name and **Settings → Trust this device** announced
+  that the certificate does not cover the host and browsers will refuse it —
+  about the certificate the browser in front of it had just accepted. A false
+  alarm on the one card people read when TLS is already confusing them, and it
+  landed on anyone following 2.49's own instructions.
+
+  An IP host is now matched against IP SANs and a DNS host against DNS SANs,
+  which is what browsers do. Both directions are tested, including a DNS-only
+  certificate still failing an IP host, so the fix is not "always true".
+
+- **25 British spellings, reintroduced by the very range that swept them out.**
+  2.46 moved the repo to American spelling; 2.44–2.49 quietly put a fresh crop
+  back. Not all of them were comments — `"Authorise it on the destination: "`
+  is a **rendered numbered step** in the off-site backup card, so this was
+  visible in the product. Swept again across every form (`colour`, `authoris-`,
+  `honour`, `behaviour`, `normalis-`, `analyse`/`analysing`, `recognis-`,
+  `organis-`, `serialis-`). `"Heather Grey"` deliberately survives: it is a
+  melin colorway from catalog data, not prose, and correcting it would stop it
+  matching the orders it came from. Three over-corrections went back the other
+  way too — `analyses` is the plural of *analysis* in both dialects, and a
+  pattern matching `analyse` had turned it into `analyzes`.
+
+- **The changelog's dates ran backwards.** 2.48.0 was dated 2026-08-24 sitting
+  above a 2.47.0 dated 2026-08-23. All three of 2.47–2.49 now read 2026-08-23,
+  which is when they shipped.
+
+- **The backup card's "the binary arrives by a bind mount" advice was true of
+  one provider.** `rsync` and `openssh-client` have shipped **in the image**
+  since 2.46; only rclone is bind-mounted. A missing rsync therefore means the
+  image predates 2.46 and needs a rebuild — pointing that person at a compose
+  overlay sends them to fix something that was never wrong. The message now
+  names the right remedy per binary.
+
+- **A redundant second clamp on the home carousel.** `visibleCount` is already
+  bounded by the number of hats with photos, so `Math.min(visibleCount,
+  hatsWithPhotos.length)` restated that rule in a second place — which is how
+  two copies of one rule start disagreeing.
+
+### Changed
+- **One definition of "is this binary present":** `backup_service.binary_available()`.
+  The upload-test endpoint re-derived it with its own `shutil.which(argv[0])`,
+  so two code paths could disagree about whether an upload could possibly run —
+  in a feature whose entire job is to answer that question honestly. The
+  duplicated "Unknown provider" rejection in `set_backup_upload` is gone for the
+  same reason: `validate_destination` already raises it, with the same message,
+  and stating it twice is two places for the wording *and* the provider list to
+  drift apart.
+- `['settings', 'tls']` added to the query-key list in `CLAUDE.md`, which
+  enumerates every `['settings', …]` key and had missed the one 2.46 added.
+
+### Added
+- **A field-parity test between `TlsStatus` and `TlsStatusRead`.** The route
+  builds the response with `TlsStatusRead(**asdict(status))`, and pydantic's
+  default `extra='ignore'` drops unknown keys **silently** — add a field to the
+  dataclass, forget the schema, and the API just stops reporting it with no
+  error anywhere and nothing red in CI. Same class of failure the Hat-column
+  DDL test exists for, so it gets the same treatment.
+- **A tautological test replaced with one that measures something.**
+  `assert isinstance(p["binary_available"], bool)` proved only that pydantic
+  works: a hardcoded `True` would have passed it, and a card that reads
+  "configured" while every upload fails is precisely what that field exists to
+  prevent. It now drives the real lookup to both answers and checks each one
+  reaches the payload.
+
+### Known
+- `tls_health.ca_fingerprint()` imports `CA_ROOT_PATH` from `routes/ca_cert` —
+  a service reaching into a route, which inverts the layering the rest of the
+  backend follows. Left alone deliberately: it is a judgment call rather than a
+  breach of a documented standard, this repo already uses deferred imports with
+  a `noqa` where a cycle demands one, and moving the constant touches 5 source
+  and 12 test sites. Recorded here so it stays a decision rather than an
+  oversight.
+
 ## [2.49.0] — 2026-08-23
 
 The LAN HTTPS front door can answer on more than the `.local` name, so the app
@@ -74,7 +179,7 @@ is reachable over a VPN instead of looking like it is down.
   for the same reason they do: a constant in this repo would agree with itself
   while the deployed configuration said something else.
 
-## [2.48.0] — 2026-08-24
+## [2.48.0] — 2026-08-23
 
 The LAN HTTPS certificate now lasts 820 days instead of twelve hours.
 
@@ -515,7 +620,7 @@ The remainder of the archaeology report, plus build-time work.
   be bridged by hue at all, because CIELAB's hue angle is non-linear through
   the blue region — a defect of the color space, not a judgement call.
 
-  A color chip now honours major colors the same way a typed color term has
+  A color chip now honors major colors the same way a typed color term has
   since 2.39, with a per-rank distance budget so "the hat with the pink brim"
   still works but a pinkish logo no longer counts as a pink hat.
 
@@ -625,7 +730,7 @@ backups that stop restating themselves.
   them. Multipart is exempt — those routes stream to disk under their own,
   much larger, deliberate caps.
 - **A rejected password is no longer echoed back in the 422.** Pydantic puts
-  the offending `input` into every validation error and FastAPI serialises the
+  the offending `input` into every validation error and FastAPI serializes the
   list straight into the response body, so a password refused for being too
   short came back in clear text — into the browser's network tab and any proxy
   log on the way. The field and the reason stay; the value was the one part
@@ -675,7 +780,7 @@ backups that stop restating themselves.
   hats has pink on it somewhere* is how you look for a collab mark or a
   contrast underbrim. On the Search page and the guest page; on the latter it
   is in the URL too, so Back restores the whole search rather than half of it.
-  An unrecognised value falls back to the default, because it arrives from a
+  An unrecognized value falls back to the default, because it arrives from a
   query string and the safe reading of a typo is not a wider search.
 
 ## [2.38.0] — 2026-08-22
@@ -783,7 +888,7 @@ Findings from a two-axis review of 2.34–2.36.1.
 ## [2.36.1] — 2026-08-22
 
 ### Fixed
-- **"Re-analyse every hat" was re-analysing a fraction of them** — 45 of 234 in
+- **"Re-analyze every hat" was re-analyzing a fraction of them** — 45 of 234 in
   a real collection.
 
   A checkbox above the button read *"Leave hand-entered prices alone"* and was
@@ -994,7 +1099,7 @@ Findings from a two-axis review of 2.34–2.36.1.
   stated, so a blank protected nothing. With none stated, every construction is
   now stripped from the name. Removed, not rewritten: "A-Game" is less specific
   than "A-Game HYDROLite" and, unlike it, known to be true. State the
-  construction and re-analyse and the full name comes back.
+  construction and re-analyze and the full name comes back.
 
 ### Added
 - **Construction audit** (Settings → Construction audit), for undoing what
@@ -1028,7 +1133,7 @@ Findings from a two-axis review of 2.34–2.36.1.
   `GET /api/admin/constructions/audit`, `POST /api/admin/constructions/clear`
   (`dry_run=true` and `skip_owner_set=true` by default).
 
-- **The analyser now knows the one HYDROLite tell that a photo can show.**
+- **The analyzer now knows the one HYDROLite tell that a photo can show.**
   HYDROLite seams are bonded and show no thread, so **visible stitching on the
   panel or crown seams rules HYDROLite out**. That is a falsifier rather than an
   identification, which is what makes it worth having: it can be checked against
@@ -1121,7 +1226,7 @@ Findings from a two-axis review of 2.34–2.36.1.
 ## [2.30.0] — 2026-08-22
 
 ### Added
-- **The analyser now learns your series.** Entering a collaboration or artist
+- **The analyzer now learns your series.** Entering a collaboration or artist
   series taught the *typing* autocomplete (`GET /api/meta/collections` has
   always returned every value in use, and the Add/Edit form offers it) — but it
   never reached Claude. `analyze_hat_image` was given the owner's style and
@@ -1157,7 +1262,7 @@ Findings from a two-axis review of 2.34–2.36.1.
 
 ### Note
 Existing hats are not retroactively re-identified — nothing in the database can
-invent a series that was never captured. **Settings → Analysis Queue → re-analyse**
+invent a series that was never captured. **Settings → Analysis Queue → re-analyze**
 picks them up, and a re-analysis never erases a series you typed (`_keep_on_null`).
 
 ## [2.29.0] — 2026-08-22
@@ -1223,7 +1328,7 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
     changes.
   - **Tags point at `/t/...`, not at the real page.** One level of indirection
     that costs nothing now and cannot be added later; if the route table is
-    ever reorganised, the landing route absorbs it and the stickers keep
+    ever reorganized, the landing route absorbs it and the stickers keep
     working.
   - **The host is configurable** (Settings → Tags & labels), defaulting to
     whatever you are browsing on. Browse to the Pi by IP once and every tag
@@ -1236,7 +1341,7 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
 - **Login returns you where you were** (`?next=`), which physical tags need:
   tapping a tag with an expired session previously dropped you on the home
   page, losing the one piece of information the tap carried. Only same-origin
-  paths are honoured — an absolute URL there would make the login screen an
+  paths are honored — an absolute URL there would make the login screen an
   open redirect.
 
 ### Fixed
@@ -1455,7 +1560,7 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
   answerable while someone downloads.
 
 - **Notes of your own, on every hat.** The only free-text field no automated
-  path ever writes — not analysis, not a refresh, not a bulk re-analyse. Every
+  path ever writes — not analysis, not a refresh, not a bulk re-analyze. Every
   other prose field on a hat is derived and gets rewritten, so the card says
   outright that this one survives.
 
@@ -1744,7 +1849,7 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
   analysis of a Melin hat reset the price to null and relied on the live feed
   putting a number back; when the marketplace API was unreachable it didn't,
   and a price you had typed was gone with nothing to recover it from — on a
-  path that also runs unattended from the bulk re-analyse queue. Prices you
+  path that also runs unattended from the bulk re-analyze queue. Prices you
   enter are now marked as yours, used as given, and never overwritten.
 - **Cost per wear used the retail estimate** when no purchase price was
   recorded, so a hat bought on sale showed a cost per wear it never had. It
@@ -1798,7 +1903,7 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
   `resale_price` is a price *of*. A category median is the going rate for a
   whole style rather than a valuation of one hat, and valuation needs to tell
   those apart without parsing a display string.
-- `purchases.size` — the size on the order line, normalised to the app's
+- `purchases.size` — the size on the order line, normalized to the app's
   vocabulary. Also now part of the import dedupe key: one real order bought
   the same model at the same price in Classic ×2 *and* Small ×1, and a key
   without size collapsed the Small.
@@ -1858,7 +1963,7 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
 ### Added
 - **Find duplicates** (`/duplicates`, linked from Search). Bulk import from a
   camera roll is how this happens: two photos of one hat become two rows that
-  both analyse plausibly, and at two hundred hats you don't notice — the
+  both analyze plausibly, and at two hundred hats you don't notice — the
   collection quietly reports more than you own, which flows into the valuation.
 
   Grouped on identity fields, never pixels: two shots of one hat look different
@@ -1866,7 +1971,7 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
   same colorway look nearly identical, so photos are the wrong signal in both
   directions. `exact` means every identity field agrees; `likely` means same
   model and size with the colorway missing on one side, which is the usual
-  shape of an unanalysed twin.
+  shape of an unanalyzed twin.
 
   Colorways that actively **disagree** are never grouped — "Trenches Black"
   and "Trenches Navy" are two hats somebody deliberately owns, and reporting
@@ -2265,7 +2370,7 @@ only from a backup.
 
 - **Collection / collab can be set when adding a hat**, not only when editing
   one. It is printed on the box and the hang tag and is frequently invisible in
-  a photo of the hat, so the owner knows something the analyser cannot see —
+  a photo of the hat, so the owner knows something the analyzer cannot see —
   and withholding the field until the Edit form meant either a second trip or
   hoping Claude guessed. Anything typed still survives a re-analysis.
 
@@ -2297,7 +2402,7 @@ only from a backup.
 ## [2.10.0] — 2026-08-16 — _watch the run_
 
 ### Added
-- **Bulk re-analysis is now a tracked job.** Firing "Re-analyse every hat" used
+- **Bulk re-analysis is now a tracked job.** Firing "Re-analyze every hat" used
   to leave you watching a backlog number tick down, with no record that a run
   had happened at all. The Analysis Queue card now shows a progress bar with
   **X of Y**, how long ago it started, a running failure count, and a short
@@ -2331,7 +2436,7 @@ only from a backup.
 
   Implemented by pointing `photo_path` back at the original and queueing, so
   the pipeline sees a `.jpg`, cuts it, and overwrites the old PNG in place. It
-  is the upload path run again, with nothing special-cased. Hats analysed
+  is the upload path run again, with nothing special-cased. Hats analyzed
   before this release have no original; the button is hidden for them and the
   endpoint says so rather than failing obscurely.
 - **Gallery thumbnails.** A 320px WebP derivative is generated alongside every
@@ -2375,7 +2480,7 @@ only from a backup.
   can't quietly drop them.
 
 ### Added
-- **The analysing spinner now says which step is running** — "Removing
+- **The analyzing spinner now says which step is running** — "Removing
   background…", "Identifying the hat…", "Checking prices…", "Checking resale…"
   — instead of a bare "Analyzing…" for the whole multi-minute run. The queue
   card shows it too, which is what separates the hat actually being worked on
@@ -2422,9 +2527,9 @@ only from a backup.
   only while there's something to watch. A backlog with a stopped worker is
   called out explicitly, because that's the state where nothing will happen
   until a restart.
-- **Re-analyse every hat**, from the same card. This is the retroactive half of
+- **Re-analyze every hat**, from the same card. This is the retroactive half of
   any change to identification or pricing: the anchors above only affect hats
-  analysed after them, so without this a collection keeps whatever the old
+  analyzed after them, so without this a collection keeps whatever the old
   prompt produced. Background removal is skipped for stored cutouts, so it's a
   Claude call per hat rather than the full pipeline — and your cutouts are not
   touched. Disposed hats are excluded, and "leave hand-entered prices alone"
@@ -2487,14 +2592,14 @@ was reported from use.
   the API ceiling was raised to match.
 - **Re-analysis could overwrite a photo you'd just replaced.** The worker held a
   hat for minutes, then wrote back a `photo_path` from before the replacement,
-  orphaning the new photo and leaving it unanalysed. The result is now discarded
+  orphaning the new photo and leaving it unanalyzed. The result is now discarded
   if the committed photo changed while the pipeline ran.
 - **A hat could sit "Analyzing…" forever.** With the worker disabled there is no
   boot sweep either, so an inline pipeline failure stranded `analysis_status`
   on `pending` with no endpoint able to clear it. Both paths now stamp a
   terminal status.
 
-### Fixed — behaviour
+### Fixed — behavior
 
 - **New cases ignored the default room, and could be orphaned outright.** The
   frontend hardcoded `room_id: 1` regardless of what the picker showed,
@@ -2596,7 +2701,7 @@ was reported from use.
   rembg re-segmented an already-transparent image and wrote it back over the
   only copy, so every tap ate further into the alpha and trimmed more of the
   bill. Background removal is now skipped when the input is already a cutout;
-  uploads are normalised to JPEG first, so a `.png` here can only mean
+  uploads are normalized to JPEG first, so a `.png` here can only mean
   "already cut out". This is what made the fading progressive.
 - **Navigation kept the previous page's scroll position.** Saving a hat and
   tapping through to add another dropped you at the bottom of an empty form.
@@ -2638,7 +2743,7 @@ is nothing to re-cut from.
 - **Photo analysis is queued instead of blocking the upload.** `POST /api/hats/
   {id}/photo` now saves the photo, marks the hat `analysis_status='pending'` and
   returns immediately; a background worker (`analysis_queue.py`) runs rembg →
-  Claude → eBay → Melin. You can keep adding hats while earlier ones analyse.
+  Claude → eBay → Melin. You can keep adding hats while earlier ones analyze.
   The hat page shows a spinning **Analyzing…** badge and polls until the status
   is terminal. Previously the request stayed open for the whole pipeline —
   Claude alone is a 30s timeout × the SDK's 3 attempts, after tens of seconds of
@@ -2681,7 +2786,7 @@ is nothing to re-cut from.
   loses thin protruding shapes — on a hat that is precisely the **bill**, so
   cutouts came back as brimless crowns. The heavier model costs ~170 MB and
   slower inference, which stopped mattering once analysis left the request path.
-  `HEADROOM_REMBG_MODEL=u2netp` restores the old behaviour.
+  `HEADROOM_REMBG_MODEL=u2netp` restores the old behavior.
 
 ### Fixed
 - **The photo button never offered your library.** The file input carried
@@ -2714,7 +2819,7 @@ is nothing to re-cut from.
   transaction, which SQLite holds until commit — so the lock stayed held through
   Claude, eBay and Melin. Any concurrent write then waited out `busy_timeout`
   and failed with "database is locked", which the new queue would have made
-  routine (adding a hat while another analyses). The network-bound section now
+  routine (adding a hat while another analyzes). The network-bound section now
   runs under `no_autoflush`.
 - `vite.config.ts` used `__dirname`, which only exists because Vite's current
   config loader wraps the file in CJS shims. The config is ESM
@@ -2762,7 +2867,7 @@ is nothing to re-cut from.
 
 ### Added
 - **The default room is now a flag, not a hardcoded id.** Previously room `id=1`
-  was permanently undeletable, no matter how you'd since reorganised. Any room
+  was permanently undeletable, no matter how you'd since reorganized. Any room
   can now take the role via **Make default** on the Rooms page
   (`POST /api/rooms/{id}/default`), which frees the previous one for deletion.
   The Rooms page shows a **Default** badge and only disables delete on the room
@@ -2867,7 +2972,7 @@ Net, measured in CI's own log: image build **9 noise lines → 0**, and
   page filters on — a silent null there would have quietly matched nothing.
 
 ### Changed
-- **Code-review cleanup — no behaviour change.** Verified by generating the full
+- **Code-review cleanup — no behavior change.** Verified by generating the full
   OpenAPI document before and after and diffing it: **90 routes, identical**,
   every response schema byte-identical.
   - The Anthropic and Google-Vision API-key routes were line-for-line twins.

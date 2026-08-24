@@ -1,7 +1,7 @@
 """Finding hats that are probably the same hat, entered twice.
 
 Bulk import from a camera roll is the main way this happens: two photos of one
-hat, taken from slightly different angles, become two rows that both analyse
+hat, taken from slightly different angles, become two rows that both analyze
 plausibly. At forty hats you notice; at two hundred you don't, and the
 collection quietly reports more than you own — which then flows into the
 valuation.
@@ -32,7 +32,7 @@ from headroom.services.vocabulary import _fold
 # A group whose members agree on every identity field we have. Reported first.
 EXACT = "exact"
 # Same model and size, but the colorway differs or is missing on one side.
-# Worth surfacing — an unanalysed twin usually has no colorway yet.
+# Worth surfacing — an unanalyzed twin usually has no colorway yet.
 LIKELY = "likely"
 
 
@@ -62,7 +62,7 @@ def _identity(hat: Hat) -> tuple[str, str, str, str, str]:
 def _is_identifiable(hat: Hat) -> bool:
     """Whether a hat has enough recorded to be worth comparing at all.
 
-    Without this, every un-analysed hat matches every other un-analysed hat on
+    Without this, every un-analyzed hat matches every other un-analyzed hat on
     "same size, same style" and the report is one enormous useless group. A
     model name — or a brand plus a colorway — is the least that makes two rows
     meaningfully the same thing.
@@ -115,7 +115,7 @@ async def find_duplicates(db: AsyncSession) -> list[DuplicateGroup]:
         )
 
     # Second, looser pass over what the first didn't claim: same model and
-    # size, colorway not agreeing. Usually a twin that hasn't been analysed
+    # size, colorway not agreeing. Usually a twin that hasn't been analyzed
     # yet, so it has the model but no colorway.
     loose: dict[tuple, list[Hat]] = {}
     for hat in candidates:
@@ -131,7 +131,7 @@ async def find_duplicates(db: AsyncSession) -> list[DuplicateGroup]:
         # grouping "Trenches Icon Black" with "Trenches Icon Navy" would report
         # every collector's normal shelf as a mistake, which is the fastest way
         # to make a report like this get ignored. At most one distinct
-        # colorway means the rest simply haven't been analysed yet.
+        # colorway means the rest simply haven't been analyzed yet.
         stated = {_norm(h.colorway) for h in members if h.colorway}
         if len(stated) > 1:
             continue

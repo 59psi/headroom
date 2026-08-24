@@ -527,7 +527,7 @@ async def scheduled_backup_loop(interval_hours: float, keep: int) -> None:
     process. Nothing supervised it and nothing reported it, so the failure
     presented as backups quietly never happening again while the UI kept listing
     the last successful one. For the feature that IS the disaster-recovery
-    story, silent permanent death is the worst available behaviour.
+    story, silent permanent death is the worst available behavior.
 
     Cancelled cleanly when the lifespan exits.
     """
@@ -652,7 +652,7 @@ def backup_interval_hours() -> float:
 def backup_keep() -> int:
     """How many backups to keep. Count, not days — see `_enforce_retention`.
 
-    `HEADROOM_BACKUP_RETENTION_DAYS` is still honoured as a fallback so an
+    `HEADROOM_BACKUP_RETENTION_DAYS` is still honored as a fallback so an
     existing `.env` keeps meaning something rather than silently reverting to
     the default, but it is read as a COUNT now and the name is deprecated.
     Reusing a name whose unit changed would be worse than either.
@@ -666,7 +666,7 @@ def backup_keep() -> int:
 #: `-a` preserves times and symlinks; owner and group are deliberately NOT
 #: preserved. This container runs as uid 1000 and a NAS maps its own users, so
 #: asking for them either fails outright or fills the log with warnings about
-#: an identity the destination was never going to honour.
+#: an identity the destination was never going to honor.
 _RSYNC_ARGV = ("rsync", "-a", "--no-owner", "--no-group", "{path}", "{dest}")
 
 
@@ -749,7 +749,7 @@ UPLOAD_PROVIDERS: dict[str, UploadProvider] = {
         setup=(
             "Create an SSH key for the backup on the Pi: "
             "`ssh-keygen -t ed25519 -f ~/.ssh/headroom-backup -N \"\"`.",
-            "Authorise it on the destination: "
+            "Authorize it on the destination: "
             "`ssh-copy-id -i ~/.ssh/headroom-backup.pub user@host`.",
             "Connect once by hand so the host key is recorded — an unknown host "
             "key makes the upload hang, not fail.",
@@ -794,6 +794,16 @@ UPLOAD_PROVIDER_KEY = "backup_upload_provider"
 UPLOAD_DESTINATION_KEY = "backup_upload_destination"
 
 
+def binary_available(binary: str) -> bool:
+    """Is this executable on PATH inside the container?
+
+    The single answer to that question. The test endpoint used to re-derive it
+    with its own `shutil.which(argv[0])`, which meant two places could disagree
+    about whether an upload could possibly run.
+    """
+    return shutil.which(binary) is not None
+
+
 def provider_binary_available(provider: str) -> bool | None:
     """Is the transport's binary actually in this container?
 
@@ -804,7 +814,7 @@ def provider_binary_available(provider: str) -> bool | None:
     p = UPLOAD_PROVIDERS.get(provider or "")
     if p is None:
         return None
-    return shutil.which(p.binary) is not None
+    return binary_available(p.binary)
 
 
 def validate_destination(dest: str, provider: str = "rclone") -> str:

@@ -117,7 +117,7 @@ def normalize_color_name(name: str) -> str:
     """Snap a hand-typed color name onto the palette's spelling.
 
     The counterpart to `normalize_hex_name` for the case where a human, not the
-    analyser, supplied the name. Matching by NAME rather than by hex is the
+    analyzer, supplied the name. Matching by NAME rather than by hex is the
     whole point: a person correcting a mis-detected color is telling us the
     stored hex is wrong, so re-deriving from that hex would just reinstate the
     error. Anything not in the palette passes through trimmed and unchanged —
@@ -424,7 +424,7 @@ def color_family(name: str | None) -> frozenset[str]:
     """The basic color words for a palette name; empty if it isn't one.
 
     Empty means "not a curated name" — treated as unknown rather than as a
-    family of its own, so unrecognised values never silently group together.
+    family of its own, so unrecognized values never silently group together.
     """
     return _COLOR_FAMILIES.get((name or "").strip().lower(), frozenset())
 

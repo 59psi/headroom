@@ -37,7 +37,7 @@ class Purchase(Base):
     item_title: Mapped[str] = mapped_column(String(200))
     model_name: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
     colorway: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    # The size on the order line, normalised to the app's vocabulary
+    # The size on the order line, normalized to the app's vocabulary
     # ("classic" / "small" / "x_large"), or None when the line didn't state one.
     #
     # Order emails have always carried this ("Transit / Classic") and the

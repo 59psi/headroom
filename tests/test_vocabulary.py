@@ -39,7 +39,7 @@ async def test_a_differently_cased_collection_snaps_to_the_existing_spelling(cli
     assert options == ["Neon"], f"one collection expected, got {options}"
 
 
-async def test_surrounding_and_doubled_whitespace_is_normalised(client):
+async def test_surrounding_and_doubled_whitespace_is_normalized(client):
     """Invisible in a picker, so it would be an undetectable duplicate."""
     await _add(client, artist_series="Skye Walker")
     padded = await _add(client, artist_series="  Skye   Walker ")

@@ -37,7 +37,7 @@ from __future__ import annotations
 MANUAL_SOURCE = "Manual"
 TABLE_SOURCE = "melin retail"
 
-# Keyed on the normalised construction word. Lower-case, substring-matched the
+# Keyed on the normalized construction word. Lower-case, substring-matched the
 # same way `Hat.set_construction` derives its flags — HYDROLite is checked
 # first because "hydro" is a substring of it.
 _BY_CONSTRUCTION: tuple[tuple[str, float], ...] = (
@@ -67,7 +67,7 @@ _BY_STYLE: dict[str, float] = {
     # asserting a price for the one beanie there is no evidence for.
 }
 
-# The physical article the whole app is organised around: melin's 3 Hat Travel
+# The physical article the whole app is organized around: melin's 3 Hat Travel
 # Case. $49 x34 and $39 x15 in the order history — the $39s are the older
 # price, the same drift that left the hat anchors stale.
 #

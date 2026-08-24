@@ -205,7 +205,7 @@ export function HatBasicsCard({
         {/* Editable at ADD time, not only on the Edit form. A collection or
             collaboration name is printed on the box and the hang tag, and is
             frequently invisible in a photo of the hat itself — so the owner
-            standing there with it knows something the analyser cannot see, and
+            standing there with it knows something the analyzer cannot see, and
             making them save first and edit second meant either a second trip
             or hoping Claude guessed. Analysis leaves a filled-in value alone. */}
         <div className="mb-3">
@@ -221,7 +221,7 @@ export function HatBasicsCard({
               Pick an existing one to keep them from splitting into
               &ldquo;Neon&rdquo;, &ldquo;NEON&rdquo; and &ldquo;neon&rdquo; —
               and if you type one anyway, it snaps to the spelling already on
-              record. Analysis fills this in when it recognises one; anything
+              record. Analysis fills this in when it recognizes one; anything
               you type survives a re-analysis.</>
             }
           />

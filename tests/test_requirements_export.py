@@ -41,12 +41,12 @@ _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
 def _significant(text: str) -> list[str]:
-    """Just the pins, with comments and terminal colour removed.
+    """Just the pins, with comments and terminal color removed.
 
     Two things differ between the committed file and a fresh export that say
     nothing about which packages are installed: `uv export` records its own
     command line in a header comment (so `-o requirements.txt` differs from
-    stdout), and it colourises annotations when writing to a stream but not to
+    stdout), and it colorizes annotations when writing to a stream but not to
     a file. Comparing either would fail this test for a reason that cannot
     reach the image.
     """

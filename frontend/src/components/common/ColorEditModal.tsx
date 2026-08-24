@@ -58,7 +58,7 @@ export function ColorEditModal({ hatId, colors, editingRank, onClose }: Props) {
         // Blank means "derive it from the hex" — the server does that, snapping
         // to the filter palette. Don't substitute the *specific* name here: it's
         // free text ("cobalt blue"), and since a typed general_color is now
-        // honoured verbatim, sending it would store an off-palette value and
+        // honored verbatim, sending it would store an off-palette value and
         // quietly drop the hat out of the color-chip search.
         general_color: general.trim(),
         hex_value: hex,

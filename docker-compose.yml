@@ -36,6 +36,20 @@ services:
       # arg above. Set it here only to force a model that is NOT in the image
       # (the Pi will then download it on first use).
       HEADROOM_CORS_ORIGINS: '["http://localhost:8000"]'
+      # Password for the Synology / rsync-daemon backup target, forwarded from
+      # your `.env` into the container.
+      #
+      # This line is load-bearing and its absence was a silent bug: Compose's
+      # `.env` feeds variable INTERPOLATION only, it does not become the
+      # container's environment. Without this passthrough the docs said "put it
+      # in .env" and the app then read nothing, so `upload_env()` returned None
+      # and rsync sat waiting for a password on a non-tty until the upload
+      # timed out. The tests missed it because they `monkeypatch.setenv`
+      # in-process, where no container boundary exists to cross.
+      #
+      # Empty by default, which `upload_env()` treats as "not configured" —
+      # so this is inert unless you set it.
+      HEADROOM_BACKUP_RSYNC_PASSWORD: "${HEADROOM_BACKUP_RSYNC_PASSWORD:-}"
     # Bound the container so a memory spike fails as a scoped, diagnosable
     # event instead of competing for the whole machine. The peak here is the
     # photo pipeline: a ~179MB rembg model resident alongside a full-resolution

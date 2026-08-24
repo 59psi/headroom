@@ -430,7 +430,7 @@ export interface BackupUploadStatus {
 export interface DuplicateGroup {
   key: string;
   /** "exact" — every identity field agrees. "likely" — same model and size,
-   *  with the colorway missing on at least one side (usually an unanalysed
+   *  with the colorway missing on at least one side (usually an unanalyzed
    *  twin). Colorways that actively disagree are never grouped. */
   confidence: 'exact' | 'likely';
   label: string;

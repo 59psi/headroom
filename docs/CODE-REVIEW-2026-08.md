@@ -62,7 +62,7 @@ tested code.
 | 7 | **Divergent change / large modules** — `routes/admin.py` (334 lines, 7 reasons to change); `SettingsPage.tsx` (1084 lines). | `routes/admin/` package of six single-concern modules, with prefix/tag/`require_admin` applied once in `__init__`. `SettingsPage.tsx` → 44-line composition root over 15 card modules in `components/settings/`. |
 | 8 | **Inconsistent schema placement** — four Pydantic models declared inline in `routes/admin.py` while `BackupInfo`/`RecentError` came from `schemas/`. | All six now in `schemas/admin.py`, mirroring `routes/admin/`. |
 
-**How the no-behaviour-change claim was verified** (not just "tests pass"): the
+**How the no-behavior-change claim was verified** (not just "tests pass"): the
 full OpenAPI document was generated from `origin/main` and from HEAD and
 diffed. **90 routes before, 90 after, identical**; every response schema
 byte-identical. The only path-level differences are three `operationId`/`summary`
@@ -71,7 +71,7 @@ Key` rather than `Delete Api Key`, which is more accurate given there are two
 providers) and one added endpoint description. Backend tests 190/190;
 frontend typecheck and production build clean.
 
-One deliberate behaviour change: `SettingsPage` used to hold a single spinner
+One deliberate behavior change: `SettingsPage` used to hold a single spinner
 over the whole page until the logo/key/model queries resolved. With per-card
 state that would have flashed "No key configured" at someone who has one, so
 those three cards now show their own inline "Loading…" instead.
@@ -80,7 +80,7 @@ those three cards now show their own inline "Loading…" instead.
 
 ## Follow-up: frontend test coverage
 
-The gap called out above — "verified structurally, not behaviourally" — is now
+The gap called out above — "verified structurally, not behaviorally" — is now
 closed. Vitest 4 + Testing Library 16 (jsdom), **27 tests** at the time of
 writing (35 as of v2.3.0 — the react-router 8 upgrade added 8 routing tests),
 wired into the existing CI frontend job (no new job, no new workflow trigger).

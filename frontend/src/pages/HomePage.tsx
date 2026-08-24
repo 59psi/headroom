@@ -55,12 +55,13 @@ export function HomePage() {
   // running carousel (a hat disposed or deleted on another device, then a
   // refetch), and `hatsWithPhotos[activeIndex]` would then be undefined and
   // throw, taking the whole page down to the ErrorBoundary.
+  // No second clamp here — `visibleCount` is already bounded by the number of
+  // hats with photos, and clamping twice invites the two rules to drift.
   const visibleHats = useMemo(
     () =>
       hatsWithPhotos.length
-        ? Array.from(
-            { length: Math.min(visibleCount, hatsWithPhotos.length) },
-            (_, i) => hatsWithPhotos[(activeIndex + i) % hatsWithPhotos.length]
+        ? Array.from({ length: visibleCount }, (_, i) =>
+            hatsWithPhotos[(activeIndex + i) % hatsWithPhotos.length]
           )
         : [],
     [hatsWithPhotos, activeIndex, visibleCount]

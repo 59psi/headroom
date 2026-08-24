@@ -1,4 +1,4 @@
-"""End-to-end pipeline for analysing a freshly-uploaded hat photo.
+"""End-to-end pipeline for analyzing a freshly-uploaded hat photo.
 
 Steps:
   1. Process upload (resize / convert to JPEG) — handled by photo utils.
@@ -114,7 +114,7 @@ async def finalize_hat_photo(
 
     # 1. Background removal → transparent PNG, swap as canonical.
     #
-    # Skipped when the input IS already a cutout. Uploads are normalised to JPEG
+    # Skipped when the input IS already a cutout. Uploads are normalized to JPEG
     # before they reach here, so a .png input can only be a photo that has been
     # through rembg already — which is exactly what the reanalyze path hands us.
     # Re-running it there is destructive, not merely wasteful: `cutout_target`
@@ -178,7 +178,7 @@ async def finalize_hat_photo(
     # across the entire Claude + eBay + Melin sequence: minutes, worst case.
     # Every other writer in the process then waits out `busy_timeout` and fails
     # with "database is locked" — so adding a second hat while the first is
-    # analysing would error out. Deferring the flush shrinks the lock window to
+    # analyzing would error out. Deferring the flush shrinks the lock window to
     # the caller's commit. Safe because nothing in here re-queries the hat row;
     # the pending change only has to be visible at commit time.
     with db.no_autoflush:
@@ -480,7 +480,7 @@ def _strip_contradicting_construction(
 
     melin names read "<line> <construction>" — "A-Game Hydro", "Coronado
     HYDROLite" — so a model name can assert a build all by itself. A hat the
-    owner recorded as Thermal, analysed before that value was sent to Claude,
+    owner recorded as Thermal, analyzed before that value was sent to Claude,
     kept a stored name like "A-Game HYDROLite": the construction field was
     right and the name a person actually reads was wrong.
 
@@ -506,7 +506,7 @@ def _strip_contradicting_construction(
 
     Same principle as above: remove, don't substitute. "A-Game" is less
     specific than "A-Game HYDROLite" and, unlike it, known to be true. State
-    the construction and re-analyse and the full name comes back.
+    the construction and re-analyze and the full name comes back.
     """
     if not model_name:
         return model_name
@@ -561,7 +561,7 @@ async def _known_series(db) -> list[str]:
     """Series/collab names the collection already uses, for the prompt.
 
     A series is rarely legible in a photo — often it's a woven label or an
-    embroidery style — so an analyser recalling them unaided misses most of
+    embroidery style — so an analyzer recalling them unaided misses most of
     them. Sending the ones already on record turns recall into recognition.
     """
     from headroom.services import vocabulary

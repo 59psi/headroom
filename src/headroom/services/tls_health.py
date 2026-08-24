@@ -21,6 +21,7 @@ Anthropic key out of `/health/ready`.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import os
 import socket
@@ -121,16 +122,32 @@ def _fetch_peer_certificate(host: str, port: int, timeout: float) -> bytes:
 
 
 def _covers(cert: x509.Certificate, host: str) -> bool:
-    """Does the certificate's SAN list include this hostname?
+    """Does the certificate's SAN list include this host?
 
     Only SANs are consulted. CN has not been a valid source of identity for
-    browsers since 2017, so honouring it here would report a pass that Chrome
+    browsers since 2017, so honoring it here would report a pass that Chrome
     and Safari would then refuse.
+
+    **An IP host is matched against IP SANs and never against DNS ones.** That
+    is what browsers do, and getting it wrong here is worse than useless: since
+    2.49 an install can serve on a bare address (`HEADROOM_SITE_ADDRESSES`),
+    Caddy puts it in the certificate as an `IPAddress` SAN, and a DNS-only
+    lookup finds nothing — so a perfectly good certificate gets reported as
+    "doesn't cover this host, browsers will refuse it". A false alarm on the
+    one card people consult when TLS is already confusing them.
     """
     try:
         san = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName)
     except x509.ExtensionNotFound:
         return False
+
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        address = None
+    if address is not None:
+        return address in san.value.get_values_for_type(x509.IPAddress)
+
     names = san.value.get_values_for_type(x509.DNSName)
     host = host.lower()
     for name in names:

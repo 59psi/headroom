@@ -80,7 +80,7 @@ async def test_basis_labels_match():
 
 
 async def test_the_python_rule_ranks_signals_the_same_way():
-    """A short behavioural check, not just constant equality.
+    """A short behavioral check, not just constant equality.
 
     Constants matching wouldn't catch the branches being ordered differently —
     which is precisely the bug the report had, preferring an undiscounted eBay

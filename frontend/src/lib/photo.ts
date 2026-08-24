@@ -7,7 +7,7 @@
  * phone memory, for pixels nobody could see. `thumb_path` is a 320px WebP
  * derivative, typically under 10 KB.
  *
- * Falls back to the full photo: hats analysed before thumbnails existed have
+ * Falls back to the full photo: hats analyzed before thumbnails existed have
  * none until the startup backfill reaches them, and a slow tile beats a broken
  * one. Full-size views (the hat page lightbox) deliberately do NOT use this.
  */

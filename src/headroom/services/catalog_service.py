@@ -358,7 +358,7 @@ def normalize_size(raw: str | None) -> str | None:
     """"Classic" / "X-Large" / "C" -> the `Hat.size` value, or None.
 
     None means "no usable size on this line" and is not a failure: matching
-    treats it as a wildcard, which is the pre-2.19 behaviour. Returning a
+    treats it as a wildcard, which is the pre-2.19 behavior. Returning a
     made-up value instead would be worse than returning nothing, because a
     wrong size actively prevents the correct match rather than merely failing
     to sharpen it.
@@ -465,7 +465,7 @@ def _looks_like_headwear(purchase: Purchase, hats: list[Hat]) -> bool:
     """Rough flag for lines that are not hats — travel cases, gift cards.
 
     Advisory only, and reported rather than acted on: an order line this does
-    not recognise is still imported, because a heuristic that silently drops
+    not recognize is still imported, because a heuristic that silently drops
     purchases would hide a real hat behind a wording nobody anticipated. It
     exists so the preview can say "12 of these look like accessories" instead
     of leaving them to be noticed as odd rows months later.

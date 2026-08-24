@@ -39,7 +39,7 @@ export function DuplicatesPage() {
             <div className="fw-semibold mb-1">No duplicates found</div>
             <p className="text-secondary small mb-0">
               Every hat with an identified model looks distinct. Hats that
-              haven't been analysed yet aren't compared — there's nothing to
+              haven't been analyzed yet aren't compared — there's nothing to
               compare them on.
             </p>
           </div>

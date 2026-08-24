@@ -142,7 +142,7 @@ export function BulkImportPage() {
             <div className="card-body">
               <div className="card-title">Defaults applied to every hat</div>
               <p className="text-secondary small mb-3">
-                You can edit each hat after Claude finishes analysing it.
+                You can edit each hat after Claude finishes analyzing it.
               </p>
               <div className="row g-2">
                 <div className="col-6 col-md-3">

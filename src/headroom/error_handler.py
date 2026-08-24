@@ -31,7 +31,7 @@ async def validation_error(request: Request, exc: Exception) -> JSONResponse:
     """FastAPI's 422, with the submitted value taken back out.
 
     Pydantic v2 puts the offending `input` into every validation error, and
-    FastAPI serialises the list straight into the response body. For most
+    FastAPI serializes the list straight into the response body. For most
     fields that is a genuinely helpful 422. For `POST /api/auth/setup` it
     means a password rejected as too short is echoed back in clear text — into
     the browser's network tab, into any proxy log along the way, and into

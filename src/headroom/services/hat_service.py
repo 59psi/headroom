@@ -123,7 +123,7 @@ async def _validate_capacity(
     # The refusal quotes the HARD limit, not the nominal one. A case at 3 of 3
     # still accepts a fourth — it just becomes overfull — so reporting "max 3"
     # while accepting the save would be the picker and the server disagreeing
-    # again, in the message rather than the behaviour.
+    # again, in the message rather than the behavior.
     if is_beanie and not room.accepts_beanie:
         raise HTTPException(
             status_code=409,
@@ -330,7 +330,7 @@ async def update_hat(db: AsyncSession, hat_id: int, data: HatUpdate) -> Hat:
             details={
                 "fields": changed_fields,
                 # str() because these land in a JSON column and a date or
-                # Decimal would otherwise fail to serialise and lose the whole
+                # Decimal would otherwise fail to serialize and lose the whole
                 # audit row — a partial record beats none.
                 "previous": {k: (None if v is None else str(v)) for k, v in previous.items()},
             },
@@ -570,7 +570,7 @@ async def list_by_analysis_status(
     Lives here rather than in the admin routes so the one place that knows how
     to load a Hat (`_hat_loads`) stays the one place that does. Entities, not
     columns: `display_id` is a derived property that walks `hat.case`, so it
-    cannot be selected — and it is the label a person actually recognises.
+    cannot be selected — and it is the label a person actually recognizes.
     """
     query = select(Hat).options(*_hat_loads()).where(Hat.analysis_status == status)
     if newest_first:
@@ -604,7 +604,7 @@ async def ids_for_reanalysis(db: AsyncSession) -> list[int]:
     of them and the option looked harmless. 2.27 moved the majority to the
     retail table (`source = "melin retail"`), and the same filter then matched
     only the remainder Claude still prices — 45 hats out of 234 in a real
-    collection — under a button that says "Re-analyse every hat".
+    collection — under a button that says "Re-analyze every hat".
     """
     stmt = select(Hat.id).where(Hat.photo_path.is_not(None), Hat.disposed_at.is_(None))
     return list((await db.execute(stmt.order_by(Hat.id))).scalars().all())

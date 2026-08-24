@@ -11,7 +11,7 @@ import { LoadingSpinner } from '../components/common/LoadingSpinner';
 /**
  * Where to go after a successful login.
  *
- * Only same-origin PATHS are honoured. `next` reaches us through the URL, so
+ * Only same-origin PATHS are honored. `next` reaches us through the URL, so
  * anyone can put anything in it — an absolute URL there would turn the login
  * screen into an open redirect, which is a phishing primitive: a link that
  * genuinely is your Headroom login and genuinely does hand you onward to

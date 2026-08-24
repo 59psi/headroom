@@ -92,7 +92,7 @@ async def test_upload_persists_full_claude_analysis(client, stub_claude):
     assert data["logo_detected"] == "Melin — M monogram, front panel"
     # "A-Game Hydro" comes back as "A-Game": the fixture states no construction,
     # and analysis is no longer allowed to assert one — in `construction` or,
-    # as here, inside the model name. Stating HYDRO and re-analysing restores
+    # as here, inside the model name. Stating HYDRO and re-analyzing restores
     # the full name.
     assert data["model_name"] == "A-Game"
     assert data["construction"] is None, "analysis decided a construction"
@@ -410,7 +410,7 @@ async def test_no_owner_context_when_nothing_was_stated(client):
 async def test_a_rescan_repairs_a_model_name_that_contradicts_the_construction(client):
     """melin names read "<line> <construction>", so a model name asserts a build.
 
-    Hats analysed before the owner's construction was sent to Claude kept names
+    Hats analyzed before the owner's construction was sent to Claude kept names
     like "A-Game HYDROLite" on a hat recorded as Thermal — the construction
     field right, the name a person reads wrong. A full rescan has to repair
     those, not preserve them.

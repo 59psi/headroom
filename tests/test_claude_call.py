@@ -116,7 +116,7 @@ async def test_the_owners_stated_construction_is_sent_as_ground_truth(
 
 
 async def test_known_series_are_offered_as_a_record_not_a_menu(monkeypatch, tmp_path):
-    """A series is rarely legible in a photo, so an analyser recalling them
+    """A series is rarely legible in a photo, so an analyzer recalling them
     unaided misses most of them — but a candidate LIST invites a forced choice,
     and a wrong series is indistinguishable from a right one."""
     capture: dict = {}
@@ -145,7 +145,7 @@ async def test_the_tool_is_forced_so_the_reply_is_always_structured(
 
 
 async def test_the_system_prompt_is_cached(monkeypatch, tmp_path):
-    """It is long and identical on every call — a bulk re-analyse of 234 hats
+    """It is long and identical on every call — a bulk re-analyze of 234 hats
     would otherwise pay for it 234 times."""
     capture: dict = {}
     _stub_client(monkeypatch, capture=capture)
@@ -209,7 +209,7 @@ async def test_any_unexpected_failure_is_still_a_ClaudeAnalysisError(
     """Every caller catches this one type and degrades.
 
     Anything else escaping takes the whole analysis run down instead of
-    marking one hat, which on a bulk re-analyse is the difference between one
+    marking one hat, which on a bulk re-analyze is the difference between one
     failure and two hundred.
     """
     _stub_client(monkeypatch, raises=RuntimeError("something new"))

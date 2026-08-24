@@ -316,7 +316,7 @@ async def search_hats_by_color(
             #
             # Prefer the stored palette name, which is what the hat is
             # recorded as being; fall back to snapping the hex for swatches
-            # that predate color normalisation.
+            # that predate color normalization.
             if not is_same_color(target_lab, swatch_lab, color.general_color):
                 continue
             rank = color.dominance_rank

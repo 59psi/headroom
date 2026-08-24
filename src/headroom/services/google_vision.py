@@ -64,7 +64,7 @@ async def detect_brand_logo(
     hats, not an error.
 
     A missing file is also None rather than an exception. This is the fallback
-    path: it exists to salvage something when the primary analyser is
+    path: it exists to salvage something when the primary analyzer is
     unavailable, so it must never be the thing that takes the run down. The
     photo can genuinely disappear mid-run when a replacement upload deletes it.
     """

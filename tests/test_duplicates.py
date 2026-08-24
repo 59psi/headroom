@@ -1,7 +1,7 @@
 """Finding hats that are probably the same hat, entered twice.
 
 Bulk import from a camera roll is how this happens — two photos of one hat
-become two rows that both analyse plausibly. At forty hats you notice; at two
+become two rows that both analyze plausibly. At forty hats you notice; at two
 hundred you don't, and the collection reports more than you own, which then
 flows into the valuation.
 """
@@ -19,7 +19,7 @@ async def _add(client, **over) -> dict:
     resp = await client.post("/api/hats", json=body)
     assert resp.status_code == 201, resp.text
     hat = resp.json()
-    # Identity fields the picker can't set on create; the analyser normally
+    # Identity fields the picker can't set on create; the analyzer normally
     # fills these, so set them the way it would.
     edits = {k: over[k] for k in ("brand", "colorway") if k in over}
     if edits:
@@ -55,8 +55,8 @@ async def test_genuinely_different_hats_are_not_grouped(client):
     assert await _groups(client) == []
 
 
-async def test_an_unanalysed_twin_is_reported_as_likely(client):
-    """The common bulk-import shape: one row analysed, its twin not yet.
+async def test_an_unanalyzed_twin_is_reported_as_likely(client):
+    """The common bulk-import shape: one row analyzed, its twin not yet.
 
     Same model and size, colorway missing on one side — an exact match is
     impossible, and dropping it would hide the case this feature exists for.
@@ -83,7 +83,7 @@ async def test_casing_and_spacing_do_not_hide_a_duplicate(client):
 
 
 async def test_hats_with_nothing_recorded_are_not_all_one_giant_group(client):
-    """Without an identity floor, every un-analysed hat matches every other on
+    """Without an identity floor, every un-analyzed hat matches every other on
     "same size, same style" and the report is one useless group."""
     for _ in range(4):
         await _add(client)
