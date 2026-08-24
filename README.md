@@ -570,6 +570,7 @@ link-only if the API is unreachable.
 | `HEADROOM_MDNS_ENABLED` | `true` | Advertise `headroom.local` on the LAN (Docker: stack `docker-compose.mdns.yml`, or `docker-compose.https-lan.yml` for passkey-grade HTTPS) |
 | `HEADROOM_MDNS_HOSTNAME` | `headroom` | mDNS host label — resolves as `<label>.local` |
 | `HEADROOM_MDNS_PORT` | `8000` | Port the mDNS advertisement points at |
+| `HEADROOM_SITE_ADDRESSES` | `<HEADROOM_MDNS_HOSTNAME>.local` | LAN HTTPS overlay only. Every name/address Caddy answers on **and** puts in the certificate, comma-separated. Add the LAN IP to reach it where `.local` can't resolve — a VPN, a tunnel, another subnet |
 
 ---
 
