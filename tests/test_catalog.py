@@ -717,3 +717,131 @@ async def test_a_travel_case_never_matches_a_hat():
     from headroom.services.catalog_service import _model_tier
 
     assert _model_tier("Trenches Icon Hydro", "3 Hat Travel Case") is None
+
+
+# ---- the two properties the 2.52.0 release notes assert ----------------- #
+
+
+def _maximum_matching(purchases, hats) -> int:
+    """Reference maximum bipartite matching, by augmenting paths.
+
+    Deliberately a SECOND implementation, not a call into the service: it
+    answers "how many links are possible" with no notion of scoring, ordering
+    or scarcity, so it can contradict the matcher. Kuhn's algorithm — for each
+    purchase, walk its candidate hats and recursively bump whoever holds one.
+
+    This exists because the release notes claim the matcher achieves the
+    maximum possible, and that claim was measured once in a throwaway script.
+    A number nobody can reproduce is a rumor.
+    """
+    from headroom.services.catalog_service import _match_score
+
+    edges = {
+        i: [j for j, h in enumerate(hats) if _match_score(p, h) is not None]
+        for i, p in enumerate(purchases)
+    }
+    holder: dict[int, int] = {}   # hat index -> purchase index
+
+    def _augment(i: int, seen: set[int]) -> bool:
+        for j in edges[i]:
+            if j in seen:
+                continue
+            seen.add(j)
+            if j not in holder or _augment(holder[j], seen):
+                holder[j] = i
+                return True
+        return False
+
+    return sum(_augment(i, set()) for i in edges)
+
+
+async def test_matching_achieves_the_maximum_possible(client, db_session):
+    """Greedy + scarcity ordering must equal the true optimum, not approach it.
+
+    The arrangement is the one that breaks naive greedy. Two hats of the same
+    model differing only in size; a sizeless purchase can take EITHER, a
+    Classic purchase can take only the Classic hat. Insert the sizeless line
+    first, and in file order it takes the Classic hat on a tie-break, leaving
+    the Classic line with nothing — one link where two were possible.
+
+    Sabotage-checked: replacing `_by_scarcity` with file order fails this.
+    """
+    from headroom.models.catalog import Purchase
+    from headroom.services.catalog_service import match_purchases_to_hats
+
+    # Classic first, so it is also the tie-break winner for the sizeless line.
+    await _hat_with(client, db_session, size="classic", model="A-Game Hydro")
+    await _hat_with(client, db_session, size="small", model="A-Game Hydro")
+
+    # Order matters: the unconstrained line is inserted first on purpose.
+    db_session.add(Purchase(
+        source="test", item_title="A-Game Hydro - Black",
+        model_name="A-Game Hydro", colorway="Black", quantity=1, price=79.0,
+    ))
+    db_session.add(Purchase(
+        source="test", item_title="A-Game Hydro - Black",
+        model_name="A-Game Hydro", colorway="Black", size="classic",
+        quantity=1, price=79.0,
+    ))
+    await db_session.commit()
+
+    from sqlalchemy import select
+
+    from headroom.models.hat import Hat
+    purchases = list((await db_session.execute(select(Purchase))).scalars().all())
+    hats = list((await db_session.execute(
+        select(Hat).where(Hat.disposed_at.is_(None))
+    )).scalars().all())
+    best = _maximum_matching(purchases, hats)
+    assert best == 2, "the fixture is meant to admit two links"
+
+    result = await match_purchases_to_hats(db_session)
+
+    assert result["matched"] == best, (
+        f"matched {result['matched']} of a possible {best} — scarcity ordering "
+        "is not achieving the optimum"
+    )
+
+
+async def test_the_preview_predicts_what_importing_actually_does(client, db_session):
+    """A preview that under-reports the blast radius is worse than none.
+
+    Importing runs the matcher over EVERY unmatched purchase, not just the
+    lines in the file. Previewing only the file once reported "1 to import,
+    0 would match" against a collection where the click then matched 144 and
+    wrote 144 hat prices.
+    """
+    from headroom.models.catalog import Purchase
+    from headroom.services.catalog_service import (
+        import_purchases,
+        match_purchases_to_hats,
+        preview_import,
+    )
+
+    await _hat_with(client, db_session, size="classic", model="A-Game Hydro")
+    await _hat_with(client, db_session, size="classic", model="Trenches Thermal")
+
+    # A purchase already on record and unmatched — the backlog.
+    db_session.add(Purchase(
+        source="test", item_title="A-Game Hydro - Black",
+        model_name="A-Game Hydro", colorway="Black", quantity=1, price=79.0,
+    ))
+    await db_session.commit()
+
+    new = [{"item_title": "Trenches Thermal - Camo", "price": 89.0, "quantity": 1}]
+
+    preview = await preview_import(db_session, new)
+    # The file contributes one match; the backlog contributes the other, and
+    # the preview must say so rather than quietly counting only the first.
+    assert preview["would_import"] == 1
+    assert preview["would_match"] == 1
+    assert preview["would_match_backlog"] == 1
+    assert preview["would_match_total"] == 2
+
+    await import_purchases(db_session, new)
+    result = await match_purchases_to_hats(db_session)
+
+    assert result["matched"] == preview["would_match_total"], (
+        f"preview promised {preview['would_match_total']} matches, import made "
+        f"{result['matched']}"
+    )

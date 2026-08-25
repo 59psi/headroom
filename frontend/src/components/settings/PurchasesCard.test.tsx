@@ -12,6 +12,7 @@ const fetchMock = vi.mocked(apiFetch);
 const PREVIEW = {
   would_import: 12, duplicates: 3, unusable: 0, likely_accessories: 2,
   would_match: 9, would_not_match: 3, ambiguous: 1,
+  would_match_backlog: 0, would_match_total: 9,
 };
 
 /** Route each call by path so order doesn't matter. */
@@ -30,8 +31,10 @@ function jsonFile(body: unknown, name = 'melin-purchases.json') {
 }
 
 async function pick(file: File) {
-  const input = document.querySelector('input[type="file"]') as HTMLInputElement;
-  await userEvent.upload(input, file);
+  // By label, not by querySelector — the control carries an aria-label because
+  // the visible labels in this app have no htmlFor, and a test reaching past
+  // that is how a control ships unlabelled.
+  await userEvent.upload(screen.getByLabelText('Purchase history JSON file'), file);
 }
 
 describe('PurchasesCard', () => {
@@ -115,6 +118,37 @@ describe('PurchasesCard', () => {
       expect.stringContaining('dry_run=true'),
       expect.anything(),
     );
+  });
+
+  it('warns that importing also matches purchases already on record', async () => {
+    // The shipped bug: previewing one new line reported "0 would match" while
+    // the import matched 144 and wrote 144 hat prices. The blast radius has to
+    // be on screen before the button is pressed.
+    route({
+      'dry_run=true': {
+        ...PREVIEW, would_import: 1, would_match: 0,
+        would_match_backlog: 144, would_match_total: 144,
+      },
+      '/api/admin/purchases': [],
+    });
+
+    renderWithProviders(<PurchasesCard />);
+    await pick(jsonFile([{ item_title: 'Coach Hydro - Black' }]));
+
+    expect(
+      await screen.findByText(/Also matches 144 purchases already on record/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/writes a colorway and cost basis onto 144 hats/)).toBeInTheDocument();
+  });
+
+  it('stays quiet about the backlog when there is none', async () => {
+    route({ 'dry_run=true': PREVIEW, '/api/admin/purchases': [] });
+
+    renderWithProviders(<PurchasesCard />);
+    await pick(jsonFile([{ item_title: 'Coach Hydro - Black' }]));
+
+    await screen.findByText('12');
+    expect(screen.queryByText(/already on record\./)).toBeNull();
   });
 
   it('offers Unlink all only once something is linked', async () => {

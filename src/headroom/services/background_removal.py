@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 _MODEL_NAME = os.environ.get("HEADROOM_REMBG_MODEL", "isnet-general-use")
 _session = None
 # Single-shot lock used ONLY around lazy session creation, not around inference.
-# The session itself is reentrant once initialised.
+# The session itself is reentrant once initialized.
 _init_lock = asyncio.Lock()
 
 # How many inferences may be in flight at once, across ALL callers. Created
