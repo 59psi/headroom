@@ -1,0 +1,140 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { renderWithProviders } from '../../test/utils';
+import { PurchasesCard } from './PurchasesCard';
+import { apiFetch } from '../../api/client';
+
+vi.mock('../../api/client', () => ({ apiFetch: vi.fn() }));
+
+const fetchMock = vi.mocked(apiFetch);
+
+const PREVIEW = {
+  would_import: 12, duplicates: 3, unusable: 0, likely_accessories: 2,
+  would_match: 9, would_not_match: 3, ambiguous: 1,
+};
+
+/** Route each call by path so order doesn't matter. */
+function route(handlers: Record<string, unknown>) {
+  fetchMock.mockImplementation((path: string) => {
+    for (const [needle, value] of Object.entries(handlers)) {
+      if (path.includes(needle)) return Promise.resolve(value) as never;
+    }
+    return Promise.resolve([]) as never;
+  });
+}
+
+/** jsdom's File has .text(), which is what the card reads. */
+function jsonFile(body: unknown, name = 'melin-purchases.json') {
+  return new File([JSON.stringify(body)], name, { type: 'application/json' });
+}
+
+async function pick(file: File) {
+  const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+  await userEvent.upload(input, file);
+}
+
+describe('PurchasesCard', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('previews a picked file before writing anything', async () => {
+    route({ 'dry_run=true': PREVIEW, '/api/admin/purchases': [] });
+
+    renderWithProviders(<PurchasesCard />);
+    await pick(jsonFile([{ item_title: 'Trenches Icon Hydro - Camo' }]));
+
+    expect(await screen.findByText('12')).toBeInTheDocument();
+    expect(screen.getByText('melin-purchases.json')).toBeInTheDocument();
+
+    // The whole point of the preview: nothing is imported until confirmed.
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      '/api/admin/purchases/import',
+      expect.anything(),
+    );
+  });
+
+  it('imports only after the confirm button', async () => {
+    route({
+      'dry_run=true': PREVIEW,
+      '/api/admin/purchases/import': { imported: 12, skipped: 3, matched: 9, unmatched: 3 },
+      '/api/admin/purchases': [],
+    });
+
+    renderWithProviders(<PurchasesCard />);
+    await pick(jsonFile([{ item_title: 'Trenches Icon Hydro - Camo' }]));
+
+    const confirm = await screen.findByRole('button', { name: /Import 12 and match/ });
+    await userEvent.click(confirm);
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/admin/purchases/import',
+        expect.objectContaining({ method: 'POST' }),
+      ),
+    );
+    expect(await screen.findByText(/imported 12, matched 9 to hats/)).toBeInTheDocument();
+  });
+
+  it('sends the file contents, unwrapping an {items: [...]} envelope', async () => {
+    route({ 'dry_run=true': PREVIEW, '/api/admin/purchases': [] });
+
+    renderWithProviders(<PurchasesCard />);
+    await pick(jsonFile({ items: [{ item_title: 'A-Game Hydro' }] }));
+
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(([p]) => String(p).includes('dry_run=true'));
+      expect(call).toBeDefined();
+      expect(JSON.parse(String(call![1]!.body))).toEqual({
+        items: [{ item_title: 'A-Game Hydro' }],
+      });
+    });
+  });
+
+  it('says so when every line is already on record', async () => {
+    route({
+      'dry_run=true': { ...PREVIEW, would_import: 0, duplicates: 294 },
+      '/api/admin/purchases': [],
+    });
+
+    renderWithProviders(<PurchasesCard />);
+    await pick(jsonFile([{ item_title: 'Trenches Icon Hydro - Camo' }]));
+
+    expect(await screen.findByText(/all 294 lines are already on record/)).toBeInTheDocument();
+    // Nothing to do, so no confirm button to press.
+    expect(screen.queryByRole('button', { name: /^Import \d+ and match/ })).toBeNull();
+  });
+
+  it('reports a file that is not a list of line items rather than posting it', async () => {
+    route({ '/api/admin/purchases': [] });
+
+    renderWithProviders(<PurchasesCard />);
+    await pick(jsonFile({ orders: 'nope' }));
+
+    expect(await screen.findByText(/Expected a JSON array/)).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      expect.stringContaining('dry_run=true'),
+      expect.anything(),
+    );
+  });
+
+  it('offers Unlink all only once something is linked', async () => {
+    route({
+      '/api/admin/purchases': [
+        { id: 1, order_ref: 'A', order_date: null, item_title: 'Hydro', price: 79, hat_id: null },
+      ],
+    });
+
+    const { unmount } = renderWithProviders(<PurchasesCard />);
+    expect(await screen.findByText(/1 purchases · 0 linked/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Unlink all' })).toBeNull();
+    unmount();
+
+    route({
+      '/api/admin/purchases': [
+        { id: 1, order_ref: 'A', order_date: null, item_title: 'Hydro', price: 79, hat_id: 7 },
+      ],
+    });
+    renderWithProviders(<PurchasesCard />);
+    expect(await screen.findByRole('button', { name: 'Unlink all' })).toBeInTheDocument();
+  });
+});

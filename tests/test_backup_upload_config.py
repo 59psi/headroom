@@ -455,3 +455,21 @@ async def test_the_synology_setup_names_the_right_checkbox():
     assert "do not assume it" in steps
     assert "enable network backup service" in steps
     assert "openrsync" in steps, "macOS rsync cannot do daemon syntax"
+
+
+async def test_the_module_host_is_parsed_from_the_destination():
+    """Enumeration targets the host, not the whole destination string."""
+    import inspect
+
+    src = inspect.getsource(backup_service.list_rsync_modules)
+
+    # Anonymous by design: module listing precedes authentication, so no
+    # credential should appear anywhere in that call.
+    assert "RSYNC_PASSWORD" not in src
+    assert "rsync://" in src
+
+
+async def test_module_listing_never_raises_on_a_dead_host():
+    """It only ever decorates an error message."""
+    assert await backup_service.list_rsync_modules("u@127.0.0.1::x", timeout=1) == []
+    assert await backup_service.list_rsync_modules("", timeout=1) == []

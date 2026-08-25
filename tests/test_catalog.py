@@ -646,3 +646,74 @@ async def test_the_preview_predicts_a_multi_line_import_exactly(client):
         "the import disagreed with its own preview"
     )
     assert imported["imported"] == 2, "a unit of the second line was dropped"
+
+
+# ---- model-name tiers ------------------------------------------------- #
+#
+# Exact equality left ~120 purchase units on this collection unmatched, and the
+# cause is structural: `model_name` comes from Claude Vision reading a PHOTO,
+# which cannot show the sub-line, so it lands on the generic family ("odysea
+# hydro"). The order email states the full product ("Odysea Packable Hydro").
+# The photo saw less than the receipt knew — which is the expected direction.
+
+
+async def test_identical_model_names_score_highest():
+    from headroom.services.catalog_service import MODEL_EXACT, _model_tier
+
+    assert _model_tier("Trenches Icon Hydro", "Trenches Icon Hydro") == MODEL_EXACT
+
+
+async def test_a_generic_hat_name_matches_a_specific_purchase():
+    """The ~120-unit case. The receipt knows the sub-line; the photo does not."""
+    from headroom.services.catalog_service import MODEL_CONTAINED, _model_tier
+
+    for hat, purchase in [
+        ("Odysea Hydro", "Odysea Packable Hydro"),
+        ("Trenches Thermal", "Trenches Icon Infinite Thermal"),
+        ("A-Game Hydro", "A-Game Icon Hydro"),
+        ("Trenches Hydro", "Trenches Links Hydro"),
+    ]:
+        assert _model_tier(hat, purchase) == MODEL_CONTAINED, (hat, purchase)
+
+
+async def test_exact_always_outranks_contained():
+    """So a subset match only ever picks up what nothing better claimed."""
+    from headroom.services.catalog_service import MODEL_CONTAINED, MODEL_EXACT
+
+    assert MODEL_EXACT > MODEL_CONTAINED
+
+
+async def test_the_subset_direction_is_not_symmetric():
+    """A hat named MORE specifically than the receipt must NOT match.
+
+    That would mean the photo knew something the receipt did not, which does
+    not happen — and it would let one generic receipt line claim any specific
+    hat in the family.
+    """
+    from headroom.services.catalog_service import _model_tier
+
+    assert _model_tier("Trenches Icon Mill Pinya", "Trenches Icon") is None
+    assert _model_tier("Odysea Packable Hydro", "Odysea Hydro") is None
+
+
+async def test_hyphens_do_not_defeat_the_comparison():
+    """`A-Game` and `A Game` are one product line; `X - Camo` is `X Camo`."""
+    from headroom.services.catalog_service import MODEL_EXACT, _model_tier
+
+    assert _model_tier("A-Game Hydro", "A Game Hydro") == MODEL_EXACT
+    assert _model_tier("Trenches Thermal - Camo", "Trenches Thermal Camo") == MODEL_EXACT
+
+
+async def test_unrelated_models_never_match():
+    from headroom.services.catalog_service import _model_tier
+
+    assert _model_tier("Odysea Hydro", "Trenches Thermal") is None
+    assert _model_tier("", "Trenches Hydro") is None
+    assert _model_tier("Trenches Hydro", "") is None
+
+
+async def test_a_travel_case_never_matches_a_hat():
+    """78 units of it in the real history — accessories must stay unmatched."""
+    from headroom.services.catalog_service import _model_tier
+
+    assert _model_tier("Trenches Icon Hydro", "3 Hat Travel Case") is None

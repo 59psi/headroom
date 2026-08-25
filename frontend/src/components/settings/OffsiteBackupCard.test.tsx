@@ -205,4 +205,24 @@ describe('OffsiteBackupCard', () => {
 
     expect(await screen.findByText(/Uploaded x.tar.gz/)).toBeInTheDocument();
   });
+
+  it("shows the setup steps for the provider actually CONFIGURED, not rclone", async () => {
+    // The bug: provider state was useState("rclone"), never synced to the
+    // saved value. After configuring Synology, reopening Settings showed
+    // rclone selected and rclone's steps — so the instructions for the
+    // transport in use were in the payload but unreachable, which reads as
+    // "you took away the instructions".
+    const user = userEvent.setup();
+    mocked.getBackupUpload.mockResolvedValue(status({
+      configured: true, provider: "synology",
+      destination: "backup@nas::NetBackup/x",
+    }));
+    renderWithProviders(<OffsiteBackupCard />);
+    await screen.findByRole("option", { name: /Synology/ });
+
+    expect(screen.getByLabelText("Upload provider")).toHaveValue("synology");
+
+    await user.click(screen.getByRole("button", { name: /How to finish setting up/i }));
+    expect(await screen.findByText(/Enable the rsync service in DSM/i)).toBeInTheDocument();
+  });
 });

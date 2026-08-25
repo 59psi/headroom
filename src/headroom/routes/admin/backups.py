@@ -244,10 +244,26 @@ async def test_backup_upload(db: AsyncSession = Depends(get_db)):
         return BackupUploadTestResult(
             ok=True, detail=f"Uploaded {backups[0].name} with {argv[0]}."
         )
-    return BackupUploadTestResult(
-        ok=False,
-        detail=_explain(h.last_upload_error or "Upload failed — see the container log."),
-    )
+    detail = _explain(h.last_upload_error or "Upload failed — see the container log.")
+
+    # "Unknown module" is a dead end on its own, and the real list is
+    # install-specific — DSM derives modules from your shared folders. This
+    # container has GNU rsync, so it asks rather than telling the operator to go
+    # and run a command themselves.
+    if "unknown module" in detail.lower():
+        destination = await settings_service.get_setting(
+            db, backup_service.UPLOAD_DESTINATION_KEY
+        )
+        modules = await backup_service.list_rsync_modules(destination or "")
+        if modules:
+            detail += "\n\nThat host currently offers: " + ", ".join(modules)
+        else:
+            detail += (
+                "\n\nCould not list its modules either — the daemon may not be "
+                "reachable from this container."
+            )
+
+    return BackupUploadTestResult(ok=False, detail=detail)
 
 
 #: Failures whose message is accurate but whose CAUSE is somewhere else, mapped
