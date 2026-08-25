@@ -57,6 +57,16 @@ class TlsStatusRead(BaseModel):
     needs_attention: bool = False
     #: A valid certificate for the wrong name fails in a browser just as hard.
     hostname_ok: bool | None = None
+    #: True when the served root differs from the one recorded on first sight —
+    #: i.e. Caddy regenerated the authority and every device that trusts the old
+    #: root will now refuse the connection. Distinct from an expiry problem and
+    #: far worse: reissuing a leaf is automatic, replacing a hand-installed root
+    #: means visiting every device.
+    ca_changed: bool = False
+    #: The fingerprint the devices actually trust, when it differs from what is
+    #: being served. Both are shown together or neither means anything — Caddy
+    #: gives every root the same NAME, so only these tell them apart.
+    ca_expected_sha256: str | None = None
     #: SHA-256 of the CA this install hands out. Published because Caddy names
     #: every root identically, so two installs yield two different roots with
     #: the same name — and only a fingerprint tells them apart.

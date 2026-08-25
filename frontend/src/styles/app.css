@@ -401,6 +401,24 @@ button.card:hover::before,
   min-height: 36px;
 }
 
+/* Touch devices get the documented 44px minimum tap target, everywhere.
+   `.btn` and the full-size controls already clear it; the `-sm` variants were
+   36px, which is fine under a mouse and under a fingertip is not — and on a
+   phone the `-sm` buttons are the destructive ones ("Unlink all", "Delete"),
+   sitting in a row beside their neighbours.
+
+   Keyed on `pointer: coarse` rather than a width breakpoint because the
+   question is what is doing the pointing, not how wide the screen is: an iPad
+   is a wide touch screen and a small laptop window is a narrow mouse one.
+   Padding stays put so nothing reflows — only the box grows. */
+@media (pointer: coarse) {
+  .btn-sm,
+  .form-select-sm,
+  .form-control-sm {
+    min-height: 44px;
+  }
+}
+
 .form-control-color {
   padding: 0.25rem;
   width: 48px;

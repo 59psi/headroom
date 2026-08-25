@@ -86,6 +86,29 @@ export function TrustCertCard() {
             (<code>docker restart headroom-caddy</code>) and reload.
           </p>
         )}
+        {/* Louder than expiry, and above it, because it is a bigger problem
+            with a different fix. An expired leaf is reissued by restarting
+            Caddy; a replaced ROOT means the authority every device trusts no
+            longer exists, and no amount of restarting brings it back. */}
+        {tls?.ca_changed && (
+          <p className="small mb-3" style={{ color: 'var(--neon-pink, #ff4fa3)' }}>
+            <strong>The certificate authority has changed.</strong> This install
+            is now serving a different root than the one recorded when it was
+            first set up, which means Caddy generated a fresh authority — so
+            every device that trusted the old one will refuse to connect until
+            it installs the new certificate below.
+            <br />
+            <span className="font-mono" style={{ fontSize: '0.68rem' }}>
+              your devices trust {tls.ca_expected_sha256}
+              <br />
+              now serving&nbsp;&nbsp;&nbsp;&nbsp; {tls.ca_sha256}
+            </span>
+            <br />
+            If you have a backup from before this happened, restoring{' '}
+            <code>caddy-pki/</code> from it puts the original authority back and
+            saves re-trusting anything.
+          </p>
+        )}
         {tls?.applicable && tls.hostname_ok === false && (
           <p className="small mb-3" style={{ color: 'var(--neon-pink, #ff4fa3)' }}>
             The certificate being served doesn&rsquo;t cover{' '}

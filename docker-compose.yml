@@ -50,6 +50,21 @@ services:
       # Empty by default, which `upload_env()` treats as "not configured" —
       # so this is inert unless you set it.
       HEADROOM_BACKUP_RSYNC_PASSWORD: "${HEADROOM_BACKUP_RSYNC_PASSWORD:-}"
+      # Whether backups carry Caddy's local CA, private keys included. Same
+      # passthrough reasoning as the line above — setting it in `.env` alone
+      # would do nothing.
+      #
+      # Default true: the root of that CA is installed BY HAND on every device
+      # that browses the site, and a root is self-signed, so nothing can vouch
+      # for a replacement. Losing it means visiting every phone and laptop, and
+      # it lived only in Caddy's volume — on the card whose unclean shutdown
+      # caused the 37-day HTTPS outage.
+      #
+      # Set false if your backups travel somewhere you would rather that key
+      # did not: anyone holding it can mint a certificate for ANY host those
+      # devices will trust, which is a broader capability than anything else
+      # in the archive.
+      HEADROOM_BACKUP_INCLUDE_CA: "${HEADROOM_BACKUP_INCLUDE_CA:-true}"
     # Bound the container so a memory spike fails as a scoped, diagnosable
     # event instead of competing for the whole machine. The peak here is the
     # photo pipeline: a ~179MB rembg model resident alongside a full-resolution

@@ -75,16 +75,36 @@ services:
     depends_on:
       - headroom
 
-  # Publishes Caddy's public root where a non-root app can read it.
+  # Publishes Caddy's CA where the non-root app can read it.
   #
   # Runs as root (so it can read the 0700 PKI) but touches nothing else: it
-  # reads one file from a read-only mount and writes one file, world-readable,
-  # to a volume that holds nothing else.
+  # reads from a read-only mount and writes into a volume that holds nothing
+  # but what it puts there.
   #
   # It polls instead of copying once because Caddy mints the CA a moment AFTER
   # startup on a first boot, and rotates the intermediate periodically
   # thereafter — a one-shot copy would race the former and leave the endpoint
   # 404ing until someone restarted the stack.
+  #
+  # TWO destinations, with deliberately different permissions:
+  #
+  #   /export/root.crt      0644 — the public trust anchor, served to anyone
+  #                         who asks at /api/public/ca-certificate. A device
+  #                         cannot reach the site until it has this.
+  #   /export/pki/          0700, uid 1000 — the WHOLE authority, private keys
+  #                         included, readable only by the app so it can put
+  #                         them in a backup.
+  #
+  # The second one is why this stopped being a one-file copy. Every device that
+  # browses the site installed root.crt by hand, and a root is self-signed —
+  # nothing can vouch for a replacement. Losing this directory does not mean
+  # "reissue a certificate", it means visiting every phone, tablet and laptop.
+  # It lived only in Caddy's volume, on the same SD card whose unclean shutdown
+  # caused the 37-day outage, and no backup contained it.
+  #
+  # uid 1000 matches the `headroom` user in the Dockerfile. Set
+  # HEADROOM_BACKUP_INCLUDE_CA=false on the app to keep the keys out of
+  # backups; the export itself stays, since it costs four small files.
   caddy-ca-export:
     image: caddy:2-alpine
     container_name: headroom-caddy-ca-export
@@ -96,11 +116,20 @@ services:
       - caddy-ca:/export
     entrypoint: ["/bin/sh", "-c"]
     command: >
-      'while :; do
-         if [ -f /data/caddy/pki/authorities/local/root.crt ]; then
-           install -m 0644 /data/caddy/pki/authorities/local/root.crt /export/root.crt
-         fi
-         sleep 60
+      'PKI=/data/caddy/pki/authorities/local;
+       while :; do
+         if [ -f "$$PKI/root.crt" ]; then
+           install -m 0644 "$$PKI/root.crt" /export/root.crt;
+           mkdir -p /export/pki;
+           chown 1000:1000 /export/pki;
+           chmod 0700 /export/pki;
+           for f in root.crt root.key intermediate.crt intermediate.key; do
+             if [ -f "$$PKI/$$f" ]; then
+               install -o 1000 -g 1000 -m 0600 "$$PKI/$$f" "/export/pki/$$f";
+             fi;
+           done;
+         fi;
+         sleep 60;
        done'
 
 volumes:

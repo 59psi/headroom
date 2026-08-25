@@ -25,6 +25,7 @@ from headroom.schemas.settings import (
 )
 from headroom.services import (
     activity_service,
+    ca_vault,
     guest_view_service,
     mdns_service,
     tls_health,
@@ -180,7 +181,7 @@ async def test_api_key(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/tls", response_model=TlsStatusRead)
-async def get_tls_status():
+async def get_tls_status(db: AsyncSession = Depends(get_db)):
     """What certificate the HTTPS front door is actually serving.
 
     Opens a TLS connection to the app's own origin rather than reading Caddy's
@@ -191,7 +192,17 @@ async def get_tls_status():
     Run off the event loop — it is a network round trip, short but not free.
     """
     status = await asyncio.to_thread(tls_health.check_certificate)
-    return TlsStatusRead(**asdict(status))
+
+    # Has the trust anchor itself been replaced? Caddy names every root
+    # `Caddy Local Authority - <year> ECC Root`, so a regenerated CA looks
+    # identical by eye to the one every device installed by hand — the first
+    # symptom is a device reporting an invalid signature on a chain the server
+    # considers perfect. Compared against the fingerprint recorded on first
+    # sight, so the change is reported the hour it happens.
+    changed, expected = await ca_vault.check_root(db, status.ca_sha256)
+    return TlsStatusRead(
+        **asdict(status), ca_changed=changed, ca_expected_sha256=expected
+    )
 
 
 @router.get("/mdns", response_model=MdnsStatus)

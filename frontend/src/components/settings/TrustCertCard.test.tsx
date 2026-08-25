@@ -24,7 +24,8 @@ function tls(over: Partial<TlsStatus> = {}): TlsStatus {
     applicable: true, host: 'headroom.local', port: 443,
     not_before: '2026-08-23T22:44:33Z', not_after: '2026-08-24T10:44:33Z',
     days_remaining: 0.5, expired: false, needs_attention: false,
-    hostname_ok: true, ca_sha256: 'CB:08:88:5B:FD:B7:F7:DD', error: null, ...over,
+    hostname_ok: true, ca_sha256: 'CB:08:88:5B:FD:B7:F7:DD', error: null,
+    ca_changed: false, ca_expected_sha256: 'CB:08:88:5B:FD:B7:F7:DD', ...over,
   };
 }
 
@@ -137,5 +138,39 @@ describe('TrustCertCard', () => {
     expect(
       await screen.findByText(/isn[’']t a trust anchor/i),
     ).toBeInTheDocument();
+  });
+
+  it('raises the alarm when the authority itself was replaced', async () => {
+    // Categorically worse than expiry and fixed differently: a leaf reissues
+    // itself, a hand-installed root has to be reinstalled on every device.
+    mocked.apiFetch.mockResolvedValue('cert');
+    tlsApi.getTlsStatus.mockResolvedValue(tls({
+      ca_changed: true,
+      ca_sha256: 'NEW:FF:EE',
+      ca_expected_sha256: 'OLD:AA:BB',
+    }));
+
+    renderWithProviders(<TrustCertCard />);
+
+    expect(
+      await screen.findByText(/certificate authority has changed/i),
+    ).toBeInTheDocument();
+    // Both fingerprints, because Caddy gives every root the same NAME — these
+    // are the only thing that tells the two apart. `getAllBy` for the served
+    // one: the card also prints it in its own fingerprint row further down,
+    // which is correct and not what this test is about.
+    expect(screen.getByText(/OLD:AA:BB/)).toBeInTheDocument();
+    expect(screen.getAllByText(/NEW:FF:EE/).length).toBeGreaterThan(0);
+    // The cheap way out, if a backup predates the change.
+    expect(screen.getByText(/caddy-pki/)).toBeInTheDocument();
+  });
+
+  it('stays quiet when the authority is the one the devices trust', async () => {
+    mocked.apiFetch.mockResolvedValue('cert');
+
+    renderWithProviders(<TrustCertCard />);
+
+    await screen.findByText(/Install the certificate/i);
+    expect(screen.queryByText(/certificate authority has changed/i)).toBeNull();
   });
 });
