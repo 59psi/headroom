@@ -286,10 +286,50 @@ async def test_every_dataclass_field_survives_into_the_schema():
     dataclass_fields = {f.name for f in dataclasses.fields(tls_health.TlsStatus)}
     schema_fields = set(TlsStatusRead.model_fields)
 
-    assert dataclass_fields == schema_fields, (
-        "TlsStatus and TlsStatusRead have drifted; the extra dataclass fields "
-        "are silently dropped by the API"
+    assert dataclass_fields <= schema_fields, (
+        "TlsStatus and TlsStatusRead have drifted; these dataclass fields are "
+        f"silently dropped by the API: {sorted(dataclass_fields - schema_fields)}"
     )
+
+    # The reverse direction is legitimate but must stay deliberate: these come
+    # from the ROUTE, not from `check_certificate`, because answering them
+    # needs the database and this dataclass is built by a sync network call.
+    # Enumerated so that adding a third is a decision rather than a default
+    # nobody notices going out as False.
+    assert schema_fields - dataclass_fields == {"ca_changed", "ca_expected_sha256"}
+
+
+async def test_the_route_supplies_every_schema_only_field(client, monkeypatch):
+    """A schema-only field the route forgets defaults silently — pin it.
+
+    `ca_changed=False` is exactly what "everything is fine" looks like, so a
+    route that stopped passing it would report health rather than nothing.
+    """
+    import dataclasses
+
+    from headroom.schemas.settings import TlsStatusRead
+    from headroom.services import ca_vault
+
+    seen: dict = {}
+
+    async def _fake_check(db, current):
+        seen["called"] = True
+        return True, "AA:BB:EXPECTED"
+
+    monkeypatch.setattr(ca_vault, "check_root", _fake_check)
+    monkeypatch.setattr(
+        tls_health, "check_certificate",
+        lambda *a, **k: tls_health.TlsStatus(applicable=True, ca_sha256="CC:DD"),
+    )
+
+    body = (await client.get("/api/settings/tls")).json()
+
+    assert seen.get("called"), "the route never consulted the CA check"
+    dataclass_fields = {f.name for f in dataclasses.fields(tls_health.TlsStatus)}
+    for field in set(TlsStatusRead.model_fields) - dataclass_fields:
+        assert field in body, f"route never supplies {field}"
+    assert body["ca_changed"] is True
+    assert body["ca_expected_sha256"] == "AA:BB:EXPECTED"
 
 
 # ---- the Safari ceiling ------------------------------------------------ #

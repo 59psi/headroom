@@ -378,6 +378,15 @@ export interface TlsStatus {
   /** Expired, or close enough that renewal has evidently stopped. */
   needs_attention: boolean;
   hostname_ok: boolean | null;
+  /** The trust anchor itself was replaced — Caddy regenerated the authority,
+   *  so every device that installed the old root by hand will now refuse the
+   *  connection. Categorically worse than an expiry: a leaf reissues itself,
+   *  a hand-installed root has to be reinstalled on each device. */
+  ca_changed: boolean;
+  /** The fingerprint the devices actually trust, when it differs from what is
+   *  being served. Meaningless alone — Caddy gives every root the same name,
+   *  so only the pair identifies which is which. */
+  ca_expected_sha256: string | null;
   /** SHA-256 of the CA this install hands out. Caddy names every root the
    *  same, so two installs give two different roots with one name — a browser
    *  matching by name picks the wrong one and reports "invalid signature" on a
@@ -458,4 +467,51 @@ export interface ConstructionClearResult {
   prices_cleared: number;
   manual_prices_kept: number;
   samples: string[];
+}
+
+// ---- Purchase history ---------------------------------------------- //
+
+export interface PurchaseRow {
+  id: number;
+  order_ref: string | null;
+  order_date: string | null;
+  item_title: string;
+  price: number | null;
+  hat_id: number | null;
+}
+
+/** What importing WOULD do. Nothing is written to produce this. */
+export interface ImportPreview {
+  would_import: number;
+  duplicates: number;
+  unusable: number;
+  likely_accessories: number;
+  /** Matches among the lines in the file — what the operator is choosing. */
+  would_match: number;
+  would_not_match: number;
+  /** Purchases ALREADY on record that the same click would also match.
+   *  Importing re-runs matching over everything unmatched, so this is the
+   *  part nobody asked for and the part that writes prices onto hats. */
+  would_match_backlog: number;
+  /** What the import will report afterwards: the file's lines plus the
+   *  backlog. The number the preview is accountable for. */
+  would_match_total: number;
+  ambiguous: number;
+}
+
+export interface ImportResult {
+  imported: number;
+  skipped: number;
+  matched: number;
+  unmatched: number;
+}
+
+export interface MatchResult {
+  matched: number;
+  unmatched: number;
+}
+
+export interface UnmatchResult {
+  unmatched: number;
+  fields_cleared: number;
 }

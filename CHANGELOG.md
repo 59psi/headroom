@@ -6,6 +6,82 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.54.0] — 2026-08-24
+
+Closes the gap 2.53.0 recorded and left open: Caddy's certificate authority —
+the artifact that actually died in the 37-day HTTPS outage — was in no backup,
+and nothing noticed when it was replaced.
+
+### Added
+- **Caddy's local CA is now part of the backup.** A leaf certificate expiring
+  is a non-event; Caddy issues another. The **root** is the expensive one:
+  every device that browses the site installed it by hand through iOS Settings
+  or macOS Keychain, and a root is self-signed, so nothing can vouch for a
+  replacement. Losing it means visiting every phone, tablet and laptop.
+
+  It lived only inside Caddy's own volume — on the same SD card whose unclean
+  shutdown started the outage — and `_data_fingerprint_sync` measured only the
+  database and the uploads tree. The export sidecar now copies the whole
+  authority to `/caddy-ca/pki` (**0700, uid 1000**, alongside the 0644
+  `root.crt` the app already serves publicly — two destinations with
+  deliberately different permissions), and backups carry it under
+  `data/caddy-pki/`.
+
+  The file list is **explicit, never globbed**: these are private keys, so
+  what leaves the box is an inspected decision rather than whatever happens to
+  be in that directory. The CA also joins the backup change-gate, or a
+  regenerated authority would not itself trigger a backup and the archive
+  holding the *old* root would age out of the retention window while the new
+  one was never captured — losing both.
+
+  **The tradeoff is stated rather than assumed.** Anyone holding `root.key`
+  can mint a certificate for *any* hostname those devices trust, which is a
+  broader capability than anything else in the archive, and the post-backup
+  hook may be uploading it to a NAS or cloud. A `READ-ME-CA-KEYS.txt` travels
+  *inside* the archive saying so, because by the time it reaches a NAS nothing
+  else is around to mention it. `HEADROOM_BACKUP_INCLUDE_CA=false` opts out.
+
+- **A replaced certificate authority is now reported.** Nothing noticed when
+  the served root changed, and it is close to invisible: Caddy names every root
+  `Caddy Local Authority - <year> ECC Root`, so a regenerated CA has the same
+  name, the same issuer string and a completely different key. The first
+  symptom is a device reporting an invalid signature on a chain that verifies
+  perfectly at the server.
+
+  The fingerprint is recorded on first sight and compared on every reading;
+  `GET /api/settings/tls` gained `ca_changed` and `ca_expected_sha256`, and
+  Settings → Trust this device shows both fingerprints with the fix. It is
+  ranked **above** the expiry warning and worded differently on purpose: an
+  expired leaf is repaired by restarting Caddy, a replaced root cannot be
+  repaired that way at all. The check deliberately **never self-heals** — 
+  overwriting the stored fingerprint on a mismatch would silence the alarm on
+  the next poll while every device stayed broken.
+
+  Restoring `caddy-pki/` from a backup taken before the change puts the
+  original authority back and saves re-trusting anything, which is the reason
+  the two halves of this release ship together.
+
+### Fixed
+- **Touch targets on small controls.** `.btn-sm`, `.form-select-sm` and
+  `.form-control-sm` were 36px against a documented 44px minimum — fine under
+  a mouse, and on a phone these are the destructive buttons ("Unlink all",
+  "Delete") sitting in a row beside their neighbours. Now 44px under
+  `@media (pointer: coarse)`, keyed on what is doing the pointing rather than a
+  width breakpoint: an iPad is a wide touch screen and a small laptop window is
+  a narrow mouse one. Padding is unchanged, so nothing reflows.
+
+- **`PurchasesCard` reached past the API layer.** It held its own interfaces
+  and four `apiFetch` URL literals, against the convention that API functions
+  live in `frontend/src/api/` and types in `frontend/src/types/`. Now
+  `api/purchases.ts`, with the shapes in `types/index.ts` where every other
+  payload is defined.
+
+**Durability itself remains Caddy's.** It decides when to fsync its own files
+and this app cannot reach inside it, so a durable *copy* is the only mitigation
+available — which is why the backup half of this matters more than it looks.
+
+**793 backend + 191 frontend tests pass.**
+
 ## [2.53.0] — 2026-08-24
 
 A code review of 2.52.0 found that the purchase-import preview — the whole

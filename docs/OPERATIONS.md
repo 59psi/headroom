@@ -224,6 +224,49 @@ Off-machine safety: periodically copy the newest file out of the backups
 directory (or download via the Settings page) to somewhere that isn't the
 same disk.
 
+### The certificate authority is in the backup too
+
+If you run the LAN-HTTPS overlay, the archive also contains
+`data/caddy-pki/` — Caddy's local certificate authority, **private keys
+included**.
+
+It is there because it is the one thing here that cannot be regenerated. A
+leaf certificate expiring is a non-event: Caddy issues another. The **root**
+of that authority was installed by hand on every device that browses the site,
+through iOS Settings or macOS Keychain, and a root is self-signed — there is no
+authority above it to vouch for a replacement. Lose it and the repair is
+walking to every phone, tablet and laptop. Until now it existed only inside
+Caddy's own volume, on the same card whose unclean shutdown caused the 37-day
+HTTPS outage, and no backup contained it.
+
+**Treat these archives accordingly.** Anyone holding `root.key` can mint a
+certificate for *any* hostname those devices will trust — not just this app.
+That is a broader capability than the database's contents, and the post-backup
+upload hook may be sending the archive to a NAS or cloud. Set
+`HEADROOM_BACKUP_INCLUDE_CA=false` in `.env` to leave it out; you keep the
+database and photos and accept re-trusting every device if the card dies.
+
+**Restoring the CA** — stop the stack, put the four files back, start again:
+
+```bash
+docker compose down
+tar xzf headroom-backup-<timestamp>.tar.gz data/caddy-pki
+docker run --rm -v headroom_caddy-data:/data -v "$PWD/data/caddy-pki":/restore \
+  alpine sh -c 'mkdir -p /data/caddy/pki/authorities/local &&
+                cp /restore/root.* /restore/intermediate.* /data/caddy/pki/authorities/local/ &&
+                chown -R root:root /data/caddy/pki &&
+                chmod 0700 /data/caddy/pki/authorities/local'
+docker compose -f docker-compose.yml -f docker-compose.https-lan.yml up -d
+```
+
+Then check Settings → Trust this device. It records the CA fingerprint the
+first time it sees one and compares every reading against it, so **"The
+certificate authority has changed"** appearing there is the alarm for exactly
+this failure — Caddy generated a fresh authority and every device is about to
+refuse the connection. Caddy names every root
+`Caddy Local Authority - <year> ECC Root`, so the fingerprint is the only
+thing that distinguishes the one your devices trust from a replacement.
+
 ### Off-site / remote backups
 
 Local backups still share one disk (the SD card) with the database. Two ways to

@@ -1,21 +1,10 @@
 import { useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiFetch } from '../../api/client';
+import {
+  importPurchases, listPurchases, previewImport, rematchPurchases, unmatchAllPurchases,
+} from '../../api/purchases';
+import type { ImportPreview } from '../../types';
 import { invalidateHatViews } from '../../lib/invalidate';
-
-interface PurchaseRow {
-  id: number; order_ref: string | null; order_date: string | null;
-  item_title: string; price: number | null; hat_id: number | null;
-}
-
-interface ImportPreview {
-  would_import: number; duplicates: number; unusable: number;
-  likely_accessories: number; would_match: number; would_not_match: number;
-  would_match_backlog: number; would_match_total: number;
-  ambiguous: number;
-}
-
-interface ImportResult { imported: number; skipped: number; matched: number; unmatched: number }
 
 /** Accepts either a bare array of line items or `{items: [...]}`. */
 function readItems(text: string): Record<string, unknown>[] {
@@ -39,7 +28,7 @@ export function PurchasesCard() {
 
   const purchases = useQuery({
     queryKey: ['admin', 'purchases'],
-    queryFn: () => apiFetch<PurchaseRow[]>('/api/admin/purchases'),
+    queryFn: listPurchases,
   });
 
   const reset = () => {
@@ -53,18 +42,12 @@ export function PurchasesCard() {
   // and cost bases onto hats, and there is no undo for that beyond
   // `unmatch-all`. A dry run costs one round trip.
   const previewMut = useMutation({
-    mutationFn: (items: Record<string, unknown>[]) =>
-      apiFetch<ImportPreview>('/api/admin/purchases/import?dry_run=true', {
-        method: 'POST', body: JSON.stringify({ items }),
-      }),
+    mutationFn: previewImport,
     onSuccess: setPreview,
   });
 
   const importMut = useMutation({
-    mutationFn: (items: Record<string, unknown>[]) =>
-      apiFetch<ImportResult>('/api/admin/purchases/import', {
-        method: 'POST', body: JSON.stringify({ items }),
-      }),
+    mutationFn: importPurchases,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['admin', 'purchases'] });
       invalidateHatViews(qc);
@@ -73,9 +56,7 @@ export function PurchasesCard() {
   });
 
   const rematchMut = useMutation({
-    mutationFn: () => apiFetch<{ matched: number; unmatched: number }>(
-      '/api/admin/purchases/match', { method: 'POST' },
-    ),
+    mutationFn: rematchPurchases,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['admin', 'purchases'] });
       invalidateHatViews(qc);
@@ -83,9 +64,7 @@ export function PurchasesCard() {
   });
 
   const unmatchMut = useMutation({
-    mutationFn: () => apiFetch<{ unmatched: number; fields_cleared: number }>(
-      '/api/admin/purchases/unmatch-all', { method: 'POST' },
-    ),
+    mutationFn: unmatchAllPurchases,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['admin', 'purchases'] });
       invalidateHatViews(qc);

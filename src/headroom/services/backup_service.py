@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from headroom.config import env_flag, env_float, env_int, settings
+from headroom.services import ca_vault
 from headroom.utils import disk
 
 logger = logging.getLogger(__name__)
@@ -203,6 +204,38 @@ def _add_db_to_tar(tar: tarfile.TarFile, db: Path, tmp_dir: Path) -> None:
     tar.addfile(info, io.BytesIO(note))
 
 
+def _add_ca_to_tar(tar: tarfile.TarFile) -> None:
+    """Add Caddy's local CA, if this deployment has one and wants it kept.
+
+    The root of this CA is installed by hand on every device that browses the
+    site, and a root is self-signed — nothing can vouch for a replacement. So
+    losing it is not "reissue a certificate", it is "visit every device". It
+    was outside every backup until now, on the same SD card whose unclean
+    shutdown started the 37-day outage.
+
+    Never fatal. A backup that skips the CA is worth far more than one that
+    fails, so this swallows everything: no overlay, an unreadable mount, a
+    half-written export mid-copy.
+    """
+    if not ca_vault.include_in_backup():
+        return
+    try:
+        files = ca_vault.exported_files()
+        if not files:
+            return
+        for path in files:
+            tar.add(path, arcname=f"data/caddy-pki/{path.name}")
+        # Travels with the archive, because the archive travels: it may be
+        # uploaded to a NAS or cloud by the post-backup hook, and by then
+        # nothing else says a private key is inside it.
+        note = ca_vault.BACKUP_README.encode()
+        info = tarfile.TarInfo(name="data/caddy-pki/READ-ME-CA-KEYS.txt")
+        info.size = len(note)
+        tar.addfile(info, io.BytesIO(note))
+    except Exception:  # noqa: BLE001 — a partial backup beats a failed one
+        logger.warning("Could not add Caddy CA to backup", exc_info=True)
+
+
 def _build_tarball_sync(target_path: Path | None = None, include_uploads: bool = True) -> bytes | None:
     """Build a tar.gz of the DB (and optionally uploads). Always gzipped.
 
@@ -226,6 +259,7 @@ def _build_tarball_sync(target_path: Path | None = None, include_uploads: bool =
                     _add_db_to_tar(tar, db, Path(tmp))
                 if include_uploads and uploads.exists():
                     tar.add(uploads, arcname="data/uploads")
+                _add_ca_to_tar(tar)
         if buf is not None:
             return buf.getvalue()
         return None
@@ -368,6 +402,12 @@ def _data_fingerprint_sync() -> str:
             total += st.st_size
             newest = max(newest, st.st_mtime)
     parts.append(f"uploads:{count}:{total}:{newest:.0f}")
+
+    # The CA counts as data. Without this a regenerated authority would not by
+    # itself trigger a backup, so the archive holding the OLD root could age
+    # out of the retention window while the new one was never captured.
+    if ca_vault.include_in_backup():
+        parts.extend(ca_vault.fingerprint_parts())
 
     return hashlib.sha256("|".join(parts).encode()).hexdigest()[:32]
 
