@@ -457,16 +457,38 @@ async def test_the_synology_setup_names_the_right_checkbox():
     assert "openrsync" in steps, "macOS rsync cannot do daemon syntax"
 
 
-async def test_the_module_host_is_parsed_from_the_destination():
-    """Enumeration targets the host, not the whole destination string."""
-    import inspect
+async def test_the_module_host_is_parsed_from_the_destination(monkeypatch):
+    """Enumeration targets the HOST, not the whole destination string.
 
-    src = inspect.getsource(backup_service.list_rsync_modules)
+    Exercises the real call and captures the argv, rather than reading the
+    source for a substring — a source grep passes just as happily when the
+    string sits in a comment or an unreachable branch.
+    """
+    seen: dict = {}
 
+    async def _fake_exec(*argv, **kwargs):
+        seen["argv"] = argv
+        seen["env"] = kwargs.get("env")
+
+        class _Proc:
+            async def communicate(self):
+                return b"NetBackup\tbackups\nhome\thome dirs\n", b""
+
+        return _Proc()
+
+    monkeypatch.setattr(
+        backup_service.asyncio, "create_subprocess_exec", _fake_exec
+    )
+
+    modules = await backup_service.list_rsync_modules("backup@10.0.111.10::NetBackup/hats")
+
+    assert modules == ["NetBackup", "home"]
+    # The user and the module path are stripped; only the host is dialed.
+    assert seen["argv"][-1] == "rsync://10.0.111.10/"
     # Anonymous by design: module listing precedes authentication, so no
-    # credential should appear anywhere in that call.
-    assert "RSYNC_PASSWORD" not in src
-    assert "rsync://" in src
+    # credential may be passed — in argv or in the environment.
+    assert not any("RSYNC_PASSWORD" in str(a) for a in seen["argv"])
+    assert seen["env"] is None or "RSYNC_PASSWORD" not in seen["env"]
 
 
 async def test_module_listing_never_raises_on_a_dead_host():

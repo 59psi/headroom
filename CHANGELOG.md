@@ -6,6 +6,78 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.53.0] — 2026-08-24
+
+A code review of 2.52.0 found that the purchase-import preview — the whole
+safety story for a feature with no undo — was describing a smaller operation
+than the button performed.
+
+### Fixed
+- **The import preview under-reported what importing would do, by a factor of
+  144.** Importing runs the matcher over **every** purchase with no hat linked,
+  not just the lines in the file being imported. `preview_import` only ever
+  considered the file. Against the real collection the gap was not subtle:
+
+  ```
+  PREVIEW shown to the user: would_import=1  would_match=0
+  IMPORT actually did:       imported=1      matched=144
+                             +144 hat prices written by that one click
+  ```
+
+  That is precisely the "every price on the shelf is now slightly wrong" this
+  preview exists to prevent, and it contradicted the invariant the release
+  notes cited while shipping it. The preview now matches the file's lines
+  **together with the existing backlog**, in the same scarcity order the import
+  uses, and reports `would_match` (the file's own lines), `would_match_backlog`
+  (purchases already on record that the same click would also match) and
+  `would_match_total` separately. The backlog is called out in the UI in
+  **hats**, because hats are what changes. `test_the_preview_predicts_what_
+  importing_actually_does` pins it and fails if the backlog is dropped again.
+
+- **The purchase-import file picker had no `aria-label`.** The visible labels
+  in this app carry no `htmlFor`, so nothing else associates them — an
+  accessibility requirement first, and the reason `getByLabelText` works. Its
+  own test proved the cost by reaching past it with
+  `document.querySelector('input[type="file"]')`, the exact escape hatch the
+  rule exists to prevent; the test now selects by label.
+
+- **British spellings.** `initialised` in `OffsiteBackupCard`, `catalogued` in
+  the 2.52.0 notes, and two older ones in `background_removal` and
+  `schemas/hat` that predated the sweep.
+
+### Changed
+- **2.52.0 overstated the matching result, and the claim is now checkable.**
+  It said 144 matches was "the maximum possible… no further scoring or ordering
+  change can improve it", and that "the ceiling moves when more hats are
+  cataloged, not when the matcher is tuned". The first half was measured in a
+  throwaway script that was never committed — a number nobody can reproduce is
+  a rumor. The second half was false as written: the optimum is relative to
+  which pairs are *eligible*, and the gate is a deliberate choice (hats with no
+  `model_name` are unmatchable; the superset direction is refused so a generic
+  receipt line cannot claim a specific hat), not a law. Loosening either adds
+  edges and could raise the ceiling.
+
+  `test_matching_achieves_the_maximum_possible` now computes a maximum
+  bipartite matching with a second, independent implementation (Kuhn's
+  algorithm) and fails if the matcher falls short. It is **sabotage-checked**:
+  with `_by_scarcity` replaced by file order it fails with *matched 1 of a
+  possible 2*. The 2.52.0 entry has been corrected in place, and states plainly
+  that the target was 90% and the delivered figure is 68%.
+
+- `_matchable_hats()` is now the single query behind both the preview and the
+  import, and the score weights `STATED_FIELD` / `COLOR_WORD` are named
+  constants beside `MODEL_EXACT` / `MODEL_CONTAINED` — the 6-point gap that
+  keeps an exact model hit above a contained one carrying a series is
+  load-bearing and was previously two bare `score += n` literals.
+
+- `test_the_module_host_is_parsed_from_the_destination` exercised nothing: it
+  read `inspect.getsource` and grepped for `"rsync://"`, which passes just as
+  happily when the string sits in a comment. It now runs the real call, asserts
+  the dialed URL is `rsync://10.0.111.10/` — user and module path stripped —
+  and that no credential appears in argv or the environment.
+
+**777 backend + 189 frontend tests pass.**
+
 ## [2.52.0] — 2026-08-24
 
 ### Fixed
@@ -79,13 +151,23 @@ All notable changes are documented here. This project follows
 
   Measured against a real 294-unit order history: **matched units went 41 → 144
   (19% → 68% of hat units)**. That 144 is not a tuning result — it is the
-  **maximum possible**, confirmed by computing the maximum bipartite matching
-  over every pair the rules allow. Greedy now achieves the optimum, so no
-  further scoring or ordering change can improve it. The remaining unmatched
-  units are contention, not a defect: 73 `Trenches Icon Hydro` purchases
-  contend for 36 such hats, and 78 lines are travel cases that correctly never
-  match a hat. The ceiling moves when more hats are catalogued, not when the
-  matcher is tuned.
+  **maximum achievable under the current eligibility rules**, and
+  `test_matching_achieves_the_maximum_possible` pins it: the test computes a
+  maximum bipartite matching with a second, independent implementation and
+  fails if the matcher falls short. So no further **scoring or ordering**
+  change can improve the result.
+
+  Stated precisely, because the distinction matters: the optimum is relative to
+  which pairs are *eligible* at all. Most of the remaining gap is genuine
+  contention — 73 `Trenches Icon Hydro` purchases against 36 such hats, plus 78
+  travel-case lines that correctly never match a hat — and cataloging more hats
+  is what moves that. But the gate itself is a deliberate choice, not a law:
+  hats with no `model_name` are structurally unmatchable, and the superset
+  direction is refused so a generic receipt line cannot claim a specific hat.
+  Loosening either would add edges and could raise the ceiling, at the cost of
+  matches nobody can verify. **The target was 90%; this delivers 68%**, and the
+  shortfall is contention plus that deliberate strictness — not something a
+  better algorithm reaches.
 
 ### Added
 - **Purchase history can be imported from Settings.** There was no UI path at

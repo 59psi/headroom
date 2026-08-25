@@ -27,7 +27,7 @@ export function OffsiteBackupCard() {
   const qc = useQueryClient();
   const status = useQuery({ queryKey: ['admin', 'backup-upload'], queryFn: getBackupUpload });
   const [destination, setDestination] = useState('');
-  // NOT initialised to a literal. Hardcoding 'rclone' meant that after
+  // NOT initialized to a literal. Hardcoding 'rclone' meant that after
   // configuring Synology, reopening Settings showed rclone selected and
   // rclone's setup steps — so the instructions for the provider actually in
   // use were in the payload but unreachable, which reads as "the instructions

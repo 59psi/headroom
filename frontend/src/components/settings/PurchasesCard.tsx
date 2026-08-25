@@ -11,6 +11,7 @@ interface PurchaseRow {
 interface ImportPreview {
   would_import: number; duplicates: number; unusable: number;
   likely_accessories: number; would_match: number; would_not_match: number;
+  would_match_backlog: number; would_match_total: number;
   ambiguous: number;
 }
 
@@ -160,6 +161,7 @@ export function PurchasesCard() {
         <input
           ref={fileRef}
           type="file"
+          aria-label="Purchase history JSON file"
           accept="application/json,.json"
           onChange={handleFile}
           hidden
@@ -200,6 +202,22 @@ export function PurchasesCard() {
                     </span>
                   </>
                 )}
+              </p>
+            )}
+            {/*
+              The backlog is the part nobody asked for. Importing runs the
+              matcher over EVERY unmatched purchase, not just this file's, so
+              one click can write prices onto hats the file never mentioned.
+              Stated in hats rather than rows because hats are what changes.
+            */}
+            {preview.would_match_backlog > 0 && (
+              <p className="small mb-2">
+                <strong>Also matches {preview.would_match_backlog} purchase
+                {preview.would_match_backlog === 1 ? '' : 's'} already on record.</strong>{' '}
+                Importing re-runs matching over everything unmatched, so this writes a
+                colorway and cost basis onto {preview.would_match_total} hat
+                {preview.would_match_total === 1 ? '' : 's'} in total. Unlink all is the
+                only undo.
               </p>
             )}
             <div className="d-flex gap-2 flex-wrap">

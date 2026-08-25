@@ -122,7 +122,7 @@ async def harvest_catalog(db: AsyncSession) -> dict:
 
     Each category is isolated. One failing category used to abandon every
     category after it — the sweep is sequential and commits as it goes, so the
-    result was a SILENTLY partial catalogue: the endpoint had already returned
+    result was a SILENTLY partial catalog: the endpoint had already returned
     202, and nothing recorded that the run stopped early. A collection missing
     two thirds of its models looked exactly like a complete one.
     """
@@ -372,6 +372,23 @@ def normalize_size(raw: str | None) -> str | None:
     return _SIZE_ALIASES.get(key)
 
 
+async def _matchable_hats(db: AsyncSession) -> list[Hat]:
+    """Every hat a purchase could be matched to, colors eagerly loaded.
+
+    One definition because the preview and the import must consider the same
+    shelf; two copies of this query is two places for the disposed-hat filter
+    or the `selectinload` to drift. The eager load is not optional — scoring
+    reads `hat.colors`, and a lazy access under async raises
+    `greenlet_spawn has not been called`.
+    """
+    return list(
+        (await db.execute(
+            select(Hat).options(selectinload(Hat.colors)).where(Hat.disposed_at.is_(None))
+        ))
+        .scalars().all()
+    )
+
+
 async def preview_import(db: AsyncSession, items: list[dict]) -> dict:
     """What `import_purchases` + matching WOULD do. Writes nothing.
 
@@ -381,16 +398,25 @@ async def preview_import(db: AsyncSession, items: list[dict]) -> dict:
     away from being a real import nobody asked for. Everything here is built in
     memory and never added to the session.
     """
-    hats = (
-        (await db.execute(
-            select(Hat).options(selectinload(Hat.colors)).where(Hat.disposed_at.is_(None))
-        ))
-        .scalars().all()
-    )
+    hats = await _matchable_hats(db)
     claimed = {
         p.hat_id for p in
         (await db.execute(select(Purchase).where(Purchase.hat_id.is_not(None)))).scalars().all()
     }
+
+    # Purchases ALREADY on record and still unmatched. Importing calls
+    # `match_purchases_to_hats`, which matches every purchase with a null
+    # hat_id — not only the ones this file adds — so a preview built from the
+    # file alone describes a different operation than the one the button runs.
+    #
+    # That gap is not cosmetic. Against the real collection, previewing a
+    # single new line reported "1 to import, 0 would match" and the import then
+    # matched 144 and wrote 144 hat prices, which is exactly the "every price
+    # on the shelf is now slightly wrong" this preview exists to prevent.
+    backlog = (
+        (await db.execute(select(Purchase).where(Purchase.hat_id.is_(None))))
+        .scalars().all()
+    )
 
     would_import: list[Purchase] = []
     duplicates = 0
@@ -425,8 +451,15 @@ async def preview_import(db: AsyncSession, items: list[dict]) -> dict:
                 accessories += 1
             would_import.append(transient)
 
+    # Match the file's lines and the backlog together, exactly as the import
+    # will. `_by_scarcity` sees the same pool for the same reason it is shared
+    # at all: order decides who gets which hat.
+    new_rows = {id(p) for p in would_import}
     proposals: list[dict] = []
-    for purchase in _by_scarcity(would_import, [h for h in hats if h.id not in claimed]):
+    backlog_matches = 0
+    for purchase in _by_scarcity(
+        [*backlog, *would_import], [h for h in hats if h.id not in claimed]
+    ):
         candidates = [
             (score, hat)
             for hat in hats
@@ -439,6 +472,8 @@ async def preview_import(db: AsyncSession, items: list[dict]) -> dict:
         best = [hat for score, hat in candidates if score == best_score]
         hat = best[0]
         claimed.add(hat.id)
+        if id(purchase) not in new_rows:
+            backlog_matches += 1
         proposals.append({
             "item_title": purchase.item_title,
             "order_ref": purchase.order_ref,
@@ -451,16 +486,28 @@ async def preview_import(db: AsyncSession, items: list[dict]) -> dict:
             "ambiguous": len(best) > 1,
             "tied_hat_ids": [h.id for h in best] if len(best) > 1 else [],
             "sets_price": purchase.price is not None and hat.purchase_price is None,
+            # Which half of the click this row is. A caller showing only the
+            # file's own lines would reproduce the bug this split exists to fix.
+            "already_on_record": id(purchase) not in new_rows,
         })
 
+    from_file = len(proposals) - backlog_matches
     return {
         "dry_run": True,
         "would_import": len(would_import),
         "duplicates": duplicates,
         "unusable": unusable,
         "likely_accessories": accessories,
-        "would_match": len(proposals),
-        "would_not_match": len(would_import) - len(proposals),
+        # Matches among the lines in the FILE — what the operator is choosing.
+        "would_match": from_file,
+        "would_not_match": len(would_import) - from_file,
+        # Purchases already on record that this same click would also match.
+        # Reported separately rather than folded in, because they are the part
+        # nobody asked for and the part that writes prices onto hats.
+        "would_match_backlog": backlog_matches,
+        # What `match_purchases_to_hats` will report afterwards. The number the
+        # preview is accountable for.
+        "would_match_total": len(proposals),
         "ambiguous": sum(1 for p in proposals if p["ambiguous"]),
         "proposals": proposals,
     }
@@ -491,6 +538,17 @@ MODEL_EXACT = 8
 #: The hat's model name is a token-SUBSET of the purchase's. Weaker, and
 #: deliberately below every exact match, but a real signal.
 MODEL_CONTAINED = 2
+
+#: An owner-stated field (`artist_series`, `construction`) found in the title.
+#: Deliberately below the 6-point gap between MODEL_EXACT and MODEL_CONTAINED:
+#: an exact model hit must outrank a contained one that also carries a series,
+#: or the generic-family match would beat the product the receipt names.
+STATED_FIELD = 5
+#: The receipt's colorway shares a word with the colors read off the photo.
+#: Weakest signal here — the analyzer names a dominant color ("brown") where
+#: melin names a product colorway ("Bone Brown"), so agreement is suggestive
+#: and disagreement means nothing.
+COLOR_WORD = 3
 
 
 @lru_cache(maxsize=4096)
@@ -595,7 +653,7 @@ def _match_score(purchase: Purchase, hat: Hat) -> int | None:
     for stated in (hat.artist_series, hat.construction):
         tokens = _model_tokens(stated)
         if tokens and tokens <= title_tokens:
-            score += 5
+            score += STATED_FIELD
 
     # The colorway the receipt states, against the colors read off this hat's
     # own photo. Every hat has these, where only matched ones have a colorway,
@@ -605,7 +663,7 @@ def _match_score(purchase: Purchase, hat: Hat) -> int | None:
     # without sharing a word.
     pcw = _model_tokens(purchase.colorway)
     if pcw and (pcw & _color_words(hat)):
-        score += 3
+        score += COLOR_WORD
 
     pc = (purchase.colorway or "").lower()
     hc = (hat.colorway or "").lower()
@@ -665,12 +723,7 @@ async def match_purchases_to_hats(db: AsyncSession, *, dry_run: bool = False) ->
         (await db.execute(select(Purchase).where(Purchase.hat_id.is_(None))))
         .scalars().all()
     )
-    hats = (
-        (await db.execute(
-            select(Hat).options(selectinload(Hat.colors)).where(Hat.disposed_at.is_(None))
-        ))
-        .scalars().all()
-    )
+    hats = await _matchable_hats(db)
     linked_hat_ids = {
         p.hat_id for p in
         (await db.execute(select(Purchase).where(Purchase.hat_id.is_not(None)))).scalars().all()
