@@ -539,3 +539,13 @@ export interface PriceReleaseResult {
   released: number;
   hats: FrozenPriceRow[];
 }
+
+/** One distinct analysis failure and how many hats it hit. */
+export interface AnalysisFailureGroup {
+  reason: string;
+  hat_count: number;
+  sample_hat_ids: number[];
+  last_seen: string | null;
+  /** Anthropic billing/quota — the failure that looks like a missing key. */
+  is_billing: boolean;
+}

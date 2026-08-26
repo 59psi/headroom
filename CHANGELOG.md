@@ -6,6 +6,24 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.60.0] — 2026-08-26
+
+### Added
+- **Settings → Analysis now says why analysis is failing.** Distinct failures,
+  grouped, worst first, with the actual error text and a few hat ids.
+
+  It was visible nowhere. A failure lived on one hat's own page, where the
+  banner printed generic advice instead of the reason — so when the Anthropic
+  **account ran out of credit**, all 235 hats read "add a Claude API key" on a
+  key that was set, valid, and had been working minutes earlier. Three days.
+
+  Grouped, because 235 hats failing for one reason is **one** problem and a
+  flat list of 235 identical rows hides that. The `request_id` is stripped
+  before grouping or every call looks like its own unique fault. A
+  billing/quota refusal is flagged explicitly — it is the one failure that
+  masquerades as a missing key — and says to top up the account instead.
+
+
 ## [2.59.0] — 2026-08-26
 
 Measured against the real 294-line order history throughout: **144 → 152

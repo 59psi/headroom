@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.database import get_db
 from headroom.schemas.admin import (
+    AnalysisFailureGroup,
     AnalysisJobRead,
     AnalysisQueueStatus,
     PendingHat,
@@ -118,3 +119,18 @@ async def reanalyze_all(db: AsyncSession = Depends(get_db)):
         worker_alive=analysis_queue.worker_alive(),
         job=_job_read(progress),
     )
+
+
+@router.get("/analysis/failures", response_model=list[AnalysisFailureGroup])
+async def analysis_failures(db: AsyncSession = Depends(get_db)):
+    """Why hats are failing analysis, grouped, worst first.
+
+    The only place a failure used to be legible was a single hat's own page,
+    where the banner printed generic advice rather than the reason. One
+    Anthropic billing refusal took down all 235 hats and read everywhere as
+    "add an API key" — which was already set, valid, and had been working.
+    """
+    return [
+        AnalysisFailureGroup(**group)
+        for group in await analysis_job_service.recent_failures(db)
+    ]

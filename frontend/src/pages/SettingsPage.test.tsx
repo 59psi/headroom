@@ -32,6 +32,7 @@ vi.mock('../api/settings', () => ({
     hostname_ok: true, ca_sha256: 'CB:08:88:5B:FD:B7:F7:DD', error: null,
   })),
   getRecentErrors: vi.fn(async () => []),
+  getAnalysisFailures: vi.fn(async () => []),
   getAnalysisQueue: vi.fn(async () => ({
     worker_alive: true, queued: 0, pending_count: 0, pending: [],
     current_job: null, recent_jobs: [],
