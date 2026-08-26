@@ -2,7 +2,7 @@ import { apiFetch } from './client';
 import type {
   ActivityRow, AnalysisJobRead, AnalysisQueueStatus, ApiKeyStatus, ApiKeyTestResult,
   BackupHealth, BackupInfo, BackupUploadStatus, EbayCredsStatus, ImportJob, MdnsStatus, ModelStatus,
-  TlsStatus, FrozenPriceRow, PriceReleaseResult,
+  TlsStatus, FrozenPriceRow, PriceReleaseResult, AnalysisFailureGroup,
   RecentError, TagBaseStatus, ConstructionAuditRow, ConstructionClearResult,
 } from '../types';
 
@@ -318,4 +318,9 @@ export function releaseFrozenPrices(
   return apiFetch<PriceReleaseResult>(`/api/admin/prices/release?${qs}`, {
     method: 'POST',
   });
+}
+
+/** Why hats are failing analysis, grouped, worst first. */
+export function getAnalysisFailures() {
+  return apiFetch<AnalysisFailureGroup[]>('/api/admin/analysis/failures');
 }

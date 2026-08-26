@@ -290,3 +290,22 @@ class PriceReleaseResult(BaseModel):
     dry_run: bool
     released: int
     hats: list[FrozenPriceRow] = []
+
+
+class AnalysisFailureGroup(BaseModel):
+    """One distinct analysis failure, and how many hats it hit.
+
+    Grouped rather than listed per hat: 235 hats failing for one reason is one
+    problem, and a flat list of 235 identical rows hides that it is one.
+    """
+
+    #: The failure, trimmed to the part that identifies it.
+    reason: str
+    hat_count: int
+    #: A few hat ids, so you can open one and see it for yourself.
+    sample_hat_ids: list[int] = []
+    #: Most recent time a hat hit this.
+    last_seen: datetime | None = None
+    #: True when the text looks like an Anthropic billing/quota refusal — the
+    #: one failure that looks like a broken key but is not.
+    is_billing: bool = False

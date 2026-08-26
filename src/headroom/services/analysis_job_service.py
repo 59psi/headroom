@@ -12,6 +12,8 @@ construction, including after a restart mid-run.
 
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -60,6 +62,71 @@ async def create_job(db: AsyncSession, hat_ids: list[int]) -> AnalysisJob:
         )
     )
     return job
+
+
+#: Substrings that mean "your Anthropic ACCOUNT is the problem, not your key".
+#: Kept explicit because this is the failure that masquerades as a missing key,
+#: and the one an owner will otherwise spend days re-pasting a valid key over.
+_BILLING_MARKERS = (
+    "credit balance is too low",
+    "billing",
+    "quota",
+    "insufficient_quota",
+    "payment",
+)
+
+#: Cap on how much of a failure string is used to group by. API errors carry a
+#: request id and other per-call noise; without a cap every hat looks like its
+#: own unique problem, which is the opposite of what grouping is for.
+_REASON_KEY_CHARS = 160
+
+
+def _reason_key(error: str) -> str:
+    """The part of a failure string that identifies the FAILURE, not the call."""
+    cleaned = re.sub(r"'request_id':\s*'[^']*'", "", error)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned[:_REASON_KEY_CHARS]
+
+
+async def recent_failures(db: AsyncSession, limit: int = 10) -> list[dict]:
+    """Distinct analysis failures across active hats, worst first.
+
+    Exists because the only place a failure was legible was one hat's own page,
+    and the banner there printed generic advice instead of the reason. An
+    Anthropic billing refusal took down all 235 hats and read, everywhere, as
+    "add an API key" — which was already set. A count and the actual text answer
+    that in one glance.
+    """
+    rows = (
+        await db.execute(
+            select(Hat.id, Hat.analysis_error, Hat.analyzed_at)
+            .where(
+                Hat.disposed_at.is_(None),
+                Hat.analysis_error.is_not(None),
+                Hat.analysis_error != "",
+            )
+            .order_by(Hat.analyzed_at.desc())
+        )
+    ).all()
+
+    groups: dict[str, dict] = {}
+    for hat_id, error, analyzed_at in rows:
+        key = _reason_key(error or "")
+        g = groups.setdefault(key, {
+            "reason": key,
+            "hat_count": 0,
+            "sample_hat_ids": [],
+            "last_seen": None,
+            "is_billing": any(m in key.lower() for m in _BILLING_MARKERS),
+        })
+        g["hat_count"] += 1
+        if len(g["sample_hat_ids"]) < 5:
+            g["sample_hat_ids"].append(hat_id)
+        if analyzed_at and (g["last_seen"] is None or analyzed_at > g["last_seen"]):
+            g["last_seen"] = analyzed_at
+
+    ordered = sorted(groups.values(), key=lambda g: -g["hat_count"])
+    return ordered[:limit]
 
 
 async def _counts(db: AsyncSession, job_id: int) -> tuple[int, int, int]:

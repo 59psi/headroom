@@ -320,3 +320,45 @@ async def test_a_job_still_closes_when_one_of_its_hats_is_deleted(client, db_ses
     assert progress.job.status == "done", (
         "a deleted hat stranded the job — it can never reach its frozen total"
     )
+
+
+async def test_analysis_failures_group_and_flag_a_billing_refusal(client, db_session):
+    """235 hats failing for one reason is ONE problem, and it must read as one.
+
+    The real incident: the Anthropic account ran out of credit, every hat fell
+    back, and the only visible message was "add a Claude API key" — on a key
+    that was set, valid, and had been working minutes earlier. Nothing in the
+    app aggregated the actual reason, so it went unnoticed for three days.
+    """
+    from headroom.models.hat import Hat
+
+    billing = (
+        "Claude analysis failed: Anthropic API error: Error code: 400 - "
+        "{'error': {'message': 'Your credit balance is too low to access the "
+        "Anthropic API.'}, 'request_id': 'req_ONE'}"
+    )
+    other = "Claude analysis failed: Connection timed out"
+
+    ids = [await _hat_with_photo(client) for _ in range(4)]
+    for hat_id, err in zip(ids, [billing, billing.replace("req_ONE", "req_TWO"),
+                                 billing.replace("req_ONE", "req_THREE"), other], strict=True):
+        row = await db_session.get(Hat, hat_id)
+        row.analysis_status = "fallback"
+        row.analysis_error = err
+    await db_session.commit()
+
+    groups = (await client.get("/api/admin/analysis/failures")).json()
+
+    assert groups[0]["hat_count"] == 3, (
+        "three hats hit the same refusal — a differing request_id must not "
+        "split one problem into three"
+    )
+    assert groups[0]["is_billing"] is True, (
+        "a credit-balance refusal must be flagged; it is the failure that "
+        "looks like a missing key and is not"
+    )
+    assert "credit balance is too low" in groups[0]["reason"]
+    assert len(groups[0]["sample_hat_ids"]) == 3
+
+    timeout = next(g for g in groups if "timed out" in g["reason"])
+    assert timeout["is_billing"] is False

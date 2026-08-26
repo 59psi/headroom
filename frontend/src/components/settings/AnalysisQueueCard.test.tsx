@@ -7,6 +7,7 @@ import type { AnalysisQueueStatus } from '../../api/settings';
 
 vi.mock('../../api/settings', () => ({
   getAnalysisQueue: vi.fn(),
+  getAnalysisFailures: vi.fn(async () => []),
   reanalyzeAll: vi.fn(),
 }));
 
@@ -76,5 +77,30 @@ describe('AnalysisQueueCard', () => {
     expect(await screen.findByText('Recent runs')).toBeInTheDocument();
     expect(screen.getByText(/213\/213/)).toBeInTheDocument();
     expect(screen.getByText(/1 failed/)).toBeInTheDocument();
+  });
+});
+
+describe('AnalysisQueueCard — why analysis is failing', () => {
+  it('names the account, not the key, for a billing refusal', async () => {
+    vi.mocked(settingsApi.getAnalysisQueue).mockResolvedValue(IDLE);
+    vi.mocked(settingsApi.getAnalysisFailures).mockResolvedValue([
+      {
+        reason:
+          'Claude analysis failed: Anthropic API error: Error code: 400 - ' +
+          'Your credit balance is too low to access the Anthropic API.',
+        hat_count: 235,
+        sample_hat_ids: [1, 2, 3],
+        last_seen: '2026-08-23T22:26:44Z',
+        is_billing: true,
+      },
+    ]);
+
+    renderWithProviders(<AnalysisQueueCard />);
+
+    // The count is the point: 235 hats failing for one reason is ONE problem.
+    expect(await screen.findByText(/235 hats/)).toBeInTheDocument();
+    expect(screen.getByText(/your Anthropic ACCOUNT, not your key/)).toBeInTheDocument();
+    // And the real error text, which used to be visible nowhere.
+    expect(screen.getByText(/credit balance is too low/)).toBeInTheDocument();
   });
 });

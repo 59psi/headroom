@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
-import { getAnalysisQueue, reanalyzeAll } from '../../api/settings';
+import { getAnalysisFailures, getAnalysisQueue, reanalyzeAll } from '../../api/settings';
 
 /** Mirrors the stage labels on the hat page. */
 const STAGE_LABELS: Record<string, string> = {
@@ -36,6 +36,16 @@ function since(iso: string): string {
 export function AnalysisQueueCard() {
   const qc = useQueryClient();
   const [confirming, setConfirming] = useState(false);
+
+  // Why hats are failing, grouped. Before this the only place a failure was
+  // legible was one hat's own page, and the banner there printed generic
+  // advice instead of the reason — so an Anthropic billing refusal that took
+  // down all 235 hats read everywhere as "add an API key", on a key that was
+  // set and valid. Three days.
+  const failures = useQuery({
+    queryKey: ['admin', 'analysis-failures'],
+    queryFn: getAnalysisFailures,
+  });
 
   const queue = useQuery({
     queryKey: ['admin', 'analysis-queue'],
@@ -205,6 +215,37 @@ export function AnalysisQueueCard() {
                 onClick={() => setConfirming(false)}
               >Cancel</button>
             </div>
+          </div>
+        )}
+
+        {(failures.data?.length ?? 0) > 0 && (
+          <div className="mt-3">
+            <div className="text-secondary small fw-semibold mb-1">
+              Why analysis is failing
+            </div>
+            {failures.data!.map(f => (
+              <div
+                key={f.reason}
+                className={`alert mb-2 small ${f.is_billing ? 'alert-warning' : 'alert-info'}`}
+              >
+                <div className="fw-semibold">
+                  {f.hat_count} hat{f.hat_count === 1 ? '' : 's'}
+                  {f.is_billing && ' · your Anthropic ACCOUNT, not your key'}
+                </div>
+                <div style={{ wordBreak: 'break-word' }}>{f.reason}</div>
+                {f.is_billing && (
+                  <div className="mt-1">
+                    The key is fine. Top up at{' '}
+                    <span className="font-mono">console.anthropic.com</span>{' '}
+                    → Plans &amp; Billing, then Re-analyze.
+                  </div>
+                )}
+                <div className="text-muted" style={{ fontSize: '0.72rem' }}>
+                  e.g. hat{f.sample_hat_ids.length === 1 ? '' : 's'}{' '}
+                  {f.sample_hat_ids.map(id => `#${id}`).join(', ')}
+                </div>
+              </div>
+            ))}
           </div>
         )}
 
