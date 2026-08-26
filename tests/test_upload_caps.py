@@ -150,17 +150,33 @@ async def test_the_two_helpers_disagree_on_purpose():
     assert up.copy_upload_truncating(_upload(b"a" * 4096), io.BytesIO(), 16) > 16
 
 
-async def test_the_import_route_uses_the_shared_helper():
-    """It carried a private copy of this loop while the shared one sat unused.
+async def test_every_upload_route_uses_the_shared_helpers():
+    """Assert the CALL SITES, not the docstring's count of them.
 
-    That is how `utils/upload.py`'s "one definition, used by all" stopped being
-    true without anything failing: both implementations were correct, so only
-    the docstring was wrong.
+    `utils/upload.py` claimed "one definition, used by all four" while two
+    routes carried private copies of the same loop. Every copy was correct, so
+    nothing failed and only the sentence was false — and the release that
+    claimed to fix it removed one copy, missed `share`, and left the sentence.
+    A prose count is not a guard; this is.
     """
-    from headroom.routes import import_jobs
+    import inspect
 
-    assert import_jobs.copy_upload_truncating is up.copy_upload_truncating
-    assert not hasattr(import_jobs, "_spool"), "the private copy is back"
+    from headroom.routes import hats, import_jobs, settings, share
+
+    for module in (import_jobs, share):
+        assert module.copy_upload_truncating is up.copy_upload_truncating, (
+            f"{module.__name__} is not using the shared lenient helper"
+        )
+    for module in (hats, settings):
+        assert module.copy_upload_capped is up.copy_upload_capped
+
+    # And no route may grow a replacement: a `while True` reading fixed-size
+    # chunks off an upload is this loop, whatever it gets called.
+    for module in (hats, settings, import_jobs, share):
+        src = inspect.getsource(module)
+        assert ".read(1024 * 1024)" not in src, (
+            f"{module.__name__} has grown a private chunk loop again"
+        )
 
 
 # ---- the route that uses it ------------------------------------------- #

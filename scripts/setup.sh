@@ -258,7 +258,7 @@ log "Installing frontend dependencies..."
 (cd frontend && npm install)
 
 log "Creating upload directories..."
-mkdir -p uploads/cases uploads/hats uploads/branding
+mkdir -p uploads/hats uploads/branding
 
 log "Initializing database..."
 uv run python -c "import asyncio; from headroom.database import init_db; asyncio.run(init_db())"

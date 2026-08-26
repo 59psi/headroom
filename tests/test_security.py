@@ -41,6 +41,12 @@ def _make_app_with_dist(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     (dist / "index.html").write_text("<html>spa</html>")
     (dist / "assets").mkdir()
     (dist / "assets" / "ok.js").write_text("// ok")
+    # A file at the dist ROOT, so fetching it goes through the SPA catch-all
+    # and therefore through `_safe_spa_path` — the function under test. Files
+    # under /assets are served by a StaticFiles mount bound at `create_app()`
+    # time, so they answer even when the request-time global is unpatched, and
+    # a canary built on one proves nothing about the other.
+    (dist / "canary.txt").write_text("SERVED FROM TMP DIST")
 
     secret = tmp_path / "secret.txt"
     secret.write_text("DO NOT LEAK")
@@ -63,8 +69,8 @@ async def test_spa_does_not_serve_files_outside_dist(tmp_path, monkeypatch):
     # anything from what it refuses to serve. Without this the test has no way
     # to distinguish "traversal was blocked" from "the payload was never
     # anywhere near the secret", which is the state it silently sat in.
-    assert client.get("/assets/ok.js").text == "// ok", (
-        "FRONTEND_DIST is not patched at request time — the traversal "
+    assert client.get("/canary.txt").text == "SERVED FROM TMP DIST", (
+        "FRONTEND_DIST is not patched at REQUEST time — the traversal "
         "assertions below would pass without testing anything"
     )
 
@@ -210,3 +216,27 @@ async def test_the_401_log_never_contains_the_credential(anon_client, caplog):
         await anon_client.get("/api/hats", headers={"Authorization": f"Bearer {secret}"})
 
     assert secret not in caplog.text
+
+
+# ---- POST /share is a two-line auth special case ----------------------- #
+
+
+async def test_the_share_target_requires_auth_but_the_share_page_does_not(anon_client):
+    """`/share` matches no protected prefix — two lines in `auth.py` guard it.
+
+    `POST /share` writes DB rows and spools up to 100 files to disk; `GET
+    /share/<token>` is the public share page and must stay open. That asymmetry
+    was carried entirely by `if path == "/share" and request.method == "POST"`
+    with NO test touching it: both existing callers used the authenticated
+    fixture, so deleting those two lines left the suite green and the endpoint
+    unauthenticated.
+    """
+    posted = await anon_client.post(
+        "/share", files=[("photos", ("a.jpg", b"\xff\xd8\xff", "image/jpeg"))]
+    )
+    assert posted.status_code == 401, "the share TARGET must not be open"
+
+    # The public share page keeps working — a bad token is a 404 from the SPA
+    # route, never a 401, or sharing a link would demand a login.
+    page = await anon_client.get("/share/some-token")
+    assert page.status_code != 401, "the public share page must stay open"

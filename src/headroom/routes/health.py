@@ -129,7 +129,7 @@ async def ready(request: Request, db: AsyncSession = Depends(get_db)):
         }
     else:
         # Booleans only. `disk` and `workers` are here because they GATE
-        # readiness and an anonymous 503 with no reason is a worse artefact
+        # readiness and an anonymous 503 with no reason is a worse artifact
         # than one that names which check failed — but "the disk is low" and
         # "a worker is down" carry no filesystem path, no capacity figure and
         # no queue depth, which is where the operational detail actually is.

@@ -2,13 +2,23 @@
 
 Every upload route needs the same guarantee: a client cannot make this process
 allocate an unbounded amount of memory or disk. The bulk-import route grew its
-own version of this after a review; the three single-file photo routes never
-got one, which mattered because what follows an upload here is a full-resolution
-Pillow decode and a resident ~179 MB rembg model on a Raspberry Pi with no
-container memory limit. One oversized photo is enough to reach the OOM killer,
-and the kernel kills the process without giving the app a chance to log why.
+own version of this after a review; the single-file photo routes never got one,
+which mattered because what follows an upload here is a full-resolution Pillow
+decode and a resident ~179 MB rembg model on a Raspberry Pi with a 1g limit.
+One oversized photo is enough to reach the OOM killer, and the kernel kills the
+process without giving the app a chance to log why.
 
-So: one definition, used by all four.
+Two functions, differing only in what they do when the cap is hit — 413 for a
+single named file, truncate for one item in a batch — and FOUR call sites:
+`routes/hats`, `routes/settings`, `routes/import_jobs`, `routes/share`.
+
+That sentence was wrong for a long time and is worth the warning. It read "one
+definition, used by all four" while `import_jobs` and `share` each carried a
+private copy of the same loop; every copy was individually correct, so nothing
+ever failed and only this docstring was false. 2.57.0 removed one of them and
+STILL left the claim — and left `share` unfound, so the count was wrong in the
+release that claimed to fix it. `tests/test_upload_caps.py` now asserts the
+call sites rather than trusting a sentence.
 """
 
 from __future__ import annotations

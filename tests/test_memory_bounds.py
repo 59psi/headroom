@@ -233,9 +233,9 @@ async def test_the_share_target_spools_to_disk_and_caps_each_file(client, monkey
     from headroom.utils import upload
 
     monkeypatch.setattr(upload, "MAX_PHOTO_BYTES", 2048)
-    monkeypatch.setattr("headroom.routes.share.MAX_PHOTO_BYTES", 2048)
-    # `create_job` applies its OWN per-file limit to decide queued vs error;
-    # the route's cap only bounds MEMORY. Both matter, so pin both.
+    # Since 2.57.2 the route spools with the SHARED helper and caps on the
+    # import service's own per-file limit, so there is one number to pin here
+    # rather than a route-local copy of it.
     monkeypatch.setattr("headroom.services.import_service.MAX_BYTES_PER_FILE", 2048)
 
     small = b"\xff\xd8\xff" + b"\x00" * 128

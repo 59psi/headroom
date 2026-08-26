@@ -180,6 +180,26 @@ class Hat(Base):
         lazy="selectin", cascade="all, delete-orphan", order_by="WearLog.worn_at"
     )
 
+    def detach_from_case(self, room_id: int | None) -> None:
+        """Take this hat out of its case, leaving it loose in `room_id`.
+
+        The ONLY writer of "no longer in a case". Since 2.33 a hat can live in
+        a room with no case, so clearing `case_id` alone stopped meaning "still
+        on that shelf" and started meaning "nowhere" — reachable only from the
+        Hats list and search. Two callers detach a hat and each had its own
+        answer: `case_service.delete_case` learned to carry the room across in
+        2.57.0, and `hat_service.undispose_hat`'s can't-fit fallback did not,
+        so restoring a hat into a full case silently un-roomed it. That is a
+        mechanism with three implementations, which is why it lives here beside
+        `set_construction` rather than at either call site.
+
+        `room_id=None` is still available and still means "nowhere" — but it
+        has to be asked for now, rather than being what you get by forgetting.
+        """
+        self.case_id = None
+        self.position_in_case = None
+        self.direct_room_id = room_id
+
     def set_construction(self, value: str | None) -> None:
         """Record the construction and re-derive the two indexed flags.
 

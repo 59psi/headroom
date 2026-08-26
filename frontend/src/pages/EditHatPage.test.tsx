@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { focusManager } from '@tanstack/react-query';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../test/utils';
@@ -209,5 +210,78 @@ describe('EditHatPage — a price becomes "manual" only when you actually edit i
     expect(vi.mocked(hatsApi.updateHat).mock.calls[0][1]).toMatchObject({
       resale_price: null,
     });
+  });
+});
+
+/**
+ * The two ways the price guard can be defeated, both found by review AFTER the
+ * guard shipped. Comparing the box against the LIVE row rather than the seeded
+ * one reopens the exact bug the guard closes, and `type="number"` collapses
+ * "cleared" and "rejected what you typed" into the same empty string.
+ */
+describe('EditHatPage — the price guard cannot be defeated by a refetch or a typo', () => {
+  const PRICED: HatRead = {
+    ...HAT,
+    estimated_new_price: 79,
+    estimated_new_price_source: 'melin retail',
+    resale_price: 52.5,
+    resale_price_scope: 'model',
+    resale_price_source: 'Median of 11 live listings',
+  };
+
+  beforeEach(() => vi.clearAllMocks());
+
+  it('does not resend a stale price when a fresher one lands mid-edit', async () => {
+    const user = userEvent.setup();
+    // Seed at 52.5, then make the background refetch actually land 55. The box
+    // still shows 52.5 because seeding is frozen per hat, so comparing the box
+    // to the LIVE row calls that a user edit and writes 52.5 back as `manual`.
+    //
+    // The refetch has to be FORCED. An earlier version of this test just
+    // queued a second mock return and asserted — nothing ever requested it, so
+    // it passed against the bug it was written to catch. `focusManager` is
+    // what `refetchOnWindowFocus` listens to, and jsdom fires no focus events
+    // of its own.
+    vi.mocked(hatsApi.getHat)
+      .mockResolvedValueOnce(PRICED)
+      .mockResolvedValue({ ...PRICED, resale_price: 55 });
+
+    renderWithProviders(<EditHatPage />);
+
+    const field = await screen.findByLabelText('Collection or collaboration');
+    expect(await screen.findByLabelText('Resale ($)')).toHaveValue(52.5);
+
+    focusManager.setFocused(false);
+    focusManager.setFocused(true);
+    await waitFor(() => expect(vi.mocked(hatsApi.getHat).mock.calls.length).toBeGreaterThan(1));
+    // The fresher row is in the cache; the box was deliberately not reseeded.
+    expect(screen.getByLabelText('Resale ($)')).toHaveValue(52.5);
+
+    await user.clear(field);
+    await user.type(field, 'melin x Hydro Flask');
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }));
+
+    await waitFor(() => expect(hatsApi.updateHat).toHaveBeenCalled());
+    expect(vi.mocked(hatsApi.updateHat).mock.calls[0][1]).not.toHaveProperty('resale_price');
+  });
+
+  it('does not clear a price when the browser rejected what was typed', async () => {
+    const user = userEvent.setup();
+    vi.mocked(hatsApi.getHat).mockResolvedValue(PRICED);
+    renderWithProviders(<EditHatPage />);
+
+    const resale = await screen.findByLabelText('Resale ($)');
+    // A partial exponent like "1e" is accepted keystroke-by-keystroke but
+    // sanitized to "" by the number input, with `badInput` set. jsdom does not
+    // model that sanitization, so the state is forced directly.
+    await user.clear(resale);
+    Object.defineProperty(resale, 'validity', {
+      configurable: true,
+      value: { badInput: true },
+    });
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }));
+
+    await waitFor(() => expect(hatsApi.updateHat).toHaveBeenCalled());
+    expect(vi.mocked(hatsApi.updateHat).mock.calls[0][1]).not.toHaveProperty('resale_price');
   });
 });

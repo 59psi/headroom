@@ -457,8 +457,17 @@ async def undispose_hat(db: AsyncSession, hat_id: int) -> Hat:
             # stale position_in_case would duplicate display IDs / QR labels.
             hat.position_in_case = await _get_next_position(db, target_case_id)
         except HTTPException:
-            hat.case_id = None
-            hat.position_in_case = None
+            # Doesn't fit any more (the case filled up while this hat was
+            # disposed, or its capacity was lowered). Come back loose in the
+            # case's room rather than nowhere: `detach_from_case` is the one
+            # definition of that, and skipping it here is what made a restore
+            # into a full case silently un-room the hat. The 8 -> 6 beanie
+            # change in 2.57.0 widened this from rare to routine.
+            room_id = None
+            if target_case_id is not None:
+                target_case = await db.get(Case, target_case_id)
+                room_id = target_case.room_id if target_case else None
+            hat.detach_from_case(room_id)
     await db.commit()
     await log_and_commit(
         db, kind="hat.undisposed", entity_type="hat", entity_id=hat_id,

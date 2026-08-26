@@ -122,7 +122,23 @@ def resolve_retail(
 
     base = base_retail(style, construction)
     if base is None:
-        return estimate, ("Claude Vision" if estimate is not None else None)
+        if estimate is not None:
+            return estimate, "Claude Vision"
+        # No table entry AND no estimate is a NON-ANSWER, not an answer of
+        # "this hat has no retail price". Returning `(None, None)` here erased
+        # a perfectly good stored price every time anyone tapped Reanalyze —
+        # and `_apply_analysis` assigns the result unconditionally, so there
+        # was nothing downstream to catch it. The blast radius was not an edge
+        # case: 12 of the 16 styles and 9 of the 11 known constructions have no
+        # table entry, a blank construction is the NORMAL state (analysis is
+        # forbidden from guessing one), and `reanalyze-all` covers every hat
+        # with a photo. `backfill_retail_prices` did the same thing at scale
+        # from lifespan.
+        #
+        # This is exactly the rule `hat_analysis_pipeline._keep_on_null`
+        # applies to brand / model_name / artist_series: a real answer wins, a
+        # non-answer leaves what is already there alone.
+        return current, current_source
 
     if estimate is not None and estimate > base:
         # Above the base is plausible (collab / limited run); below it is the

@@ -53,6 +53,27 @@ export function EditHatPage() {
   // typed reverted to the server's values mid-sentence.
   const seededFor = useRef<number | null>(null);
 
+  // The prices AS SEEDED, and the price inputs themselves.
+  //
+  // The seeded values, not `hat.data`, are what "did the user change this?"
+  // must be measured against. Seeding is frozen per hat (above) while
+  // `hat.data` keeps refetching (`refetchOnWindowFocus`), so comparing the box
+  // to the live row reopens the bug the comparison exists to close: tab away
+  // from a hat whose resale is a scraped median, let a re-analysis land a
+  // fresher number, come back and save anything at all — the box still holds
+  // the OLD value, it now differs from the row, and it gets written and
+  // stamped `manual` forever.
+  //
+  // The refs are for `validity.badInput`. A `type="number"` input reports
+  // `value === ""` both when you clear it and when it rejects what you typed
+  // ("1e"), which are opposite intentions flattened into one string — and this
+  // form treats an empty box as "clear this price".
+  const seededPrices = useRef<{ estimated: number | null; resale: number | null }>({
+    estimated: null, resale: null,
+  });
+  const estimatedRef = useRef<HTMLInputElement>(null);
+  const resaleRef = useRef<HTMLInputElement>(null);
+
   useEffect(() => {
     if (hat.data && seededFor.current !== hat.data.id) {
       seededFor.current = hat.data.id;
@@ -79,6 +100,10 @@ export function EditHatPage() {
       setColorway(hat.data.colorway || '');
       setEstimatedPrice(hat.data.estimated_new_price != null ? String(hat.data.estimated_new_price) : '');
       setResalePrice(hat.data.resale_price != null ? String(hat.data.resale_price) : '');
+      seededPrices.current = {
+        estimated: hat.data.estimated_new_price ?? null,
+        resale: hat.data.resale_price ?? null,
+      };
       setDesignNotes(hat.data.design_notes || '');
       if (hat.data.photo_path) {
         setPhotoPreview(`/uploads/${hat.data.photo_path}`);
@@ -114,14 +139,25 @@ export function EditHatPage() {
       // melinrecap median as "Price you entered — used as given" and froze it
       // against every future analysis. Same number on screen, different
       // meaning, no way to tell. Sent only when actually changed.
-      const priceEdited = (typed: string, current: number | null | undefined) =>
-        (typed ? Number(typed) : null) !== (current ?? null);
-      if (priceEdited(estimatedPrice, hat.data?.estimated_new_price)) {
-        data.estimated_new_price = estimatedPrice ? Number(estimatedPrice) : null;
-      }
-      if (priceEdited(resalePrice, hat.data?.resale_price)) {
-        data.resale_price = resalePrice ? Number(resalePrice) : null;
-      }
+      // Compared against the SEEDED value and guarded on `badInput` — see the
+      // note on `seededPrices`. Returns null for "leave this key out".
+      const priceToSend = (
+        typed: string,
+        seeded: number | null,
+        input: HTMLInputElement | null,
+      ): { send: boolean; value: number | null } => {
+        // Unparseable text in the box reads as `value === ""`, which is
+        // indistinguishable from cleared. Sending null there would wipe a
+        // real price because of a typo the browser already rejected.
+        if (input?.validity.badInput) return { send: false, value: null };
+        const value = typed ? Number(typed) : null;
+        return { send: value !== seeded, value };
+      };
+
+      const est = priceToSend(estimatedPrice, seededPrices.current.estimated, estimatedRef.current);
+      if (est.send) data.estimated_new_price = est.value;
+      const resale = priceToSend(resalePrice, seededPrices.current.resale, resaleRef.current);
+      if (resale.send) data.resale_price = resale.value;
       data.limited_edition = basics.limitedEdition;
 
       await updateHat(id, data);
@@ -217,11 +253,11 @@ export function EditHatPage() {
             <div className="row g-2 mb-3">
               <div className="col-6">
                 <label className="form-label" htmlFor="hat-est-new">Est. new retail ($)</label>
-                <input id="hat-est-new" type="number" step="0.01" className="form-control" value={estimatedPrice} onChange={e => setEstimatedPrice(e.target.value)} />
+                <input id="hat-est-new" ref={estimatedRef} type="number" step="0.01" className="form-control" value={estimatedPrice} onChange={e => setEstimatedPrice(e.target.value)} />
               </div>
               <div className="col-6">
                 <label className="form-label" htmlFor="hat-resale">Resale ($)</label>
-                <input id="hat-resale" type="number" step="0.01" className="form-control" value={resalePrice} onChange={e => setResalePrice(e.target.value)} />
+                <input id="hat-resale" ref={resaleRef} type="number" step="0.01" className="form-control" value={resalePrice} onChange={e => setResalePrice(e.target.value)} />
                 <div className="form-text small">
                   Setting this marks it as your own price: it's used as-is and
                   a re-analysis won't overwrite it. Clear it to hand the hat

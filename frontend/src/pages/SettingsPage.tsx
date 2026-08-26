@@ -34,7 +34,12 @@ import { TrustCertCard } from '../components/settings/TrustCertCard';
  * errand, and it does not matter that it spans two API keys, a worker queue and
  * an error list. The names are the errand, not the component.
  */
-const SECTIONS = [
+// Exported for `SettingsPage.test.tsx`, which must count the REAL cards
+// rather than a number typed beside a hand-written roster. That roster said
+// 21 while 22 were mounted, and the missing one (TrustCertCard) could be
+// deleted with the whole suite green — the exact failure the census exists to
+// prevent, committed inside the census itself.
+export const SECTIONS = [
   {
     id: 'analysis',
     label: 'Analysis',
@@ -115,12 +120,18 @@ export function SettingsPage() {
       <p className="text-secondary small hr-settings-blurb">{active.blurb}</p>
 
       {/* Only the active section is mounted. Each card owns its own query, so
-          the flat page fired nineteen requests on open — most for cards you
-          were never going to look at. */}
+          the flat page fired one request per card on open — most for cards you
+          were never going to look at. (Count not quoted: it was "nineteen" and
+          the roster reached 22 within two releases.) */}
       <div
         role="tabpanel"
         id={`settings-panel-${active.id}`}
-        aria-labeledby={`settings-tab-${active.id}`}
+        // `labelledby` is the ARIA spelling and is NOT subject to the
+        // American-spelling rule — it is a W3C attribute name, not prose. An
+        // unanchored `labelled -> labeled` sweep renamed it in 2.57.0; React
+        // passes unknown `aria-*` through verbatim, so the only signal was a
+        // console warning nobody read, and the tabpanel lost its name.
+        aria-labelledby={`settings-tab-${active.id}`}
       >
         {active.cards.map(Card => <Card key={Card.name} />)}
       </div>

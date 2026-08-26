@@ -6,6 +6,111 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.57.2] — 2026-08-26
+
+A second whole-codebase review, run adversarially. Most of what it found was
+in **2.57.0 itself** — written and self-reviewed in one sitting, merged an hour
+later. That is the finding worth keeping: a release that fixes a lot, reviewed
+by one pass, is where the next batch of bugs comes from.
+
+### Fixed — regressions introduced by 2.57.0
+- **`aria-labelledby` had been renamed to `aria-labeledby`.** The
+  American-spelling sweep used unanchored regex and ate the `l` in a W3C
+  attribute name. React passes unknown `aria-*` through verbatim, so nothing
+  errored and no test failed — it printed a console warning on every test run
+  that nobody read, while the Settings tabpanel lost its accessible name.
+- **`resize: vertical` and `field-sizing: content` were shipped together and
+  are mutually destructive.** Dragging the grabber writes an inline `height`
+  that later changes do not reset (css-ui-4 §4.1), and a fixed height reimposes
+  a fixed size — so one drag permanently killed auto-growth. `field-sizing` now
+  applies only inside `@supports`, *instead* of the drag handle.
+- **The textarea ceiling was smaller than its own floor on a phone.**
+  `max-height: 40vh` is ~157px on an iPhone in landscape against a 146px
+  `min-height`, so the cap lost to the floor exactly where height is scarcest.
+  `vh` is also the *large* viewport and does not shrink for the soft keyboard —
+  the one moment the ceiling exists for. Now expressed in lines.
+- **"Press ⌘/Ctrl + Enter" was shown on a phone.** Neither key is on an iOS
+  soft keyboard. Hidden under `@media (pointer: coarse)`.
+- **The price guard could be defeated by a background refetch.** It compared
+  the box against the *live* row while seeding is frozen per hat, so with
+  `refetchOnWindowFocus` on: open a hat, tab away, let a fresher price land,
+  save anything — the stale value was written and stamped `manual` forever.
+  Now compared against the value as seeded.
+- **A price could be silently cleared by a typo.** `type="number"` reports
+  `value === ""` both when you clear it and when it rejects what you typed
+  ("1e"), and this form reads an empty box as "clear this price".
+  `validity.badInput` separates them.
+- **`HatNotesCard` leaked mutation state between hats** — the card is at a
+  fixed position, so one failed save left a red "Couldn't save" under the next
+  three hats' untouched boxes. Keyed on the hat id.
+- **`undispose_hat` still un-roomed a hat**, and 2.57.0's beanie change made it
+  routine. `delete_case` was taught to keep hats in the room; the *other*
+  detach site was not, so restoring a hat into a full case dropped it out of
+  every room view. `Hat.detach_from_case()` is now the one definition, beside
+  `set_construction` for the same reason.
+- **`delete_case` filed DISPOSED hats into the room** (`Case.hats` is
+  unfiltered) and counted them in the audit line, which still read
+  "unassigned" — the outcome the same commit had just changed.
+- **`delete_case` wrote a room id it never validated** — the only such writer;
+  `create_case` and `update_case` both check. A case orphaned by an older
+  version handed every hat a dangling `direct_room_id`.
+- **`uploads/cases` was still created** by `Dockerfile` and `setup.sh`, so
+  2.57.0's "no longer created on every boot" was false on every build.
+
+### Fixed — older bugs
+- **A re-analysis erased `estimated_new_price` for most of the collection.**
+  `resolve_retail` returned `(None, None)` when the table had no entry *and*
+  Claude declined, and `_apply_analysis` assigns unconditionally. That is 12 of
+  16 styles and 9 of 11 constructions, a blank construction is the normal state
+  (analysis is forbidden from guessing one), and `reanalyze-all` covers every
+  hat with a photo. It now keeps the stored value — the rule `_keep_on_null`
+  already applies to brand/model/series, 75 lines above.
+- **`POST /share` had no total-batch cap and ran on the event loop**, with a
+  fourth private copy of the chunk loop. 100 × 20 MB is 2 GB written to an SD
+  card in one request. It now uses the shared helper, off-thread, under the
+  same 750 MB ceiling `import_jobs` has always had.
+- **The "full" badge, the Settings census, and the CI probe** — see below.
+
+### Fixed — tests that could not fail
+- **`test_multipart_is_exempt` asserted `x + 1 > x`** and then posted 4 KB
+  against an unpatched 2 MB cap. Deleting the multipart exemption breaks bulk
+  import in production and left this green. Now sabotage-verified.
+- **The path-traversal canary I added in 2.57.0 was itself wrong** — it probed
+  `/assets/ok.js`, served by a mount bound at `create_app()`, so it answered
+  even with the request-time global unpatched. Moved to a dist-root file that
+  goes through `_safe_spa_path`, and verified by reinstating the original bug.
+- **`POST /share`'s auth was untested** — a two-line special case in `auth.py`,
+  with both existing callers authenticated, so deleting it left the suite green
+  and the endpoint open.
+- **The Settings census counted a literal.** It asserted `toHaveLength(21)`
+  beside a roster of 21 while 22 cards were mounted, so `TrustCertCard` could
+  be deleted outright with every test passing. It now derives from the exported
+  `SECTIONS`, and the one conditionally-hidden card is declared rather than
+  omitted.
+- **`test_upload_caps` asserted a false statement** — added in 2.57.0, claiming
+  "one definition, used by all" while `share.py` was a third copy. It now
+  asserts the call sites and fails if any route grows a private chunk loop.
+
+### Documentation
+- `CLAUDE.md` still said beanies pack "3-to-a-case instead of **8**" one line
+  above the sentence 2.57.0 corrected to 6.
+- **"semgrep-enforced" is now accurate in both directions**: the rules are not
+  in this repo *and* the check is **not required** — `main` has no branch
+  protection and no rulesets, so it reports and does not block. 2.57.0 replaced
+  a wrong claim with a differently wrong one, and contradicted itself inside a
+  single sentence.
+- The Dependabot note said "Two failure modes" above three, in the comment
+  added to describe the third.
+- 2.57.0's changelog said `routes/admin/` has "ten submodules"; it has nine.
+  And it said `delete_room` states the "opposite" principle — it states the
+  same one.
+- The CI container probe curled `/health` (a static 200) while production's
+  healthcheck uses `/health/ready` (disk floor + worker liveness), so a
+  readiness regression shipped green.
+- rembg's model size was given three different ways; measured, it is ~179 MB.
+- Sweep misses: "artefact", "modelled". `USAGE.md` implied beanies get the
+  one-hat overfill allowance they have never had.
+
 ## [2.57.1] — 2026-08-26
 
 ### Changed

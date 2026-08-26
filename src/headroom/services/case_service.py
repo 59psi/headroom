@@ -108,22 +108,42 @@ async def update_case(
 
 async def delete_case(db: AsyncSession, display_id: str) -> None:
     case = await get_case_by_display_id(db, display_id)
-    # Unassign all hats before deleting, but keep them IN THE ROOM the case was
-    # in. Since 2.33 a hat can live in a room with no case, so "unassigned" and
-    # "not in any room" stopped being the same state — and clearing `case_id`
-    # alone left these hats reachable from nowhere but the Hats list and
-    # search, which reads as the shelf emptying itself when a case is deleted.
-    # `room_service.delete_room` states the same principle for the symmetric
-    # operation. The hats did not physically move; only their container went.
-    freed = len(case.hats)
-    for hat in list(case.hats):
-        hat.case_id = None
-        hat.position_in_case = None
-        hat.direct_room_id = case.room_id
+    # Detach every hat before deleting, keeping it IN THE ROOM the case was in.
+    # Since 2.33 a hat can live in a room with no case, so "unassigned" and
+    # "not in any room" stopped being the same state — clearing `case_id` alone
+    # left these hats reachable from nowhere but the Hats list and search, which
+    # reads as the shelf emptying itself. `room_service.delete_room` states the
+    # same principle for the symmetric operation. The hats did not physically
+    # move; only their container went.
+    #
+    # The room is VALIDATED first. This is the one place that wrote a room id
+    # without checking, and `create_case` below documents why that matters:
+    # nothing enforces it at the DB level, so a case orphaned by an older
+    # version would hand every one of its hats a dangling `direct_room_id` —
+    # `Hat.room` then resolves to None and the hat is in no room while the
+    # column insists otherwise. Falling back to the default room keeps them
+    # somewhere a person can actually find them.
+    room_id = case.room_id
+    if not await room_service.room_exists(db, room_id):
+        room_id = await room_service.get_default_room_id(db)
+
+    # `Case.hats` is unfiltered, so it includes DISPOSED hats. They keep their
+    # disposition and must not be filed onto a shelf they are not on — and they
+    # must not be counted in the audit line either, which is what made "N
+    # hat(s) unassigned" wrong in both halves.
+    active = [h for h in case.hats if h.disposed_at is None]
+    for hat in active:
+        hat.detach_from_case(room_id)
+    for hat in case.hats:
+        if hat.disposed_at is not None:
+            hat.case_id = None
+            hat.position_in_case = None
     case_id = case.id
     await db.delete(case)
     await db.commit()
     await log_and_commit(
         db, kind="case.deleted", entity_type="case", entity_id=case_id,
-        summary=f"Case {display_id} deleted · {freed} hat(s) unassigned",
+        # "moved to", not "unassigned" — the durable record has to name what
+        # actually happened, and since 2.57.1 the hats keep their room.
+        summary=f"Case {display_id} deleted · {len(active)} hat(s) moved to the room",
     )
