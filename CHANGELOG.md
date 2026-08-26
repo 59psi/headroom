@@ -6,6 +6,47 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.56.0] — 2026-08-26
+
+Five Dependabot PRs had piled up; three of them could never have gone green.
+
+### Changed
+- **Backend dependencies updated as one coherent resolution.** Notably
+  `websockets` 16.1.1 → 17.0.1, `starlette` 1.3.1 → 1.6.0, `uvicorn` 0.51.0 →
+  0.52.3, `rembg` 2.0.78 → 2.0.81, `sqlalchemy` 2.0.51 → 2.0.52, plus the
+  minor/patch group. One `uv lock --upgrade`, one export, one review.
+
+  This replaces three Dependabot PRs that were **internally inconsistent**, and
+  the reason is worth recording. `requirements.txt` is a *generated* artifact
+  (`uv export`) that the Docker image installs from — worth 490s of an 873s Pi
+  rebuild, and byte-identical across a version bump so a release does not bust
+  that layer. Dependabot cannot see that it is derived from `uv.lock`, and
+  treats it as a manifest in its own right. Two distinct failures resulted:
+
+  - One PR bumped **only** `requirements.txt` — `websockets`, a transitive
+    dependency that is not in `pyproject.toml` at all — so `uv.lock` never
+    moved and the two disagreed by construction.
+  - Another bumped **both, independently, to different resolutions**: its
+    `uv.lock` said `annotated-types 0.7.0` while its own `requirements.txt`
+    said `0.8.0`, and `cbor2` — a WebAuthn dependency — appeared in one and not
+    the other. The image would have installed a different dependency set than
+    the tests ran against.
+
+  `tests/test_requirements_export.py` caught both, which is exactly what it was
+  added for in 2.52.0. Regenerating on the Dependabot branch is **not** the fix
+  for the second case: it silently discards half the update.
+
+- **`.github/dependabot.yml` and CLAUDE.md now say all of this at the point of
+  use**, including the one-command recipe, so the next person does not
+  rediscover it from a red CI run.
+
+  There is deliberately **no workflow auto-regenerating the file** on those
+  branches. Doing so requires `pull_request_target` with a writable token plus
+  a checkout of the PR branch — the pwn-request pattern this repo's own semgrep
+  scan rejects. Suppressing that scan to save one command is a bad trade.
+
+**799 backend + 192 frontend tests pass.**
+
 ## [2.55.0] — 2026-08-26
 
 Found on the real deployment: certificates were being issued for **six days**
