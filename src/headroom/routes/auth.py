@@ -111,13 +111,18 @@ async def login(
 ):
     ip = client_ip(request)
     if auth_service.is_rate_limited(ip, data.username):
+        # The log line goes out every time — it is free and it is what you
+        # grep. The durable audit ROW goes out once per lockout window: this
+        # endpoint is unauthenticated, so a row per request let anyone fill
+        # the disk, 90 days at a time. See `auth_service.should_log_block`.
         logger.warning("Login rate-limited: '%s' from %s", data.username, ip)
-        await log_activity(
-            db, kind="auth.login_blocked", entity_type="auth", entity_id=None,
-            summary=f"Login blocked (rate limit): '{data.username}' from {ip}",
-            details={"ip": ip, "username": data.username},
-        )
-        await db.commit()
+        if auth_service.should_log_block(ip, data.username):
+            await log_activity(
+                db, kind="auth.login_blocked", entity_type="auth", entity_id=None,
+                summary=f"Login blocked (rate limit): '{data.username}' from {ip}",
+                details={"ip": ip, "username": data.username},
+            )
+            await db.commit()
         raise HTTPException(
             status_code=429,
             detail="Too many failed logins — try again in a few minutes.",

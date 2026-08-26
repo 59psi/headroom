@@ -37,15 +37,45 @@ _MAX_FAILURES = 5
 _LOCKOUT_SECONDS = 15 * 60
 _failures: dict[str, list[float]] = {}
 
+#: Sweep every key this often (in calls), not on every call — see `_prune`.
+_SWEEP_EVERY = 64
+_since_sweep = 0
+
+#: Keys already audited as blocked in the current window — see
+#: `should_log_block`. Bounded, because it is fed by an open endpoint.
+_blocked_logged: dict[str, float] = {}
+_MAX_TRACKED_KEYS = 4096
+
 
 def _prune(key: str, now: float) -> list[float]:
+    """Expire `key`'s window, and periodically sweep every other key too.
+
+    The per-key half was here from the start and its comment claimed to be an
+    "unbounded-memory guard". It is not: it only ever touches the ONE key it
+    is handed, so a client rotating the username — which is what credential
+    stuffing looks like — leaves one permanent entry per name it tried, and
+    nothing ever visits them again. Measured: 200 distinct usernames left 200
+    live keys, still 200 after touching an unrelated key.
+
+    The sweep is amortised on a counter rather than run every call, because
+    the common case is a handful of keys and walking the dict on each login
+    would be the wrong trade in the other direction.
+    """
     kept = [t for t in _failures.get(key, []) if now - t < _LOCKOUT_SECONDS]
-    # Drop keys whose window has fully expired so the dict can't grow one
-    # permanent entry per (ip, username) ever probed (unbounded-memory guard).
     if kept:
         _failures[key] = kept
     else:
         _failures.pop(key, None)
+
+    global _since_sweep
+    _since_sweep += 1
+    if _since_sweep >= _SWEEP_EVERY:
+        _since_sweep = 0
+        for stale in [
+            k for k, times in _failures.items()
+            if not any(now - t < _LOCKOUT_SECONDS for t in times)
+        ]:
+            _failures.pop(stale, None)
     return kept
 
 
@@ -62,7 +92,38 @@ def record_failure(client_ip: str, username: str) -> None:
 
 
 def clear_failures(client_ip: str, username: str) -> None:
-    _failures.pop(f"{client_ip}:{username.lower()}", None)
+    key = f"{client_ip}:{username.lower()}"
+    _failures.pop(key, None)
+    _blocked_logged.pop(key, None)
+
+
+def should_log_block(client_ip: str, username: str) -> bool:
+    """True only the FIRST time a given (ip, username) is blocked in a window.
+
+    The 429 branch writes an `auth.login_blocked` activity row and commits it
+    before raising, so the limiter was not stopping the write — it was only
+    changing which row got written. One durable row per request, from an
+    unauthenticated endpoint, retained 90 days: an anonymous client on the LAN
+    could fill the SD card, which is the failure `/health/ready`'s disk floor
+    exists to notice and this app would have caused itself.
+
+    Once per lockout window keeps the security signal — "this address is being
+    hammered" is answered by one row plus the log line every attempt still
+    emits — while making the row count independent of the attempt count.
+    """
+    key = f"{client_ip}:{username.lower()}"
+    now = time.monotonic()
+    last = _blocked_logged.get(key)
+    if last is not None and now - last < _LOCKOUT_SECONDS:
+        return False
+    _blocked_logged[key] = now
+    # Bounded the same way `_failures` is, and by the same sweep.
+    if len(_blocked_logged) > _MAX_TRACKED_KEYS:
+        for stale in [
+            k for k, t in _blocked_logged.items() if now - t >= _LOCKOUT_SECONDS
+        ]:
+            _blocked_logged.pop(stale, None)
+    return True
 
 
 # ------------------------------ passwords ----------------------------- #

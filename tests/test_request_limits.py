@@ -156,3 +156,50 @@ async def test_the_vision_key_travels_in_a_header_not_the_url(monkeypatch):
     assert seen["headers"]["X-Goog-Api-Key"] == "super-secret-key"
     assert seen["params"] is None
     assert "super-secret-key" not in seen["url"]
+
+
+async def test_a_chunked_oversize_body_gets_a_413_not_a_500(
+    anon_client, db_session, monkeypatch
+):
+    """A chunked request declares no Content-Length, so the byte count is the
+    only limit that applies — and it must end the same way the declared path
+    does.
+
+    It used to return an ASGI disconnect, which Starlette turns into
+    `ClientDisconnect` inside the route. Nothing catches that, so it reached
+    the unhandled-exception handler: a 500 to the caller AND a durable
+    `error.unhandled` row. On `/api/auth/login`, which is open, that made an
+    oversize chunked body an unauthenticated way to write an audit row per
+    request — the same disk-filling shape as the rate-limit branch.
+    """
+    from sqlalchemy import func, select
+
+    from headroom.models.activity_log import ActivityLog
+
+    monkeypatch.setenv("HEADROOM_MAX_BODY_BYTES", "512")
+
+    async def chunks():
+        for _ in range(8):
+            yield b"x" * 256
+
+    async def unhandled_rows() -> int:
+        db_session.expire_all()
+        return (await db_session.execute(
+            select(func.count(ActivityLog.id)).where(
+                ActivityLog.kind == "error.unhandled"
+            )
+        )).scalar_one()
+
+    before = await unhandled_rows()
+    resp = await anon_client.post(
+        "/api/auth/login",
+        content=chunks(),
+        headers={"content-type": "application/json"},
+    )
+
+    assert resp.status_code == 413, (
+        f"chunked oversize body returned {resp.status_code}, not a 413"
+    )
+    assert await unhandled_rows() == before, (
+        "an oversize body wrote an unhandled-error audit row"
+    )

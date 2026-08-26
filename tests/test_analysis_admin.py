@@ -289,3 +289,34 @@ async def test_pending_count_is_not_capped_by_the_preview_list(client):
 
     assert body["pending_count"] == 55, "the count was capped by the preview list"
     assert len(body["pending"]) == 50, "the preview list itself stays bounded"
+
+
+async def test_a_job_still_closes_when_one_of_its_hats_is_deleted(client, db_session):
+    """`total` is frozen at creation; the counts are over surviving rows.
+
+    So deleting a hat mid-run — which the Duplicates page does — left `done`
+    permanently one short of `total`, and the job reported itself in flight
+    forever, across restarts. A second run then re-tagged every hat and
+    stranded the first one identically. Progress is derived from the rows, so
+    the gate has to ask the rows: is anything still pending?
+    """
+    from headroom.models.hat import Hat
+    from headroom.services import analysis_job_service
+
+    ids = [await _hat_with_photo(client) for _ in range(3)]
+    job = await analysis_job_service.create_job(db_session, ids)
+    await db_session.commit()
+
+    # Two finish; the third is deleted before the worker reaches it.
+    for hat_id in ids[:2]:
+        (await db_session.get(Hat, hat_id)).analysis_status = "ok"
+    await db_session.delete(await db_session.get(Hat, ids[2]))
+    await db_session.commit()
+
+    progress = await analysis_job_service.progress_for(db_session, job)
+
+    assert progress.done == 2
+    assert progress.job.total == 3, "the recorded total is history, not a target"
+    assert progress.job.status == "done", (
+        "a deleted hat stranded the job — it can never reach its frozen total"
+    )

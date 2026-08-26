@@ -76,25 +76,56 @@ class BodySizeLimitMiddleware:
             except ValueError:
                 pass  # unparseable; the streaming count below still applies
 
+        # A chunked request declares no Content-Length, so the count below is
+        # the only limit that applies to it — and it has to end the same way
+        # the declared path does, with a 413.
+        #
+        # It used to return `{"type": "http.disconnect"}`, and the comment
+        # claimed that let "the request fail as the malformed thing it is".
+        # It does not: Starlette's `Request.stream()` turns a disconnect into
+        # `ClientDisconnect`, which no handler catches, so it reached
+        # `error_handler.log_unhandled` and produced a 500 AND a durable
+        # `error.unhandled` activity row. On an open endpoint like
+        # `/api/auth/login` that made an oversize chunked body an
+        # unauthenticated way to write an audit row per request — the same
+        # disk-filling shape as the rate-limit branch. Two halves of one
+        # middleware, disagreeing about what "refused" means.
+        over_limit = False
         received = 0
 
         async def counting_receive() -> Message:
-            nonlocal received
+            nonlocal received, over_limit
             message = await receive()
             if message["type"] == "http.request":
                 received += len(message.get("body", b""))
                 if received > limit:
-                    # Truncate rather than pass it on. Raising here would
-                    # surface as a 500 from inside the route; ending the body
-                    # early lets the request fail as the malformed thing it is.
+                    over_limit = True
                     logger.warning(
-                        "Request body over the %d byte limit on %s %s — truncated.",
+                        "Request body over the %d byte limit on %s %s — refused.",
                         limit, scope["method"], scope.get("path", ""),
                     )
-                    return {"type": "http.disconnect"}
+                    # Stop the body cleanly. The route sees a complete (short)
+                    # body rather than a disconnect, and `guarded_send` below
+                    # replaces whatever it decides with the 413.
+                    return {"type": "http.request", "body": b"", "more_body": False}
             return message
 
-        await self.app(scope, counting_receive, send)
+        # The route still runs — it has to, because the cap is only known once
+        # the body has been read past it — but its response never reaches the
+        # client. Swapping at the `http.response.start` boundary means nothing
+        # partial has been written yet.
+        started = False
+
+        async def guarded_send(message: Message) -> None:
+            nonlocal started
+            if over_limit:
+                if not started:
+                    started = True
+                    await _reject(scope, send, limit)
+                return  # drop the route's own body chunks
+            await send(message)
+
+        await self.app(scope, counting_receive, guarded_send)
 
 
 async def _reject(scope: Scope, send: Send, limit: int) -> None:

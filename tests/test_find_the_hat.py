@@ -6,8 +6,11 @@ from __future__ import annotations
 
 import pytest
 
+from headroom.services import color_extraction
 from headroom.services.color_extraction import (
     color_distance,
+    is_same_color,
+    lab_of,
     normalize_hex_name,
     palette,
     parse_hex,
@@ -626,3 +629,72 @@ async def test_every_palette_color_finds_itself_first(client, db_session):
         assert hits[0]["id"] == ids[chip["name"]], (
             f"{chip['name']} did not rank itself first"
         )
+
+
+# ---- membership: the hue fallback must not admit pale tints ------------ #
+
+
+async def test_a_saturated_color_never_matches_a_pale_tint():
+    """Searching olive must not return the cream hats.
+
+    The hue fallback exists because ΔE is dominated by lightness, so a
+    DARKENED color lands on a neutral name. A swatch LIGHTER than the target
+    is the opposite case and the reasoning does not carry over: chroma is
+    bounded by lightness, so at L=95 a low chroma is the most a color can
+    have up there, not evidence of desaturation. Comparing it against a
+    mid-lightness target's chroma is a ratio between two different ceilings.
+
+    These four pairs were the entire remaining cross-family leak.
+    """
+    leaks = [
+        ("olive", "#6e6e32", "cream", "#faf0d7"),
+        ("olive", "#6e6e32", "beige", "#e8dcc0"),
+        ("tan", "#c8a678", "cream", "#faf0d7"),
+        ("gold", "#d4a017", "beige", "#e8dcc0"),
+    ]
+    for target_name, target_hex, swatch_name, swatch_hex in leaks:
+        assert not is_same_color(
+            lab_of(target_hex), lab_of(swatch_hex), swatch_name
+        ), f"searching {target_name} still returns {swatch_name}"
+
+
+async def test_the_fallback_still_rescues_the_case_it_exists_for():
+    """A dark teal classifies as charcoal by ΔE but is still a teal.
+
+    The motivating case in `is_same_color`'s docstring — L≈21, hue 197°,
+    nearest palette name charcoal. If the darker-only guard ever breaks this,
+    the guard is wrong, not this test.
+    """
+    dark_teal = lab_of("#1c3f3f")
+
+    assert "teal" not in color_extraction.families_of_lab(dark_teal), (
+        "premise changed: this swatch no longer misclassifies, so it no "
+        "longer exercises the fallback at all"
+    )
+    assert is_same_color(lab_of("#3d8a8a"), dark_teal, None)
+
+
+async def test_no_two_palette_colors_of_different_families_ever_match():
+    """The whole invariant, over the entire cross-product.
+
+    Membership is categorical: two curated names sharing no basic color word
+    must never match, at any distance. Three successive distance cutoffs
+    (30, 22, 26) could not deliver this — at 26 there were 51 such pairs.
+    """
+    from itertools import permutations
+
+    entries = [
+        (name, lab_of(f"#{r:02x}{g:02x}{b:02x}"))
+        for name, (r, g, b) in color_extraction._PALETTE
+    ]
+    offenders = [
+        f"{t_name}->{s_name}"
+        for (t_name, t_lab), (s_name, s_lab) in permutations(entries, 2)
+        if not (
+            color_extraction.color_family(t_name)
+            & color_extraction.color_family(s_name)
+        )
+        and is_same_color(t_lab, s_lab, s_name)
+    ]
+
+    assert not offenders, f"cross-family matches: {offenders}"

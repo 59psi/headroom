@@ -268,3 +268,25 @@ class ConstructionClearResult(BaseModel):
     prices_cleared: int
     manual_prices_kept: int
     samples: list[str]
+
+
+class FrozenPriceRow(BaseModel):
+    """One hat whose price analysis can no longer touch."""
+
+    hat_id: int
+    display_id: str | None = None
+    model_name: str | None = None
+    resale_price: float | None = None
+    estimated_new_price: float | None = None
+    #: The hat carries marketplace provenance (a listing URL or a checked-at
+    #: timestamp), so it WAS priced by the feed before something marked it
+    #: manual. A hint that this one is the pre-2.57.0 bug rather than a person.
+    was_market_priced: bool = False
+
+
+class PriceReleaseResult(BaseModel):
+    """What releasing frozen prices did, or would do under `dry_run`."""
+
+    dry_run: bool
+    released: int
+    hats: list[FrozenPriceRow] = []

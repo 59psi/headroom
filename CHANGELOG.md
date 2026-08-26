@@ -6,6 +6,72 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.58.0] — 2026-08-26
+
+The six things 2.57.2 listed as "not fixed". They are fixed.
+
+### Fixed
+- **Color search returned the wrong hats, and now it doesn't.** Searching
+  **olive returned the cream hats** — ΔE 40.0 apart, across families the module
+  swears it never crosses. Also olive→beige, tan→cream, gold→beige.
+
+  The hue fallback exists because ΔE is dominated by lightness, so a DARKENED
+  color lands on a neutral name (the dark teal at L=21 that classifies as
+  charcoal). It only ever tested chroma and hue, so pale tints walked through
+  in the opposite direction. **Chroma is bounded by lightness**: at L=95 a low
+  chroma is the most a color can have, not evidence of desaturation, so the
+  chroma ratio against a mid-lightness target compares two different ceilings.
+
+  The fallback now applies only to swatches **darker than the target**. Not a
+  fourth tuned constant — the three before it (30 → 22 → 26) are why. Measured
+  over the full palette cross-product: **4 cross-family matches → 0**, the
+  dark-teal case it exists for still works, all 6 darkened-swatch rescues kept,
+  0 regressions. `test_find_the_hat.py` now asserts zero cross-family matches
+  over **every ordered palette pair**, so it cannot regress quietly.
+
+- **An analysis job never closed if one of its hats was deleted mid-run.**
+  `total` is frozen at creation while the counts are over surviving rows, so
+  `done` stayed one short forever — the run reported itself in flight
+  permanently, across restarts, and a second `reanalyze-all` re-tagged
+  everything and stranded the first identically. Now gated on "nothing is left
+  PENDING", which is what the docstring always claimed.
+
+- **An oversize chunked body returned 500, not 413** — and wrote a durable
+  `error.unhandled` row each time. The counted-bytes path returned an ASGI
+  disconnect, which Starlette turns into `ClientDisconnect` inside the route
+  where nothing catches it. On `/api/auth/login`, which is open, that made an
+  oversize body an unauthenticated way to write an audit row per request.
+
+### Security
+- **Three unauthenticated ways to fill the disk or the heap, all closed.**
+  - Every rate-limited login **committed an audit row before raising**, so the
+    limiter changed *which* row was written, not whether one was. 90-day
+    retention, open endpoint. Now audited once per lockout window; the log line
+    still fires every attempt.
+  - `auth_service._prune` claimed to be an "unbounded-memory guard" and only
+    ever pruned the single key handed to it. Rotating the username — which is
+    what credential stuffing looks like — left one permanent entry per name
+    tried. Measured: 200 usernames, 200 live keys. Now swept periodically.
+  - The **passkey challenge store was uncapped**, fed by an open, bodyless,
+    unrate-limited endpoint, holding each entry 300s. Measured: 300 requests,
+    300 live entries. Now bounded at 512, evicting oldest-first so a flood
+    evicts its own entries rather than a real ceremony's.
+
+### Added
+- **`GET /api/admin/prices/frozen` and `POST /api/admin/prices/release`** —
+  the repair 2.57.0 needed and did not have. Its fix stopped the Edit form
+  freezing prices as `manual`; every hat already stamped stayed frozen forever,
+  and the release notes claimed the fix with no caveat.
+
+  Nothing records whether a `manual` stamp came from a person or from the form
+  resending a value it had seeded, and the numbers are identical either way —
+  so this reports and lets you choose, exactly like `construction_audit`, never
+  guessing in a backfill. `dry_run` defaults to **true**, releasing keeps the
+  price VALUE and clears only the scope, and `market_priced_only` narrows to
+  hats carrying a listing URL or checked-at timestamp — marketplace provenance
+  under a manual stamp being the bug's signature.
+
+
 ## [2.57.2] — 2026-08-26
 
 A second whole-codebase review, run adversarially. Most of what it found was

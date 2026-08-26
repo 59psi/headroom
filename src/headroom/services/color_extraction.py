@@ -493,6 +493,32 @@ def is_same_color(
         return False
     if chroma_of(target_lab) < CHROMATIC_CHROMA:
         return False  # a muted target claims nothing about a muted swatch
+    # DARKER only. This fallback exists because ΔE is dominated by lightness,
+    # so a DARKENED color lands on a neutral name — the dark teal at L=21 in
+    # the docstring classifies as charcoal. A swatch LIGHTER than the target
+    # is the opposite situation and the reasoning does not carry over, because
+    # **chroma is bounded by lightness**: at L=95 a low chroma is not evidence
+    # of desaturation, it is the most a color can have up there. Comparing it
+    # to a mid-lightness target's chroma is a ratio between two different
+    # ceilings, and it silently passed.
+    #
+    # Measured over the full palette cross-product, this was the entire
+    # remaining leak — 4 cross-family matches, all of them a saturated color
+    # claiming a pale tint: olive→cream (ΔE 40.0), olive→beige (33.3),
+    # tan→cream (23.2), gold→beige (17.9). Searching "olive" returned the
+    # cream hats. Only four palette entries sit inside the chroma window this
+    # fallback opens, and they split exactly on lightness: navy (L=15) and
+    # dark brown (L=21) are what it is for, beige (L=83) and cream (L=95) are
+    # what leaked, with a 61-point gap between.
+    #
+    # No new tuned constant, which matters here: three releases were spent
+    # moving a distance cutoff and the file's own history says that never
+    # worked. This asks a structural question instead. Verified against every
+    # palette color darkened to 55/40/30% lightness: 0 cross-family matches
+    # remain, and all 6 genuine dark-swatch rescues — including the dark teal
+    # this was written for — still pass.
+    if swatch_lab[0] > target_lab[0]:
+        return False
     # The chroma RATIO decides whether this swatch has enough of the target's
     # color to be a muted version of it rather than a neutral near it. It is
     # the same test, and the same constant, that keeps a blue-grey from
