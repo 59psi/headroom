@@ -30,11 +30,30 @@ from headroom.models.user import PasskeyCredential, User
 _CHALLENGE_TTL_S = 300
 _challenges: dict[str, tuple[bytes, int | None, float]] = {}
 
+#: Hard ceiling on live challenges.
+#:
+#: `POST /api/auth/passkeys/login/options` is open by necessity — you cannot
+#: be authenticated before you log in — takes no body, and is not rate
+#: limited, so before this it was an anonymous way to add a dict entry per
+#: request and hold it for five minutes. Measured: 300 requests, 300 live
+#: entries, inside a 1g container that also hosts a 179 MB rembg model.
+#:
+#: Well above any real ceremony load: a login uses one challenge and resolves
+#: it in seconds, so reaching 512 concurrently means something is wrong. When
+#: it fills, the OLDEST are dropped — a flood then evicts its own entries
+#: rather than anyone else's, because a genuine ceremony is seconds old.
+_MAX_CHALLENGES = 512
+
 
 def _store_challenge(challenge: bytes, user_id: int | None) -> str:
     now = time.monotonic()
     for key in [k for k, (_, _, exp) in _challenges.items() if exp < now]:
         _challenges.pop(key, None)
+    # Expiry alone is not a bound: it caps how LONG an entry lives, not how
+    # many arrive inside that window.
+    while len(_challenges) >= _MAX_CHALLENGES:
+        oldest = min(_challenges, key=lambda k: _challenges[k][2])
+        _challenges.pop(oldest, None)
     state_id = secrets.token_urlsafe(16)
     _challenges[state_id] = (challenge, user_id, now + _CHALLENGE_TTL_S)
     return state_id

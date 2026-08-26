@@ -62,17 +62,18 @@ async def create_job(db: AsyncSession, hat_ids: list[int]) -> AnalysisJob:
     return job
 
 
-async def _counts(db: AsyncSession, job_id: int) -> tuple[int, int]:
-    """(finished, failed) for a job, straight from the hats."""
+async def _counts(db: AsyncSession, job_id: int) -> tuple[int, int, int]:
+    """(finished, failed, still_pending) for a job, straight from the hats."""
     row = (
         await db.execute(
             select(
                 func.count(Hat.id).filter(Hat.analysis_status != PENDING),
                 func.count(Hat.id).filter(Hat.analysis_status == "error"),
+                func.count(Hat.id).filter(Hat.analysis_status == PENDING),
             ).where(Hat.analysis_job_id == job_id)
         )
     ).one()
-    return int(row[0] or 0), int(row[1] or 0)
+    return int(row[0] or 0), int(row[1] or 0), int(row[2] or 0)
 
 
 async def progress_for(db: AsyncSession, job: AnalysisJob) -> JobProgress:
@@ -82,8 +83,18 @@ async def progress_for(db: AsyncSession, job: AnalysisJob) -> JobProgress:
     jobs. The cost is that a finished job stays 'running' until someone looks —
     which is fine, because the only thing that reads it is the thing looking.
     """
-    done, failed = await _counts(db, job.id)
-    if job.status == RUNNING and done >= job.total:
+    done, failed, pending = await _counts(db, job.id)
+    # Gated on "nothing is left PENDING", which is what this docstring has
+    # always said, rather than on `done >= job.total`.
+    #
+    # `total` is frozen at creation while the counts are over surviving rows,
+    # so deleting one hat mid-run (the Duplicates page does exactly this) left
+    # `done` one short forever: the job reported itself in flight permanently,
+    # across restarts, and a second `reanalyze-all` re-tagged every hat and
+    # stranded the first one identically. Asking about pending rows cannot
+    # drift from reality, because the rows ARE the progress — which is the
+    # claim in this module's own header.
+    if job.status == RUNNING and pending == 0:
         job.status = DONE
         job.finished_at = datetime.now(timezone.utc)
         await db.commit()

@@ -240,3 +240,52 @@ async def test_change_password_revokes_other_sessions(anon_client, app):
     # A (the changer) survives; B is dead
     assert (await anon_client.get("/api/hats")).status_code == 200
     assert (await other.get("/api/hats")).status_code == 401
+
+
+async def test_a_blocked_login_is_audited_once_per_window_not_once_per_attempt(
+    anon_client, db_session
+):
+    """The 429 branch commits a durable row BEFORE raising.
+
+    So the limiter was not stopping the write — it only changed which row got
+    written. One row per request, from an unauthenticated endpoint, retained
+    90 days: an anonymous client on the LAN could fill the SD card, which is
+    exactly the condition `/health/ready`'s disk floor exists to catch and
+    this app would have been the cause of.
+    """
+    from sqlalchemy import func, select
+
+    from headroom.models.activity_log import ActivityLog
+    from headroom.services import auth_service
+
+    async def blocked_rows() -> int:
+        return (await db_session.execute(
+            select(func.count(ActivityLog.id)).where(
+                ActivityLog.kind == "auth.login_blocked"
+            )
+        )).scalar_one()
+
+    # The limiter is process-global in-memory, so this test must leave it as
+    # it found it — 20 deliberate failures otherwise 429 whatever runs next.
+    auth_service._failures.clear()
+    auth_service._blocked_logged.clear()
+
+    codes = []
+    for _ in range(20):
+        resp = await anon_client.post(
+            "/api/auth/login", json={"username": "testowner", "password": "wrong-one"}
+        )
+        codes.append(resp.status_code)
+
+    assert 429 in codes, "the limiter never engaged, so this proves nothing"
+    blocked_attempts = codes.count(429)
+    rows = await blocked_rows()
+
+    assert rows >= 1, "a block must still be auditable"
+    assert rows < blocked_attempts, (
+        f"{rows} audit rows for {blocked_attempts} blocked attempts — an "
+        "anonymous caller still writes one durable row per request"
+    )
+
+    auth_service._failures.clear()
+    auth_service._blocked_logged.clear()
