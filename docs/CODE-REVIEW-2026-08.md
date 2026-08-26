@@ -112,7 +112,7 @@ Two real defects surfaced while writing them:
 
 1. **No form control was associated with its label** — the `<label>` elements
    carry no `htmlFor` and don't wrap their inputs, so assistive tech announced
-   the filter and hat-form selects as unlabelled. Fixed with `aria-label` on
+   the filter and hat-form selects as unlabeled. Fixed with `aria-label` on
    all eleven controls (six filters, four form selects, the date input).
 2. **A test mock disagreed with the real payload** — `ApiKeyStatus` was mocked
    as `{configured: false}`, but pydantic emits fields with defaults, so the

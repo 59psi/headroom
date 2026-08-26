@@ -42,7 +42,7 @@ still removed, and fallback color swatches still appear.
   there. That makes it the only room you can't delete — hit **Make default**
   on another room first, then the original is deletable like any other.
 - **Cases** hold hats and are type-exclusive (regular hats or beanies,
-  never mixed). A case is **full at 3 hats** (or 8 beanies) — that's what the
+  never mixed). A case is **full at 3 hats** (or 6 beanies) — that's what the
   physical case is built for. A 4th still fits, so Headroom accepts it and
   marks the case **overfull** rather than refusing something that works or
   pretending it's normal. One over is the whole allowance; the 5th is

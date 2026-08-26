@@ -83,14 +83,14 @@ async def test_export_is_a_zip_with_a_browsable_page(client, db_session):
     row = await _row(db_session, hat_id)
     row.brand = "Melin"
     row.model_name = "Coronado"
-    row.owner_notes = "Favourite one."
+    row.owner_notes = "Favorite one."
     await db_session.commit()
 
     zf = await _export(client)
     assert "index.html" in zf.namelist()
     page = zf.read("index.html").decode()
     assert "Melin Coronado" in page
-    assert "Favourite one." in page
+    assert "Favorite one." in page
 
 
 async def test_export_omits_prices_unless_asked(client, db_session):

@@ -105,45 +105,62 @@ async def test_nothing_past_the_limit_reaches_the_destination():
     assert len(dest.getvalue()) <= up._CHUNK
 
 
-# ---- read_capped (lenient, for bulk import) --------------------------- #
+# ---- copy_upload_truncating (lenient, for bulk import) ---------------- #
 
 
-async def test_read_capped_returns_a_short_file_intact():
+async def test_truncating_copy_passes_a_short_file_through_intact():
     payload = b"y" * 2048
+    dest = io.BytesIO()
 
-    assert await up.read_capped(_upload(payload), 8192) == payload
+    written = up.copy_upload_truncating(_upload(payload), dest, 8192)
+
+    assert written == len(payload)
+    assert dest.getvalue() == payload
 
 
-async def test_read_capped_stops_just_past_the_cap():
-    """Lenient by design — the bulk worker records oversize items as skipped
-    rather than failing the whole batch — but it must still stop reading.
+async def test_truncating_copy_stops_just_past_the_cap():
+    """Lenient by design — one oversize photo in a batch is an item to record
+    and move past, not a reason to reject the rest — but it must still stop.
 
-    The contract is "detectable as oversize without becoming resident": the
-    caller checks `len > cap`, so it needs at least cap+1 bytes and nothing
-    like the whole file.
+    The contract is "detectable as oversize without reading the whole thing":
+    the caller checks `written > cap`, so it needs at least cap+1 bytes and
+    nothing like the entire file.
     """
     cap = up._CHUNK
     data = b"z" * (6 * cap)
+    dest = io.BytesIO()
 
-    got = await up.read_capped(_upload(data), cap)
+    written = up.copy_upload_truncating(_upload(data), dest, cap)
 
-    assert len(got) > cap, "caller could not detect this as oversize"
-    assert len(got) < len(data), "the whole oversize file was read into memory"
+    assert written > cap, "caller could not detect this as oversize"
+    assert written < len(data), "the whole oversize file was copied"
 
 
 async def test_the_two_helpers_disagree_on_purpose():
-    """One raises, one returns. That asymmetry is the design, not an accident.
+    """One raises, one truncates. That asymmetry is the design, not an accident.
 
     A single named upload that is too big is a request to REJECT; one item in
     a hundred-file batch is an item to skip. Collapsing them would make bulk
     import fail entirely on one bad photo.
     """
-    dest = io.BytesIO()
-
     with pytest.raises(HTTPException):
-        up.copy_upload_capped(_upload(b"a" * 4096), dest, cap=16)
+        up.copy_upload_capped(_upload(b"a" * 4096), io.BytesIO(), cap=16)
 
-    assert await up.read_capped(_upload(b"a" * 4096), 16)  # no raise
+    # No raise.
+    assert up.copy_upload_truncating(_upload(b"a" * 4096), io.BytesIO(), 16) > 16
+
+
+async def test_the_import_route_uses_the_shared_helper():
+    """It carried a private copy of this loop while the shared one sat unused.
+
+    That is how `utils/upload.py`'s "one definition, used by all" stopped being
+    true without anything failing: both implementations were correct, so only
+    the docstring was wrong.
+    """
+    from headroom.routes import import_jobs
+
+    assert import_jobs.copy_upload_truncating is up.copy_upload_truncating
+    assert not hasattr(import_jobs, "_spool"), "the private copy is back"
 
 
 # ---- the route that uses it ------------------------------------------- #

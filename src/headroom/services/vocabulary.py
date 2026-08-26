@@ -10,7 +10,7 @@ Two layers stop it:
 
 1. **Suggestions.** `GET /api/meta/*` serves the values already in use, so the
    common path is tapping the existing one rather than retyping it.
-2. **Canonicalisation, here.** Suggestions can be typed past, so a value that
+2. **Canonicalization, here.** Suggestions can be typed past, so a value that
    case-insensitively matches something already recorded is stored with the
    EXISTING spelling. That is what makes the guarantee hold rather than merely
    making duplicates less likely.
@@ -56,7 +56,7 @@ def _accent_count(value: str) -> int:
 def _preferred(variants: list[str], known: tuple[str, ...] = ()) -> str:
     """Pick the spelling to keep from a group that folds to the same key.
 
-    One rule, used by both write-time canonicalisation and the one-time merge,
+    One rule, used by both write-time canonicalization and the one-time merge,
     so a value cannot land differently depending on which path reached it.
 
     In order: a curated spelling if one matches; then the most accents, because
@@ -157,7 +157,7 @@ async def merge_case_variants(
 
     Returns the number of rows changed.
 
-    Canonicalisation only applies to writes, so anything already recorded keeps
+    Canonicalization only applies to writes, so anything already recorded keeps
     whatever was typed at the time — this is the one-time repair for values
     that entered before it, or through an import. `_preferred` decides which
     spelling wins, so the merge and the write path cannot disagree.

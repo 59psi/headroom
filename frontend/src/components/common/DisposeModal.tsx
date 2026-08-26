@@ -76,8 +76,9 @@ export function DisposeModal({ hatId, show, onClose }: Props) {
             />
             <label className="form-label">Notes (optional)</label>
             <textarea
+              aria-label="Notes (optional)"
               className="form-control"
-              rows={2}
+              rows={3}
               value={notes}
               onChange={e => setNotes(e.target.value)}
             />

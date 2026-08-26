@@ -27,7 +27,7 @@ def _best_value(h: Hat) -> tuple[float | None, str]:
     """Current-value figure for the report, via the app's one valuation rule.
 
     This used to be a fourth, private ranking: eBay's median first, then
-    `resale_price` labelled "manual", then full retail. Every part of that was
+    `resale_price` labeled "manual", then full retail. Every part of that was
     wrong by the time it was read. Both feeds report ASKING prices, so neither
     was discounted; `resale_price` had long since stopped being manual and was
     a scraped median wearing that label; and falling through to undiscounted

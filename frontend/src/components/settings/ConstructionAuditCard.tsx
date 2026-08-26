@@ -10,7 +10,7 @@ import type { ConstructionClearResult } from '../../types';
  * field was empty, and Claude reads HYDRO vs HYDROLite unreliably — the tells
  * are bonded seams, a gel-welded logo and a sweatband, none of which survive a
  * front-on shot. Nothing recorded which values came from a person, so which
- * ones are wrong is a judgement only the owner can make: this previews, then
+ * ones are wrong is a judgment only the owner can make: this previews, then
  * acts on an explicit confirmation.
  */
 export function ConstructionAuditCard() {

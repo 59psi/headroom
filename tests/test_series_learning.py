@@ -142,7 +142,7 @@ async def test_an_analysis_written_series_snaps_onto_the_owners_spelling(
     assert "skye walker" not in collections
 
 
-async def test_canonicalising_leaves_a_genuinely_new_series_alone(client, db_session):
+async def test_canonicalizing_leaves_a_genuinely_new_series_alone(client, db_session):
     """Convergence must not become capture: an unrelated name stays as typed."""
     await _hat(client, artist_series="Skye Walker")
     second = await _hat(client)
@@ -154,7 +154,7 @@ async def test_canonicalising_leaves_a_genuinely_new_series_alone(client, db_ses
     assert hat.artist_series == "Jeremy Collins"
 
 
-async def test_canonicalising_a_construction_keeps_the_derived_flags_honest(
+async def test_canonicalizing_a_construction_keeps_the_derived_flags_honest(
     client, db_session
 ):
     """`construction` owns `hydro`/`hydrolite`, so it must go through the
@@ -170,7 +170,7 @@ async def test_canonicalising_a_construction_keeps_the_derived_flags_honest(
     assert hat.hydro is False, "HYDRO must not match inside HYDROLite"
 
 
-async def test_canonicalising_is_a_no_op_for_an_unanalyzed_hat(client, db_session):
+async def test_canonicalizing_is_a_no_op_for_an_unanalyzed_hat(client, db_session):
     hat_id = await _hat(client)
     hat = (await db_session.execute(select(Hat).where(Hat.id == hat_id))).scalar_one()
 

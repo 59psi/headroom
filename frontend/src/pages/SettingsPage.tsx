@@ -120,7 +120,7 @@ export function SettingsPage() {
       <div
         role="tabpanel"
         id={`settings-panel-${active.id}`}
-        aria-labelledby={`settings-tab-${active.id}`}
+        aria-labeledby={`settings-tab-${active.id}`}
       >
         {active.cards.map(Card => <Card key={Card.name} />)}
       </div>

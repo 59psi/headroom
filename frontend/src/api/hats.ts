@@ -136,7 +136,7 @@ export function getConstructions() {
  * Collection / collaboration names already in use. No curated list — melin
  * names these for the partner or the drop, so any fixed list is wrong by the
  * next release. Duplicates are prevented by these suggestions PLUS
- * server-side canonicalisation on write, not by a closed vocabulary.
+ * server-side canonicalization on write, not by a closed vocabulary.
  */
 export function getCollections() {
   return apiFetch<string[]>('/api/meta/collections');

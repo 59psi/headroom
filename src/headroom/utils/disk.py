@@ -1,7 +1,8 @@
 """How much room is left on the volume everything shares.
 
 The database and its WAL, every uploaded photo and its four derivatives, and
-seven rolling backup tarballs of all of the above live on one SD card. Until
+`HEADROOM_BACKUP_KEEP` rolling backup tarballs of all of the above (five by
+default) live on one SD card. Until
 this module existed nothing in the app could see that card filling up:
 `/health/ready` proved the uploads directory was writable by writing two
 bytes, and two bytes fit on a volume with 8 KB free — while a 200 MB backup

@@ -137,7 +137,7 @@ async def test_all_day_has_no_asserted_price():
     no melin email states its value, so there is no number to state.
 
     None is a real answer here (the same call made for Thermal and the Mill
-    straw line): it falls through to Claude's estimate, clearly labelled as a
+    straw line): it falls through to Claude's estimate, clearly labeled as a
     guess, rather than inheriting the $79 that Journey and Destination
     establish for beanies there IS evidence for.
     """

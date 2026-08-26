@@ -18,8 +18,20 @@ pytestmark = pytest.mark.anyio
 # ---- Path traversal in SPA fallback (was: app.py:55-61) ---------------- #
 
 
-def _make_app_with_dist(tmp_path: Path):
-    """Build a FastAPI app that serves a tmp directory as the SPA bundle."""
+def _make_app_with_dist(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Build a FastAPI app that serves a tmp directory as the SPA bundle.
+
+    `FRONTEND_DIST` has to stay patched for the lifetime of the REQUESTS, not
+    just while the app is built: `app._safe_spa_path` and the index fallback
+    both read the module global per request.
+
+    This helper used to set it, build the app, and restore it in a `finally`
+    *before returning the client* — so every request the test then made was
+    served from the real `frontend/dist`. The secret file below was unreachable
+    whatever `safe_join` did, and the traversal assertion could not fail. It
+    passed for the same reason an empty test passes. `monkeypatch` undoes the
+    patch at teardown instead, which is after the requests.
+    """
     from fastapi.testclient import TestClient
 
     import headroom.app as app_mod
@@ -33,24 +45,29 @@ def _make_app_with_dist(tmp_path: Path):
     secret = tmp_path / "secret.txt"
     secret.write_text("DO NOT LEAK")
 
-    # Point the app's frontend root at our tmp dist for this test
-    monkey_orig = app_mod.FRONTEND_DIST
-    app_mod.FRONTEND_DIST = dist.resolve()
-    try:
-        app = app_mod.create_app()
-        return TestClient(app), dist, secret
-    finally:
-        app_mod.FRONTEND_DIST = monkey_orig
+    # Point the app's frontend root at our tmp dist for this test.
+    monkeypatch.setattr(app_mod, "FRONTEND_DIST", dist.resolve())
+    return TestClient(app_mod.create_app()), dist, secret
 
 
-async def test_spa_does_not_serve_files_outside_dist(tmp_path):
+async def test_spa_does_not_serve_files_outside_dist(tmp_path, monkeypatch):
     """Path traversal MUST NOT escape the frontend bundle.
 
     Acceptable outcomes for a traversal payload: 404, or fall back to
     index.html (200). Returning the contents of the file outside the dist
     is the bug — anchor of CRITICAL Sentinel S1.
     """
-    client, _dist, secret = _make_app_with_dist(tmp_path)
+    client, _dist, secret = _make_app_with_dist(tmp_path, monkeypatch)
+
+    # Prove the app is actually serving OUR tmp dist before concluding
+    # anything from what it refuses to serve. Without this the test has no way
+    # to distinguish "traversal was blocked" from "the payload was never
+    # anywhere near the secret", which is the state it silently sat in.
+    assert client.get("/assets/ok.js").text == "// ok", (
+        "FRONTEND_DIST is not patched at request time — the traversal "
+        "assertions below would pass without testing anything"
+    )
+
     payloads = [
         "../secret.txt",
         "..%2fsecret.txt",

@@ -24,7 +24,7 @@ Two things this table deliberately does NOT do:
   caps and $139/$179 on Aviators, and the Mill straw line runs $99 to $180 —
   none of those is one number, and none is a number this file should invent.
   Anything absent falls through to Claude's estimate, which is a guess clearly
-  labelled as one.
+  labeled as one.
 * It does not model the premium tier. Some hats are $89 rather than $79 —
   collabs, artist series, particular colorways — and there is no field that
   reliably predicts which. The base is what a plain example costs; a hat that
@@ -110,7 +110,7 @@ def resolve_retail(
        entered is the worst kind of data loss, because it looks like nothing
        happened.
     2. **The table, when it knows.** A looked-up price beats a guess.
-    3. **Claude's estimate**, kept as-is and labelled as a guess.
+    3. **Claude's estimate**, kept as-is and labeled as a guess.
 
     Note that (2) never pulls a KNOWN-higher price down: if the estimate
     exceeds the base — a collab, an artist series, a premium colorway — the

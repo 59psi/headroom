@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
@@ -93,7 +93,10 @@ async def list_scheduled_backups():
         BackupInfo(
             filename=p.name,
             size_bytes=p.stat().st_size,
-            created_at=datetime.fromtimestamp(p.stat().st_mtime),
+            # tz-aware, like `backup_service.newest_backup_at()`, which reads
+            # this same `st_mtime`. A naive value here made the file list and
+            # the health card disagree by the host's UTC offset.
+            created_at=datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc),
         )
         for p in paths
     ]

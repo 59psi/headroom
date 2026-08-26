@@ -35,7 +35,7 @@ vi.mock('../../api/cases', () => ({
       // Real payload shape: the picker renders occupancy from
       // `nominal_capacity`, not `used + free`, so omitting it here would
       // silently render "2" instead of "2/3".
-      overfull: false, nominal_capacity: 3, nominal_regular: 3, nominal_beanie: 8,
+      overfull: false, nominal_capacity: 3, nominal_regular: 3, nominal_beanie: 6,
       created_at: '2026-08-01T00:00:00', updated_at: '2026-08-01T00:00:00',
     },
   ]),

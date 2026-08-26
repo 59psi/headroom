@@ -2,7 +2,7 @@
 
 Deliberately an explicit, previewable action rather than a startup backfill:
 nothing in the database records whether a construction came from a person or
-from a photo, so which ones are wrong is a judgement only the owner can make.
+from a photo, so which ones are wrong is a judgment only the owner can make.
 """
 
 from __future__ import annotations

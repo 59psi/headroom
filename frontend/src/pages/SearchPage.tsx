@@ -6,6 +6,7 @@ import { ColorScopePicker } from '../components/common/ColorScopePicker';
 import { ColorSwatches } from '../components/common/ColorSwatch';
 import { ConditionBadge } from '../components/common/ConditionBadge';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
+import { tileSrc } from '../lib/photo';
 import {
   useHatFilters, HatFilterBar, FilterToggleButton,
   collectGeneralColors, matchesHatFilters,
@@ -108,6 +109,7 @@ export function SearchPage() {
         <div className="input-group">
           <input
             type="search"
+            aria-label="Search hats"
             className="form-control"
             value={query}
             onChange={e => setQuery(e.target.value)}
@@ -237,7 +239,7 @@ export function SearchPage() {
               <Link key={hat.id} to={`/hats/${hat.id}`} className="card mb-2 text-decoration-none">
                 <div className="card-body d-flex gap-3 align-items-center">
                   {hat.photo_path ? (
-                    <img src={`/uploads/${hat.photo_path}`} alt="" className="hr-thumb flex-shrink-0" style={{ width: 72, height: 72 }} />
+                    <img src={tileSrc(hat)} alt="" className="hr-thumb flex-shrink-0" style={{ width: 72, height: 72 }} />
                   ) : (
                     <div className="rounded flex-shrink-0" style={{ width: 72, height: 72, background: 'rgba(0,0,0,0.3)', border: '1px dashed var(--border)' }} />
                   )}

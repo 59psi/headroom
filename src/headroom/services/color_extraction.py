@@ -361,7 +361,7 @@ def is_neutral_mismatch(
 #
 # The groups are the basic color words, not a hue wheel. Deliberately strict:
 # "gold" does not return tans, "blue" does not return teals. Over-matching is
-# the failure being fixed, and a neighbour that is genuinely wanted is one
+# the failure being fixed, and a neighbor that is genuinely wanted is one
 # entry away — whereas a search that returns everything is not fixable by the
 # person using it.
 # A name may belong to more than one word. Charcoal is both a soft black and
@@ -413,7 +413,7 @@ MAX_HUE_DELTA = 25.0
 #: CIELAB's hue angle is famously non-linear through the blue region —
 #: straight lines bend toward purple — so a navy and a purple can land within
 #: a few degrees of each other while looking nothing alike. This is a defect
-#: of the color space, not a judgement call, and it is the same defect that
+#: of the color space, not a judgment call, and it is the same defect that
 #: put palette blue ΔE 16.5 from purple under the old cutoff.
 _INCOMPATIBLE_FAMILIES: frozenset[frozenset[str]] = frozenset({
     frozenset({"blue", "purple"}),

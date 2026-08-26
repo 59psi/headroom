@@ -74,7 +74,7 @@ result, and three independent price signals per hat.
 **🧢 Live with it**
 - **Rooms → Cases → Hats**, or a hat straight in a room with no case —
   Caddies and Aviators don't fit a travel case. Per-case capacity (3 hats, or
-  8 beanies),
+  6 beanies),
   type-exclusive cases, auto-sequenced display IDs.
 - **3D-printable case rack** — a modular, stackable, supports-free rack that
   gives each Melin travel case its own slide-in bay. OpenSCAD source + STLs in
@@ -321,7 +321,10 @@ offers to install it directly. It's also linked from **Settings → This device
 Or copy it off the host manually:
 
 ```bash
-docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt headroom-ca.crt
+# The `caddy` service only exists under the https-lan overlay, so it has to be
+# named here too — without the -f flags this fails with "no such service".
+docker compose -f docker-compose.yml -f docker-compose.https-lan.yml \
+  cp caddy:/data/caddy/pki/authorities/local/root.crt headroom-ca.crt
 ```
 
 > **Install `root.crt`, not `intermediate.crt`.** They sit side by side in

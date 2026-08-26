@@ -21,7 +21,15 @@ function CaseCard({ c }: { c: CaseRead }) {
   // Full and overfull are different states and the grid is where you'd notice
   // either. A bare count can't say which: "4 hats" looks identical whether the
   // case holds four comfortably or has one crammed in.
-  const fillLabel = c.overfull ? 'overfull' : (c.hat_count > 0 && c.free_regular + c.free_beanie === 0 ? 'full' : null);
+  //
+  // Asked of the type the case actually HOLDS. Cases are type-exclusive, so
+  // the unused type's `free_*` sits at its full nominal figure forever —
+  // `free_regular + free_beanie === 0` therefore could never be true for a
+  // case with regular hats in it (a full 3-hat case publishes
+  // `free_regular: 0, free_beanie: 6`), and the badge only ever appeared on
+  // beanie cases.
+  const isFull = c.beanie_count > 0 ? c.free_beanie === 0 : c.free_regular === 0;
+  const fillLabel = c.overfull ? 'overfull' : (c.hat_count > 0 && isFull ? 'full' : null);
 
   return (
     <Link to={`/cases/${c.display_id}`} className="card text-decoration-none h-100">

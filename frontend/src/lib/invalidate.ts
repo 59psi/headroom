@@ -1,7 +1,7 @@
 import type { QueryClient } from '@tanstack/react-query';
 
 /**
- * Invalidate everything a hat change is visible in.
+ * Invalidate everything a placement change is visible in.
  *
  * Adding, deleting, disposing, restoring, re-assigning or wearing a hat all
  * change more than the hat: `['cases']` carries `hat_count` / `beanie_count`,
@@ -10,6 +10,14 @@ import type { QueryClient } from '@tanstack/react-query';
  * just `['hats']` — so a disposed hat kept occupying its slot on the Cases page
  * and inside the case for the 30s `staleTime`, which reads as the app losing
  * track of where things are.
+ *
+ * **Container mutations use this too**, and must: creating or moving a CASE
+ * changes `RoomRead.case_count` and a room's `cases` list, and renaming or
+ * deleting a ROOM changes the `room_name` printed on every hat card and the
+ * room a loose hat is filed under. Those four mutations each picked their own
+ * subset as well — case create/edit invalidated only `['cases']`, room
+ * mutations never touched `['hats']` — which is the identical bug one level
+ * up. One list, or the two drift and only one of them gets fixed.
  *
  * `['case']` is deliberately the bare prefix: TanStack matches query keys by
  * prefix, so it covers every open case detail without the caller having to know

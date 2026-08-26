@@ -6,7 +6,7 @@ freedom is drift: "Neon" today, "NEON" next month, "neon" from the phone, and
 one collection becomes three that never find each other in search.
 
 Autocomplete alone only makes that less likely, because you can type past a
-suggestion. Canonicalisation on write is what makes it not happen.
+suggestion. Canonicalization on write is what makes it not happen.
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ async def test_surrounding_and_doubled_whitespace_is_normalized(client):
 
 
 async def test_a_genuinely_new_collection_is_kept_as_typed(client):
-    """Canonicalising must not mean guessing — an unseen name is the answer."""
+    """Canonicalizing must not mean guessing — an unseen name is the answer."""
     await _add(client, artist_series="Neon")
     fresh = await _add(client, artist_series="Deep Sea")
 
@@ -94,7 +94,7 @@ async def test_the_merge_pulls_unaccented_rows_across(client, db_session):
     assert (await client.get("/api/meta/collections")).json() == ["Piña"]
 
 
-async def test_editing_canonicalises_too(client):
+async def test_editing_canonicalizes_too(client):
     """The Edit form is where a value gets retyped from memory — the most
     likely place for a variant to enter."""
     await _add(client, artist_series="Neon")
@@ -107,7 +107,7 @@ async def test_editing_canonicalises_too(client):
     assert edited["artist_series"] == "Neon"
 
 
-async def test_construction_canonicalises_on_the_same_rule(client):
+async def test_construction_canonicalizes_on_the_same_rule(client):
     """Same treatment — it is the other free-text vocabulary field."""
     await _add(client, construction="Waxed Canvas")
     second = await _add(client, construction="waxed canvas")
@@ -137,7 +137,7 @@ async def test_collections_suggestions_exclude_hats_with_none(client):
 
 
 async def test_existing_variants_are_merged_once(client, db_session):
-    """Canonicalisation only covers writes; this repairs what predates it."""
+    """Canonicalization only covers writes; this repairs what predates it."""
     from sqlalchemy import update as sa_update
 
     from headroom.models.hat import Hat
@@ -176,7 +176,7 @@ async def test_the_merge_keeps_the_most_common_spelling(client, db_session):
     from headroom.models.hat import Hat
     from headroom.services import vocabulary
 
-    # All four first, so write-time canonicalisation leaves them identical —
+    # All four first, so write-time canonicalization leaves them identical —
     # forcing the variant BEFORE the rest would make the later writes snap to
     # it, which is the guard doing its job rather than the case under test.
     hats = [await _add(client, artist_series="Deep Sea") for _ in range(4)]

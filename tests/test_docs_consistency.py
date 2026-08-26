@@ -41,7 +41,7 @@ async def test_docs_advertise_the_real_default_model(doc):
 async def test_settings_ui_marks_the_real_default_model():
     source = _MODEL_CARD.read_text()
     match = _DEFAULT_OPTION.search(source)
-    assert match, "no model option in ClaudeModelCard.tsx is labelled '(default)'"
+    assert match, "no model option in ClaudeModelCard.tsx is labeled '(default)'"
     assert match.group(1) == settings.anthropic_model, (
         f"the Settings picker labels '{match.group(1)}' as the default but the "
         f"code default is '{settings.anthropic_model}'"

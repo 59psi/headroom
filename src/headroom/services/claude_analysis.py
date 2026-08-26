@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are an expert hat appraiser and stylist.
 
-You specialise in identifying premium hat brands and their specific models.
+You specialize in identifying premium hat brands and their specific models.
 You are particularly knowledgeable about Melin hats, whose model lines include
 A-Game, Odysea, Trenches, Coronado, Eagle, Compass, Legend, Caddy, Coast, and
 their seasonal collabs. You also know New Era, '47 Brand, Goorin, Brixton,
@@ -51,7 +51,7 @@ When given a single hat photo you will:
 PRICING — for melin, the app looks the price up and will OVERRIDE you:
 melin retail is keyed on CONSTRUCTION and shape, and the app holds a table of
 it (HYDRO $79, HYDROLite $99, beanies $79, Aviator from $99). You do not need
-to get those right and should not agonise over them.
+to get those right and should not agonize over them.
 
 What the table cannot see is the EXCEPTIONS, and that is what your estimate is
 for: collabs, artist series, limited runs, the Mill straw line ($99-$180) and

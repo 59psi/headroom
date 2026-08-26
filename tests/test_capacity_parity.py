@@ -43,7 +43,7 @@ async def test_the_beanie_default_matches():
 async def test_the_overfill_allowances_match():
     """The squeeze is part of what the placeholder promises, so pin it too.
 
-    A regular case is nominally 3 and takes a 4th; a beanie case is 8 and
+    A regular case is nominally 3 and takes a 4th; a beanie case is 6 and
     takes no more. Getting these wrong would make the form's "(4 at a
     squeeze)" a lie the moment either side moved.
     """

@@ -63,7 +63,7 @@ class BodySizeLimitMiddleware:
         content_type = headers.get("content-type", "")
         if content_type.startswith("multipart/form-data"):
             # Upload routes: capped per-file and per-batch as they stream to
-            # disk. See `utils.uploads` and `routes/import_jobs`.
+            # disk. See `utils.upload` and `routes/import_jobs`.
             return await self.app(scope, receive, send)
 
         limit = max_body_bytes()

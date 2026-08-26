@@ -116,7 +116,7 @@ ENV HEADROOM_REMBG_MODEL=${REMBG_MODEL}
 # changes — a dependency bump, the uv pin, the model arg. On a Pi that meant a
 # 175 MB download over a home connection to reproduce a file that had not
 # changed. `U2NET_HOME` points rembg at a BuildKit cache mount; the copy
-# afterwards materialises the weights INTO the layer, which is required because
+# afterwards materializes the weights INTO the layer, which is required because
 # a cache mount is not part of the image and the runtime stage `COPY --from`s
 # this exact path.
 #

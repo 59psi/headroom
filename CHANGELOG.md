@@ -6,6 +6,132 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.57.0] — 2026-08-26
+
+A whole-codebase two-axis review (`/code-review everything`, 12 agents across
+6 areas), plus two changes asked for directly. The review's headline finding is
+that the **code** is in good shape and the **documentation had drifted** — but
+it also turned up four real bugs, one of which was quietly rewriting prices.
+
+### Changed
+- **A case now holds 6 beanies, not 8.** `MAX_BEANIE` is the owner's number for
+  how many belong in a case, so it gets no overfill allowance — the same rule a
+  per-case `capacity` override has always had: a stated number is exact.
+
+  The figure has now moved twice (3 → 8 → 6), which is why **it is never
+  restated by hand**. `services/capacity.py::MAX_BEANIE` is the value,
+  `frontend/src/lib/capacity.ts` carries only the *default* for the create/edit
+  placeholder, and `tests/test_capacity_parity.py` fails if they drift. Four
+  in-code comments were still claiming 6 while the code said 8, and one of them
+  also promised beanies "one hat of overfill latitude" that
+  `BEANIE_OVERFILL_ALLOWANCE = 0` has never granted.
+
+  **A case already holding 7 or 8 beanies is not broken** — it reports
+  `overfull` and refuses more, exactly as an over-crammed hat case does.
+
+- **The notes box is a designed field instead of a browser default.** There was
+  no `textarea` rule in the stylesheet at all: every multi-line field borrowed
+  `.form-control`, which is built for one line and got four things wrong the
+  moment there were two — `min-height: 44px` (a single touch target), no
+  `line-height` (so prose fell back to the browser's ~1.2, visibly tighter than
+  every paragraph beside it), `resize: both` (draggable sideways out of a card
+  whose `overflow: hidden` then clips it), and `vertical-align: baseline` (a
+  descender gap under the box, so it lined up with nothing).
+
+  Fixed at the mechanism, so Design Notes and the disposal notes get it too.
+  Your notes additionally get room to write in, an explicit *Unsaved changes*
+  state, and ⌘/Ctrl+Enter to save — Enter inserts a newline in a textarea, so
+  the usual submit gesture was unavailable on a field with its own Save button.
+  `<kbd>` is styled rather than left at its own default, for the same reason.
+
+### Fixed
+- **Editing any field silently froze a hat's prices and relabelled them as
+  yours.** `EditHatPage` seeds both price boxes from the loaded hat and sent
+  them on *every* save; `hat_service.update_hat` reads a sent key as "a person
+  typed this number" and stamps the price `manual`. So changing a colorway
+  turned a scraped melinrecap median into *"Price you entered — used as given"*
+  and made it permanent — `resolve_retail` returns it forever, and both
+  `refresh_melin_resale` and `_apply_resale_pointer` bail on it. Same number on
+  screen, different meaning, nothing to see. The keys are now sent only when
+  the value actually changed; clearing one still sends `null`, which is what
+  hands the hat back to the live market feed.
+- **Deleting a case took its hats out of the room with it.** `delete_case`
+  cleared `case_id` but never set `direct_room_id`, so since 2.33 — when a hat
+  could first live in a room without a case — the hats became reachable from
+  nowhere but the Hats list and search. The shelf appeared to empty itself.
+  `room_service.delete_room` has stated the opposite principle for the
+  symmetric operation since that release.
+- **The "full" badge never appeared on a case holding regular hats.** Cases are
+  type-exclusive, so the unused type's `free_*` sits at its full nominal figure
+  forever: a full 3-hat case publishes `free_regular: 0, free_beanie: 6`, and
+  the grid tested `free_regular + free_beanie === 0`. Asked of the type the
+  case actually holds now.
+- **Container mutations left the views they changed stale for 30s.** Creating
+  or moving a case invalidated only `['cases']` — never the room's `case_count`
+  or its contents — and room rename/delete never touched `['hats']`, so hat
+  cards kept printing the old room name. All four now go through
+  `invalidateHatViews`, which is the same bug one level up from the one that
+  function was written for. The room-delete confirmation also names the loose
+  hats that move, not just the cases.
+- **First-run setup hashed argon2 on the event loop.** `create_user` was the
+  one remaining sync `hash_password` call — ~64 MiB and a few hundred
+  milliseconds of fully frozen process on a Pi, health check included.
+- **`GET /api/admin/backups` returned a naive timestamp** while
+  `newest_backup_at()` reads the same `st_mtime` as UTC, so the file list and
+  the health card disagreed by the host's offset.
+- **Search rendered full-resolution cutouts into 72px rows**, ignoring
+  `thumb_path` that `SearchResult` already projects — the one list in the app
+  still doing what `lib/photo.ts` exists to prevent.
+
+### Security
+- **The path-traversal regression test could not fail.** `_make_app_with_dist`
+  restored `FRONTEND_DIST` in a `finally` *before* returning the client, but
+  `app._safe_spa_path` reads that global per request — so every request was
+  served from the real `frontend/dist` and the planted secret was unreachable
+  whatever `safe_join` did. The stated anchor for the critical traversal
+  finding was pinning nothing. It now uses `monkeypatch`, asserts up front that
+  the app is really serving the temp bundle, and **fails when `safe_join`'s
+  containment check is removed** (verified by sabotage).
+
+### Removed
+- **`read_capped` is gone**, replaced by `copy_upload_truncating`. It had *zero*
+  production callers: the import route carried a private `_spool` that streamed
+  to disk instead of buffering in memory — strictly better, so nothing ever
+  failed and only `utils/upload.py`'s "one definition, used by all four" was
+  wrong. Promoted the copy, deleted the original, and a test now pins that the
+  route uses the shared helper.
+- **`uploads/cases` is no longer created on every boot** — a leftover from the
+  removed case-photo feature, written to by nothing since.
+
+### Documentation
+- **CLAUDE.md is the spec here, so its false claims were defects.** Corrected:
+  `['hats','disposed']` is **covered** by `['hats']` (TanStack matches array
+  keys element-wise by prefix — the doc asserted the opposite; the genuine
+  sibling traps are `['room']`/`['rooms']` and `recent-errors`/`-count`);
+  `read_capped` no longer guards bulk import; `ids_for_reanalysis` and
+  `pending_count` live in `hat_service`/`routes/admin/analysis`, not
+  `analysis_job_service`; `routes/admin/` has ten submodules, not seven;
+  `CONDITION_IN_SENTENCE` is module-private, not exported;
+  `frontend/src/lib/capacity.ts` exists and is reconciled by a parity test,
+  which the "ONE rule" entry had denied.
+- **Counts that had already gone stale are no longer quoted** — the Settings
+  card roster ("nineteen") and `.card`-on-an-anchor ("six places"), both of
+  which had drifted within two releases, exactly as the test counts did twice
+  before.
+- **"semgrep-enforced" now says where the rules are.** They are not in this
+  repo — `semgrep-cloud-platform/scan` is a required check supplied by the
+  Semgrep Cloud Platform app, so grepping for a config finds nothing and the
+  enforcement is real anyway.
+- **Two commands that could not work as written**: the CA-export `docker
+  compose cp` in README omitted the overlay that defines the `caddy` service,
+  and OPERATIONS named *Enable rsync service* for Synology where
+  `backup_service` correctly warns it must be **Enable network backup
+  service** — the other checkbox yields `@ERROR: Unknown module`, which reads
+  like a broken NAS.
+- American spelling swept across code, comments, tests, docs and UI (~48 sites
+  in 39 files). `"Heather Grey"` is real melin catalog data and is untouched;
+  `"cancelled"` as a persisted status value is data, not prose, and stays.
+
 ## [2.56.0] — 2026-08-26
 
 Five Dependabot PRs had piled up; three of them could never have gone green.

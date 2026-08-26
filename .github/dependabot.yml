@@ -63,9 +63,10 @@ updates:
   #
   # There is deliberately NO workflow auto-regenerating the file on these
   # branches. Doing so needs `pull_request_target` with a writable token plus a
-  # checkout of the PR branch, which is the pwn-request pattern this repo's own
-  # semgrep scan rejects — and suppressing that to save a command is a bad
-  # trade.
+  # checkout of the PR branch, which is the pwn-request pattern the required
+  # `semgrep-cloud-platform/scan` check rejects (the rules live in the Semgrep
+  # Cloud Platform app, not in this repo) — and suppressing that to save a
+  # command is a bad trade.
   - package-ecosystem: uv
     directory: /
     schedule:

@@ -211,7 +211,7 @@ async def test_a_grey_hat_is_never_a_purple_hat(client, db_session):
     back empty. TEAL is deliberately absent: it is itself only C=27, barely
     over `CHROMATIC_CHROMA`, and a slate at C=9 holds a third of that. A
     blue-grey hat surfacing for teal is a fair answer — teal IS a desaturated
-    blue-green and those are its real neighbours — where a charcoal hat
+    blue-green and those are its real neighbors — where a charcoal hat
     surfacing for purple never was. Claiming otherwise here would be asserting
     a behavior the rule does not have and should not.
     """

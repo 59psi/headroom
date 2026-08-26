@@ -40,7 +40,7 @@ async def create_case(db: AsyncSession, data: CaseCreate) -> Case:
     if room_id is None:
         room_id = await room_service.get_default_room_id(db)
     elif not await room_service.room_exists(db, room_id):
-        # Defence in depth behind the frontend fix. Nothing enforces this at the
+        # Defense in depth behind the frontend fix. Nothing enforces this at the
         # DB level (no `PRAGMA foreign_keys`), so an id for a room that isn't
         # there used to be written straight through — and the symptoms never
         # named the cause: the case reported its room as "Unknown", and the room
@@ -108,11 +108,18 @@ async def update_case(
 
 async def delete_case(db: AsyncSession, display_id: str) -> None:
     case = await get_case_by_display_id(db, display_id)
-    # Unassign all hats before deleting
+    # Unassign all hats before deleting, but keep them IN THE ROOM the case was
+    # in. Since 2.33 a hat can live in a room with no case, so "unassigned" and
+    # "not in any room" stopped being the same state — and clearing `case_id`
+    # alone left these hats reachable from nowhere but the Hats list and
+    # search, which reads as the shelf emptying itself when a case is deleted.
+    # `room_service.delete_room` states the same principle for the symmetric
+    # operation. The hats did not physically move; only their container went.
     freed = len(case.hats)
     for hat in list(case.hats):
         hat.case_id = None
         hat.position_in_case = None
+        hat.direct_room_id = case.room_id
     case_id = case.id
     await db.delete(case)
     await db.commit()

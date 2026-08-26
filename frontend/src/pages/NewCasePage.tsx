@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router';
 import { createCase } from '../api/cases';
 import { listRooms } from '../api/rooms';
 import { CAPACITY_PLACEHOLDER } from '../lib/capacity';
+import { invalidateHatViews } from '../lib/invalidate';
 
 export function NewCasePage() {
   const [caseType, setCaseType] = useState('archive');
@@ -23,7 +24,9 @@ export function NewCasePage() {
   const mutation = useMutation({
     mutationFn: () => createCase(caseType, selectedRoom === '' ? null : selectedRoom, capacity ? Number(capacity) : undefined),
     onSuccess: (data) => {
-      qc.invalidateQueries({ queryKey: ['cases'] });
+      // A new case changes its room's `case_count` and the room detail page's
+      // list, not just `['cases']`.
+      invalidateHatViews(qc);
       navigate(`/cases/${data.display_id}`);
     },
   });

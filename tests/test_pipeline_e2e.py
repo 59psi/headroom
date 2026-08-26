@@ -188,7 +188,7 @@ async def test_analysis_never_writes_a_construction_at_all(client):
 
     Two things made that expensive rather than cosmetic: `retail_pricing`
     prices HYDRO at $79 and HYDROLite at $99, so a guess skewing HYDROLite
-    over-prices the hat; and construction became a filter, so a mislabelled hat
+    over-prices the hat; and construction became a filter, so a mislabeled hat
     is absent from a filtered view rather than merely wrong in a detail pane.
 
     A blank construction is an honest "nobody has looked yet". A guessed one is

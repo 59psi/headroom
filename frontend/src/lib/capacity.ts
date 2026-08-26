@@ -21,15 +21,15 @@
 export const DEFAULT_REGULAR_CAPACITY = 3;
 
 /** Beanies in a default case — they pack far smaller. */
-export const DEFAULT_BEANIE_CAPACITY = 8;
+export const DEFAULT_BEANIE_CAPACITY = 6;
 
 /**
  * How far past nominal a default case may be crammed.
  *
  * A fourth hat does go in; it just isn't how the case is meant to be loaded,
  * so it is accepted on write and reported as *overfull*. Beanies get none —
- * 8 is a measured maximum rather than a name on a box, and adding slack to a
- * measurement asserts a ninth fits, which nobody has claimed.
+ * 6 is the owner stating how many belong in a case rather than a name on a
+ * box, and a stated number is exact.
  */
 export const REGULAR_OVERFILL_ALLOWANCE = 1;
 export const BEANIE_OVERFILL_ALLOWANCE = 0;

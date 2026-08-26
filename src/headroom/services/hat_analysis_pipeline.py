@@ -460,7 +460,7 @@ def _apply_construction(hat: Hat, construction: str | None) -> None:
     * **It moves money.** `retail_pricing` prices HYDRO at $79 and HYDROLite at
       $99, so a guess that skews HYDROLite over-prices the hat by $20 and the
       collection by that times however many.
-    * **It hides hats.** Construction became a filter, so a mislabelled hat is
+    * **It hides hats.** Construction became a filter, so a mislabeled hat is
       absent from the filtered view rather than merely wrong in a detail pane.
 
     An empty construction is an honest "nobody has looked yet". A guessed one
@@ -572,7 +572,7 @@ async def _known_series(db) -> list[str]:
 async def _canonicalize_analysis_text(db, hat: Hat) -> None:
     """Snap analysis-written free text to the spelling already on record.
 
-    `hat_service` canonicalises on the client write path, but the ANALYSIS path
+    `hat_service` canonicalizes on the client write path, but the ANALYSIS path
     wrote straight through — so Claude returning "skye walker" created a second
     entry beside the owner's "Skye Walker". Nothing looks wrong afterwards:
     both hats have *a* series, and the split only shows up as two near-identical
