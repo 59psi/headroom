@@ -8,7 +8,7 @@ valuation rule is rendered server-side rather than in TypeScript.
 `tests/test_valuation_parity.py` already pins the two implementations to the
 same constants. What it cannot see is whether the report actually CALLS them,
 which is exactly the drift that happened once before — the report carried a
-fourth private ranking that labelled a scraped median "manual" and fell
+fourth private ranking that labeled a scraped median "manual" and fell
 through to undiscounted retail.
 """
 
@@ -70,7 +70,7 @@ async def test_disposed_hats_are_excluded_by_default(client):
 async def test_the_report_values_hats_through_the_shared_rule(client, db_session):
     """Not a fourth private ranking.
 
-    The report once had its own, and it labelled a scraped median as "manual"
+    The report once had its own, and it labeled a scraped median as "manual"
     and fell through to undiscounted retail — valuing a worn hat at the price
     of a new one, in the document that goes to an insurer.
     """

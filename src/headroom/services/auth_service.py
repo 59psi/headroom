@@ -111,9 +111,14 @@ async def user_count(db: AsyncSession) -> int:
 
 
 async def create_user(db: AsyncSession, username: str, password: str) -> User:
+    # Hashed OFF the event loop, like every other argon2 call here. This was
+    # the one site still using the sync form: argon2id at these parameters is
+    # ~64 MiB and a few hundred milliseconds on a Pi, and on the event loop
+    # that is the whole process frozen — including the health check. Only
+    # first-run setup reaches it, which is exactly why it went unnoticed.
     user = User(
         username=username.strip().lower(),
-        password_hash=hash_password(password),
+        password_hash=await hash_password_async(password),
         api_token=new_api_token(),
     )
     db.add(user)

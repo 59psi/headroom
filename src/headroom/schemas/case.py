@@ -15,8 +15,10 @@ class CaseCreate(BaseModel):
     # case_service.create_case. Was a hardcoded 1, which pinned new cases to a
     # room that can now be deleted.
     room_id: int | None = None
-    # Per-case hat capacity; None → type default (3 regular / 6 beanie,
-    # each with one hat of overfill latitude). A stated number is exact.
+    # Per-case hat capacity; None → type default (3 regular / 6 beanie). The
+    # regular default carries one hat of overfill latitude; the beanie default
+    # carries none, and neither does a number stated here — a stated capacity
+    # is exact.
     capacity: int | None = Field(None, ge=1, le=50)
 
 
@@ -78,8 +80,9 @@ class CaseRead(BaseModel):
     nominal_capacity: int
     #: Both type defaults, so no client has to restate them. The detail page
     #: hardcoded `capacity ?? 4` / `?? 6` — 4 being the OVERFILL limit rather
-    #: than nominal, so a full three-hat case displayed "3/4", and 6 silently
-    #: became wrong the day beanie capacity moved to 8.
+    #: than nominal, so a full three-hat case displayed "3/4". Served rather
+    #: than restated because the beanie figure has now moved twice (3 → 8 → 6),
+    #: and every hand-written copy was wrong for a while after each move.
     nominal_regular: int
     nominal_beanie: int
     created_at: datetime

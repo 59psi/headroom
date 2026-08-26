@@ -200,7 +200,7 @@ def _listing_facts(li: dict) -> tuple[str, float, str | None, str | None] | None
         amount / 100,
         # A condition that is STATED but unrecognized falls to "worn": the
         # marketplace's two "new" grades are the ones enumerated above, so a
-        # value outside that set is some flavour of used. Defaulting the other
+        # value outside that set is some flavor of used. Defaulting the other
         # way would let a vocabulary addition quietly inflate valuations.
         # A condition that is ABSENT stays None — unknown, not worn.
         _CONDITION_MAP.get(raw_condition, "worn" if raw_condition else None),

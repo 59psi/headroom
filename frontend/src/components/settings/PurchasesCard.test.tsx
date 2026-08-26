@@ -33,7 +33,7 @@ function jsonFile(body: unknown, name = 'melin-purchases.json') {
 async function pick(file: File) {
   // By label, not by querySelector — the control carries an aria-label because
   // the visible labels in this app have no htmlFor, and a test reaching past
-  // that is how a control ships unlabelled.
+  // that is how a control ships unlabeled.
   await userEvent.upload(screen.getByLabelText('Purchase history JSON file'), file);
 }
 

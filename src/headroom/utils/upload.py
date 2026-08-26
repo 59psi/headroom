@@ -24,25 +24,31 @@ MAX_PHOTO_BYTES = 20 * 1024 * 1024
 _CHUNK = 1024 * 1024
 
 
-async def read_capped(upload: UploadFile, cap: int) -> bytes:
-    """Read an upload in chunks, stopping just past `cap` bytes.
+def copy_upload_truncating(upload: UploadFile, dest: BinaryIO, cap: int) -> int:
+    """Stream an upload to `dest`, stopping just past `cap`. Returns bytes written.
 
-    A file larger than the limit comes back at ~cap+1 rather than fully
-    resident, so a caller can still detect it as oversize (`len > cap`) without
-    a single huge file ballooning memory. Lenient by design: the bulk-import
-    worker records oversize items as skipped rather than failing the batch.
+    The LENIENT half of this module, for bulk import: one oversize photo in a
+    batch of sixty is an item to record and move past, not a reason to reject
+    the other fifty-nine. Its caller detects the truncation as `written > cap`.
+
+    Streams to `dest` rather than returning bytes. There used to be a
+    `read_capped` here that accumulated chunks into memory and returned them,
+    and it was the version this module's docstring described — but the import
+    route never called it: it carried a private copy that spooled to disk
+    instead, which is strictly better (a batch upload never holds a photo in
+    RAM) and left `read_capped` reachable only from its own tests. Promoted the
+    copy, deleted the original; "one definition, used by all" is true again.
     """
-    chunks: list[bytes] = []
-    size = 0
+    written = 0
     while True:
-        chunk = await upload.read(_CHUNK)
+        chunk = upload.file.read(_CHUNK)
         if not chunk:
             break
-        chunks.append(chunk)
-        size += len(chunk)
-        if size > cap:
+        dest.write(chunk)
+        written += len(chunk)
+        if written > cap:
             break
-    return b"".join(chunks)
+    return written
 
 
 def copy_upload_capped(

@@ -26,7 +26,7 @@ describe('matchedRankLabel', () => {
     expect(matchedRankLabel(9)).toBe('accent');
   });
 
-  it('treats a rank below 1 as the main color rather than labelling it', () => {
+  it('treats a rank below 1 as the main color rather than labeling it', () => {
     // Not reachable through the API — every writer assigns ranks with
     // enumerate(..., start=1) — but a 0 here should degrade to the quiet
     // case, not print "accent" on a hat's primary color.

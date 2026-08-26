@@ -98,7 +98,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     _configure_logging()
     _warn_if_multiprocess()
     settings.upload_dir.mkdir(parents=True, exist_ok=True)
-    (settings.upload_dir / "cases").mkdir(exist_ok=True)
+    # No `cases` directory: there is deliberately no case-photo feature (see
+    # `tests/test_photos.py::test_there_is_no_case_photo_route`). It was still
+    # being created on every boot long after the last reader was removed.
     (settings.upload_dir / "hats").mkdir(exist_ok=True)
     branding_dir = settings.upload_dir / "branding"
     branding_dir.mkdir(exist_ok=True)
@@ -112,7 +114,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     async with async_session() as db:
         # One-time: collapse case/whitespace variants of the free-text
         # vocabulary fields ("Neon"/"NEON"/"neon" -> one collection).
-        # Canonicalisation only covers writes, so values that predate it, or
+        # Canonicalization only covers writes, so values that predate it, or
         # arrived by import, need this once.
         if await settings_service.get_setting(db, "vocabulary_merged_v1") is None:
             from headroom.models.hat import Hat

@@ -343,8 +343,12 @@ silently switched transport would fail with credentials nobody configured and
 look like a broken NAS.
 
 **Synology, without enabling SSH:** Control Panel → File Services → rsync →
-*Enable rsync service* (DSM creates the `NetBackup` shared folder), then add an
-rsync account under the same page — it is separate from your DSM login. Allow
+**Enable network backup service** — that is the checkbox that creates the
+`NetBackup` shared folder, and it is *not* the neighboring *Enable rsync
+service*. Ticking only the latter leaves no module to connect to and rsync
+answers `@ERROR: Unknown module`, which reads like a broken NAS rather than a
+missing checkbox. Then add an rsync account under the same page — it is
+separate from your DSM login. Allow
 port 873 if the NAS firewall is on. Put that account's password in `.env` as
 `HEADROOM_BACKUP_RSYNC_PASSWORD`; it is read from the host at upload time,
 mapped to rsync's own `RSYNC_PASSWORD`, and never stored by Headroom or

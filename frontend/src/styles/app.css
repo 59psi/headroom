@@ -116,8 +116,10 @@ h5, h6 { font-size: 0.95rem; text-transform: uppercase; }
 /* ===== Cards ===================================================== */
 .card {
   /* An anchor is `display: inline` by default, and `.card` is applied to one
-     in six places (the Cases grid, the Hats list, Duplicates, the case detail
-     list, and both outside-viewer grids). An inline box ignores `h-100`
+     in a dozen-odd places (the Cases grid, the Hats list, Search, Duplicates,
+     the case and room detail lists, and both outside-viewer grids — the count
+     is deliberately vague because the last exact one went stale within two
+     releases). An inline box ignores `h-100`
      entirely and breaks its border across line boxes, which is what the guest
      grid's ragged, half-drawn tiles were. Divs are already block, so this
      changes nothing for them; `.d-flex` is `!important` and still wins where
@@ -405,7 +407,7 @@ button.card:hover::before,
    `.btn` and the full-size controls already clear it; the `-sm` variants were
    36px, which is fine under a mouse and under a fingertip is not — and on a
    phone the `-sm` buttons are the destructive ones ("Unlink all", "Delete"),
-   sitting in a row beside their neighbours.
+   sitting in a row beside their neighbors.
 
    Keyed on `pointer: coarse` rather than a width breakpoint because the
    question is what is doing the pointing, not how wide the screen is: an iPad
@@ -417,6 +419,69 @@ button.card:hover::before,
   .form-control-sm {
     min-height: 44px;
   }
+}
+
+/* ===== Textareas ================================================= */
+/* Until now there was no `textarea` rule at all — every multi-line field in
+   the app borrowed `.form-control`, which is built for a single line and gets
+   four things wrong the moment there are two:
+
+   - `min-height: 44px` is one touch target. Correct for an <input>; for prose
+     it is the height of a field that looks like it wants one word.
+   - `.form-control` sets no `line-height`, which an <input> does not need
+     (there is nothing to lead). A <textarea> falls back to the browser's
+     `normal`, roughly 1.2 — visibly tighter than every paragraph beside it.
+   - The browser default is `resize: both`, so the box can be dragged SIDEWAYS
+     out of its card. `.card` declares `overflow: hidden`, so the overflow is
+     clipped rather than scrolled: the field is simply cut off.
+   - A textarea is inline-block on the baseline by default, leaving a few
+     pixels of descender space underneath, so it fails to line up with
+     anything next to it. This is the "default alignment" that made these look
+     dropped-in rather than designed. */
+textarea.form-control {
+  display: block;
+  width: 100%;
+  /* Kills the baseline descender gap. */
+  vertical-align: top;
+  line-height: 1.55;
+  padding: 0.7rem 0.9rem;
+  /* Three lines of real text plus the padding, rather than one touch target.
+     Expressed in terms of the line-height above so the two cannot drift. */
+  min-height: calc(1.55em * 3 + 1.4rem);
+  /* Vertical only. Horizontal resizing has nowhere to go inside a card. */
+  resize: vertical;
+  /* Grow with the content where supported, so a long note is not read through
+     a three-line slot. Bounded, or a long note pushes the save button off a
+     phone screen. Browsers that don't know `field-sizing` ignore it and get
+     the min-height plus the drag handle, which is the old behavior improved
+     rather than broken. */
+  field-sizing: content;
+  max-height: 40vh;
+}
+
+/* The notes field is the one piece of writing in this app that is entirely
+   yours — no analysis or refresh ever rewrites it — so it gets room to write
+   in rather than the default three lines. */
+.hr-notes-input.form-control {
+  min-height: calc(1.55em * 5 + 1.4rem);
+}
+
+/* A browser's default <kbd> is the page's monospace font at whatever size it
+   inherits, with no box — indistinguishable from inline code. Styled here so
+   a key looks like a key. */
+kbd {
+  display: inline-block;
+  padding: 0.1em 0.4em;
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  line-height: 1.4;
+  color: var(--text);
+  background: var(--bg-input);
+  border: 1px solid var(--border-bright);
+  border-radius: 4px;
+  /* The lip that reads as a physical key. */
+  box-shadow: 0 1px 0 var(--border-bright);
+  white-space: nowrap;
 }
 
 .form-control-color {
@@ -1820,7 +1885,7 @@ body.hr-keyboard-open .bottom-nav {
  * Tag landing (/t/h/:id) — where a hat's QR sticker or NFC tag lands.
  *
  * Sized for one-handed use at the moment you're putting the hat on: the
- * action is a thumb-height target, centred, with nothing above it that
+ * action is a thumb-height target, centered, with nothing above it that
  * needs reading first. Everything else on the page is confirmation that
  * you scanned the right hat.
  * ------------------------------------------------------------------ */

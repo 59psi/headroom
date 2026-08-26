@@ -399,7 +399,7 @@ export function HatDetailPage() {
                 />
               </div>
               <div className="col-6">
-                {/* Was labelled "Resale (manual)" while holding a scraped
+                {/* Was labeled "Resale (manual)" while holding a scraped
                     median for all but the rare hand-entered price — the label
                     named the exception. */}
                 <PriceTile

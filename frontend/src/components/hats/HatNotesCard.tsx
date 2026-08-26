@@ -45,11 +45,22 @@ export function HatNotesCard({ hat }: { hat: HatRead }) {
         <textarea
           id={`notes-${hat.id}`}
           aria-label="Your notes"
-          className="form-control"
-          rows={3}
+          className="form-control hr-notes-input"
+          // `rows` is the floor for browsers without `field-sizing`, and it
+          // matches the CSS min-height so the box is the same size either way.
+          rows={5}
           value={notes}
           placeholder="Where you got it, who you wore it with, why you kept it…"
           onChange={e => setNotes(e.target.value)}
+          // Enter inserts a newline in a textarea, so the usual submit gesture
+          // is unavailable — which on a field with a separate Save button
+          // means typing a note and navigating away silently loses it.
+          onKeyDown={e => {
+            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && dirty && !save.isPending) {
+              e.preventDefault();
+              save.mutate();
+            }
+          }}
         />
         <div className="d-flex align-items-center gap-2" style={{ marginTop: 8 }}>
           <button
@@ -60,11 +71,16 @@ export function HatNotesCard({ hat }: { hat: HatRead }) {
           >
             {save.isPending ? 'Saving…' : 'Save notes'}
           </button>
+          {/* Unsaved beats Saved: this field has its own button rather than
+              saving with the rest of the form, so "you have typed something
+              that is not stored yet" is the state worth showing. */}
+          {dirty && !save.isPending && <span className="text-muted small">Unsaved changes</span>}
           {saved && !dirty && <span className="text-muted small">Saved</span>}
           {save.isError && <span className="text-danger small">Couldn’t save — try again</span>}
         </div>
         <p className="text-muted mb-0" style={{ fontSize: '0.72rem', marginTop: 6 }}>
-          Never overwritten by an analysis or a refresh.
+          Never overwritten by an analysis or a refresh. Press{' '}
+          <kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>Enter</kbd> to save.
         </p>
       </div>
     </div>

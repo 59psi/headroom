@@ -5,6 +5,7 @@ import { getCase, updateCase } from '../api/cases';
 import { listRooms } from '../api/rooms';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { CAPACITY_PLACEHOLDER } from '../lib/capacity';
+import { invalidateHatViews } from '../lib/invalidate';
 
 export function EditCasePage() {
   const { displayId } = useParams<{ displayId: string }>();
@@ -40,8 +41,10 @@ export function EditCasePage() {
       });
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['case', displayId] });
-      qc.invalidateQueries({ queryKey: ['cases'] });
+      // This form edits `room_id`, so it MOVES a case between rooms — both
+      // rooms' counts and contents change, and every hat in the case reports
+      // a new `room_name`. `['case']`+`['cases']` covered none of that.
+      invalidateHatViews(qc);
       navigate(`/cases/${displayId}`);
     },
   });

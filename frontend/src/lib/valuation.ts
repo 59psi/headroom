@@ -282,8 +282,8 @@ export interface CaseValuation {
  * Kept SEPARATE from the hat figures rather than folded in, for two reasons:
  *
  * * A case is not a hat. Quietly adding a couple of thousand to a number
- *   labelled "market value" would make every comparison on the page — retail
- *   retention, unrealised gain, cost per hat — wrong in a way nobody could see.
+ *   labeled "market value" would make every comparison on the page — retail
+ *   retention, unrealized gain, cost per hat — wrong in a way nobody could see.
  * * The two numbers are different KINDS. Hats are valued from live comparable
  *   listings; cases have no resale market at all (melinrecap sells hats), so
  *   $49 is replacement cost, not what one would fetch.

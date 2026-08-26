@@ -74,7 +74,7 @@ async def test_case_label_shows_nominal_capacity_not_the_overfill_limit(client):
     above — not the number at which a case is full, so a case with no room left
     printed as having one slot spare. `capacity.evaluate` owns that distinction
     (`max_regular` vs `limit_regular`) and the sheet now asks it, rather than
-    keeping a third copy of a rule the module exists to centralise.
+    keeping a third copy of a rule the module exists to centralize.
     """
     case = (await client.post("/api/cases", json={"case_type": "archive"})).json()
     for _ in range(3):

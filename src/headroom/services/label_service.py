@@ -94,7 +94,7 @@ async def render_case_labels(db: AsyncSession, base_url: str) -> str:
         url = tag_service.tag_url(base_url, tag_service.CASE, c.display_id)
         # Occupancy comes from the one rule that owns it. This used to be
         # computed inline as `c.capacity or (6 if any beanie else 4)` — a third
-        # copy of the rule `capacity.py` exists to centralise, and wrong two
+        # copy of the rule `capacity.py` exists to centralize, and wrong two
         # ways, printed onto adhesive: 4 is the OVERFILL limit rather than
         # nominal capacity (so a full 3-hat case read "3/4", i.e. room for one
         # more), and `len(hats)` counted disposed hats that had already freed

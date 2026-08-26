@@ -86,7 +86,7 @@ describe('construction filter', () => {
     ).toBe(false);
   });
 
-  it('ignores casing, for rows written before values were canonicalised', () => {
+  it('ignores casing, for rows written before values were canonicalized', () => {
     expect(
       matchesHatFilters(hat({ construction: 'hydro' }), filters({ construction: 'HYDRO' })),
     ).toBe(true);

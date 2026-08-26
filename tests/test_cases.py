@@ -142,7 +142,7 @@ async def test_case_read_reports_what_it_can_accept(client):
     assert case["accepts_regular"] is True
     assert case["accepts_beanie"] is True
     assert case["free_regular"] == 3, "a three-hat case; melin's own order lines call it that"
-    assert case["free_beanie"] == 8, "beanies squash flat — eight to a case"
+    assert case["free_beanie"] == 6, "beanies squash flat — six to a case"
 
     # One regular hat in: still takes regular hats, no longer takes beanies.
     await client.post("/api/hats", json={
@@ -216,3 +216,35 @@ async def test_a_disposed_hat_frees_its_slot_in_the_read_model(client):
     after = (await client.get(f"/api/cases/{case['display_id']}")).json()
     assert after["free_regular"] == 3, "a disposed hat is still occupying a slot"
     assert after["hat_count"] == 0
+
+
+@pytest.mark.anyio
+async def test_deleting_a_case_leaves_its_hats_in_the_room(client):
+    """A deleted case must not take its hats out of the room with it.
+
+    Before 2.33 a hat with no case had no room either, so clearing `case_id`
+    was the whole job. Now a hat can live in a room directly, and clearing
+    only `case_id` left these hats reachable from nowhere but the Hats list
+    and search — the shelf appeared to empty itself. The hats did not move;
+    only their container went. `room_service.delete_room` has said the same
+    thing about the symmetric operation since 2.33.
+    """
+    room = (await client.post("/api/rooms", json={"name": "Closet"})).json()
+    case = (await client.post(
+        "/api/cases", json={"case_type": "daily_wear", "room_id": room["id"]}
+    )).json()
+    hat = (await client.post("/api/hats", json={
+        "condition": "new", "size": "classic", "style": "a_game", "case_id": case["id"],
+    })).json()
+
+    assert (await client.delete(f"/api/cases/{case['display_id']}")).status_code in (200, 204)
+
+    after = (await client.get(f"/api/hats/{hat['id']}")).json()
+    assert after["case_id"] is None, "the case is gone, so the hat cannot still be in it"
+    assert after["direct_room_id"] == room["id"], "the hat is still physically in that room"
+    assert after["room_id"] == room["id"], "and must resolve a room for every room view"
+
+    detail = (await client.get(f"/api/rooms/{room['id']}")).json()
+    assert any(h["id"] == hat["id"] for h in detail["loose_hats"]), (
+        "the room detail page is the only place a loose hat is browsable"
+    )

@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import { listRooms, createRoom, updateRoom, deleteRoom, setDefaultRoom } from '../api/rooms';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
+import { invalidateHatViews } from '../lib/invalidate';
 import type { RoomRead } from '../types';
 
 function RoomCard({ room, onEdit, onDelete, onMakeDefault }: {
@@ -81,12 +82,16 @@ export function RoomsPage() {
     },
   });
 
+  // Renaming a room changes the `room_name` printed on every hat card and
+  // every case row; deleting one MOVES its cases and its loose hats to the
+  // default room. Both were invalidating `['rooms']`/`['cases']` only, so the
+  // hat lists kept showing the old name — or the deleted room — for the whole
+  // 30s staleTime.
   const updateMut = useMutation({
     mutationFn: (vars: { id: number; name: string }) => updateRoom(vars.id, vars.name),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['rooms'] });
+      invalidateHatViews(qc);
       qc.invalidateQueries({ queryKey: ['meta', 'rooms'] });
-      qc.invalidateQueries({ queryKey: ['cases'] });
       setEditingId(null);
     },
   });
@@ -94,9 +99,8 @@ export function RoomsPage() {
   const deleteMut = useMutation({
     mutationFn: (id: number) => deleteRoom(id),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['rooms'] });
+      invalidateHatViews(qc);
       qc.invalidateQueries({ queryKey: ['meta', 'rooms'] });
-      qc.invalidateQueries({ queryKey: ['cases'] });
     },
   });
 
@@ -119,8 +123,15 @@ export function RoomsPage() {
     // Name the actual destination — it's whichever room holds the flag, which
     // is no longer necessarily one called "Default Room".
     const defaultRoomName = roomsQ.data?.find(r => r.is_default)?.name ?? 'the default room';
-    const msg = room.case_count > 0
-      ? `Delete "${room.name}"? Its ${room.case_count} case(s) will move to ${defaultRoomName}.`
+    // Loose hats move too — `delete_room` sweeps `direct_room_id` as well as
+    // the cases — and they are the contents you can ONLY see from this room,
+    // so leaving them out of the warning understated what the button does.
+    const moving = [
+      room.case_count > 0 && `${room.case_count} case${room.case_count !== 1 ? 's' : ''}`,
+      room.loose_hat_count > 0 && `${room.loose_hat_count} loose hat${room.loose_hat_count !== 1 ? 's' : ''}`,
+    ].filter(Boolean).join(' and ');
+    const msg = moving
+      ? `Delete "${room.name}"? Its ${moving} will move to ${defaultRoomName}.`
       : `Delete "${room.name}"?`;
     if (confirm(msg)) deleteMut.mutate(id);
   }

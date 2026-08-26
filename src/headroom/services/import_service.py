@@ -348,7 +348,7 @@ async def _worker_loop() -> None:
                 await _process_item(item_id)
             except Exception as exc:  # noqa: BLE001 — one bad item must NOT
                 # kill the worker; _process_item handles its own bookkeeping,
-                # this is the last line of defence against an unforeseen escape.
+                # this is the last line of defense against an unforeseen escape.
                 logger.exception("Import worker: unhandled error on item %s: %s", item_id, exc)
             finally:
                 _queue.task_done()

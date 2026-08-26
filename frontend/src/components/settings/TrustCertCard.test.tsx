@@ -128,7 +128,7 @@ describe('TrustCertCard', () => {
   });
 
   it('says why an intermediate did nothing', async () => {
-    // The reported symptom: installing the neighbouring intermediate.crt
+    // The reported symptom: installing the neighboring intermediate.crt
     // appears to succeed and changes nothing.
     mocked.apiFetch.mockResolvedValue('cert');
 

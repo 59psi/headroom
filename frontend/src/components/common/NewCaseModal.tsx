@@ -3,6 +3,7 @@ import { portalToBody } from './ModalPortal';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { createCase } from '../../api/cases';
 import { listRooms } from '../../api/rooms';
+import { invalidateHatViews } from '../../lib/invalidate';
 
 interface Props {
   show: boolean;
@@ -26,7 +27,9 @@ export function NewCaseModal({ show, onClose, onCreated }: Props) {
   const mutation = useMutation({
     mutationFn: async () => {
       const data = await createCase(caseType, selectedRoom === '' ? null : selectedRoom);
-      await qc.invalidateQueries({ queryKey: ['cases'] });
+      // Same reach as the full page: a new case changes its room's counts and
+      // contents too.
+      await invalidateHatViews(qc);
       return data;
     },
     onSuccess: (data) => {

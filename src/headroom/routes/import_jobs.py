@@ -16,6 +16,7 @@ from headroom.schemas.hat import HAT_DEFAULTS
 from headroom.schemas.import_job import ImportJobCreated, ImportJobRead
 from headroom.services import import_service
 from headroom.utils.photo import validate_image_content_type
+from headroom.utils.upload import copy_upload_truncating
 
 router = APIRouter(prefix="/api/hats/import", tags=["bulk-import"])
 
@@ -66,7 +67,7 @@ async def create_import_job(
             dest = staging / f"{index:04d}"
             with dest.open("wb") as fh:
                 written = await asyncio.to_thread(
-                    _spool, p, fh, import_service.MAX_BYTES_PER_FILE
+                    copy_upload_truncating, p, fh, import_service.MAX_BYTES_PER_FILE
                 )
             total += written
             if total > _MAX_TOTAL_UPLOAD_BYTES:
@@ -92,25 +93,6 @@ async def create_import_job(
         # this temp copy is always disposable — including on the 413/400 paths,
         # where leaving it would strand a batch of photos until reboot.
         shutil.rmtree(staging, ignore_errors=True)
-
-
-def _spool(upload, dest, cap: int) -> int:
-    """Copy an upload to `dest`, stopping just past `cap`. Returns bytes written.
-
-    Lenient like `read_capped`: an oversize file is truncated rather than
-    rejected, so `create_job` still records it as a skipped item and the rest of
-    the batch proceeds.
-    """
-    written = 0
-    while True:
-        chunk = upload.file.read(1024 * 1024)
-        if not chunk:
-            break
-        dest.write(chunk)
-        written += len(chunk)
-        if written > cap:
-            break
-    return written
 
 
 @router.get("/{job_id}", response_model=ImportJobRead)

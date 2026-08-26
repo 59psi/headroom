@@ -132,3 +132,82 @@ describe('EditHatPage — Collection / collab', () => {
     });
   });
 });
+
+/**
+ * The two price boxes are the only fields whose PRESENCE in the payload is
+ * itself a decision. `hat_service.update_hat` reads a sent key as "a person
+ * typed this number" and stamps the price `manual`, which is permanent:
+ * `resolve_retail` returns it forever after, and both `refresh_melin_resale`
+ * and `_apply_resale_pointer` bail on it.
+ *
+ * This form seeds both boxes from the loaded hat, so sending them
+ * unconditionally meant editing a colorway silently relabeled a scraped
+ * melinrecap median as "Price you entered — used as given" and froze it
+ * against every future analysis — same number on screen, different meaning,
+ * nothing to see.
+ */
+describe('EditHatPage — a price becomes "manual" only when you actually edit it', () => {
+  const PRICED: HatRead = {
+    ...HAT,
+    estimated_new_price: 79,
+    estimated_new_price_source: 'melin retail',
+    resale_price: 52.5,
+    resale_price_scope: 'model',
+    resale_price_source: 'Median of 11 live listings',
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(hatsApi.getHat).mockResolvedValue(PRICED);
+  });
+
+  it('omits both price keys when something else was edited', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<EditHatPage />);
+
+    const field = await screen.findByLabelText('Collection or collaboration');
+    await user.clear(field);
+    await user.type(field, 'melin x Hydro Flask');
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }));
+
+    await waitFor(() => expect(hatsApi.updateHat).toHaveBeenCalled());
+    const payload = vi.mocked(hatsApi.updateHat).mock.calls[0][1];
+
+    // `exclude_unset` on the server means ABSENT and null mean different
+    // things here, so this must assert absence, not a null value.
+    expect(payload).not.toHaveProperty('estimated_new_price');
+    expect(payload).not.toHaveProperty('resale_price');
+  });
+
+  it('sends the price when the number really changed', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<EditHatPage />);
+
+    const resale = await screen.findByLabelText('Resale ($)');
+    await user.clear(resale);
+    await user.type(resale, '60');
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }));
+
+    await waitFor(() => expect(hatsApi.updateHat).toHaveBeenCalled());
+    const payload = vi.mocked(hatsApi.updateHat).mock.calls[0][1];
+
+    expect(payload).toMatchObject({ resale_price: 60 });
+    expect(payload).not.toHaveProperty('estimated_new_price');
+  });
+
+  it('sends null when a price is deliberately cleared', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<EditHatPage />);
+
+    await user.clear(await screen.findByLabelText('Resale ($)'));
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }));
+
+    await waitFor(() => expect(hatsApi.updateHat).toHaveBeenCalled());
+    // Clearing hands the hat back to the live market feed, which the server
+    // does by nulling `resale_price_scope` — so the key must be SENT as null,
+    // not omitted the way an untouched field is.
+    expect(vi.mocked(hatsApi.updateHat).mock.calls[0][1]).toMatchObject({
+      resale_price: null,
+    });
+  });
+});

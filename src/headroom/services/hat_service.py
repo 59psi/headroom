@@ -170,7 +170,7 @@ async def create_hat(db: AsyncSession, data: HatCreate) -> Hat:
         # Empty string from an untouched form field means "not stated", same as
         # omitting it — storing "" would make the hat look annotated when the
         # owner never typed anything.
-        # Canonicalised so "Neon"/"NEON"/"neon" converge on the spelling
+        # Canonicalized so "Neon"/"NEON"/"neon" converge on the spelling
         # already recorded — free text without this becomes five collections
         # that never find each other in search.
         artist_series=await vocabulary.canonicalize(db, Hat.artist_series, data.artist_series),

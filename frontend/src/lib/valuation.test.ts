@@ -236,8 +236,8 @@ describe('valueCases', () => {
     photo_path: null, capacity: null, retail_price: 49,
     hat_count: 0, beanie_count: 0, regular_count: 0,
     room_id: 1, room_name: 'Closet', hat_thumbs: [],
-    overfull: false, nominal_capacity: 3, nominal_regular: 3, nominal_beanie: 8,
-    accepts_regular: true, accepts_beanie: true, free_regular: 3, free_beanie: 8,
+    overfull: false, nominal_capacity: 3, nominal_regular: 3, nominal_beanie: 6,
+    accepts_regular: true, accepts_beanie: true, free_regular: 3, free_beanie: 6,
     created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
     ...over,
   });

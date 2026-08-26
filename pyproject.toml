@@ -1,6 +1,6 @@
 [project]
 name = "headroom"
-version = "2.56.0"
+version = "2.57.0"
 description = "Headroom — AI-powered hat collection tracker"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -35,7 +35,7 @@ dev = [
     # marker; the tests run asyncio-only (see conftest `anyio_backend`), so no
     # trio extra and no separate `pytest-anyio` stub package are needed.
     "anyio",
-    # starlette's TestClient deprecated httpx in favour of httpx2 and emits a
+    # starlette's TestClient deprecated httpx in favor of httpx2 and emits a
     # StarletteDeprecationWarning on every run without it. Test-only: the app's
     # own outbound calls (eBay, Google Vision, melinrecap) still use httpx,
     # which is current at 0.28.1 and not deprecated in its own right.

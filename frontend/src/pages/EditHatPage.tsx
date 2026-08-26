@@ -103,8 +103,25 @@ export function EditHatPage() {
       data.purchase_price = basics.purchasePrice ? Number(basics.purchasePrice) : null;
       data.purchased_at = basics.purchasedAt ? `${basics.purchasedAt}T00:00:00` : null;
       data.design_notes = designNotes || null;
-      data.estimated_new_price = estimatedPrice ? Number(estimatedPrice) : null;
-      data.resale_price = resalePrice ? Number(resalePrice) : null;
+      // These two are the only fields whose mere PRESENCE in the payload is
+      // itself a decision. `hat_service.update_hat` reads a sent key as "a
+      // person typed this number" and stamps the price `manual` — which is
+      // permanent: `resolve_retail` returns it forever, and both
+      // `refresh_melin_resale` and `_apply_resale_pointer` bail on it.
+      //
+      // This form seeds both boxes from the loaded hat, so sending them
+      // unconditionally meant editing a colorway relabeled a scraped
+      // melinrecap median as "Price you entered — used as given" and froze it
+      // against every future analysis. Same number on screen, different
+      // meaning, no way to tell. Sent only when actually changed.
+      const priceEdited = (typed: string, current: number | null | undefined) =>
+        (typed ? Number(typed) : null) !== (current ?? null);
+      if (priceEdited(estimatedPrice, hat.data?.estimated_new_price)) {
+        data.estimated_new_price = estimatedPrice ? Number(estimatedPrice) : null;
+      }
+      if (priceEdited(resalePrice, hat.data?.resale_price)) {
+        data.resale_price = resalePrice ? Number(resalePrice) : null;
+      }
       data.limited_edition = basics.limitedEdition;
 
       await updateHat(id, data);
@@ -216,8 +233,9 @@ export function EditHatPage() {
             <div className="mb-3">
               <label className="form-label">Design Notes</label>
               <textarea
+                aria-label="Design Notes"
                 className="form-control"
-                rows={2}
+                rows={3}
                 value={designNotes}
                 onChange={e => setDesignNotes(e.target.value)}
               />

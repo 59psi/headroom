@@ -14,11 +14,11 @@ from dataclasses import dataclass
 
 # Nominal capacity when a case carries no explicit `capacity` — what "full"
 # means. The physical article is a three-hat case; melin's own order lines
-# call it a "3 Hat Travel Case". Beanies have no brim and squash flat, so far
-# more fit in the same shell — eight, measured by the owner packing them, not
-# derived from the three-hat figure.
+# call it a "3 Hat Travel Case". Beanies have no brim and squash flat, so more
+# fit in the same shell — six, which is the owner's number for how many he
+# actually wants in one, not a figure derived from the three-hat capacity.
 MAX_REGULAR = 3
-MAX_BEANIE = 8
+MAX_BEANIE = 6
 
 # How far past nominal a DEFAULT case may be crammed. A fourth hat does go in,
 # it just isn't how the case is meant to be loaded — so it's allowed on write
@@ -33,9 +33,11 @@ OVERFILL_ALLOWANCE = 1
 
 # Beanies get NO allowance. The regular allowance exists because 3 is melin's
 # *name* for the case — a "3 Hat Travel Case" — and a fourth demonstrably fits,
-# so the number to be lenient about was never a measurement. 8 is the opposite:
-# it is what the owner fits in one, counted by packing it. Adding slack on top
-# of a measured maximum asserts a ninth fits, which nobody has claimed.
+# so the number to be lenient about was never a measurement. 6 is the opposite:
+# it is the owner stating how many beanies belong in a case. Same reasoning as
+# a per-case `capacity` override, which also gets no allowance — a stated
+# number is the number, and quietly allowing a seventh would answer a question
+# that was already answered.
 BEANIE_OVERFILL_ALLOWANCE = 0
 
 
