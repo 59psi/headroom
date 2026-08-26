@@ -272,3 +272,36 @@ async def test_google_vision_key_roundtrip(client):
     assert resp.status_code == 204
     resp = await client.get("/api/settings/google-vision-key")
     assert resp.json()["configured"] is False
+
+
+async def test_the_fallback_message_does_not_tell_you_to_add_a_key_you_have():
+    """The advice has to match the reason.
+
+    A real incident: the Anthropic ACCOUNT ran out of credit. The key was
+    present, valid and had been working minutes earlier — but the message
+    appended "Add a Claude API key" unconditionally, so all 235 hats told
+    their owner to add the key they already had. It went unnoticed for three
+    days, because the banner was the only thing visible and the true reason
+    sat in a field the fallback branch never rendered.
+    """
+    from headroom.services.hat_analysis_pipeline import fallback_message
+
+    billing = (
+        "Claude analysis failed: Anthropic API error: Error code: 400 - "
+        "Your credit balance is too low to access the Anthropic API."
+    )
+
+    cases = [
+        (billing, False),
+        ("Claude analysis failed: Connection timed out", False),
+        ("Claude is not configured", True),
+        ("No API key set", True),
+    ]
+    for reason, should_mention_key in cases:
+        message = fallback_message(reason, ["colors from photo cutout"])
+
+        assert reason in message, "the real cause must survive into the message"
+        mentions_key = "add a claude api key" in message.lower()
+        assert mentions_key is should_mention_key, (
+            f"reason {reason!r} produced advice {message!r}"
+        )

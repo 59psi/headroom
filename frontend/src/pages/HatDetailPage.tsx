@@ -658,11 +658,27 @@ export function HatDetailPage() {
         </div>
       )}
 
+      {/* Fallback means "Claude did not answer", which has two very different
+          causes, and this banner used to assert the wrong one. It said "add a
+          Claude API key" unconditionally — so when the Anthropic account ran
+          out of CREDIT, every hat in the collection told its owner to add the
+          key that was already there and plainly working. The real reason was
+          sitting in `analysis_error` the whole time and only the `error`
+          status ever rendered it. Show it here too. */}
       {data.analysis_status === 'fallback' && (
         <div className="alert alert-info mb-3 small">
           Basic fallback ID only (colors from the photo cutout{data.brand ? ', brand from logo detection' : ''}).
-          Add a Claude API key in <Link to="/settings" style={{ color: 'inherit', textDecoration: 'underline' }}>Settings</Link> and
-          hit Reanalyze for full model + price identification.
+          {data.analysis_error ? (
+            <>
+              {' '}<strong>Why:</strong> {data.analysis_error}
+            </>
+          ) : (
+            <>
+              {' '}Add a Claude API key in{' '}
+              <Link to="/settings" style={{ color: 'inherit', textDecoration: 'underline' }}>Settings</Link>
+              {' '}and hit Reanalyze for full model + price identification.
+            </>
+          )}
         </div>
       )}
 

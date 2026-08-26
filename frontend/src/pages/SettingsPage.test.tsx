@@ -76,6 +76,8 @@ vi.mock('../api/settings', () => ({
     { construction: 'HYDROLite', hat_count: 12, priced_from_table: 9 },
   ]),
   clearConstruction: vi.fn(),
+  auditFrozenPrices: vi.fn(async () => []),
+  releaseFrozenPrices: vi.fn(),
 }));
 
 vi.mock('../api/auth', () => ({
@@ -119,6 +121,7 @@ const SECTION_CARDS: Record<string, string[]> = {
   ],
   data: [
     'Construction audit',
+    'Frozen prices',
     'Colorway Catalog',
     'Purchase History',
     'eBay Comparable Listings (optional)',
