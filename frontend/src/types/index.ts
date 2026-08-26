@@ -522,3 +522,20 @@ export interface UnmatchResult {
   unmatched: number;
   fields_cleared: number;
 }
+
+/** One hat whose price analysis can no longer touch. */
+export interface FrozenPriceRow {
+  hat_id: number;
+  display_id: string | null;
+  model_name: string | null;
+  resale_price: number | null;
+  estimated_new_price: number | null;
+  /** Carries marketplace provenance under a manual stamp — the bug's signature. */
+  was_market_priced: boolean;
+}
+
+export interface PriceReleaseResult {
+  dry_run: boolean;
+  released: number;
+  hats: FrozenPriceRow[];
+}

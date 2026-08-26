@@ -2,7 +2,7 @@ import { apiFetch } from './client';
 import type {
   ActivityRow, AnalysisJobRead, AnalysisQueueStatus, ApiKeyStatus, ApiKeyTestResult,
   BackupHealth, BackupInfo, BackupUploadStatus, EbayCredsStatus, ImportJob, MdnsStatus, ModelStatus,
-  TlsStatus,
+  TlsStatus, FrozenPriceRow, PriceReleaseResult,
   RecentError, TagBaseStatus, ConstructionAuditRow, ConstructionClearResult,
 } from '../types';
 
@@ -289,5 +289,33 @@ export function setGuestView(enabled: boolean) {
   return apiFetch<{ enabled: boolean }>('/api/settings/guest-view', {
     method: 'PUT',
     body: JSON.stringify({ enabled }),
+  });
+}
+
+// ---------------------------- Frozen prices --------------------------- #
+
+/** Every active hat whose price is immune to future analysis. */
+export function auditFrozenPrices() {
+  return apiFetch<FrozenPriceRow[]>('/api/admin/prices/frozen');
+}
+
+/**
+ * Hand frozen prices back to the live market feed.
+ *
+ * `dry_run` defaults true server-side and `hatIds` omitted means EVERY frozen
+ * hat, so the bare call is the one that changes nothing.
+ */
+export function releaseFrozenPrices(
+  hatIds: number[] | null,
+  dryRun: boolean,
+  marketPricedOnly = false,
+) {
+  const qs = new URLSearchParams({
+    dry_run: String(dryRun),
+    market_priced_only: String(marketPricedOnly),
+  });
+  if (hatIds) for (const id of hatIds) qs.append('hat_ids', String(id));
+  return apiFetch<PriceReleaseResult>(`/api/admin/prices/release?${qs}`, {
+    method: 'POST',
   });
 }

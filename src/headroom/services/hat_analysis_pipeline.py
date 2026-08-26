@@ -348,6 +348,32 @@ async def refresh_melin_resale(hat: Hat) -> None:
     hat.resale_checked_at = datetime.now(timezone.utc)
 
 
+#: Reasons that genuinely mean "there is no key to call with". Anything else
+#: — a billing failure, a network error, a model rejecting the request — means
+#: the key exists and something else went wrong.
+_MISSING_KEY_MARKERS = ("not configured", "no api key", "no anthropic key")
+
+
+def fallback_message(reason: str, provided: list[str]) -> str:
+    """The `analysis_error` text for a hat that fell back to basic ID.
+
+    A pure function so the ADVICE can be tested without a photo, a cutout or a
+    database — which is why the rule was wrong for as long as it was.
+
+    The advice has to match the reason. It used to append "Add a Claude API
+    key" unconditionally, so when the Anthropic ACCOUNT RAN OUT OF CREDIT —
+    key present, valid, working minutes earlier — every hat told its owner to
+    add the key they already had. A 235-hat collection sat like that for three
+    days, because the banner was the only thing on screen and the true reason
+    lived in a field the fallback branch never rendered.
+    """
+    if any(m in reason.lower() for m in _MISSING_KEY_MARKERS):
+        advice = "Add a Claude API key in Settings and Reanalyze for full identification."
+    else:
+        advice = "Reanalyze once the cause above is resolved for full identification."
+    return f"{reason} — basic fallback applied ({', '.join(provided)}). {advice}"
+
+
 async def run_fallback_analysis(
     db: AsyncSession, hat: Hat, photo_path: Path, *, reason: str
 ) -> bool:
@@ -406,10 +432,7 @@ async def run_fallback_analysis(
         await refresh_melin_resale(hat)
 
     hat.analysis_status = "fallback"
-    hat.analysis_error = (
-        f"{reason} — basic fallback applied ({', '.join(provided)}). "
-        "Add a Claude API key and Reanalyze for full identification."
-    )
+    hat.analysis_error = fallback_message(reason, provided)
     hat.analyzed_at = datetime.now(timezone.utc)
     return True
 

@@ -6,6 +6,57 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.59.0] — 2026-08-26
+
+Measured against the real 294-line order history throughout: **144 → 152
+matched, which is now the provable maximum** rather than whatever a heuristic
+happened to reach.
+
+### Fixed
+- **A construction word in the colorway half no longer rules a hat out.**
+  melin model names read `<line> <construction>`, but a receipt is free to put
+  that word in either half of the title, and the gate only compares the model
+  half. Real miss: hat `Eagle Denim` against `Eagle Mill Union - Hickory
+  Denim` — `denim` sits in the *colorway* half, so containment failed and a hat
+  with the right line, series, size and **price to the cent** was discarded
+  before anything else was scored. The gate now retries with the construction
+  stripped from both sides. Narrower than widening it to the whole title, which
+  was tried and rejected for letting any Trenches hat claim any Trenches line.
+- **A construction that CONTRADICTS the title now vetoes**, which the above
+  makes necessary: stripped, `A-Game Thermal` and `A-Game Hydro` both reduce to
+  `{a, game}`, so a Thermal hat could take a Hydro receipt's price.
+- **A price typed off the receipt outweighs a colorway typo.** Two stated
+  colorways that disagree normally rule a hat out. That is right when the
+  colorway is all you have and wrong when the owner entered the purchase price
+  from the same order confirmation — "Navy Denium" against "Hickory Denim" is
+  someone's words for a color; **$200.00 against $200.00 is corroboration**.
+  `purchase_price` was not used by the matcher at all before this.
+- **The Claude fallback banner stopped telling you to add a key you already
+  have.** When the Anthropic account ran out of credit, every hat displayed
+  "Add a Claude API key in Settings" — the key was present, valid, and had been
+  working minutes earlier. The real reason sat in `analysis_error`, which only
+  the `error` status ever rendered. `fallback` now shows it too, and the
+  message builder picks its advice from the actual cause.
+
+### Changed
+- **Assignment is maximum bipartite matching, not greedy.** `assign_purchases`
+  (Kuhn's augmenting paths) replaces "each purchase takes its best free hat,
+  scarcest first". That heuristic was measured leaving **3 real matches
+  unclaimed** the moment scoring changed — the optimality it appeared to have
+  was luck, and `_by_scarcity` was the ordering trick that bought it. Augmenting
+  paths cannot have that failure: a later purchase displaces an earlier one and
+  sends it to another hat it also fits. Candidates are visited in descending
+  score order, so among maximum-size assignments the better-evidenced pairings
+  win. Keyed on `id(hat)` rather than `hat.id` — the same transient-row trap
+  `_by_scarcity` already documents. Shared by the importer and `preview_import`.
+
+### Added
+- **Settings → Data → Frozen prices.** 2.58.0 shipped
+  `/api/admin/prices/frozen` and `/prices/release` with no UI, which meant the
+  only way to repair the affected hats was curl. Now a list with checkboxes,
+  flagging the ones carrying marketplace provenance under a manual stamp.
+
+
 ## [2.58.0] — 2026-08-26
 
 The six things 2.57.2 listed as "not fixed". They are fixed.

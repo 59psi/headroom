@@ -845,3 +845,114 @@ async def test_the_preview_predicts_what_importing_actually_does(client, db_sess
         f"preview promised {preview['would_match_total']} matches, import made "
         f"{result['matched']}"
     )
+
+
+# ---- regressions from the real order history --------------------------- #
+
+from headroom.models.catalog import Purchase  # noqa: E402
+from headroom.models.hat import Hat  # noqa: E402
+from headroom.services import catalog_service  # noqa: E402
+
+
+def _hat(**kw):
+    """A hat with just the fields matching reads."""
+    h = Hat(condition="new", size=kw.pop("size", "classic"), style="a_game")
+    for k, v in kw.items():
+        setattr(h, k, v)
+    for attr in ("colors", "colorway", "artist_series", "construction",
+                 "purchase_price", "model_name"):
+        if not hasattr(h, attr) or getattr(h, attr, None) is None:
+            if attr == "colors":
+                h.colors = []
+    return h
+
+
+async def test_a_construction_in_the_colorway_half_does_not_rule_the_hat_out():
+    """melin model names read `<line> <construction>`; receipts may put that
+    word in EITHER half of the title, and the gate only sees the model half.
+
+    Real miss: hat "Eagle Denim" against "Eagle Mill Union - Hickory Denim".
+    `denim` sits in the colorway half, so containment failed and a hat with the
+    right line, series, size and price to the cent was thrown out before
+    anything else was scored.
+    """
+    purchase = Purchase(
+        item_title="Eagle Mill Union - Hickory Denim",
+        model_name="Eagle Mill Union",
+        colorway="Hickory Denim",
+        size="classic",
+        price=200.0,
+    )
+    hat = _hat(model_name="Eagle Denim", artist_series="Union",
+               construction="Denim", colorway="Navy Denium",
+               size="classic", purchase_price=200.0)
+    hat.colors = []
+
+    assert catalog_service._match_score(purchase, hat) is not None
+
+
+async def test_a_price_typed_off_the_receipt_outweighs_a_colorway_typo():
+    """A colorway is a description; a hand-entered price is a fact.
+
+    Both sides stating a colorway and disagreeing normally rules a hat out.
+    That is right when the colorway is all you have and wrong when the owner
+    typed the purchase price off the same order confirmation the line came
+    from — "Navy Denium" against "Hickory Denim" is someone's words for a
+    color, $200.00 against $200.00 is corroboration.
+    """
+    purchase = Purchase(
+        item_title="Eagle Mill Union - Hickory Denim",
+        model_name="Eagle Mill Union", colorway="Hickory Denim",
+        size="classic", price=200.0,
+    )
+    priced = _hat(model_name="Eagle Denim", colorway="Navy Denium",
+                  size="classic", purchase_price=200.0)
+    priced.colors = []
+    unpriced = _hat(model_name="Eagle Denim", colorway="Navy Denium",
+                    size="classic", purchase_price=None)
+    unpriced.colors = []
+
+    assert catalog_service._match_score(purchase, priced) is not None
+    assert catalog_service._match_score(purchase, unpriced) is None, (
+        "without the corroborating price, two disagreeing colorways still veto"
+    )
+
+
+async def test_a_contradicting_construction_still_rules_a_hat_out():
+    """The gate can now look past the construction word, so disagreement has
+    to veto — or a Thermal hat takes a Hydro receipt's price when no Hydro hat
+    is free."""
+    purchase = Purchase(
+        item_title="A-Game Infinite Hydro - Black", model_name="A-Game Infinite Hydro",
+        colorway="Black", size="classic", price=79.0,
+    )
+    thermal = _hat(model_name="A-Game Thermal", construction="Thermal", size="classic")
+    thermal.colors = []
+
+    assert catalog_service._match_score(purchase, thermal) is None
+
+
+async def test_the_assignment_is_maximum_not_merely_greedy():
+    """Greedy leaves real matches unclaimed; augmenting paths do not.
+
+    Two purchases, two hats. The generic line fits both hats; the specific line
+    fits only the second. Greedy in the wrong order hands the shared hat to the
+    generic line and strands the specific one — which is exactly what cost
+    three matches on the real 294-line history.
+    """
+    generic = Purchase(item_title="Odysea Hydro - Black", model_name="Odysea Hydro",
+                       colorway=None, size=None, price=79.0)
+    specific = Purchase(item_title="Odysea Hydro - Black", model_name="Odysea Hydro",
+                        colorway=None, size="small", price=79.0)
+    classic = _hat(model_name="Odysea Hydro", size="classic")
+    small = _hat(model_name="Odysea Hydro", size="small")
+    classic.colors = []
+    small.colors = []
+
+    assigned = catalog_service.assign_purchases([generic, specific], [classic, small])
+
+    assert len(assigned) == 2, (
+        "both purchases are satisfiable at once — the generic line must give "
+        "up the small hat so the sized line can have it"
+    )
+    assert assigned[id(specific)].hat is small

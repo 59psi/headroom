@@ -19,6 +19,7 @@ import { AccountCard } from '../components/settings/AccountCard';
 import { ShareLinksCard } from '../components/settings/ShareLinksCard';
 import { TagsCard } from '../components/settings/TagsCard';
 import { ConstructionAuditCard } from '../components/settings/ConstructionAuditCard';
+import { FrozenPricesCard } from '../components/settings/FrozenPricesCard';
 import { GuestViewCard } from '../components/settings/GuestViewCard';
 import { TrustCertCard } from '../components/settings/TrustCertCard';
 
@@ -56,7 +57,13 @@ export const SECTIONS = [
     id: 'data',
     label: 'Data',
     blurb: 'What the app knows about your hats, and where it came from.',
-    cards: [ConstructionAuditCard, ColorwayCatalogCard, PurchasesCard, EbayCredsCard],
+    cards: [
+      ConstructionAuditCard,
+      FrozenPricesCard,
+      ColorwayCatalogCard,
+      PurchasesCard,
+      EbayCredsCard,
+    ],
   },
   {
     id: 'sharing',

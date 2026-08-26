@@ -18,6 +18,7 @@ import asyncio
 
 import logging
 from collections.abc import Sequence
+from typing import NamedTuple
 from datetime import datetime, timezone
 from functools import lru_cache
 
@@ -28,6 +29,7 @@ from sqlalchemy.orm import selectinload
 
 from headroom.models.catalog import ColorwayEntry, Purchase
 from headroom.models.hat import Hat
+from headroom.schemas.hat import KNOWN_CONSTRUCTIONS
 from headroom.services.activity_service import log_and_commit
 from headroom.services.melin_recap import (
     STYLE_TO_CATEGORY,
@@ -452,25 +454,19 @@ async def preview_import(db: AsyncSession, items: list[dict]) -> dict:
             would_import.append(transient)
 
     # Match the file's lines and the backlog together, exactly as the import
-    # will. `_by_scarcity` sees the same pool for the same reason it is shared
-    # at all: order decides who gets which hat.
+    # will — through the SAME `assign_purchases`. A preview that assigned
+    # differently would under-report the matches the import then makes, and be
+    # wrong in the one direction nobody checks.
     new_rows = {id(p) for p in would_import}
     proposals: list[dict] = []
     backlog_matches = 0
-    for purchase in _by_scarcity(
-        [*backlog, *would_import], [h for h in hats if h.id not in claimed]
-    ):
-        candidates = [
-            (score, hat)
-            for hat in hats
-            if hat.id not in claimed
-            and (score := _match_score(purchase, hat)) is not None
-        ]
-        if not candidates:
+    to_match = [*backlog, *would_import]
+    assignment = assign_purchases(to_match, [h for h in hats if h.id not in claimed])
+    for purchase in to_match:
+        found = assignment.get(id(purchase))
+        if found is None:
             continue
-        best_score = max(score for score, _ in candidates)
-        best = [hat for score, hat in candidates if score == best_score]
-        hat = best[0]
+        hat, best_score, ambiguous, tied_hat_ids = found
         claimed.add(hat.id)
         if id(purchase) not in new_rows:
             backlog_matches += 1
@@ -483,8 +479,8 @@ async def preview_import(db: AsyncSession, items: list[dict]) -> dict:
             "hat_display_id": hat.display_id,
             "score": best_score,
             "matched_on": _matched_on(purchase, hat),
-            "ambiguous": len(best) > 1,
-            "tied_hat_ids": [h.id for h in best] if len(best) > 1 else [],
+            "ambiguous": ambiguous,
+            "tied_hat_ids": tied_hat_ids if ambiguous else [],
             "sets_price": purchase.price is not None and hat.purchase_price is None,
             # Which half of the click this row is. A caller showing only the
             # file's own lines would reproduce the bug this split exists to fix.
@@ -539,6 +535,12 @@ MODEL_EXACT = 8
 #: deliberately below every exact match, but a real signal.
 MODEL_CONTAINED = 2
 
+#: An exact hit only after removing the construction word from both sides.
+#: Below a true `MODEL_EXACT` — the names are not literally the same — but
+#: above `MODEL_CONTAINED`, because both sides named the same line rather than
+#: one being a prefix of the other.
+MODEL_EXACT_STRIPPED = 5
+
 #: An owner-stated field (`artist_series`, `construction`) found in the title.
 #: Deliberately below the 6-point gap between MODEL_EXACT and MODEL_CONTAINED:
 #: an exact model hit must outrank a contained one that also carries a series,
@@ -549,6 +551,22 @@ STATED_FIELD = 5
 #: melin names a product colorway ("Bone Brown"), so agreement is suggestive
 #: and disagreement means nothing.
 COLOR_WORD = 3
+
+#: An owner-entered purchase price matching the receipt to the cent. Ranked
+#: above every descriptive signal because it is the only one that is a FACT
+#: rather than someone's words for a color — and high enough to carry a hat
+#: whose colorway text disagrees, which is the case it was added for.
+PRICE_EXACT = 6
+
+
+#: Every word that is a CONSTRUCTION rather than a product line, lowercased and
+#: split the way `_model_tokens` splits. Used to retry the model gate with the
+#: construction removed — see `_model_tier`.
+_CONSTRUCTION_TOKENS: frozenset[str] = frozenset(
+    t
+    for known in KNOWN_CONSTRUCTIONS
+    for t in known.lower().replace("-", " ").split()
+)
 
 
 @lru_cache(maxsize=4096)
@@ -614,6 +632,40 @@ def _model_tier(hat_model: str | None, purchase_model: str) -> int | None:
         return MODEL_EXACT
     if hat_tokens < purchase_tokens:
         return MODEL_CONTAINED
+
+    # Retry with the CONSTRUCTION word removed from both sides.
+    #
+    # melin model names read `<line> <construction>` — "Eagle Denim" — but a
+    # receipt is free to put that word in either half of the title, and it
+    # splits on " - " into model and colorway. A real miss:
+    #
+    #     hat      "Eagle Denim"                 -> {eagle, denim}
+    #     purchase "Eagle Mill Union - Hickory Denim"
+    #              model half                    -> {eagle, mill, union}
+    #
+    # `denim` sits in the COLORWAY half, so containment failed and a hat with
+    # the right line, series, size and price to the cent was ruled out before
+    # anything else was scored. Stripping the construction leaves {eagle},
+    # which is properly contained, and the construction still earns its
+    # `STATED_FIELD` bonus below because that is matched against the WHOLE
+    # title where the word actually is.
+    #
+    # This is narrower than widening the gate to the whole title, which was
+    # tried and rejected up in `_match_score` for letting any Trenches hat
+    # claim any Trenches line. Removing one known vocabulary word from both
+    # sides cannot introduce a new line, only reveal that two names describe
+    # the same one.
+    hat_bare = hat_tokens - _CONSTRUCTION_TOKENS
+    purchase_bare = purchase_tokens - _CONSTRUCTION_TOKENS
+    # A name made ENTIRELY of construction words ("Hydro") strips to nothing,
+    # and the empty set is a subset of everything — it would match the whole
+    # shelf. Fall back to the strict comparison above rather than that.
+    if not hat_bare or not purchase_bare:
+        return None
+    if hat_bare == purchase_bare:
+        return MODEL_EXACT_STRIPPED
+    if hat_bare < purchase_bare:
+        return MODEL_CONTAINED
     return None
 
 
@@ -650,6 +702,21 @@ def _match_score(purchase: Purchase, hat: Hat) -> int | None:
     # "Trenches Icon Hydro - Camo"). A bonus, never a veto: 102 hats have no
     # series recorded at all, and absence is not disagreement.
     title_tokens = _model_tokens(purchase.item_title)
+
+    # A stated construction that CONTRADICTS the title rules the hat out.
+    #
+    # Necessary once `_model_tier` can match past the construction word: with
+    # it stripped, "A-Game Thermal" and "A-Game Hydro" both reduce to
+    # {a, game}, so a Thermal hat could otherwise be handed a Hydro receipt's
+    # price when no Hydro hat was free. Same principle colorway and size
+    # already follow — both sides stating something, and disagreeing, is the
+    # one case where silence would be better than a guess. HYDROLite is
+    # checked as its own token, so it does not read as a HYDRO.
+    hat_construction = _model_tokens(hat.construction) & _CONSTRUCTION_TOKENS
+    title_construction = title_tokens & _CONSTRUCTION_TOKENS
+    if hat_construction and title_construction and not (hat_construction & title_construction):
+        return None
+
     for stated in (hat.artist_series, hat.construction):
         tokens = _model_tokens(stated)
         if tokens and tokens <= title_tokens:
@@ -665,12 +732,35 @@ def _match_score(purchase: Purchase, hat: Hat) -> int | None:
     if pcw and (pcw & _color_words(hat)):
         score += COLOR_WORD
 
+    # PRICE the owner typed off the receipt, against the receipt.
+    #
+    # The strongest evidence available and it was going unused. A colorway is a
+    # DESCRIPTION — the analyzer invents them, and an owner types what the hat
+    # looks like ("Navy Denium") rather than what melin called it ("Hickory
+    # Denim"). A price entered by hand from an order confirmation is a fact,
+    # and matching one to the cent is corroboration a spelling cannot outweigh.
+    price_corroborates = (
+        hat.purchase_price is not None
+        and purchase.price is not None
+        and abs(float(hat.purchase_price) - float(purchase.price)) < 0.005
+    )
+    if price_corroborates:
+        score += PRICE_EXACT
+
     pc = (purchase.colorway or "").lower()
     hc = (hat.colorway or "").lower()
     if pc and hc:
         if pc != hc:
-            return None
-        score += 2
+            # Normally a veto — two stated colorways that disagree are
+            # different hats. NOT when the price corroborates: a real miss was
+            # a hat recorded "Navy Denium" against "Eagle Mill Union - Hickory
+            # Denim", same line, same series, same size, same $200.00, bought
+            # the same week. Everything a receipt can prove agreed, and the one
+            # field the owner had guessed at threw it out.
+            if not price_corroborates:
+                return None
+        else:
+            score += 2
 
     ps, hs = purchase.size, hat.size
     if ps and hs:
@@ -711,6 +801,93 @@ def _by_scarcity(purchases: Sequence[Purchase], available: Sequence[Hat]) -> lis
     return sorted(purchases, key=lambda p: counts[id(p)])
 
 
+class Assignment(NamedTuple):
+    """One purchase's chosen hat, and how confident that choice is."""
+
+    hat: Hat
+    score: int
+    #: More than one hat shared the top score — the records cannot tell them
+    #: apart, so the tie is reported rather than silently broken.
+    ambiguous: bool
+    tied_hat_ids: list[int]
+
+
+def assign_purchases(
+    purchases: Sequence[Purchase], hats: Sequence[Hat]
+) -> dict[int, Assignment]:
+    """The best assignment of hats to purchases, keyed on `id(purchase)`.
+
+    MAXIMUM bipartite matching (Kuhn's augmenting paths), not greedy.
+
+    Greedy — take each purchase's best free hat, scarcest purchase first — is
+    only a heuristic, and it was measured leaving 3 real matches unclaimed on a
+    294-line history the moment the scoring changed. The property it seemed to
+    have was luck, and `_by_scarcity` was the trick that bought it: order the
+    purchases so the constrained ones go first and hope nothing downstream
+    starves. Hope is the wrong mechanism for "did this hat get its price".
+    Augmenting paths simply do not have the failure — a later purchase can
+    displace an earlier one and send it to another hat it also fits.
+    Deterministic, and O(V·E), which at a few hundred rows is nothing.
+
+    Candidates are visited in DESCENDING SCORE order, so among assignments of
+    the same (maximum) size the better-evidenced pairings are taken first.
+    Cardinality is what is guaranteed; the score ordering is the tiebreak.
+
+    Returns `{id(purchase): Assignment}`. `ambiguous` marks a
+    purchase whose top score was shared by more than one hat — the records
+    genuinely cannot tell those apart, and a coin flip presented as a fact is
+    the thing this whole module exists to avoid.
+    """
+    candidates: dict[int, list[tuple[int, Hat]]] = {}
+    ambiguous: dict[int, bool] = {}
+    tied: dict[int, list[int]] = {}
+    for purchase in purchases:
+        scored = [
+            (score, hat)
+            for hat in hats
+            if (score := _match_score(purchase, hat)) is not None
+        ]
+        scored.sort(key=lambda pair: (-pair[0], pair[1].id))
+        candidates[id(purchase)] = scored
+        top = scored[0][0] if scored else None
+        tied[id(purchase)] = [h.id for sc, h in scored if sc == top and h.id is not None]
+        ambiguous[id(purchase)] = len(tied[id(purchase)]) > 1
+
+    # Keyed on `id(hat)`, NOT `hat.id` — the same trap `_by_scarcity`
+    # documents for purchases. A transient row's primary key is still None, so
+    # `hat.id` collapses every unsaved hat onto one bucket and the matching
+    # silently returns one result for the whole shelf.
+    holder: dict[int, tuple[Purchase, Hat]] = {}
+
+    def augment(purchase: Purchase, seen: set[int]) -> bool:
+        for _score, hat in candidates[id(purchase)]:
+            if id(hat) in seen:
+                continue
+            seen.add(id(hat))
+            current = holder.get(id(hat))
+            if current is None or augment(current[0], seen):
+                holder[id(hat)] = (purchase, hat)
+                return True
+        return False
+
+    # Fewest candidates first. This no longer decides correctness — the result
+    # is maximum either way — but it keeps the search shallow and the output
+    # stable against reordering of the input.
+    for purchase in sorted(purchases, key=lambda p: len(candidates[id(p)])):
+        augment(purchase, set())
+
+    out: dict[int, Assignment] = {}
+    for purchase, hat in holder.values():
+        score = next(sc for sc, h in candidates[id(purchase)] if h is hat)
+        out[id(purchase)] = Assignment(
+            hat=hat,
+            score=score,
+            ambiguous=ambiguous[id(purchase)],
+            tied_hat_ids=tied[id(purchase)],
+        )
+    return out
+
+
 async def match_purchases_to_hats(db: AsyncSession, *, dry_run: bool = False) -> dict:
     """Link unmatched purchases to hats and set the hat's cost basis.
 
@@ -729,27 +906,16 @@ async def match_purchases_to_hats(db: AsyncSession, *, dry_run: bool = False) ->
         (await db.execute(select(Purchase).where(Purchase.hat_id.is_not(None)))).scalars().all()
     }
 
-    purchases = _by_scarcity(purchases, [h for h in hats if h.id not in linked_hat_ids])
+    free_hats = [h for h in hats if h.id not in linked_hat_ids]
+    assignment = assign_purchases(purchases, free_hats)
 
     matched = 0
     proposals: list[dict] = []
     for purchase in purchases:
-        candidates = [
-            (score, hat)
-            for hat in hats
-            if hat.id not in linked_hat_ids
-            and (score := _match_score(purchase, hat)) is not None
-        ]
-        if not candidates:
+        found = assignment.get(id(purchase))
+        if found is None:
             continue
-        best_score = max(score for score, _ in candidates)
-        best = [hat for score, hat in candidates if score == best_score]
-        # A tie means the records genuinely cannot tell these hats apart (same
-        # model, same colorway, same size). Taking one at random would be a
-        # coin flip presented as a fact; the tie is reported instead so it can
-        # be resolved by hand.
-        ambiguous = len(best) > 1
-        hat = best[0]
+        hat, best_score, ambiguous, tied_hat_ids = found
 
         proposals.append({
             "purchase_id": purchase.id,
@@ -761,7 +927,7 @@ async def match_purchases_to_hats(db: AsyncSession, *, dry_run: bool = False) ->
             "score": best_score,
             "matched_on": _matched_on(purchase, hat),
             "ambiguous": ambiguous,
-            "tied_hat_ids": [h.id for h in best] if ambiguous else [],
+            "tied_hat_ids": tied_hat_ids if ambiguous else [],
             "sets_price": purchase.price is not None and hat.purchase_price is None,
             "sets_colorway": bool(purchase.colorway) and not hat.colorway,
         })
