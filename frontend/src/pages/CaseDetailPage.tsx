@@ -45,8 +45,9 @@ export function CaseDetailPage() {
   // `?? 4` — a second copy of a rule `services/capacity.py` owns, and wrong
   // twice: 4 is the OVERFILL limit rather than nominal capacity, so a full
   // three-hat case displayed "3/4" and invited an add the API would accept
-  // only as overfull; and the hardcoded 6 became wrong the moment beanie
-  // capacity moved to 8.
+  // only as overfull; and the hardcoded 6 went stale the moment beanie
+  // capacity moved. That figure has since been 3, then 8, then 6 again —
+  // which is the whole argument for serving it rather than typing it.
   const maxBeanies = data.nominal_beanie;
   const maxRegular = data.nominal_regular;
 

@@ -450,13 +450,29 @@ textarea.form-control {
   min-height: calc(1.55em * 3 + 1.4rem);
   /* Vertical only. Horizontal resizing has nowhere to go inside a card. */
   resize: vertical;
-  /* Grow with the content where supported, so a long note is not read through
-     a three-line slot. Bounded, or a long note pushes the save button off a
-     phone screen. Browsers that don't know `field-sizing` ignore it and get
-     the min-height plus the drag handle, which is the old behavior improved
-     rather than broken. */
-  field-sizing: content;
-  max-height: 40vh;
+  /* A ceiling, or a long note pushes the save button off a phone screen.
+     Expressed in lines rather than `vh` on purpose: at 40vh this was SMALLER
+     than the min-height above on any phone in landscape (an iPhone 15 gives a
+     157px cap against a 146px floor), so the cap silently lost to the floor
+     exactly where height is scarcest. `vh` is also the LARGE viewport and does
+     not shrink for the soft keyboard, which is the one moment the ceiling is
+     for — `lib/useKeyboardOpen.ts` exists because nothing in CSS reports it. */
+  max-height: calc(1.55em * 14 + 1.4rem);
+}
+
+/* Auto-growth, only where the browser can do it — and only INSTEAD of the drag
+   handle, never alongside it. The two are mutually destructive: per css-ui-4
+   §4.1 dragging the grabber writes an inline `height` that later changes do not
+   reset, and a fixed height reimposes a fixed size on the control. So one drag
+   permanently kills auto-growth for that element, silently. Shipping both (as
+   2.57.0 did) means the user's most natural gesture disables the feature.
+   Browsers without `field-sizing` keep `resize: vertical` from the block above,
+   which is the pre-2.57.0 behavior and still fine. */
+@supports (field-sizing: content) {
+  textarea.form-control {
+    field-sizing: content;
+    resize: none;
+  }
 }
 
 /* The notes field is the one piece of writing in this app that is entirely
@@ -466,9 +482,19 @@ textarea.form-control {
   min-height: calc(1.55em * 5 + 1.4rem);
 }
 
+/* A keyboard shortcut is not advice on a touch device — neither ⌘ nor Ctrl is
+   on an iOS soft keyboard. Keyed on what is doing the pointing, like the
+   tap-target rule above, rather than on width. */
+@media (pointer: coarse) {
+  .hr-keyboard-hint { display: none; }
+}
+
 /* A browser's default <kbd> is the page's monospace font at whatever size it
    inherits, with no box — indistinguishable from inline code. Styled here so
-   a key looks like a key. */
+   a key looks like a key.
+   Deliberately a bare element selector: every <kbd> in this app SHOULD look
+   like this, and the alternative is remembering a class each time. There is no
+   third-party markup in the tree for it to reach into. */
 kbd {
   display: inline-block;
   padding: 0.1em 0.4em;

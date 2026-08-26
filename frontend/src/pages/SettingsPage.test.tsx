@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../test/utils';
-import { SettingsPage } from './SettingsPage';
+import { SettingsPage, SECTIONS } from './SettingsPage';
 import { AnthropicKeyCard } from '../components/settings/AnthropicKeyCard';
 import { ClaudeModelCard } from '../components/settings/ClaudeModelCard';
 import * as settingsApi from '../api/settings';
@@ -135,6 +135,18 @@ const SECTION_CARDS: Record<string, string[]> = {
   maintenance: ['Backups', 'Off-site backup', 'Recent Activity'],
 };
 
+/**
+ * Cards that MOUNT but deliberately render nothing here.
+ *
+ * `TrustCertCard` shows only when a local CA exists, i.e. under the LAN-HTTPS
+ * overlay, and the `apiFetch` mock above makes that probe fail on purpose.
+ * Listed rather than omitted: while it was simply absent from the roster
+ * above, the union check counted 21 against 22 mounted cards and deleting the
+ * card from `SECTIONS` entirely kept the suite green. A conditional card still
+ * has to be accounted for — it just is not accounted for by rendering.
+ */
+const MOUNTED_BUT_HIDDEN: Record<string, number> = { device: 1 };
+
 /** Cards visible in a section, scoped to `.card-title` — card *bodies* mention
  *  other cards by name (ShareTargetCard points at "Account"), so a bare text
  *  query would be ambiguous. */
@@ -160,9 +172,23 @@ describe('SettingsPage', () => {
   it('accounts for every card across the sections', () => {
     // Guards the real risk of splitting one list into five: a card that is in
     // no section renders nowhere and nothing else notices.
+    //
+    // Counted against the REAL section table, not a literal. This asserted
+    // `toHaveLength(21)` beside a roster of 21 while SettingsPage mounted 22,
+    // so `TrustCertCard` — the LAN-HTTPS "Trust this device" card — could be
+    // deleted outright with every test still green. A census that restates a
+    // number is a census of the number.
     const all = Object.values(SECTION_CARDS).flat();
     expect(new Set(all).size).toBe(all.length);
-    expect(all).toHaveLength(21);
+
+    const hidden = Object.values(MOUNTED_BUT_HIDDEN).reduce((a, b) => a + b, 0);
+    const mounted = SECTIONS.flatMap(s => s.cards);
+    expect(all.length + hidden).toBe(mounted.length);
+    expect(Object.keys(SECTION_CARDS)).toHaveLength(SECTIONS.length);
+    for (const section of SECTIONS) {
+      const expected = section.cards.length - (MOUNTED_BUT_HIDDEN[section.id] ?? 0);
+      expect(SECTION_CARDS[section.id]).toHaveLength(expected);
+    }
   });
 
   it('defaults to the first section when no tab is named', async () => {

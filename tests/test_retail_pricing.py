@@ -114,3 +114,35 @@ async def test_backfill_repairs_hats_priced_by_the_stale_anchors(client, db_sess
 async def test_cases_publish_their_retail_price(client):
     body = (await client.post("/api/cases", json={"case_type": "archive"})).json()
     assert body["retail_price"] == 49.0
+
+
+async def test_a_non_answer_never_erases_a_stored_retail_price():
+    """No table entry AND no estimate must leave the stored price alone.
+
+    This returned `(None, None)`, and `_apply_analysis` assigns it
+    unconditionally — so tapping Reanalyze wiped `estimated_new_price` for any
+    hat the table does not cover. That is not an edge case: most styles have no
+    table entry, and a blank construction is the normal state because analysis
+    is forbidden from guessing one. Same rule as `_keep_on_null`.
+    """
+    # A Mill straw cap: no table entry for the style, and Claude declined.
+    price, source = retail_pricing.resolve_retail(
+        "trucker", "Straw", estimate=None, current=180.0, current_source="Claude Vision",
+    )
+    assert price == 180.0, "a non-answer erased a real price"
+    assert source == "Claude Vision"
+
+
+async def test_a_real_estimate_still_wins_over_a_stored_one():
+    """The keep-on-null rule must not freeze the field — only protect it."""
+    price, source = retail_pricing.resolve_retail(
+        "trucker", "Straw", estimate=210.0, current=180.0, current_source="Claude Vision",
+    )
+    assert (price, source) == (210.0, "Claude Vision")
+
+
+async def test_nothing_stored_and_nothing_offered_is_still_none():
+    """Keeping `current` must not invent a price where there never was one."""
+    assert retail_pricing.resolve_retail(
+        "trucker", "Straw", estimate=None, current=None, current_source=None,
+    ) == (None, None)

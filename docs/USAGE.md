@@ -46,7 +46,8 @@ still removed, and fallback color swatches still appear.
   physical case is built for. A 4th still fits, so Headroom accepts it and
   marks the case **overfull** rather than refusing something that works or
   pretending it's normal. One over is the whole allowance; the 5th is
-  refused. Each case can override the number (e.g. 2 for one you don't want
+  refused. **Beanies get no latitude at all** — 6 is the number you want in a
+  case, so a 7th is simply refused, the same way a capacity you set is exact. Each case can override the number (e.g. 2 for one you don't want
   to cram) — **a capacity you set is exact and gets no overfill latitude**,
   since avoiding the cram is the reason to set it.
   Cases get display IDs like `A-001` (archive) or `D-001` (daily wear),

@@ -12,6 +12,7 @@ to /api/hats/import.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import shutil
 import tempfile
@@ -25,9 +26,13 @@ from headroom.database import get_db
 from headroom.schemas.hat import HAT_DEFAULTS
 from headroom.services import import_service
 from headroom.utils.photo import validate_image_content_type
-from headroom.utils.upload import MAX_PHOTO_BYTES
+from headroom.utils.upload import copy_upload_truncating
 
 logger = logging.getLogger(__name__)
+
+#: Ceiling on ONE shared batch. Mirrors `routes/import_jobs._MAX_TOTAL_UPLOAD_BYTES`
+#: — same operation, same machine, same SD card.
+_MAX_TOTAL_SHARE_BYTES = 750 * 1024 * 1024
 
 router = APIRouter()
 
@@ -53,25 +58,37 @@ async def share_target(
     staging = Path(tempfile.mkdtemp(prefix="share-"))
     try:
         files: list[tuple[str, Path]] = []
+        total = 0
         for idx, f in enumerate(incoming[:import_service.MAX_FILES_PER_JOB]):
             if not validate_image_content_type(f.content_type):
                 logger.info("Share-target rejected non-image: %s", f.content_type)
                 continue
             name = Path(f.filename or "shared.jpg").name
             dest = staging / f"{idx:04d}-{name[:120]}"
-            # Chunked and capped: one chunk in memory at a time, and an
-            # oversize file stops just past the limit so `create_job` records
-            # it as skipped rather than the whole share failing.
+            # The SHARED helper, off the event loop — identical to what
+            # `routes/import_jobs` does, because this is the same operation.
+            # This carried its own copy of the chunk loop until 2.57.2, which
+            # is how `utils/upload.py` came to claim "one definition, used by
+            # all" while four existed. It also ran on the event loop, so a
+            # 20 MB share blocked every other request for the duration.
             with dest.open("wb") as out:
-                written = 0
-                while True:
-                    chunk = await f.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    out.write(chunk)
-                    written += len(chunk)
-                    if written > MAX_PHOTO_BYTES:
-                        break
+                written = await asyncio.to_thread(
+                    copy_upload_truncating, f, out, import_service.MAX_BYTES_PER_FILE
+                )
+            total += written
+            # A per-file cap is not a cap. The share sheet will hand over a
+            # whole camera roll selection, and 100 x 20 MB is 2 GB written to a
+            # Pi's SD card in one unattended request — the disk exhaustion
+            # `utils/disk.py` exists to notice, caused by the app itself.
+            # `routes/import_jobs` has enforced this since it was written;
+            # sharing from the phone was the path without it.
+            if total > _MAX_TOTAL_SHARE_BYTES:
+                logger.warning(
+                    "Share-target batch over %d MB — keeping the first %d file(s)",
+                    _MAX_TOTAL_SHARE_BYTES // 1024 // 1024, len(files),
+                )
+                dest.unlink(missing_ok=True)
+                break
             files.append((name, dest))
 
         if not files:

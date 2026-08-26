@@ -46,8 +46,11 @@ export function HatNotesCard({ hat }: { hat: HatRead }) {
           id={`notes-${hat.id}`}
           aria-label="Your notes"
           className="form-control hr-notes-input"
-          // `rows` is the floor for browsers without `field-sizing`, and it
-          // matches the CSS min-height so the box is the same size either way.
+          // The floor for browsers without `field-sizing`. Deliberately NOT
+          // claimed to equal the CSS min-height: that is a border-box value
+          // under the global `box-sizing`, so it works out a couple of pixels
+          // short of five rows — and per MDN `rows` has no effect at all once
+          // `field-sizing: content` applies, so the two never both decide.
           rows={5}
           value={notes}
           placeholder="Where you got it, who you wore it with, why you kept it…"
@@ -79,8 +82,13 @@ export function HatNotesCard({ hat }: { hat: HatRead }) {
           {save.isError && <span className="text-danger small">Couldn’t save — try again</span>}
         </div>
         <p className="text-muted mb-0" style={{ fontSize: '0.72rem', marginTop: 6 }}>
-          Never overwritten by an analysis or a refresh. Press{' '}
-          <kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>Enter</kbd> to save.
+          Never overwritten by an analysis or a refresh.{' '}
+          {/* Hidden on touch: neither key is on an iPhone or iPad soft
+              keyboard, and this app is phone-first, so on the primary device
+              this sentence was instructions for hardware you don't have. */}
+          <span className="hr-keyboard-hint">
+            Press <kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>Enter</kbd> to save.
+          </span>
         </p>
       </div>
     </div>

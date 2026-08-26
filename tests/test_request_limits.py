@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import pytest
 
-from headroom import limits
-
 pytestmark = pytest.mark.anyio
 
 
@@ -47,7 +45,7 @@ async def test_a_normal_request_is_untouched(anon_client):
     assert resp.status_code != 413
 
 
-async def test_multipart_is_exempt(client):
+async def test_multipart_is_exempt(client, monkeypatch):
     """Upload routes stream to disk under their own, much larger caps.
 
     A JSON-shaped limit applied here would break bulk import; bulk import's
@@ -56,13 +54,21 @@ async def test_multipart_is_exempt(client):
     """
     import io
 
-    monkey_size = limits.DEFAULT_MAX_BODY_BYTES + 1
-    assert monkey_size > limits.DEFAULT_MAX_BODY_BYTES
+    # The body must actually EXCEED the limit, or the exemption is not what
+    # let it through. This test used to assert `x + 1 > x` and then post 4 KB
+    # against an unpatched 2 MB cap — deleting the multipart branch from
+    # `limits.py` broke bulk import in production and left this green.
+    monkeypatch.setenv("HEADROOM_MAX_BODY_BYTES", "1024")
+    payload = b"x" * 8192
+    assert len(payload) > 1024
 
-    files = [("photos", ("a.jpg", io.BytesIO(b"x" * 4096), "image/jpeg"))]
+    files = [("photos", ("a.jpg", io.BytesIO(payload), "image/jpeg"))]
     resp = await client.post("/api/hats/import", files=files)
 
-    assert resp.status_code == 202
+    assert resp.status_code == 202, (
+        "a multipart upload was body-capped — upload routes carry their own, "
+        "much larger caps and stream to disk"
+    )
 
 
 async def test_a_get_is_never_body_checked(anon_client, monkeypatch):

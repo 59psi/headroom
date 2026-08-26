@@ -112,7 +112,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # keeping it here means a source edit doesn't re-download ~40s of ONNX weights.
 ARG REMBG_MODEL=isnet-general-use
 ENV HEADROOM_REMBG_MODEL=${REMBG_MODEL}
-# The weights are ~175 MB, and this layer busts whenever anything above it
+# The weights are ~179 MB, and this layer busts whenever anything above it
 # changes — a dependency bump, the uv pin, the model arg. On a Pi that meant a
 # 175 MB download over a home connection to reproduce a file that had not
 # changed. `U2NET_HOME` points rembg at a BuildKit cache mount; the copy
@@ -188,7 +188,7 @@ COPY --chown=headroom:headroom pyproject.toml /app/
 COPY --chown=headroom:headroom seed /app/seed
 
 WORKDIR /app
-RUN mkdir -p /data/uploads/cases /data/uploads/hats /data/uploads/branding \
+RUN mkdir -p /data/uploads/hats /data/uploads/branding \
     && chown -R headroom:headroom /data /app
 
 USER headroom

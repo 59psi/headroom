@@ -554,7 +554,7 @@ thing standing between the internet and your hats.
   build) or build/push from a faster machine with
   `docker buildx build --platform linux/arm64,linux/amd64 -t <registry>/headroom:latest --push .`
 - The rembg model is pre-downloaded **into the image** at build time so the
-  Pi never fetches it at runtime. Default `isnet-general-use` (~170 MB).
+  Pi never fetches it at runtime. Default `isnet-general-use` (~179 MB).
   `u2netp` (4.7 MB) is far faster — 5–15 s per photo on a Pi 4 — but its low
   capacity loses thin protruding shapes, which on a hat means the BILL: it
   keeps the crown and cuts the brim off. Since analysis moved onto the

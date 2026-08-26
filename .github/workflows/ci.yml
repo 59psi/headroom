@@ -106,7 +106,7 @@ jobs:
       # `cache-to: type=gha,mode=max` was tried and made this job roughly 2.7x
       # SLOWER — 98s before, 204-284s after, including on runs that changed
       # nothing in the image. `mode=max` exports every intermediate layer to
-      # GitHub's cache backend, and this image carries a 171 MB ONNX model plus
+      # GitHub's cache backend, and this image carries a 179 MB ONNX model plus
       # a full venv, so each run shipped on the order of a gigabyte over the
       # network to avoid a build that took 98 seconds. The cache cost more than
       # the thing it was caching.
@@ -117,8 +117,14 @@ jobs:
       # scarce resource is a home internet connection rather than a runner.
       - name: Build image
         run: docker build -t headroom:ci .
-      - name: Container serves /health
+      - name: Container serves /health/ready
         run: |
           docker run -d --name ci -p 8000:8000 headroom:ci
-          timeout 120 bash -c 'until curl -fsS localhost:8000/health; do sleep 2; done' \
-            || { echo "never became healthy"; docker logs ci; exit 1; }
+          # /health/ready, not /health. `/health` is a static 200 that proves
+          # only that the process is listening; /health/ready is what
+          # docker-compose's healthcheck uses and what `restart: unless-stopped`
+          # acts on, and it gates on the disk floor and worker liveness. A
+          # regression that makes readiness 500 or hang shipped green while
+          # this probe watched the endpoint that cannot fail.
+          timeout 120 bash -c 'until curl -fsS localhost:8000/health/ready; do sleep 2; done' \
+            || { echo "never became ready"; docker logs ci; exit 1; }

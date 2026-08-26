@@ -63,7 +63,7 @@ class PasswordChange(BaseModel):
 
 class PasskeyRegisterVerify(BaseModel):
     state_id: str
-    # `dict` rather than a modelled shape: this is the WebAuthn credential the
+    # `dict` rather than a modeled shape: this is the WebAuthn credential the
     # browser produced, and it is handed to the passkey library verbatim.
     # Re-declaring its structure here would be a second, drifting copy of the
     # spec that the library already implements.

@@ -248,3 +248,38 @@ async def test_deleting_a_case_leaves_its_hats_in_the_room(client):
     assert any(h["id"] == hat["id"] for h in detail["loose_hats"]), (
         "the room detail page is the only place a loose hat is browsable"
     )
+
+
+@pytest.mark.anyio
+async def test_deleting_a_case_does_not_file_its_disposed_hats_into_the_room(client):
+    """`Case.hats` includes disposed hats; the room must not.
+
+    Every other occupancy reader excludes them. Filing a disposed hat into a
+    room puts it on a shelf it is not on — invisible until someone restores it,
+    at which point it materializes as loose in a room it never occupied. The
+    audit line must not count them either.
+    """
+    room = (await client.post("/api/rooms", json={"name": "Attic"})).json()
+    case = (await client.post(
+        "/api/cases", json={"case_type": "daily_wear", "room_id": room["id"]}
+    )).json()
+
+    async def add():
+        return (await client.post("/api/hats", json={
+            "condition": "new", "size": "classic", "style": "a_game",
+            "case_id": case["id"],
+        })).json()
+
+    kept, sold = await add(), await add()
+    await client.post(f"/api/hats/{sold['id']}/dispose", json={"via": "sold"})
+
+    await client.delete(f"/api/cases/{case['display_id']}")
+
+    assert (await client.get(f"/api/hats/{kept['id']}")).json()["direct_room_id"] == room["id"]
+    gone = (await client.get(f"/api/hats/{sold['id']}?status=all")).json()
+    assert gone["direct_room_id"] is None, "a disposed hat is not on any shelf"
+
+    detail = (await client.get(f"/api/rooms/{room['id']}")).json()
+    loose_ids = {h["id"] for h in detail["loose_hats"]}
+    assert kept["id"] in loose_ids
+    assert sold["id"] not in loose_ids

@@ -37,7 +37,7 @@ updates:
   # image installs from — worth 490s of an 873s Pi rebuild, and byte-identical
   # across a version bump so a release doesn't bust that layer. Dependabot
   # cannot see that it is derived from `uv.lock`, and treats it as a manifest
-  # in its own right. Two failure modes, both observed here:
+  # in its own right. Three failure modes, all observed here:
   #
   #   1. A PR bumping ONLY requirements.txt — e.g. websockets 16.1.1 -> 17.0.1,
   #      a transitive dependency that is not in pyproject.toml at all. uv.lock
@@ -57,7 +57,7 @@ updates:
   #      correctly declines to move it: pydantic-core can only advance when
   #      pydantic does. Do not "help" by editing the pin.
   #
-  # `tests/test_requirements_export.py` catches both, so these PRs fail rather
+  # `tests/test_requirements_export.py` catches all three, so these PRs fail rather
   # than merging something incoherent. Do NOT "fix" them by regenerating on the
   # Dependabot branch — in case 2 that silently discards half the update.
   #
@@ -71,9 +71,10 @@ updates:
   #
   # There is deliberately NO workflow auto-regenerating the file on these
   # branches. Doing so needs `pull_request_target` with a writable token plus a
-  # checkout of the PR branch, which is the pwn-request pattern the required
+  # checkout of the PR branch, which is the pwn-request pattern the
   # `semgrep-cloud-platform/scan` check rejects (the rules live in the Semgrep
-  # Cloud Platform app, not in this repo) — and suppressing that to save a
+  # Cloud Platform app, not in this repo; the check reports and does not block,
+  # since `main` carries no branch protection) — and suppressing that to save a
   # command is a bad trade.
   - package-ecosystem: uv
     directory: /

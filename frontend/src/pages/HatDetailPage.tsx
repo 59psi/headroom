@@ -243,7 +243,12 @@ export function HatDetailPage() {
         </div>
       )}
 
-      <HatNotesCard hat={data} />
+      {/* Keyed on the hat so navigating between hats REMOUNTS the card.
+          Without this the component instance is reused and only `notes` is
+          reset by its own effect — the mutation's error and "Saved" state are
+          not, so one failed save on hat 12 left a red "Couldn't save" sitting
+          under hats 13, 14 and 15's untouched, empty boxes. */}
+      <HatNotesCard key={data.id} hat={data} />
 
       <div className="card mb-3">
         <div className="card-body">

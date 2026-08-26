@@ -93,3 +93,43 @@ async def test_disposed_hat_frees_case_slot(client):
         json={"condition": "new", "size": "classic", "style": "a_game", "case_id": case["id"]},
     )
     assert resp.status_code == 201
+
+
+@pytest.mark.anyio
+async def test_restoring_into_a_full_case_still_leaves_the_hat_in_the_room(client):
+    """A hat that no longer fits comes back loose IN THE ROOM, not nowhere.
+
+    `undispose_hat` catches the capacity 409 and detaches. Until 2.57.1 it
+    cleared `case_id` without setting `direct_room_id`, so a restored hat that
+    did not fit was reachable only from the Hats list and search — the same bug
+    `delete_case` had, at the second of the two detach sites. Lowering beanie
+    capacity to 6 in 2.57.0 turned this from rare into routine.
+    """
+    room = (await client.post("/api/rooms", json={"name": "Loft"})).json()
+    case = (await client.post(
+        "/api/cases", json={"case_type": "daily_wear", "room_id": room["id"]}
+    )).json()
+
+    async def add_beanie():
+        return await client.post("/api/hats", json={
+            "condition": "new", "size": "classic", "style": "beanie",
+            "case_id": case["id"],
+        })
+
+    hat = (await add_beanie()).json()
+    await client.post(f"/api/hats/{hat['id']}/dispose", json={"via": "sold"})
+
+    # Refill the freed slot and the rest of the case, so the restore cannot fit.
+    for _ in range(6):
+        assert (await add_beanie()).status_code == 201
+
+    restored = await client.delete(f"/api/hats/{hat['id']}/dispose")
+    assert restored.status_code == 200
+    body = restored.json()
+
+    assert body["case_id"] is None, "it genuinely does not fit"
+    assert body["direct_room_id"] == room["id"], "but it is still in that room"
+    assert body["room_id"] == room["id"]
+
+    detail = (await client.get(f"/api/rooms/{room['id']}")).json()
+    assert any(h["id"] == hat["id"] for h in detail["loose_hats"])
