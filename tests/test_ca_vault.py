@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import io
 import tarfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -213,3 +214,67 @@ async def test_no_certificate_at_all_is_not_a_change(db_session):
 
     assert changed is False
     assert expected is None
+
+
+# ---- a leaf cut short by its issuer ------------------------------------ #
+
+
+def _cert(tmp_path, monkeypatch, *, not_after):
+    """Write an intermediate.crt expiring at `not_after` into the fake PKI."""
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    pki = tmp_path / "pki"
+    pki.mkdir(exist_ok=True)
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Caddy Intermediate")])
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name).issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(not_after - timedelta(days=7))
+        .not_valid_after(not_after)
+        .sign(key, hashes.SHA256())
+    )
+    (pki / "intermediate.crt").write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    monkeypatch.setattr(ca_vault, "PKI_DIR", pki)
+    return not_after
+
+
+async def test_a_leaf_matching_its_issuers_expiry_is_clamped(tmp_path, monkeypatch):
+    """Caddy issues both in one operation, so a clamp matches to the second.
+
+    The real case: 820 days requested, ~6 granted, because the intermediate
+    had 6 days left. Renewing produces another 6-day certificate.
+    """
+    expiry = _cert(tmp_path, monkeypatch, not_after=datetime(2026, 8, 30, 5, 31, 42, tzinfo=timezone.utc))
+
+    assert ca_vault.clamped_by_issuer(expiry) is True
+
+
+async def test_a_leaf_expiring_on_its_own_schedule_is_not_clamped(tmp_path, monkeypatch):
+    """An ordinary short cert under a healthy issuer. Different fix entirely."""
+    _cert(tmp_path, monkeypatch, not_after=datetime(2034, 11, 12, tzinfo=timezone.utc))
+
+    leaf = datetime(2026, 8, 30, 5, 31, 42, tzinfo=timezone.utc)
+    assert ca_vault.clamped_by_issuer(leaf) is False
+
+
+async def test_no_intermediate_means_no_claim_either_way(tmp_path, monkeypatch):
+    monkeypatch.setattr(ca_vault, "PKI_DIR", tmp_path / "absent")
+
+    assert ca_vault.issuer_expiry() is None
+    assert ca_vault.clamped_by_issuer(datetime.now(timezone.utc)) is False
+
+
+async def test_an_unreadable_intermediate_never_breaks_the_page(tmp_path, monkeypatch):
+    """This runs inside the settings endpoint; a diagnostic must not 500 it."""
+    pki = tmp_path / "pki"
+    pki.mkdir()
+    (pki / "intermediate.crt").write_text("not a certificate")
+    monkeypatch.setattr(ca_vault, "PKI_DIR", pki)
+
+    assert ca_vault.issuer_expiry() is None

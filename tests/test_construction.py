@@ -191,3 +191,31 @@ async def test_collection_can_be_set_when_adding(client):
 
     assert hat["artist_series"] == "Piña"
     assert hat["model_name"] == "Trenches"
+
+
+async def test_denim_is_offered_as_a_material(client):
+    """Curated materials are suggested before any hat uses one.
+
+    `GET /api/meta/constructions` merges the curated list with whatever is
+    already on record, so a new entry has to show up on an empty collection —
+    that is the whole reason the curated half exists.
+    """
+    options = (await client.get("/api/meta/constructions")).json()
+
+    assert "Denim" in options
+
+
+async def test_denim_canonicalizes_to_the_curated_spelling(client):
+    """Typed casing must snap to the list, or the field splits in two.
+
+    The curated vocabulary is checked FIRST for exactly this: without it,
+    "denim" typed into an empty database would store that spelling and sit
+    permanently at odds with the "Denim" the picker offers.
+    """
+    hat = await _add(client, construction="denim")
+
+    assert hat["construction"] == "Denim"
+    # A material is not a melin technical line, so the derived flags stay off —
+    # a stale flag here would match a HYDRO filter.
+    assert hat["hydro"] is False
+    assert hat["hydrolite"] is False

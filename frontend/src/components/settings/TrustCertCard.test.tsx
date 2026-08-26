@@ -25,7 +25,8 @@ function tls(over: Partial<TlsStatus> = {}): TlsStatus {
     not_before: '2026-08-23T22:44:33Z', not_after: '2026-08-24T10:44:33Z',
     days_remaining: 0.5, expired: false, needs_attention: false,
     hostname_ok: true, ca_sha256: 'CB:08:88:5B:FD:B7:F7:DD', error: null,
-    ca_changed: false, ca_expected_sha256: 'CB:08:88:5B:FD:B7:F7:DD', ...over,
+    ca_changed: false, ca_expected_sha256: 'CB:08:88:5B:FD:B7:F7:DD',
+    issuer_not_after: '2034-11-12T00:00:00Z', clamped_by_issuer: false, ...over,
   };
 }
 
@@ -163,6 +164,28 @@ describe('TrustCertCard', () => {
     expect(screen.getAllByText(/NEW:FF:EE/).length).toBeGreaterThan(0);
     // The cheap way out, if a backup predates the change.
     expect(screen.getByText(/caddy-pki/)).toBeInTheDocument();
+  });
+
+  it('names the intermediate when the leaf was clamped, not merely expiring', async () => {
+    // The real incident: Caddy issued SIX-day certs against a configured 820
+    // because the intermediate had seven days left. The card correctly warned
+    // about a short certificate and then advised restarting Caddy -- which
+    // reissues another six-day cert. Same symptom, opposite fix.
+    mocked.apiFetch.mockResolvedValue('cert');
+    tlsApi.getTlsStatus.mockResolvedValue(tls({
+      needs_attention: true, days_remaining: 4.2,
+      clamped_by_issuer: true, issuer_not_after: '2026-08-30T05:31:42Z',
+    }));
+
+    renderWithProviders(<TrustCertCard />);
+
+    expect(
+      await screen.findByText(/cut short to match the intermediate/i),
+    ).toBeInTheDocument();
+    // The advice that would have looped must NOT be the headline here.
+    expect(screen.getByText(/restarting Caddy alone does not fix this/i)).toBeInTheDocument();
+    // And the reassurance that makes the fix safe to run.
+    expect(screen.getByText(/root is untouched/i)).toBeInTheDocument();
   });
 
   it('stays quiet when the authority is the one the devices trust', async () => {

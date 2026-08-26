@@ -79,11 +79,37 @@ export function TrustCertCard() {
                 {new Date(tls.not_after).toLocaleString()}.{' '}
               </>
             )}
-            Installing this CA will not help until it is reissued. Caddy renews
-            these long before this point, so a certificate this close to expiry
-            means renewal has stopped rather than that expiry is merely
-            approaching. Restart the Caddy container
-            (<code>docker restart headroom-caddy</code>) and reload.
+            Installing this CA will not help until it is reissued.{' '}
+            {tls.clamped_by_issuer ? (
+              <>
+                <strong>
+                  This is not the certificate&rsquo;s own age — it was cut short to
+                  match the intermediate that signs it
+                </strong>
+                , which runs out{' '}
+                {tls.issuer_not_after &&
+                  new Date(tls.issuer_not_after).toLocaleDateString()}
+                . A certificate cannot outlive its issuer, so renewing will just
+                produce another short one; restarting Caddy alone does not fix
+                this. Replace the intermediate — the root is untouched, so no
+                device has to be re-trusted:
+                <br />
+                <code style={{ fontSize: '0.68rem', wordBreak: 'break-all' }}>
+                  docker exec headroom-caddy rm -f
+                  /data/caddy/pki/authorities/local/intermediate.*
+                  &amp;&amp; docker exec headroom-caddy rm -rf
+                  /data/caddy/certificates/local &amp;&amp; docker restart
+                  headroom-caddy
+                </code>
+              </>
+            ) : (
+              <>
+                Caddy renews these long before this point, so a certificate this
+                close to expiry means renewal has stopped rather than that expiry
+                is merely approaching. Restart the Caddy container
+                (<code>docker restart headroom-caddy</code>) and reload.
+              </>
+            )}
           </p>
         )}
         {/* Louder than expiry, and above it, because it is a bigger problem
