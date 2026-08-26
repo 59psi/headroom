@@ -387,6 +387,13 @@ export interface TlsStatus {
    *  being served. Meaningless alone — Caddy gives every root the same name,
    *  so only the pair identifies which is which. */
   ca_expected_sha256: string | null;
+  /** When the intermediate that signs our leaves runs out. */
+  issuer_not_after: string | null;
+  /** The served cert is short because it was CLAMPED to a nearly-expired
+   *  intermediate, not because it is itself old. Identical on the certificate,
+   *  opposite fixes: renewal repairs the first and cannot repair the second,
+   *  since every reissue lands on the same issuer ceiling. */
+  clamped_by_issuer: boolean;
   /** SHA-256 of the CA this install hands out. Caddy names every root the
    *  same, so two installs give two different roots with one name — a browser
    *  matching by name picks the wrong one and reports "invalid signature" on a

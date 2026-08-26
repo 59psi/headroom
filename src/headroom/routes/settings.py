@@ -201,7 +201,14 @@ async def get_tls_status(db: AsyncSession = Depends(get_db)):
     # sight, so the change is reported the hour it happens.
     changed, expected = await ca_vault.check_root(db, status.ca_sha256)
     return TlsStatusRead(
-        **asdict(status), ca_changed=changed, ca_expected_sha256=expected
+        **asdict(status),
+        ca_changed=changed,
+        ca_expected_sha256=expected,
+        # A leaf can be short because it is old, or because its ISSUER is about
+        # to expire and Caddy clamped it. Identical on the certificate,
+        # opposite fixes — and the card used to advise the one that loops.
+        issuer_not_after=ca_vault.issuer_expiry(),
+        clamped_by_issuer=ca_vault.clamped_by_issuer(status.not_after),
     )
 
 

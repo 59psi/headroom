@@ -6,6 +6,51 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.55.0] — 2026-08-26
+
+Found on the real deployment: certificates were being issued for **six days**
+against a configured 820, and the app's own warning pointed at the wrong fix.
+
+### Fixed
+- **A leaf cut short by its issuer is now diagnosed as such.** Caddy was
+  logging `cert lifetime would exceed issuer NotAfter, clamping lifetime` —
+  820 days requested, ~6 granted — because the **intermediate** had seven days
+  left and a certificate cannot outlive what signs it.
+
+  The card correctly reported a certificate about to expire and then advised
+  restarting Caddy, which reissues *another* six-day certificate. Same symptom
+  on the certificate, opposite fix: renewal repairs an old leaf and can never
+  repair a clamped one, because every reissue lands on the same issuer ceiling.
+
+  `ca_vault.clamped_by_issuer()` tells them apart — Caddy mints leaf and issuer
+  in one operation, so a clamped expiry matches the issuer's to the second —
+  reported as `clamped_by_issuer` / `issuer_not_after` on
+  `GET /api/settings/tls`. Settings → Trust this device now names the
+  intermediate and gives the command that actually works, including the note
+  that **the root is untouched so no device has to be re-trusted**.
+
+  The intermediate is read from the exported PKI rather than the served chain,
+  because `getpeercert` returns the leaf alone — the copy 2.54.0 started
+  publishing was already sitting there.
+
+- **The trap that caused it is documented.** Shipping `intermediate_lifetime
+  3000d` in 2.48.0 did **not** fix existing installs and failed silently:
+  Caddy loads the intermediate it already has and only regenerates one when it
+  is expiring, so any box that ran the LAN-HTTPS overlay before that release
+  kept a seven-day intermediate and quietly clamped every leaf. The runbook now
+  has the symptom, the cause and the repair — which must delete the issued
+  leaves along with the intermediate, since they are signed by it and replacing
+  the issuer alone leaves a chain that does not build.
+
+### Added
+- **Denim is offered as a material.** Joins the curated `KNOWN_CONSTRUCTIONS`
+  vocabulary, so it is suggested on an empty collection rather than only after
+  some hat already uses it, and a typed "denim" snaps to that spelling instead
+  of splitting the field in two. No frontend change — `GET /api/meta/constructions`
+  merges curated with in-use, which is what that design is for.
+
+**799 backend + 192 frontend tests pass.**
+
 ## [2.54.0] — 2026-08-24
 
 Closes the gap 2.53.0 recorded and left open: Caddy's certificate authority —

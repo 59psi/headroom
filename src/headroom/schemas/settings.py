@@ -67,6 +67,14 @@ class TlsStatusRead(BaseModel):
     #: being served. Both are shown together or neither means anything — Caddy
     #: gives every root the same NAME, so only these tell them apart.
     ca_expected_sha256: str | None = None
+    #: When the intermediate that signs our leaves runs out.
+    issuer_not_after: datetime | None = None
+    #: True when the served certificate is short because it was CLAMPED to a
+    #: nearly-expired intermediate rather than because it is itself old. The
+    #: two look identical on the certificate and have opposite fixes: renewal
+    #: repairs the first and cannot repair the second, since every reissue
+    #: lands on the same issuer ceiling until the intermediate is replaced.
+    clamped_by_issuer: bool = False
     #: SHA-256 of the CA this install hands out. Published because Caddy names
     #: every root identically, so two installs yield two different roots with
     #: the same name — and only a fingerprint tells them apart.

@@ -99,6 +99,7 @@ KNOWN_CONSTRUCTIONS: tuple[str, ...] = (
     "Brushed Cotton",
     "Canvas",
     "Corduroy",
+    "Denim",
     "Linen",
     "Mesh Trucker",
     "Suede",

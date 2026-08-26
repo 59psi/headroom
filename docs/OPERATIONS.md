@@ -224,6 +224,50 @@ Off-machine safety: periodically copy the newest file out of the backups
 directory (or download via the Settings page) to somewhere that isn't the
 same disk.
 
+### If certificates are far shorter than 820 days
+
+Check the Caddy log for this line:
+
+```
+cert lifetime would exceed issuer NotAfter, clamping lifetime
+```
+
+It means the **intermediate** is nearly out and the leaf was cut down to match
+it — a certificate cannot outlive the thing that signs it. The observed case
+asked for 820 days and got six.
+
+This bites installs that ran the LAN-HTTPS overlay *before* the `Caddyfile`
+landed. Caddy loads the intermediate it already has and only regenerates one
+when it is expiring, so shipping `intermediate_lifetime 3000d` does not
+retroactively lengthen an existing seven-day intermediate. Nothing looks
+broken: HTTPS works, the certificate is valid, it is just tiny — and it will
+keep being tiny after every renewal.
+
+**Restarting Caddy does not fix this.** Every reissue lands on the same issuer
+ceiling. Delete the intermediate *and both issued leaves* — the leaves are
+signed by the intermediate, so replacing the issuer alone leaves a chain that
+does not build, which is worse than the short lifetime:
+
+```bash
+docker exec headroom-caddy rm -f \
+  /data/caddy/pki/authorities/local/intermediate.crt \
+  /data/caddy/pki/authorities/local/intermediate.key
+docker exec headroom-caddy rm -rf /data/caddy/certificates/local
+docker restart headroom-caddy
+```
+
+**The root is deliberately not touched, so no device has to be re-trusted.**
+Verify afterwards that the root fingerprint is unchanged and the leaf is now
+long-lived:
+
+```bash
+echo | openssl s_client -connect 127.0.0.1:443 -servername headroom.local \
+  2>/dev/null | openssl x509 -noout -dates
+```
+
+Settings → Trust this device reports this case directly ("cut short to match
+the intermediate that signs it") rather than telling you to restart Caddy.
+
 ### The certificate authority is in the backup too
 
 If you run the LAN-HTTPS overlay, the archive also contains

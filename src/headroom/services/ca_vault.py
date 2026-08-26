@@ -47,6 +47,7 @@ backups travel somewhere they would rather that key did not.
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -161,6 +162,54 @@ def fingerprint_parts() -> list[str]:
         except OSError:
             parts.append(f"ca/{name}:-")
     return parts
+
+
+#: A leaf whose expiry lands this close to its issuer's was CLAMPED to it
+#: rather than given its configured lifetime. Caddy issues both in the same
+#: operation, so the two timestamps match to the second when clamping happens;
+#: a minute is slack for clock granularity, not a fuzzy match.
+_CLAMP_TOLERANCE_SECONDS = 60
+
+
+def issuer_expiry() -> datetime | None:
+    """When the intermediate that signs our leaves runs out.
+
+    Read from the exported PKI rather than the served chain: `getpeercert`
+    returns the leaf alone, and the intermediate is sitting right here already.
+
+    This exists because of a diagnosis that went wrong on the real deployment.
+    Caddy was issuing SIX-DAY certificates against a configured 820, logging
+    `cert lifetime would exceed issuer NotAfter, clamping lifetime` — the
+    intermediate had a seven-day life and a leaf cannot outlive its issuer.
+    The app correctly reported a certificate about to expire and then advised
+    restarting Caddy, which would have reissued another six-day certificate.
+    Naming the real cause is the difference between a fix and a loop.
+    """
+    path = PKI_DIR / "intermediate.crt"
+    try:
+        if not path.is_file():
+            return None
+        from cryptography import x509  # noqa: PLC0415 — heavy, only needed here
+
+        return x509.load_pem_x509_certificate(path.read_bytes()).not_valid_after_utc
+    except Exception:  # noqa: BLE001 — a diagnostic must never break the page
+        logger.warning("Could not read intermediate expiry", exc_info=True)
+        return None
+
+
+def clamped_by_issuer(leaf_not_after: datetime | None) -> bool:
+    """Is the leaf short because the INTERMEDIATE is nearly out, not itself?
+
+    The two failures look identical on the certificate — a short validity
+    window — and have opposite fixes. A genuinely expiring leaf is repaired by
+    letting Caddy renew it. A clamped one is not repaired by renewal at all:
+    every reissue lands on the same issuer ceiling until the intermediate is
+    replaced.
+    """
+    issuer = issuer_expiry()
+    if leaf_not_after is None or issuer is None:
+        return False
+    return abs((leaf_not_after - issuer).total_seconds()) <= _CLAMP_TOLERANCE_SECONDS
 
 
 async def check_root(db: AsyncSession, current: str | None) -> tuple[bool, str | None]:

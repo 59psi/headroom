@@ -296,7 +296,9 @@ async def test_every_dataclass_field_survives_into_the_schema():
     # needs the database and this dataclass is built by a sync network call.
     # Enumerated so that adding a third is a decision rather than a default
     # nobody notices going out as False.
-    assert schema_fields - dataclass_fields == {"ca_changed", "ca_expected_sha256"}
+    assert schema_fields - dataclass_fields == {
+        "ca_changed", "ca_expected_sha256", "issuer_not_after", "clamped_by_issuer",
+    }
 
 
 async def test_the_route_supplies_every_schema_only_field(client, monkeypatch):
