@@ -38,7 +38,7 @@ jobs:
       # Exact tag on purpose: setup-uv only publishes floating major tags up
       # to v7, so `@v9` does not resolve. Dependabot's github-actions ecosystem
       # keeps this current.
-      - uses: astral-sh/setup-uv@v10.0.0
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
       # No python-version here on purpose: .python-version pins it, so CI runs
