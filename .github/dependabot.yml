@@ -49,6 +49,14 @@ updates:
   #      not the other. The image would have installed a different dependency
   #      set than the tests ran against.
   #
+  #   3. The sharpest version of (1): a PR proposing a transitive version that
+  #      is IMPOSSIBLE. Observed with pydantic-core 2.46.4 -> 2.48.0, where
+  #      pydantic 2.13.4 requires `pydantic-core==2.46.4` *exactly* — so the
+  #      file would have asked pip for a set no resolver can satisfy, and the
+  #      Docker build failed alongside the export test. `uv lock --upgrade`
+  #      correctly declines to move it: pydantic-core can only advance when
+  #      pydantic does. Do not "help" by editing the pin.
+  #
   # `tests/test_requirements_export.py` catches both, so these PRs fail rather
   # than merging something incoherent. Do NOT "fix" them by regenerating on the
   # Dependabot branch — in case 2 that silently discards half the update.

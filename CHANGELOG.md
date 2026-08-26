@@ -6,6 +6,24 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.57.1] — 2026-08-26
+
+### Changed
+- `uvicorn` 0.52.3 → 0.52.4, as one coherent `uv lock --upgrade`.
+
+### Documentation
+- **A third Dependabot failure mode recorded, and it is the sharpest one:** a PR
+  proposing a transitive version that is *impossible*. Observed with
+  `pydantic-core` 2.46.4 → 2.48.0 — `pydantic` 2.13.4 requires
+  `pydantic-core==2.46.4` **exactly**, so the PR would have written into
+  `requirements.txt` a set no resolver can satisfy. That is why the Docker
+  build failed alongside `tests/test_requirements_export.py`, rather than the
+  export test alone.
+
+  `uv lock --upgrade` correctly declines to move it: `pydantic-core` can only
+  advance when `pydantic` does. The note in `.github/dependabot.yml` now says
+  so, and says not to "help" by editing the pin.
+
 ## [2.57.0] — 2026-08-26
 
 A whole-codebase two-axis review (`/code-review everything`, 12 agents across
