@@ -150,6 +150,7 @@ async def _upload_status(db: AsyncSession) -> BackupUploadStatus:
         last_upload_at=h.last_upload_at,
         last_upload_ok=h.last_upload_ok,
         last_upload_error=h.last_upload_error,
+        last_upload_name=h.last_upload_name,
         upload_successes=h.upload_successes,
         upload_failures=h.upload_failures,
     )

@@ -23,9 +23,13 @@ pytestmark = pytest.mark.anyio
 
 @pytest.fixture(autouse=True)
 def _fresh_health():
+    # The load-once flag has to be reset alongside the record it guards, or a
+    # test that already triggered a load leaves every later test unable to.
     backup_service._health = backup_service.BackupHealth()
+    backup_service._upload_state_loaded = False
     yield
     backup_service._health = backup_service.BackupHealth()
+    backup_service._upload_state_loaded = False
 
 
 # ---- the validator ---------------------------------------------------- #
@@ -405,6 +409,86 @@ async def test_a_successful_upload_is_recorded(tmp_path):
     assert h.upload_successes == 1
     assert h.last_upload_ok is True
     assert h.last_upload_error is None
+    # WHICH archive, not merely that something happened.
+    assert h.last_upload_name == "b.tar.gz"
+
+
+# ---- the upload record has to outlive the process ---------------------- #
+#
+# Reported from the real deployment: the card read "nothing has been uploaded
+# yet this run" permanently, while the Pi's log showed successful nightly
+# uploads. The record was process-local, the scheduler checks once a day,
+# skips the startup backup when a recent one exists, and is change-gated — so
+# after any restart the card spent up to a full day asserting that nothing had
+# ever left the box. A backup report that cannot be trusted when it says
+# "never" is worse than no report at all.
+
+
+async def _simulate_restart():
+    """Everything in memory goes; only what is on disk survives."""
+    backup_service._health = backup_service.BackupHealth()
+    backup_service._upload_state_loaded = False
+
+
+async def test_upload_record_survives_a_restart(tmp_path, monkeypatch):
+    monkeypatch.setattr(backup_service.settings, "upload_dir", tmp_path / "data" / "uploads")
+    payload = tmp_path / "headroom-backup-2026-08-26T05-41-08Z.tar.gz"
+    payload.write_bytes(b"x")
+
+    await backup_service._run_upload_hook(payload, argv=["/usr/bin/true"])
+    assert backup_service.health().last_upload_name == payload.name
+
+    await _simulate_restart()
+
+    h = backup_service.health()
+    assert h.last_upload_at is not None, "a restart must not erase a real upload"
+    assert h.last_upload_ok is True
+    assert h.last_upload_name == payload.name
+    assert h.upload_successes == 1
+
+
+async def test_a_failed_upload_survives_a_restart_too(tmp_path, monkeypatch):
+    """A stale success must never outlive the failure that followed it."""
+    monkeypatch.setattr(backup_service.settings, "upload_dir", tmp_path / "data" / "uploads")
+    payload = tmp_path / "b.tar.gz"
+    payload.write_bytes(b"x")
+
+    await backup_service._run_upload_hook(payload, argv=["/usr/bin/true"])
+    await backup_service._run_upload_hook(payload, argv=["/usr/bin/false"])
+
+    await _simulate_restart()
+
+    h = backup_service.health()
+    assert h.last_upload_ok is False
+    assert h.last_upload_error
+    assert h.upload_successes == 1 and h.upload_failures == 1
+
+
+async def test_never_uploaded_stays_never(tmp_path, monkeypatch):
+    """With no record on disk, "never" is the truth and must be reported."""
+    monkeypatch.setattr(backup_service.settings, "upload_dir", tmp_path / "data" / "uploads")
+    await _simulate_restart()
+
+    h = backup_service.health()
+    assert h.last_upload_at is None
+    assert h.last_upload_name is None
+    assert h.upload_successes == 0
+
+
+async def test_a_corrupt_upload_record_is_not_read_as_never(tmp_path, monkeypatch):
+    """A torn file is not evidence of anything — it must not assert 'never'.
+
+    It is left reporting nothing rather than a fabricated absence, and the next
+    upload rewrites it. The write is atomic (tmp + rename) precisely so this
+    stays a theoretical case.
+    """
+    monkeypatch.setattr(backup_service.settings, "upload_dir", tmp_path / "data" / "uploads")
+    backup_service._upload_state_path().write_text("{not json")
+
+    await _simulate_restart()
+
+    h = backup_service.health()  # must not raise
+    assert h.last_upload_at is None
 
 
 # ---- explaining a failure whose cause is elsewhere --------------------- #

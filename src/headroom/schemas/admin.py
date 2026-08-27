@@ -107,9 +107,16 @@ class BackupUploadStatus(BaseModel):
     #: in the base image, and a missing one fails every unattended upload while
     #: the card would otherwise still read "configured".
     binary_available: bool | None = None
+    #: These four survive a restart (persisted beside the backups). They answer
+    #: "does a copy of my data exist off this card, and how old is it" — a fact
+    #: about the world, not about this process. None here means genuinely never,
+    #: not merely "not since the last restart".
     last_upload_at: datetime | None = None
     last_upload_ok: bool | None = None
     last_upload_error: str | None = None
+    #: The archive the last attempt shipped. "It ran" is not actionable; the
+    #: file and the timestamp are.
+    last_upload_name: str | None = None
     upload_successes: int = 0
     upload_failures: int = 0
 

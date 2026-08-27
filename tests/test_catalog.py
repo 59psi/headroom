@@ -601,7 +601,7 @@ async def test_catalog_stats_counts_the_catalog_not_a_page_of_autocomplete(
         ))
     await db_session.commit()
 
-    # The autocomplete feed still caps — that is its job.
+    # The service helper still caps by default — that is its job.
     assert len(await catalog_service.catalog_options(db_session)) == 25
     # The stats must not.
     stats = await catalog_service.catalog_stats(db_session)
@@ -611,6 +611,42 @@ async def test_catalog_stats_counts_the_catalog_not_a_page_of_autocomplete(
 
     body = (await client.get("/api/admin/colorways/status")).json()
     assert body["models"] == 40
+
+
+async def test_the_colorway_picker_can_reach_the_whole_catalog(client, db_session):
+    """Reported as "the catalogue is missing so many colorways" — it wasn't.
+
+    `GET /api/meta/colorways` called `catalog_options` without a limit, so it
+    silently took the default of 25. The live catalog held 188 colorways and
+    the picker offered 25 of them. Typing could not reach the rest either: the
+    page fetches this feed WITHOUT `q` and the combobox filters client-side,
+    so everything past the cap was unreachable however specific the query.
+
+    A truncated list is invisible — it looks exactly like a small catalog,
+    which is how this survived alongside a fix for the very same confusion in
+    the stats card. Hence a test: the failure cannot be seen, only asserted.
+    """
+    from headroom.models.catalog import ColorwayEntry
+
+    for i in range(40):
+        db_session.add(ColorwayEntry(
+            title=f"Odysea Hydro - Shade{i:02d}", model_name="Odysea Hydro",
+            colorway=f"Shade{i:02d}", category="odysea", listing_count=1,
+        ))
+    await db_session.commit()
+
+    models = (await client.get("/api/meta/colorways")).json()
+    assert len(models) >= 1
+
+    colorways = (
+        await client.get("/api/meta/colorways", params={"model": "Odysea Hydro"})
+    ).json()
+    assert len(colorways) == 40, (
+        f"picker saw {len(colorways)} of 40 — capped again"
+    )
+    # The tail specifically: the entries a cap removes are the ones nobody
+    # notices are gone.
+    assert any(c["value"] == "Shade39" for c in colorways), colorways[:3]
 
 
 async def test_the_preview_predicts_a_multi_line_import_exactly(client):
