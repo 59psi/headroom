@@ -39,6 +39,17 @@ def _no_pacing(monkeypatch):
     monkeypatch.setattr(repricing, "repricing_delay_seconds", lambda: 0.0)
 
 
+def _factory(session):
+    """Hand `reprice_once` the test session without closing it."""
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _f():
+        yield session
+
+    return _f
+
+
 def _hat(**over) -> Hat:
     fields = dict(
         brand="melin", model_name="Odysea Hydro", style="cap",
@@ -195,3 +206,119 @@ async def test_repricing_is_independent_of_analysis(db_session):
     eligible = await repricing._eligible_hats(db_session)
     assert len(eligible) == 1
     assert eligible[0].analysis_status == "fallback"
+
+
+# ---- what the adversarial review caught -------------------------------- #
+
+
+async def test_a_manual_run_does_not_clear_a_standing_scheduler_failure(
+    client, db_session, monkeypatch
+):
+    """Clicking a button proves the code works, not that the loop is alive.
+
+    `record_success` used to zero `consecutive_failures` and clear
+    `last_error` unconditionally, so a sweep failing nightly for a month read
+    "swept just now, 0 failures" after one press — hiding exactly the dead-task
+    condition the health record exists to expose.
+    """
+    from headroom.services import hat_analysis_pipeline
+
+    db_session.add(_hat(resale_price=10.0))
+    await db_session.commit()
+
+    async def fake_refresh(hat):
+        hat.resale_price = 55.0
+
+    monkeypatch.setattr(hat_analysis_pipeline, "refresh_melin_resale", fake_refresh)
+
+    repricing.health().record_failure("MelinRecapError: 429 Too Many Requests")
+    repricing.health().record_failure("MelinRecapError: 429 Too Many Requests")
+
+    await client.post("/api/admin/repricing/run")
+
+    after = (await client.get("/api/admin/repricing")).json()
+    assert after["consecutive_failures"] == 2, after
+    assert "429" in (after["last_error"] or ""), after
+    # ...while still reporting that the manual sweep itself worked.
+    assert after["last_repriced"] == 1
+
+
+async def test_a_scheduled_sweep_does_clear_the_alarm(db_session, monkeypatch):
+    """The scheduler recovering is the one thing that means recovery."""
+    repricing.health().record_failure("boom")
+    repricing.health().record_success(3, 10, scheduled=True)
+
+    assert repricing.health().consecutive_failures == 0
+    assert repricing.health().last_error is None
+
+
+async def test_a_failing_manual_run_is_recorded_not_swallowed(
+    client, db_session, monkeypatch
+):
+    """A manual sweep that fails forever must not leave the last success showing."""
+    async def boom(session_factory=None, limit=None):
+        raise RuntimeError("marketplace down")
+
+    monkeypatch.setattr(repricing, "reprice_once", boom)
+
+    # The handler records and then RE-RAISES, so the traceback still reaches
+    # the container log (CLAUDE.md: "Starlette re-raises"). Under
+    # ASGITransport that surfaces here rather than as a 500 — the contract
+    # being pinned is "recorded, then raised", not the status code.
+    with pytest.raises(RuntimeError, match="marketplace down"):
+        await client.post("/api/admin/repricing/run")
+
+    after = repricing.health()
+    assert after.consecutive_failures == 1
+    assert "marketplace down" in (after.last_error or "")
+
+
+async def test_unpriceable_hats_do_not_starve_the_queue(db_session, monkeypatch):
+    """The ordering must ADVANCE, or a capped sweep never reaches the tail.
+
+    `refresh_melin_resale` sets `resale_checked_at` only when it finds
+    listings — it returns early for a non-melin brand, an API error, or an
+    empty result. Ordered `nulls_first`, those hats keep a NULL timestamp
+    forever and permanently own the head of the queue, so every capped sweep
+    re-visits the same never-priceable rows and never gets past them.
+    """
+    from headroom.services import hat_analysis_pipeline
+
+    for i in range(3):
+        db_session.add(_hat(model_name=f"Dud{i}", brand="not-melin"))
+    await db_session.commit()
+
+    async def never_prices(hat):
+        return  # exactly what a non-melin brand or an empty result does
+
+    monkeypatch.setattr(hat_analysis_pipeline, "refresh_melin_resale", never_prices)
+
+    first = [h.model_name for h in await repricing._eligible_hats(db_session, limit=2)]
+    await repricing.reprice_once(session_factory=_factory(db_session), limit=2)
+    db_session.expire_all()
+    second = [h.model_name for h in await repricing._eligible_hats(db_session, limit=2)]
+
+    assert first != second, (
+        f"the queue did not advance: swept {first}, next sweep offers {second}"
+    )
+
+
+async def test_a_manual_run_is_bounded_and_says_what_is_left(
+    client, db_session, monkeypatch
+):
+    """Uncapped this is a four-minute HTTP request — a dead spinner on a phone."""
+    from headroom.services import hat_analysis_pipeline
+
+    monkeypatch.setattr(repricing, "MANUAL_SWEEP_LIMIT", 2)
+    for i in range(5):
+        db_session.add(_hat(model_name=f"H{i}"))
+    await db_session.commit()
+
+    async def fake_refresh(hat):
+        return
+
+    monkeypatch.setattr(hat_analysis_pipeline, "refresh_melin_resale", fake_refresh)
+
+    body = (await client.post("/api/admin/repricing/run")).json()
+    assert body["considered"] == 2, body
+    assert body["remaining"] == 5, body  # a COUNT, not len() of the capped list

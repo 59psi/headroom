@@ -196,8 +196,10 @@ export function reanalyzeAll() {
 }
 
 /** What is actually in the colorway catalog — NOT the autocomplete feed.
- *  `/api/meta/colorways` caps at its own default limit, so reading its length
- *  as "models known" reported 25 regardless of the real total. */
+ *  Reading `len(/api/meta/colorways)` as "models known" once reported 25
+ *  regardless of the real total. That feed is no longer capped at 25, but it
+ *  is still a bounded autocomplete list and still the wrong thing to count:
+ *  a COUNT is the only honest answer to "how big is the catalog". */
 export function getColorwayStatus() {
   return apiFetch<{ entries: number; models: number; colorways: number; last_harvest: string | null }>(
     '/api/admin/colorways/status',
@@ -334,7 +336,7 @@ export function getRepricing() {
 /** Sweep now. Available even when the scheduler is off — turning the
  *  background task off shouldn't remove the ability to refresh on purpose. */
 export function runRepricing() {
-  return apiFetch<{ repriced: number; considered: number }>(
+  return apiFetch<{ repriced: number; considered: number; remaining: number }>(
     '/api/admin/repricing/run', { method: 'POST' },
   );
 }

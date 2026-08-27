@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getRepricing, runRepricing } from '../../api/settings';
+import { invalidateHatViews } from '../../lib/invalidate';
 
 /**
  * Periodic re-pricing.
@@ -20,9 +21,10 @@ export function RepricingCard() {
     mutationFn: runRepricing,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['admin', 'repricing'] });
-      // Prices changed underneath every hat view.
-      qc.invalidateQueries({ queryKey: ['hats'] });
-      qc.invalidateQueries({ queryKey: ['hat'] });
+      // Prices changed underneath every hat view. Hand-rolling ['hats']/['hat']
+      // here missed the case, room and valuation keys that carry hat data —
+      // CLAUDE.md names this helper as the single place that knows them all.
+      invalidateHatViews(qc);
     },
   });
 
@@ -75,6 +77,9 @@ export function RepricingCard() {
         {run.isSuccess && (
           <p className="text-secondary small mb-0 mt-2">
             {run.data.repriced} of {run.data.considered} hats changed price.
+            {run.data.remaining > run.data.considered && (
+              <> {run.data.remaining} still to sweep &mdash; press again to continue.</>
+            )}
           </p>
         )}
         {run.isError && (

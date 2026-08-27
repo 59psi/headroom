@@ -193,13 +193,29 @@ async def catalog_stats(db: AsyncSession) -> dict:
 async def catalog_options(
     db: AsyncSession, q: str | None = None, model: str | None = None, limit: int = 25
 ) -> list[dict]:
-    """Autocomplete: distinct models, or colorways for a given model."""
+    """Autocomplete: distinct models, or colorways for a given model.
+
+    Model matching is TOKEN CONTAINMENT, not equality, for the same reason
+    `_match_score` uses `MODEL_CONTAINED`: a hat's `model_name` comes from
+    Claude reading a PHOTO, which cannot show the sub-line, so it lands on the
+    family (`odysea hydro`) while the catalog holds the product harvested from
+    a listing title (`Odysea Packable Hydro`). Under equality those hats got
+    ZERO colorways at any limit — the picker looked empty and the catalog
+    looked incomplete, which is exactly how this was reported.
+
+    Asymmetric on purpose, matching the matcher: every token of the requested
+    model must appear in the catalog entry, so `odysea hydro` reaches
+    `Odysea Packable Hydro`, but a request for the more specific name does not
+    pull in the whole family.
+    """
     if model:
+        tokens = [t for t in _model_tokens(model) if t]
         stmt = (
             select(ColorwayEntry.colorway, func.max(ColorwayEntry.listing_count))
             .where(
-                func.lower(ColorwayEntry.model_name) == model.strip().lower(),
                 ColorwayEntry.colorway.is_not(None),
+                *[ColorwayEntry.model_name.ilike(f"%{token}%") for token in tokens]
+                or [func.lower(ColorwayEntry.model_name) == model.strip().lower()],
             )
             .group_by(ColorwayEntry.colorway)
             .order_by(func.max(ColorwayEntry.listing_count).desc())

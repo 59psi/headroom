@@ -22,16 +22,34 @@ async def get_repricing():
 async def run_repricing(request: Request):
     """Sweep now, rather than waiting for the next scheduled run.
 
-    Runs inline: the caller asked for it and wants the number back. A whole
-    sweep paces itself between hats, so this is deliberately available even
-    when the scheduler is disabled — turning the background task off should
-    not remove the ability to refresh prices on purpose.
+    BOUNDED to `MANUAL_SWEEP_LIMIT`. The sweep runs inline because the caller
+    wants the number back, and uncapped that is a multi-minute HTTP request —
+    a dead spinner on a phone, then a proxy timeout, after which the result is
+    thrown away and nothing is recorded. Ordering is stalest-first, so pressing
+    the button again continues where this stopped; `remaining` tells the card
+    whether there is more.
+
+    Deliberately available even when the scheduler is disabled: turning the
+    background task off should not remove the ability to refresh on purpose.
 
     The session factory comes off `app.state`, the seam tests swap, rather than
     from the module-level one.
     """
-    repriced, considered = await repricing.reprice_once(
-        session_factory=request.app.state.session_factory
+    factory = request.app.state.session_factory
+    try:
+        repriced, considered = await repricing.reprice_once(
+            session_factory=factory, limit=repricing.MANUAL_SWEEP_LIMIT
+        )
+    except Exception as exc:  # noqa: BLE001 — a failed run must be RECORDED, then raised
+        # Without this a manual sweep could fail forever while the card went on
+        # showing the last success, which is the same blindness the health
+        # record exists to remove.
+        repricing.health().record_failure(exc)
+        raise
+    # scheduled=False: a button press proves the code works, not that the
+    # background loop is alive, so it must not clear a standing failure.
+    repricing.health().record_success(repriced, considered, scheduled=False)
+    remaining = await repricing.count_eligible(factory)
+    return RepricingRunResult(
+        repriced=repriced, considered=considered, remaining=remaining
     )
-    repricing.health().record_success(repriced, considered)
-    return RepricingRunResult(repriced=repriced, considered=considered)

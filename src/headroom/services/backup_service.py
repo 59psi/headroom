@@ -87,6 +87,15 @@ class BackupHealth:
     upload_failures: int = 0
 
     def record_upload(self, ok: bool, error: str | None = None, name: str | None = None) -> None:
+        # Hydrate FIRST. This is the write path, and it does not go through
+        # `health()` — the scheduled loop and `_run_upload_hook` both touch the
+        # module global directly. Without this the first upload after a restart
+        # increments an EMPTY record and overwrites the file with successes=1,
+        # wiping the history it exists to keep. That is the very failure this
+        # record was added to fix, reintroduced one layer down: the reader was
+        # hydrated and the writer was not, so every test that read before
+        # writing passed while the unattended nightly path silently reset.
+        _ensure_upload_state_loaded(self)
         self.last_upload_at = datetime.now(timezone.utc)
         self.last_upload_ok = ok
         self.last_upload_error = (error or None) if not ok else None
@@ -475,7 +484,16 @@ def _upload_state_path() -> Path:
 
 
 def _write_upload_state_sync(h: BackupHealth) -> None:
-    """Persist the upload record. Never raises — reporting must not break a backup."""
+    """Persist the upload record. Never raises — reporting must not break a backup.
+
+    Called straight from `record_upload` rather than through
+    `asyncio.to_thread` like `_write_fingerprint_sync`. That asymmetry is
+    deliberate: the fingerprint walks the whole uploads tree before writing,
+    while this is a two-hundred-byte buffered write and a rename, once per
+    upload — at most once a day. Making it async would turn `record_upload`
+    into a coroutine and ripple through four call sites to move microseconds
+    off the event loop.
+    """
     payload = {
         "at": h.last_upload_at.isoformat() if h.last_upload_at else None,
         "ok": h.last_upload_ok,
@@ -510,28 +528,35 @@ def _read_upload_state_sync() -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-def _ensure_upload_state_loaded() -> None:
-    """Restore the persisted upload record into `_health`, once per process."""
+def _ensure_upload_state_loaded(target: BackupHealth | None = None) -> None:
+    """Restore the persisted upload record, once per process.
+
+    `target` is explicit so the WRITE path can hydrate the object it is about
+    to mutate. Hydrating the module singleton while `record_upload` incremented
+    `self` would be correct only for as long as those are the same object, and
+    the bug this guards against was exactly that kind of near-miss.
+    """
     global _upload_state_loaded
     if _upload_state_loaded:
         return
     _upload_state_loaded = True  # set first: a failed read must not retry every call
+    health_record = target if target is not None else _health
     data = _read_upload_state_sync()
     if not data:
         return
     raw_at = data.get("at")
     if raw_at:
         try:
-            _health.last_upload_at = datetime.fromisoformat(raw_at)
+            health_record.last_upload_at = datetime.fromisoformat(raw_at)
         except (TypeError, ValueError):
-            _health.last_upload_at = None
-    _health.last_upload_ok = data.get("ok")
-    _health.last_upload_name = data.get("name")
-    _health.last_upload_error = data.get("error")
+            health_record.last_upload_at = None
+    health_record.last_upload_ok = data.get("ok")
+    health_record.last_upload_name = data.get("name")
+    health_record.last_upload_error = data.get("error")
     for attr, key in (("upload_successes", "successes"), ("upload_failures", "failures")):
         value = data.get(key)
         if isinstance(value, int) and value >= 0:
-            setattr(_health, attr, value)
+            setattr(health_record, attr, value)
 
 
 def _seconds_since_newest_backup_sync() -> float | None:

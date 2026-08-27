@@ -6,6 +6,58 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.65.0] — 2026-08-27
+
+Everything here came out of an adversarial review of 2.61.0–2.64.0. Two of the
+findings were bugs that defeated the fixes they shipped inside.
+
+### Fixed
+- **The off-site backup counters were still being wiped on every restart —
+  by the very release that claimed to fix it.** The persisted record was
+  restored only when something *read* it, but the write path never reads: the
+  scheduler and the upload hook both touch the record directly. So the first
+  nightly upload after a reboot incremented an empty record and overwrote the
+  file with `1`, discarding the history.
+
+  Every test passed because each one happened to read before writing. The
+  unattended sequence — boot, then upload, with nobody having opened the page —
+  was the one nobody exercised. There is now a test that deliberately does not
+  read first.
+
+- **Re-pricing: pressing "Re-price now" could hide a dead scheduler.** A manual
+  run cleared the error and zeroed the failure count, so a sweep that had been
+  failing nightly for a month would read "swept just now, 0 failures" after one
+  click. A button press proves the code works; it proves nothing about the
+  background loop, and only a scheduled success now clears the alarm. A manual
+  run that *fails* is recorded too, instead of leaving the last success on
+  screen.
+
+- **Re-pricing could never get past hats it cannot price.** Hats with no
+  listings — or a non-melin brand — kept an empty "last checked" timestamp, and
+  since the sweep does the least-recently-checked first, those hats owned the
+  front of the queue permanently. A capped sweep re-visited the same rows
+  forever and never reached the rest. Every attempt is now timestamped, whether
+  or not it found a price.
+
+- **"Re-price now" no longer blocks for minutes.** It was an uncapped inline
+  request — roughly four minutes for a full collection, which on a phone is a
+  dead spinner followed by a timeout, after which the result was thrown away.
+  It now sweeps a bounded batch, stalest first, and tells you how many remain
+  so you can press again.
+
+- **Two sweeps can no longer run at once.** The scheduled loop and the button
+  were separate doors into the same few hundred calls against a public API the
+  code otherwise takes care to pace.
+
+- **The colorway picker still showed nothing for many hats.** The 25-item cap
+  was fixed in 2.62.0, but the lookup still demanded an exact model-name match.
+  A hat's model name comes from a photo, which cannot show the sub-line, so it
+  lands on the family (`odysea hydro`) while the catalog holds the product
+  (`Odysea Packable Hydro`) — and those hats saw *zero* colorways at any limit.
+  Matching already solved this for purchases; the picker now does the same.
+
+- British spellings of "catalog" in the changelog, docs and tests.
+
 ## [2.64.0] — 2026-08-27
 
 ### Added
@@ -63,7 +115,7 @@ All notable changes are documented here. This project follows
 ## [2.62.0] — 2026-08-27
 
 ### Fixed
-- **The colorway picker showed 25 of 188 colorways.** The catalogue was not
+- **The colorway picker showed 25 of 188 colorways.** The catalog was not
   missing anything — 550 entries across 160 models, harvested the same day.
   `GET /api/meta/colorways` called its helper without a limit and silently took
   the default of 25. Typing couldn't reach the rest either: the edit page
@@ -71,10 +123,10 @@ All notable changes are documented here. This project follows
   the cap was unreachable however specific you were.
 
   This is the second time that same cap has been mistaken for a small
-  catalogue — the first was the Settings card reading the feed's length, fixed
+  catalog — the first was the Settings card reading the feed's length, fixed
   earlier by a dedicated status endpoint. **A truncated list is invisible: it
-  looks exactly like a short catalogue.** The feed now takes an explicit limit
-  defaulting high enough to serve the whole catalogue, and a test asserts the
+  looks exactly like a short catalog.** The feed now takes an explicit limit
+  defaulting high enough to serve the whole catalog, and a test asserts the
   *tail* is reachable, because the entries a cap removes are the ones nobody
   notices are gone.
 
@@ -2348,7 +2400,7 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
   rather than guessed — The Shore from 953 live marketplace listings
   (`The Shore Islands Hydro`), Aviator from the order history
   (`Aviator Scout Thermal — Heather Grey / Black`, order #1318309). Aviator is
-  seasonal, which is why the resale market carries none and no catalogue sweep
+  seasonal, which is why the resale market carries none and no catalog sweep
   would ever have found it. Neither is mapped into `STYLE_TO_CATEGORY`: the
   marketplace has no such category, so mapping them would sweep an empty one and
   return no comps, while leaving them out lets resale lookups fall through to
@@ -2368,7 +2420,7 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
 ## [2.25.0] — 2026-08-19
 
 ### Fixed
-- **"25 models known" was never the catalogue's size.** The Settings card read
+- **"25 models known" was never the catalog's size.** The Settings card read
   `len(GET /api/meta/colorways)` — the *autocomplete* feed, which caps at its
   own default `limit=25`. The figure would have said 25 with 1,000 models
   harvested, which is indistinguishable from a harvest that found 25.
@@ -2379,7 +2431,7 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
   `query_listings` raises on any non-200 — a 429, a 502, a dropped connection —
   and the only handler was at the very top. The sweep is sequential and commits
   per page, and the endpoint had already returned `202 started`, so a single
-  blip left a silently partial catalogue that looked exactly like a complete
+  blip left a silently partial catalog that looked exactly like a complete
   one. Pages now retry with backoff, each category is isolated, and any that
   still fails is reported in `failed_categories` instead of vanishing into a
   log line. For scale: a full sweep is **988 listings across 146 models**.
