@@ -343,3 +343,7 @@ class RepricingStatus(BaseModel):
 class RepricingRunResult(BaseModel):
     repriced: int
     considered: int
+    #: Hats still eligible for a sweep. A manual run is bounded, so without
+    #: this the card cannot say whether pressing the button again would do
+    #: anything — and "50 of 234" reads like a failure rather than a page.
+    remaining: int = 0

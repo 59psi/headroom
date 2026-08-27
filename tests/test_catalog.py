@@ -614,7 +614,7 @@ async def test_catalog_stats_counts_the_catalog_not_a_page_of_autocomplete(
 
 
 async def test_the_colorway_picker_can_reach_the_whole_catalog(client, db_session):
-    """Reported as "the catalogue is missing so many colorways" — it wasn't.
+    """Reported as "the catalog is missing so many colorways" — it wasn't.
 
     `GET /api/meta/colorways` called `catalog_options` without a limit, so it
     silently took the default of 25. The live catalog held 188 colorways and
@@ -647,6 +647,41 @@ async def test_the_colorway_picker_can_reach_the_whole_catalog(client, db_sessio
     # The tail specifically: the entries a cap removes are the ones nobody
     # notices are gone.
     assert any(c["value"] == "Shade39" for c in colorways), colorways[:3]
+
+
+async def test_the_picker_reaches_a_family_named_hat(client, db_session):
+    """A hat named for the FAMILY must still see the product's colorways.
+
+    `model_name` comes from Claude reading a photo, which cannot show the
+    sub-line, so it lands on `odysea hydro` while the harvested catalog holds
+    `Odysea Packable Hydro`. Under exact equality those hats saw ZERO
+    colorways at any limit — the picker looked empty and the catalog looked
+    incomplete, which is how "the Colorway Catalog is missing so many
+    colorways" was actually experienced.
+
+    `_match_score` already solved this for purchases with MODEL_CONTAINED;
+    the picker had nothing.
+    """
+    from headroom.models.catalog import ColorwayEntry
+
+    db_session.add(ColorwayEntry(
+        title="Odysea Packable Hydro - Hickory Denim",
+        model_name="Odysea Packable Hydro", colorway="Hickory Denim",
+        category="odysea", listing_count=3,
+    ))
+    db_session.add(ColorwayEntry(
+        title="Trenches Icon Hydro - Camo", model_name="Trenches Icon Hydro",
+        colorway="Camo", category="trenches", listing_count=2,
+    ))
+    await db_session.commit()
+
+    got = (await client.get(
+        "/api/meta/colorways", params={"model": "odysea hydro"}
+    )).json()
+    values = [c["value"] for c in got]
+    assert "Hickory Denim" in values, values
+    # Asymmetric: a different family must NOT be dragged in by a shared token.
+    assert "Camo" not in values, values
 
 
 async def test_the_preview_predicts_a_multi_line_import_exactly(client):

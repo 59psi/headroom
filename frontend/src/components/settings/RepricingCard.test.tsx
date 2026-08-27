@@ -45,7 +45,7 @@ describe('RepricingCard', () => {
     // refresh prices on purpose.
     const user = userEvent.setup();
     mocked.getRepricing.mockResolvedValue(status({ enabled: false }));
-    mocked.runRepricing.mockResolvedValue({ repriced: 12, considered: 234 });
+    mocked.runRepricing.mockResolvedValue({ repriced: 12, considered: 50, remaining: 234 });
 
     renderWithProviders(<RepricingCard />);
     expect(await screen.findByText(/Scheduled sweeps off/i)).toBeInTheDocument();
@@ -54,8 +54,10 @@ describe('RepricingCard', () => {
 
     expect(mocked.runRepricing).toHaveBeenCalledTimes(1);
     expect(
-      await screen.findByText(/12 of 234 hats changed price/i),
+      await screen.findByText(/12 of 50 hats changed price/i),
     ).toBeInTheDocument();
+    // A bounded run must say there is more, or "50 of 234" reads as a failure.
+    expect(await screen.findByText(/press again to continue/i)).toBeInTheDocument();
   });
 
   it('surfaces a failing sweep rather than looking idle', async () => {

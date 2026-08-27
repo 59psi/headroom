@@ -447,6 +447,38 @@ async def test_upload_record_survives_a_restart(tmp_path, monkeypatch):
     assert h.upload_successes == 1
 
 
+async def test_the_scheduled_path_hydrates_without_a_read_first(tmp_path, monkeypatch):
+    """The unattended path must not wipe the history it exists to keep.
+
+    `_ensure_upload_state_loaded` originally ran only from `health()`, but the
+    WRITE path never goes through it — the scheduler loop and
+    `_run_upload_hook` both touch the module global directly. So the first
+    upload after a restart incremented an EMPTY record and overwrote the file
+    with successes=1.
+
+    Every other restart test here happens to call `health()` before the next
+    upload, which hydrates it and hides this completely. This one deliberately
+    does NOT read before writing, because that is the actual production
+    sequence: boot, then a nightly upload, with nobody having opened the page.
+    """
+    monkeypatch.setattr(backup_service.settings, "upload_dir", tmp_path / "data" / "uploads")
+    payload = tmp_path / "b.tar.gz"
+    payload.write_bytes(b"x")
+
+    for _ in range(3):
+        await backup_service._run_upload_hook(payload, argv=["/usr/bin/true"])
+    assert backup_service.health().upload_successes == 3
+
+    await _simulate_restart()
+
+    # NO health() call here. Straight to the scheduled write path.
+    await backup_service._run_upload_hook(payload, argv=["/usr/bin/true"])
+
+    assert backup_service.health().upload_successes == 4, (
+        "the first upload after a restart overwrote the persisted history"
+    )
+
+
 async def test_a_failed_upload_survives_a_restart_too(tmp_path, monkeypatch):
     """A stale success must never outlive the failure that followed it."""
     monkeypatch.setattr(backup_service.settings, "upload_dir", tmp_path / "data" / "uploads")
