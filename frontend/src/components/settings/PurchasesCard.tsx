@@ -16,6 +16,83 @@ function readItems(text: string): Record<string, unknown>[] {
   return items;
 }
 
+/** The prompt handed to Claude or ChatGPT to turn an inbox into importable JSON.
+ *
+ * Every field name here is one `catalog_service` actually reads
+ * (`_line_fields`, `_units_to_add`, and the `Purchase(...)` construction) —
+ * notably `order_date`, not `purchased_at`. A prompt that names a field the
+ * importer ignores fails silently: the import succeeds, the data is simply
+ * absent, and nothing says so. `tests/test_catalog.py` pins the field set.
+ */
+const EMAIL_IMPORT_PROMPT = `Search my email for melin order confirmations and receipts.
+
+For every ORDER LINE — not every order — produce one JSON object. Return a
+single JSON object of this exact shape and nothing else. No explanation, no
+markdown code fence:
+
+{"items": [ {...}, {...} ]}
+
+Fields for each line:
+  item_title  (required) the product line exactly as printed on the receipt,
+              e.g. "Odysea Packable Hydro - Hickory Denim"
+  colorway    the colorway, when the receipt lists it separately from the name
+  size        e.g. "Classic", "Small"
+  quantity    whole number; a line reading "x 2" is quantity 2
+  price       per-unit price as a number, no currency symbol
+  order_ref   the order number
+  order_date  ISO 8601, e.g. "2026-03-14"
+
+Rules:
+- One object per order line. Do not merge similar lines together, and do not
+  deduplicate across orders — order_ref, price and size are what tell two
+  genuinely separate purchases apart.
+- Include travel cases and accessories as their own lines. Do not filter
+  anything out for looking like it isn't a hat.
+- Never guess. If a field is not visible on the receipt, leave it out entirely
+  rather than inventing a value. An omitted field is fine; a wrong one is not.
+- Output only the JSON.`;
+
+/** Copyable prompt, collapsed by default — it is long, and most visits to this
+ *  card are not the one time you set up the import. */
+function EmailPromptDisclosure() {
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(EMAIL_IMPORT_PROMPT);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard is permission-gated and absent over plain HTTP. The prompt
+      // is on screen and selectable either way, so a failure here costs the
+      // convenience, not the feature.
+      setCopied(false);
+    }
+  }
+
+  return (
+    <details className="hr-prompt-details mb-3">
+      <summary className="text-secondary small">
+        No JSON yet? Get one from your email
+      </summary>
+      <div className="mt-2">
+        <p className="text-secondary small mb-2">
+          Paste this into Claude or ChatGPT with access to your mail. It reads your
+          melin receipts and returns the JSON this card imports.
+        </p>
+        <button
+          type="button"
+          className="btn btn-outline-primary btn-sm mb-2"
+          onClick={copy}
+        >
+          {copied ? 'Copied' : 'Copy prompt'}
+        </button>
+        <pre className="hr-prompt-text font-mono">{EMAIL_IMPORT_PROMPT}</pre>
+      </div>
+    </details>
+  );
+}
+
 export function PurchasesCard() {
   const qc = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -99,6 +176,8 @@ export function PurchasesCard() {
           and cost basis — what you actually paid — so the valuation can show a real
           gain rather than a guess.
         </p>
+
+        <EmailPromptDisclosure />
 
         <div className="d-flex gap-2 align-items-center flex-wrap mb-2">
           <span className="text-secondary small font-mono">

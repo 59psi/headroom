@@ -6,6 +6,25 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.63.0] — 2026-08-27
+
+### Added
+- **Purchase History can now tell you how to get the JSON it wants.** The card
+  has always had an "Import JSON…" button and no answer to the obvious
+  question — where does that file come from? The data is sitting in your email,
+  and nothing in the app produced it.
+
+  There's now a collapsed "No JSON yet? Get one from your email" section with a
+  ready-made prompt and a copy button. Paste it into Claude or ChatGPT with
+  access to your mail; it reads your melin receipts and returns exactly the
+  JSON this card imports.
+
+  The prompt is a schema written in prose describing a Python parser, so a test
+  parses the field list back out of it and fails if any name isn't one the
+  importer actually reads. That check earns its keep: the first draft said
+  `purchased_at` where the parser reads `order_date`, which would have imported
+  cleanly with every order date silently discarded.
+
 ## [2.62.0] — 2026-08-27
 
 ### Fixed
