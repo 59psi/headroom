@@ -1533,6 +1533,12 @@ kbd {
   overflow-wrap: anywhere;
 }
 
+/* Same problem, same fix: headroom-backup-2026-08-26T05-41-08Z.tar.gz has no
+   break opportunity a phone can use. */
+.hr-upload-file {
+  overflow-wrap: anywhere;
+}
+
 .hr-price {
   font-family: var(--font-mono);
   font-weight: 700;

@@ -94,18 +94,27 @@ export function OffsiteBackupCard() {
                     container, so no upload can run. See the setup steps below.
                   </p>
                 )}
+                {/* State the actual state. A backup report that says "never"
+                    when the archive shipped last night is worse than none,
+                    and "yet this run" was an implementation detail leaking
+                    into the one line that has to be trustworthy. */}
                 <p className="text-secondary small mb-0">
                   {s.last_upload_at ? (
                     <>
-                      Last upload {new Date(s.last_upload_at).toLocaleString()} &mdash;{' '}
-                      {s.last_upload_ok ? 'succeeded' : 'FAILED'}.{' '}
-                      {s.upload_successes} ok, {s.upload_failures} failed.
+                      {s.last_upload_ok ? 'Last uploaded' : 'Last attempt FAILED'}{' '}
+                      {new Date(s.last_upload_at).toLocaleString()}
+                      {s.last_upload_name && (
+                        <>
+                          {' '}&mdash;{' '}
+                          <span className="font-mono hr-upload-file">{s.last_upload_name}</span>
+                        </>
+                      )}
+                      . {s.upload_successes} ok, {s.upload_failures} failed.
                     </>
                   ) : (
-                    // The distinction that matters: configured is not the same
-                    // as proven, and only one of them will still be true when
-                    // you need the backup.
-                    <>Configured, but nothing has been uploaded yet this run. Use <strong>Test now</strong>.</>
+                    // Reached only when nothing has EVER uploaded — this record
+                    // is persisted, so it no longer resets on restart.
+                    <>Configured, but nothing has ever been uploaded. Use <strong>Test now</strong>.</>
                   )}
                 </p>
                 {s.last_upload_error && (

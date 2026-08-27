@@ -48,7 +48,7 @@ function status(over: Partial<BackupUploadStatus> = {}): BackupUploadStatus {
   return {
     configured: false, provider: null, destination: null, from_environment: false,
     available_providers: PROVIDERS, binary_available: null,
-    last_upload_at: null, last_upload_ok: null,
+    last_upload_at: null, last_upload_ok: null, last_upload_name: null,
     last_upload_error: null, upload_successes: 0, upload_failures: 0, ...over,
   };
 }
@@ -101,7 +101,29 @@ describe('OffsiteBackupCard', () => {
 
     renderWithProviders(<OffsiteBackupCard />);
 
-    expect(await screen.findByText(/nothing has been uploaded yet/i)).toBeInTheDocument();
+    expect(await screen.findByText(/nothing has ever been uploaded/i)).toBeInTheDocument();
+  });
+
+  it('names the date, time AND file of the last upload', async () => {
+    // "It ran" is not an answer anyone can act on. The card has to say WHEN
+    // and WHICH ARCHIVE, or it cannot answer the only question it exists for:
+    // does a copy of my data exist off this card, and how old is it.
+    mocked.getBackupUpload.mockResolvedValue(status({
+      configured: true, provider: 'synology',
+      destination: 'brandon@10.0.111.10::home/Backups/headroom',
+      last_upload_at: '2026-08-26T05:41:08Z', last_upload_ok: true,
+      last_upload_name: 'headroom-backup-2026-08-26T05-41-08Z.tar.gz',
+      upload_successes: 9, upload_failures: 0,
+    }));
+
+    renderWithProviders(<OffsiteBackupCard />);
+
+    expect(
+      await screen.findByText(/headroom-backup-2026-08-26T05-41-08Z\.tar\.gz/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Last uploaded/i)).toBeInTheDocument();
+    // And it must NOT claim nothing has happened.
+    expect(screen.queryByText(/nothing has ever been uploaded/i)).not.toBeInTheDocument();
   });
 
   it('reports a failing upload rather than just a count', async () => {

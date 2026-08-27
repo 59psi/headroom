@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.database import get_db
@@ -112,8 +112,19 @@ async def list_collections(db: AsyncSession = Depends(get_db)):
 async def list_colorways(
     q: str | None = None,
     model: str | None = None,
+    limit: int = Query(1000, ge=1, le=5000),
     db: AsyncSession = Depends(get_db),
 ):
     """Autocomplete from the harvested catalog: model names, or colorways
-    for a specific model when `model` is given."""
-    return await catalog_options(db, q=q, model=model)
+    for a specific model when `model` is given.
+
+    `limit` defaults high enough to serve the WHOLE catalog, because this feed
+    is consumed by a combobox that filters what it was given on the CLIENT.
+    It previously passed no limit at all, so it took `catalog_options`' default
+    of 25 — and the picker showed 25 of 188 harvested colorways with no way to
+    reach the rest, however much you typed. A truncated list is invisible: it
+    looks exactly like a small catalog, which is precisely how this survived.
+    The payload is a few hundred short strings, so the cap is a sanity bound
+    rather than a page size.
+    """
+    return await catalog_options(db, q=q, model=model, limit=limit)

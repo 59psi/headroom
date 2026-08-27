@@ -437,9 +437,13 @@ export interface BackupUploadStatus {
    *  them are guaranteed to be, and a missing one fails every unattended
    *  upload while the card would otherwise still read "configured". */
   binary_available: boolean | null;
+  /** Survives a restart (persisted beside the backups), so null here means
+   *  genuinely never uploaded — not merely "not since the last restart". */
   last_upload_at: string | null;
   last_upload_ok: boolean | null;
   last_upload_error: string | null;
+  /** The archive the last attempt shipped. */
+  last_upload_name: string | null;
   upload_successes: number;
   upload_failures: number;
 }

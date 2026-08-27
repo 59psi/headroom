@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import io
+import json
 import logging
 import os
 import shutil
@@ -46,9 +47,13 @@ class BackupHealth:
     API, which is what makes a persistent failure visible before the day it
     matters.
 
-    Process-local by design, like every other counter in this single-process
-    app. A restart resets it, which is correct: the question it answers is
-    "is the scheduler working now".
+    The SCHEDULER fields are process-local by design, like every other counter
+    in this single-process app. A restart resets them, which is correct: the
+    question they answer is "is the scheduler working now".
+
+    The UPLOAD fields are not, and must not be — see the note on them below.
+    They answer a question about the world rather than about this process, and
+    resetting them on restart made the card assert a falsehood.
     """
 
     last_attempt_at: datetime | None = None
@@ -61,20 +66,36 @@ class BackupHealth:
     # the two fail independently and only one of them means "the archive
     # exists nowhere but this SD card". A local backup can succeed every night
     # while the upload has been failing for a month.
+    #
+    # Unlike everything above, the upload record is PERSISTED (see
+    # `_upload_state_path`). It has to be: the question it answers is not "is
+    # the scheduler working now" but "does a copy of my data exist off this
+    # card, and how old is it" — which is a fact about the world, not about
+    # this process. Held only in memory it reset on every restart, and since
+    # the scheduler checks once a day, skips the startup backup when a recent
+    # one exists, and is change-gated, the card spent nearly all of its time
+    # saying nothing had ever been uploaded while uploads were in fact
+    # succeeding nightly. A backup report that cannot be trusted when it says
+    # "never" is worse than no report at all.
     last_upload_at: datetime | None = None
     last_upload_ok: bool | None = None
     last_upload_error: str | None = None
+    #: Filename of the archive the last attempt shipped. "It ran" is not an
+    #: answer anyone can act on; the file and the timestamp are.
+    last_upload_name: str | None = None
     upload_successes: int = 0
     upload_failures: int = 0
 
-    def record_upload(self, ok: bool, error: str | None = None) -> None:
+    def record_upload(self, ok: bool, error: str | None = None, name: str | None = None) -> None:
         self.last_upload_at = datetime.now(timezone.utc)
         self.last_upload_ok = ok
         self.last_upload_error = (error or None) if not ok else None
+        self.last_upload_name = name or self.last_upload_name
         if ok:
             self.upload_successes += 1
         else:
             self.upload_failures += 1
+        _write_upload_state_sync(self)
 
     def record_success(self) -> None:
         now = datetime.now(timezone.utc)
@@ -114,9 +135,20 @@ class BackupHealth:
 
 _health = BackupHealth()
 
+#: Whether the persisted upload record has been restored into `_health` yet.
+#: Loaded once per process, lazily, through `health()`.
+_upload_state_loaded = False
+
 
 def health() -> BackupHealth:
-    """Current scheduler health. Read-only view for the admin API."""
+    """Current scheduler health. Read-only view for the admin API.
+
+    Restores the persisted upload record on first use. Done here rather than
+    at startup because this is the one seam every reader already goes through,
+    so there is no path that can observe an empty upload record and report
+    "never uploaded" for a box that uploaded last night.
+    """
+    _ensure_upload_state_loaded()
     return _health
 
 
@@ -428,6 +460,80 @@ def _write_fingerprint_sync(value: str) -> None:
         logger.warning("Could not record backup fingerprint: %s", exc)
 
 
+def _upload_state_path() -> Path:
+    """Where the last off-box upload is recorded, so a restart can't erase it.
+
+    A file beside the backups, for the same reason `_fingerprint_path` is one
+    and emphatically NOT a row in `app_settings`: the database is part of what
+    `_data_fingerprint_sync` measures, so writing upload status there would
+    change the fingerprint on every upload, every cycle would then see a
+    change, and the change-gate would degrade into an unconditional daily
+    backup. The fingerprint covers the DB, its WAL and the uploads tree — not
+    this directory — so a sidecar here is inert with respect to it.
+    """
+    return _backup_dir() / ".last-upload"
+
+
+def _write_upload_state_sync(h: BackupHealth) -> None:
+    """Persist the upload record. Never raises — reporting must not break a backup."""
+    payload = {
+        "at": h.last_upload_at.isoformat() if h.last_upload_at else None,
+        "ok": h.last_upload_ok,
+        "name": h.last_upload_name,
+        "error": h.last_upload_error,
+        "successes": h.upload_successes,
+        "failures": h.upload_failures,
+    }
+    try:
+        path = _upload_state_path()
+        # Write-then-rename: a torn file here would read as "never uploaded",
+        # which is the exact false negative this whole record exists to remove.
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(json.dumps(payload))
+        tmp.replace(path)
+    except OSError as exc:
+        logger.warning("Could not record backup upload state: %s", exc)
+
+
+def _read_upload_state_sync() -> dict | None:
+    try:
+        raw = _upload_state_path().read_text()
+    except OSError:
+        return None
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        # A corrupt marker is not evidence of anything. Say nothing rather
+        # than assert a "never uploaded" that would be a guess.
+        logger.warning("Backup upload state file is unreadable; ignoring it")
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _ensure_upload_state_loaded() -> None:
+    """Restore the persisted upload record into `_health`, once per process."""
+    global _upload_state_loaded
+    if _upload_state_loaded:
+        return
+    _upload_state_loaded = True  # set first: a failed read must not retry every call
+    data = _read_upload_state_sync()
+    if not data:
+        return
+    raw_at = data.get("at")
+    if raw_at:
+        try:
+            _health.last_upload_at = datetime.fromisoformat(raw_at)
+        except (TypeError, ValueError):
+            _health.last_upload_at = None
+    _health.last_upload_ok = data.get("ok")
+    _health.last_upload_name = data.get("name")
+    _health.last_upload_error = data.get("error")
+    for attr, key in (("upload_successes", "successes"), ("upload_failures", "failures")):
+        value = data.get(key)
+        if isinstance(value, int) and value >= 0:
+            setattr(_health, attr, value)
+
+
 def _seconds_since_newest_backup_sync() -> float | None:
     """Age of the newest backup in seconds, or None if there are none."""
     backups = _list_backups_sync()
@@ -506,11 +612,11 @@ async def _run_upload_hook(path: Path, argv: list[str] | None = None) -> None:
             logger.error(
                 "Backup upload timed out after %.0fs: %s", timeout, argv[0]
             )
-            _health.record_upload(False, f"Timed out after {timeout:.0f}s")
+            _health.record_upload(False, f"Timed out after {timeout:.0f}s", path.name)
             return
         if proc.returncode == 0:
             logger.info("Backup uploaded off-box: %s", path.name)
-            _health.record_upload(True)
+            _health.record_upload(True, name=path.name)
         else:
             # Slice the bytes before decoding — only the tail is logged, and a
             # chatty failure shouldn't cost a full-size str to throw away.
@@ -522,10 +628,10 @@ async def _run_upload_hook(path: Path, argv: list[str] | None = None) -> None:
                 "Backup upload failed (rc=%s) for %s: %s",
                 proc.returncode, path.name, tail,
             )
-            _health.record_upload(False, f"exit {proc.returncode}: {tail}"[:500])
+            _health.record_upload(False, f"exit {proc.returncode}: {tail}"[:500], path.name)
     except Exception as exc:  # noqa: BLE001 — off-site copy is best-effort
         logger.error("Backup upload hook error for %s: %s", path.name, exc)
-        _health.record_upload(False, str(exc)[:500])
+        _health.record_upload(False, str(exc)[:500], path.name)
 
 
 async def write_scheduled_backup(keep: int, fingerprint: str | None = None) -> Path | None:

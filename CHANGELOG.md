@@ -6,6 +6,41 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.62.0] — 2026-08-27
+
+### Fixed
+- **The colorway picker showed 25 of 188 colorways.** The catalogue was not
+  missing anything — 550 entries across 160 models, harvested the same day.
+  `GET /api/meta/colorways` called its helper without a limit and silently took
+  the default of 25. Typing couldn't reach the rest either: the edit page
+  fetches that feed without a query and filters client-side, so everything past
+  the cap was unreachable however specific you were.
+
+  This is the second time that same cap has been mistaken for a small
+  catalogue — the first was the Settings card reading the feed's length, fixed
+  earlier by a dedicated status endpoint. **A truncated list is invisible: it
+  looks exactly like a short catalogue.** The feed now takes an explicit limit
+  defaulting high enough to serve the whole catalogue, and a test asserts the
+  *tail* is reachable, because the entries a cap removes are the ones nobody
+  notices are gone.
+
+- **Off-site backup reported "nothing has been uploaded yet this run" forever,
+  on a box that was uploading successfully every night.** The upload record was
+  held in memory. The scheduler checks every 24 hours, skips the startup backup
+  when a recent one exists, and only writes when data changed — so after any
+  restart there was a day-long window with no upload, and the card fell back to
+  claiming nothing had ever left the machine.
+
+  The upload record is now persisted beside the backups, so it survives a
+  restart, and the card states **when** the last upload happened and **which
+  archive** it shipped. "It ran" was never an answer anyone could act on.
+  A failure is reported as a failure with its reason — a stale success is never
+  shown as if current — and "never" now means never.
+
+  Deliberately not stored in the database: the change-gate fingerprints the DB,
+  so writing upload status there would make every cycle see a change and turn
+  change-gating into an unconditional daily backup.
+
 ## [2.61.0] — 2026-08-26
 
 ### Fixed
