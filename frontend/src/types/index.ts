@@ -279,6 +279,8 @@ export interface MdnsStatus {
   hostname: string;
   port: number;
   ip: string | null;
+  /** Global LAN IPv6, advertised beside the v4 address. Null = host has none. */
+  ipv6: string | null;
   url: string | null;
   error: string | null;
 }
