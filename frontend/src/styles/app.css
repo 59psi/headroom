@@ -1539,6 +1539,35 @@ kbd {
   overflow-wrap: anywhere;
 }
 
+/* Collapsed-by-default prompt on the Purchase History card. */
+.hr-prompt-details > summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+.hr-prompt-details > summary:hover {
+  color: var(--color-accent);
+}
+
+/* The prompt is ~30 lines of preformatted text on a card that must still fit a
+   phone. Cap the height and scroll INSIDE the block rather than letting it set
+   the card's length, and wrap long lines so the page itself never scrolls
+   sideways. */
+.hr-prompt-text {
+  max-height: 14rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.72rem;
+  line-height: 1.5;
+  padding: 0.7rem 0.85rem;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+}
+
 .hr-price {
   font-family: var(--font-mono);
   font-weight: 700;

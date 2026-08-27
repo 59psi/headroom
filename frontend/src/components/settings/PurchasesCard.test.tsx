@@ -171,4 +171,49 @@ describe('PurchasesCard', () => {
     renderWithProviders(<PurchasesCard />);
     expect(await screen.findByRole('button', { name: 'Unlink all' })).toBeInTheDocument();
   });
+
+  it('offers a copyable prompt for building the JSON from email', async () => {
+    // The data lives in the user's inbox and the card previously assumed they
+    // already had a JSON file, which nothing in the app produces.
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    // jsdom exposes navigator.clipboard as a getter-only property.
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText }, configurable: true,
+    });
+    route({ '/api/admin/purchases': [] });
+
+    renderWithProviders(<PurchasesCard />);
+
+    await user.click(await screen.findByText(/get one from your email/i));
+    await user.click(screen.getByRole('button', { name: 'Copy prompt' }));
+
+    expect(writeText).toHaveBeenCalledTimes(1);
+    const copied = writeText.mock.calls[0][0] as string;
+    // The field names are the point — a prompt that copies prose the importer
+    // cannot read is worse than no prompt, because the import then "succeeds".
+    expect(copied).toContain('item_title');
+    expect(copied).toContain('order_date');
+    expect(copied).not.toContain('purchased_at');
+    expect(await screen.findByRole('button', { name: 'Copied' })).toBeInTheDocument();
+  });
+
+  it('survives a clipboard the browser refuses', async () => {
+    // navigator.clipboard is permission-gated and absent over plain http, which
+    // is exactly how this app is served on a LAN without the TLS overlay. The
+    // prompt is on screen and selectable either way.
+    const user = userEvent.setup();
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: vi.fn().mockRejectedValue(new Error('denied')) },
+      configurable: true,
+    });
+    route({ '/api/admin/purchases': [] });
+
+    renderWithProviders(<PurchasesCard />);
+    await user.click(await screen.findByText(/get one from your email/i));
+    await user.click(screen.getByRole('button', { name: 'Copy prompt' }));
+
+    // No crash, no false "Copied".
+    expect(await screen.findByRole('button', { name: 'Copy prompt' })).toBeInTheDocument();
+  });
 });
