@@ -316,3 +316,30 @@ class AnalysisFailureGroup(BaseModel):
     #: True when the text looks like an Anthropic billing/quota refusal — the
     #: one failure that looks like a broken key but is not.
     is_billing: bool = False
+
+
+class RepricingStatus(BaseModel):
+    """Is the re-pricer alive, and what did its last sweep manage?
+
+    Process-local, unlike the backup UPLOAD record — and correctly so. The
+    durable answer already lives in the data: `Hat.resale_checked_at` is a
+    per-hat timestamp, so how stale the prices are is readable from the hats
+    themselves whatever this process remembers.
+    """
+
+    enabled: bool
+    interval_hours: float
+    last_run_at: datetime | None = None
+    last_success_at: datetime | None = None
+    last_error: str | None = None
+    consecutive_failures: int = 0
+    #: Hats whose price actually CHANGED, not hats visited — a sweep that
+    #: checks 234 and moves none is a working sweep, and reporting 234 would
+    #: make a dead market look like busy work.
+    last_repriced: int = 0
+    last_considered: int = 0
+
+
+class RepricingRunResult(BaseModel):
+    repriced: int
+    considered: int

@@ -63,6 +63,13 @@ vi.mock('../api/settings', () => ({
   getColorwayStatus: vi.fn(async () => ({
     entries: 988, models: 146, colorways: 402, last_harvest: null,
   })),
+  // Mock the real payload shape: pydantic serializes every field, defaults
+  // included, so a partial literal is a fiction the component never receives.
+  getRepricing: vi.fn(async () => ({
+    enabled: true, interval_hours: 24, last_run_at: null, last_success_at: null,
+    last_error: null, consecutive_failures: 0, last_repriced: 0, last_considered: 0,
+  })),
+  runRepricing: vi.fn(),
   // Deliberately NOT the mDNS host: the assertions below identify each card
   // by a value only that card's own query supplies, so two cards showing the
   // same string would make the check ambiguous rather than stronger.
@@ -123,6 +130,7 @@ const SECTION_CARDS: Record<string, string[]> = {
   ],
   data: [
     'Construction audit',
+    'Re-pricing',
     'Frozen prices',
     'Colorway Catalog',
     'Purchase History',

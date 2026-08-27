@@ -4,6 +4,7 @@ import { ClaudeModelCard } from '../components/settings/ClaudeModelCard';
 import { GoogleVisionKeyCard } from '../components/settings/GoogleVisionKeyCard';
 import { RecentErrorsCard } from '../components/settings/RecentErrorsCard';
 import { AnalysisQueueCard } from '../components/settings/AnalysisQueueCard';
+import { RepricingCard } from '../components/settings/RepricingCard';
 import { EbayCredsCard } from '../components/settings/EbayCredsCard';
 import { MdnsCard } from '../components/settings/MdnsCard';
 import { ActivityLogCard } from '../components/settings/ActivityLogCard';
@@ -59,6 +60,7 @@ export const SECTIONS = [
     blurb: 'What the app knows about your hats, and where it came from.',
     cards: [
       ConstructionAuditCard,
+      RepricingCard,
       FrozenPricesCard,
       ColorwayCatalogCard,
       PurchasesCard,

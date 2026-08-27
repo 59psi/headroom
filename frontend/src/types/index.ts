@@ -555,3 +555,19 @@ export interface AnalysisFailureGroup {
   /** Anthropic billing/quota — the failure that looks like a missing key. */
   is_billing: boolean;
 }
+
+/** Periodic re-pricing: is the sweep alive, and what did it last manage?
+ *  Process-local by design — the durable answer is `resale_checked_at` on each
+ *  hat, so how stale prices are is readable from the hats themselves. */
+export interface RepricingStatus {
+  enabled: boolean;
+  interval_hours: number;
+  last_run_at: string | null;
+  last_success_at: string | null;
+  last_error: string | null;
+  consecutive_failures: number;
+  /** Hats whose price CHANGED, not hats visited. A flat market is a working
+   *  sweep, and reporting the visit count would hide a sweep that writes nothing. */
+  last_repriced: number;
+  last_considered: number;
+}

@@ -6,6 +6,41 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.64.0] — 2026-08-27
+
+### Added
+- **Appraisals now refresh on their own.** They never did. A hat's resale value
+  moved only when that hat was *analyzed*, and nothing re-checked prices on a
+  schedule — so every value sat frozen at the date of the last bulk
+  re-analysis, and the only way to move them was to re-analyze the entire
+  collection: a Claude vision call per hat, to fetch a marketplace median that
+  needs no Claude at all.
+
+  That coupling chained two unrelated failures together. When the Anthropic
+  balance ran out, the analysis call raised, the pipeline fell back and
+  returned early, and the price refresh below it never ran. **Prices stopped
+  because identification stopped**, though pricing never depended on it.
+
+  Re-pricing is now its own scheduled sweep, independent of analysis: the
+  marketplace lookup keys on details already stored on the hat, so it needs no
+  photo, no API key and no vision call. It keeps working when analysis can't.
+
+  - **Prices you entered yourself are never touched** — excluded from the query
+    outright, so a protected hat doesn't even cost a lookup.
+  - Disposed hats are skipped; they've left the collection.
+  - Oldest-checked-first, so a sweep interrupted by a restart makes progress on
+    the stalest prices rather than re-doing the freshest.
+  - One unreachable listing doesn't stop the other 234.
+  - A new **Re-pricing** card under Settings → Data shows when the last sweep
+    ran and how many prices actually *changed* — not how many hats were
+    visited, because a flat market is a working sweep and the visit count would
+    hide one that's silently writing nothing. It also has a "Re-price now"
+    button, which works even with the schedule turned off.
+
+  Tunable with `HEADROOM_REPRICING_ENABLED`, `_INTERVAL_HOURS` (default 24),
+  `_DELAY_SECONDS` (default 1, spacing between calls to a public API that isn't
+  ours) and `_BATCH_LIMIT`.
+
 ## [2.63.0] — 2026-08-27
 
 ### Added

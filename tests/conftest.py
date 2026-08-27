@@ -11,6 +11,8 @@ os.environ.setdefault("HEADROOM_IMPORT_WORKER_ENABLED", "false")
 # the queued path explicitly.
 os.environ.setdefault("HEADROOM_ANALYSIS_WORKER_ENABLED", "false")
 os.environ.setdefault("HEADROOM_MDNS_ENABLED", "false")
+# Sweeps the whole collection against the marketplace API — never in tests.
+os.environ.setdefault("HEADROOM_REPRICING_ENABLED", "false")
 
 # Tests never call an external API — but the WORKER flags above only stop the
 # background paths, not the keys. `config.py` reads these at import and

@@ -20,6 +20,7 @@ from headroom.routes.admin import (
     config,
     construction,
     prices,
+    repricing,
     ebay,
     errors,
     reports,
@@ -31,6 +32,6 @@ router = APIRouter(
 
 for _sub in (
     errors, backups, activity, reports, ebay, catalog, analysis, construction,
-    config, prices,
+    config, prices, repricing,
 ):
     router.include_router(_sub.router)
