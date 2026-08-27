@@ -20,7 +20,8 @@ vi.mock('../api/settings', () => ({
   setModel: vi.fn(), clearModel: vi.fn(),
   getMdnsStatus: vi.fn(async () => ({
     enabled: true, advertising: true, hostname: 'headroom.local', port: 8000,
-    ip: '192.168.1.20', url: 'http://headroom.local:8000',
+    ip: '192.168.1.20', ipv6: '2600:6c52:7500:a7b::99',
+    url: 'http://headroom.local:8000', error: null,
   })),
   // Mock the real payload shape: pydantic serializes every field, including
   // the ones with defaults, so a partial literal here would be a fiction the

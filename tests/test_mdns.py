@@ -96,32 +96,76 @@ async def test_mdns_port_parsing(monkeypatch):
 
 async def test_mdns_interfaces_defaults_to_lan_ip(monkeypatch):
     monkeypatch.delenv("HEADROOM_MDNS_INTERFACE", raising=False)
-    assert mdns_service._mdns_interfaces("192.168.1.5") == ["192.168.1.5"]
+    assert mdns_service._mdns_interfaces(["192.168.1.5"]) == ["192.168.1.5"]
+    # Both families are bound when the host has both.
+    assert mdns_service._mdns_interfaces(["192.168.1.5", "2600:1::5"]) == [
+        "192.168.1.5",
+        "2600:1::5",
+    ]
 
 
 async def test_mdns_interfaces_override_and_all(monkeypatch):
     from zeroconf import InterfaceChoice
 
+    # An explicit override REPLACES the list — it means "use exactly this NIC",
+    # so quietly binding the detected v6 address beside it would defeat it.
     monkeypatch.setenv("HEADROOM_MDNS_INTERFACE", "10.0.0.9")
-    assert mdns_service._mdns_interfaces("192.168.1.5") == ["10.0.0.9"]
+    assert mdns_service._mdns_interfaces(["192.168.1.5", "2600:1::5"]) == ["10.0.0.9"]
     # The literal "all" (any case) restores zeroconf's all-interfaces default.
     monkeypatch.setenv("HEADROOM_MDNS_INTERFACE", "all")
-    assert mdns_service._mdns_interfaces("192.168.1.5") is InterfaceChoice.All
+    assert mdns_service._mdns_interfaces(["192.168.1.5"]) is InterfaceChoice.All
     monkeypatch.setenv("HEADROOM_MDNS_INTERFACE", "ALL")
-    assert mdns_service._mdns_interfaces("192.168.1.5") is InterfaceChoice.All
+    assert mdns_service._mdns_interfaces(["192.168.1.5"]) is InterfaceChoice.All
 
 
-async def test_start_mdns_pins_lan_interface(monkeypatch):
-    """Regression (the Docker/sidecar bug): the responder must bind the detected
-    LAN interface only — not all interfaces, where docker0/veth break it — and
-    the A-record must carry that LAN IP."""
-    import socket
+# ---------------- IPv6: the >60s "handshake" that was never a handshake ------ #
 
+
+async def test_lan_ipv6_rejects_link_local(monkeypatch):
+    """A bare fe80:: AAAA is unusable to the receiver — it needs a scope id."""
+    import socket as _socket
+
+    class _FakeSock:
+        def __init__(self, addr):
+            self._addr = addr
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def connect(self, _target):
+            pass
+
+        def getsockname(self):
+            return (self._addr, 0, 0, 0)
+
+    def fake_socket_factory(addr):
+        def _factory(*_args, **_kwargs):
+            return _FakeSock(addr)
+
+        return _factory
+
+    for addr, expected in [
+        ("2600:6c52:7500:a7b::1", "2600:6c52:7500:a7b::1"),
+        ("2600:6c52:7500:a7b::1%en0", "2600:6c52:7500:a7b::1"),  # scope stripped
+        ("fe80::1471:2eda:a7a3:172c", None),
+        ("::1", None),
+        ("not-an-address", None),
+    ]:
+        monkeypatch.setattr(_socket, "socket", fake_socket_factory(addr))
+        assert mdns_service._lan_ipv6() == expected, addr
+
+
+async def _capture_registration(monkeypatch, *, ipv4, ipv6):
+    """Run start_mdns() against a fake AsyncZeroconf and return what it registered."""
     import zeroconf.asyncio as zasync
 
     monkeypatch.setenv("HEADROOM_MDNS_ENABLED", "true")
     monkeypatch.delenv("HEADROOM_MDNS_INTERFACE", raising=False)
-    monkeypatch.setattr(mdns_service, "_lan_ip", lambda: "192.168.7.42")
+    monkeypatch.setattr(mdns_service, "_lan_ip", lambda: ipv4)
+    monkeypatch.setattr(mdns_service, "_lan_ipv6", lambda: ipv6)
     monkeypatch.setattr(mdns_service, "_aiozc", None)
 
     captured: dict = {}
@@ -137,8 +181,110 @@ async def test_start_mdns_pins_lan_interface(monkeypatch):
             pass
 
     monkeypatch.setattr(zasync, "AsyncZeroconf", _FakeAIOZC)
-
     await mdns_service.start_mdns()
+    return captured
+
+
+def _address_answer_names(info):
+    """Names of the records this advertisement offers for hostname questions,
+    as {record type: owner name}. This is what a querying client actually sees."""
+    return {record.type: record.name for record in info.get_address_and_nsec_records()}
+
+
+async def test_advertises_both_address_families_so_aaaa_is_answerable(monkeypatch):
+    """Regression for the >60s page load.
+
+    Advertising IPv4 alone left every AAAA question for the hostname
+    unanswered — not refused, *unanswered* — so every client burned its full
+    resolver timeout on every lookup (5s on macOS, far worse on iOS). The TLS
+    handshake was 46ms the whole time.
+
+    The rule this pins: every address type must be accounted for under the
+    HOSTNAME. See the module docstring for the upstream zeroconf defect that
+    makes a v4-only advertisement file its negative answer under the service
+    name instead, where no client will look for it.
+    """
+    from zeroconf import IPVersion
+    from zeroconf.const import _TYPE_A, _TYPE_AAAA
+
+    captured = await _capture_registration(
+        monkeypatch, ipv4="192.168.7.42", ipv6="2600:6c52:7500:a7b::99"
+    )
+    try:
+        info = captured["info"]
+        # NOT `info.addresses` — that property is legacy and returns IPv4 only,
+        # so asserting on it would report "no IPv6 registered" on a correctly
+        # dual-stacked advertisement.
+        assert info.parsed_addresses(IPVersion.All) == [
+            "192.168.7.42",
+            "2600:6c52:7500:a7b::99",
+        ]
+        # Both sockets bound, both interfaces pinned (no docker0/veth leak).
+        assert captured["kwargs"].get("interfaces") == [
+            "192.168.7.42",
+            "2600:6c52:7500:a7b::99",
+        ]
+        assert captured["kwargs"].get("ip_version") is IPVersion.All
+
+        # The property that actually fixes the stall: a client asking the
+        # HOSTNAME for either address type finds a record bearing that name.
+        answers = _address_answer_names(info)
+        assert answers.get(_TYPE_A) == "headroom.local."
+        assert answers.get(_TYPE_AAAA) == "headroom.local."
+    finally:
+        await mdns_service.stop_mdns()
+
+
+async def test_ipv4_only_host_still_binds_v4_only(monkeypatch):
+    """No global IPv6 → don't bind a v6 socket we can do nothing with.
+
+    Such a host still trips the upstream NSEC defect; that is upstream's to fix
+    and there is no way to correct it from here (zeroconf ships compiled
+    Cython, so a ServiceInfo subclass overriding _dns_nsec is never consulted).
+    This test exists so the v4-only path stays deliberate rather than becoming
+    an accident of a future edit.
+    """
+    from zeroconf import IPVersion
+
+    captured = await _capture_registration(monkeypatch, ipv4="192.168.7.42", ipv6=None)
+    try:
+        # The address list itself is asserted by test_start_mdns_pins_lan_interface;
+        # what is specific here is that we do not open an unusable v6 socket.
+        assert captured["kwargs"].get("ip_version") is IPVersion.V4Only
+    finally:
+        await mdns_service.stop_mdns()
+
+
+async def test_status_reports_the_advertised_ipv6(monkeypatch):
+    """The Settings card must show what is actually being advertised — an
+    advertised address the operator can't see is one they can't diagnose."""
+    captured = await _capture_registration(
+        monkeypatch, ipv4="192.168.7.42", ipv6="2600:6c52:7500:a7b::99"
+    )
+    try:
+        assert captured["info"] is not None
+        status = mdns_service.mdns_status()
+        assert status["ip"] == "192.168.7.42"
+        assert status["ipv6"] == "2600:6c52:7500:a7b::99"
+    finally:
+        await mdns_service.stop_mdns()
+    # Withdrawn advertisement must not keep reporting a stale address.
+    assert mdns_service.mdns_status()["ipv6"] is None
+
+
+async def test_start_mdns_pins_lan_interface(monkeypatch):
+    """Regression (the Docker/sidecar bug): the responder must bind the detected
+    LAN interface only — not all interfaces, where docker0/veth break it — and
+    the A-record must carry that LAN IP.
+
+    ``_lan_ipv6`` is pinned to None rather than left live: this asserts the
+    exact interface list, and on any host that has a global IPv6 the real
+    detector would (correctly) add a second address and fail it for the wrong
+    reason. The v6 path has its own tests below.
+    """
+    import socket
+
+    captured = await _capture_registration(monkeypatch, ipv4="192.168.7.42", ipv6=None)
     try:
         assert captured["kwargs"].get("interfaces") == ["192.168.7.42"]
         assert captured["info"].addresses == [socket.inet_aton("192.168.7.42")]

@@ -36,6 +36,16 @@ export function MdnsCard() {
                 mdns.data.error ?? mdns.data.hostname
               )}
             </div>
+            {/* Shown because its ABSENCE is the diagnosis: without an IPv6
+                record every lookup of the name stalls for the client's full
+                resolver timeout, which reads as a slow or dead site. */}
+            {mdns.data.advertising && (
+              <div className="text-secondary small font-mono hr-mdns-v6">
+                {mdns.data.ipv6
+                  ? `IPv6 → ${mdns.data.ipv6}`
+                  : 'IPv6 → none on this host (lookups may be slow)'}
+              </div>
+            )}
           </div>
         )}
       </div>
