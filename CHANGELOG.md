@@ -6,6 +6,46 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.61.0] — 2026-08-26
+
+### Fixed
+- **`https://headroom.local` took over a minute to load, and often never did.
+  It was never the TLS handshake — that measured 46ms.** The entire delay was
+  name resolution: every lookup of `headroom.local` stalled for the client's
+  full mDNS resolver timeout (5s on macOS; far worse on iOS, where Safari
+  fires many parallel requests and each one pays it).
+
+  We advertised an IPv4 address and nothing else. A responder that owns a name
+  but has no AAAA is supposed to answer an AAAA question with an **NSEC**
+  record — a negative answer meaning "this name exists and has only these
+  types" (RFC 6762 §6.1) — which is what lets a client give up instantly.
+  python-zeroconf 0.150.0 builds that record with the wrong owner name: it
+  uses the service instance (`headroom._http._tcp.local.`) where it must use
+  the host (`headroom.local.`). An NSEC only asserts non-existence for the
+  name it carries, so clients correctly ignored it and kept waiting. **A
+  mis-named NSEC and total silence look identical to the querier**, which is
+  why this presented as a dead server rather than an error anyone could see.
+
+  Confirmed from four independent angles: a `curl` timing split
+  (`dns=5.006s`, `tls=+0.046s`), `avahi-resolve -6` timing out **on the
+  server's own box** while `-4` answered instantly, a full mDNS packet dump
+  showing the mis-named record, and a local reproduction.
+
+  Headroom now advertises every address family the host actually has. With
+  nothing missing there is no NSEC to get wrong, and IPv6 clients get a real
+  answer instead of a negative one. 0.150.0 is the current release, so there
+  was no upgrade to take, and the defect cannot be patched from outside —
+  zeroconf ships compiled Cython, so a `ServiceInfo` subclass overriding the
+  method is never consulted. Reported upstream.
+
+  Hosts with no global IPv6 are unaffected by the change and still bind IPv4
+  only, rather than opening a v6 socket they can do nothing with.
+
+### Added
+- Settings → LAN Discovery now shows the advertised IPv6 address, or says
+  plainly that the host has none — its absence is the diagnosis for a slow
+  `.local` name, and previously nothing on screen could tell you.
+
 ## [2.60.0] — 2026-08-26
 
 ### Added

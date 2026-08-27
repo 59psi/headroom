@@ -1526,6 +1526,13 @@ kbd {
   color: var(--text);
 }
 
+/* A full IPv6 address is a single unbreakable token to most wrapping rules and
+   is wider than a phone. Break it anywhere rather than let it push the card. */
+.hr-mdns-v6 {
+  margin-top: 0.35rem;
+  overflow-wrap: anywhere;
+}
+
 .hr-price {
   font-family: var(--font-mono);
   font-weight: 700;

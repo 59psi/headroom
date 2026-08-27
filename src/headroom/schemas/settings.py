@@ -90,6 +90,11 @@ class MdnsStatus(BaseModel):
     hostname: str  # e.g. "headroom.local"
     port: int
     ip: str | None = None
+    #: Global LAN IPv6, when the host has one. Advertised alongside the IPv4
+    #: address — publishing v4 alone stalls every lookup for the client's full
+    #: resolver timeout (see mdns_service's module docstring). None means the
+    #: host has no global v6, not that it was withheld.
+    ipv6: str | None = None
     url: str | None = None
     error: str | None = None
 
