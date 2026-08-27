@@ -3,7 +3,7 @@ import type {
   ActivityRow, AnalysisJobRead, AnalysisQueueStatus, ApiKeyStatus, ApiKeyTestResult,
   BackupHealth, BackupInfo, BackupUploadStatus, EbayCredsStatus, ImportJob, MdnsStatus, ModelStatus,
   TlsStatus, FrozenPriceRow, PriceReleaseResult, AnalysisFailureGroup,
-  RecentError, TagBaseStatus, ConstructionAuditRow, ConstructionClearResult,
+  RecentError, TagBaseStatus, ConstructionAuditRow, ConstructionClearResult, RepricingStatus,
 } from '../types';
 
 // Re-exported so existing imports from this module keep working; the
@@ -323,4 +323,18 @@ export function releaseFrozenPrices(
 /** Why hats are failing analysis, grouped, worst first. */
 export function getAnalysisFailures() {
   return apiFetch<AnalysisFailureGroup[]>('/api/admin/analysis/failures');
+}
+
+/** Periodic re-pricing status. Appraisals used to move only when a hat was
+ *  re-analyzed, so they sat frozen at the date of the last bulk run. */
+export function getRepricing() {
+  return apiFetch<RepricingStatus>('/api/admin/repricing');
+}
+
+/** Sweep now. Available even when the scheduler is off — turning the
+ *  background task off shouldn't remove the ability to refresh on purpose. */
+export function runRepricing() {
+  return apiFetch<{ repriced: number; considered: number }>(
+    '/api/admin/repricing/run', { method: 'POST' },
+  );
 }

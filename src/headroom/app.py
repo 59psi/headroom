@@ -22,6 +22,7 @@ from headroom.services import (
     backup_service,
     import_service,
     mdns_service,
+    repricing,
 )
 
 logger = logging.getLogger(__name__)
@@ -167,6 +168,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # answerable without reading logs.
     app.state.backup_task = backup_task
 
+    # Periodic re-pricing. Deliberately NOT part of analysis: a marketplace
+    # median keys on fields already in the database, so it needs no photo and
+    # no Claude call. Coupling them is what left every appraisal frozen at the
+    # date of the last bulk re-analysis, and made an expired Anthropic balance
+    # stop prices as well as identification.
+    app.state.repricing_task = await repricing.start_repricing()
+
     # Bulk-import worker — single async task, drains the import queue.
     if env_flag("HEADROOM_IMPORT_WORKER_ENABLED"):
         await import_service.start_worker()
@@ -248,7 +256,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     try:
         yield
     finally:
-        for task in (backup_task, prune_task, mdns_task, thumbs_task, exports_task):
+        for task in (backup_task, app.state.repricing_task, prune_task,
+                     mdns_task, thumbs_task, exports_task):
             if task is not None:
                 task.cancel()
                 try:
