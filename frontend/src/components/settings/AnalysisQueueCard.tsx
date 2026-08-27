@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
-import { getAnalysisFailures, getAnalysisQueue, reanalyzeAll } from '../../api/settings';
+import {
+  getAnalysisFailures, getAnalysisQueue, reanalyzeAll, retryFailedAnalysis,
+} from '../../api/settings';
 
 /** Mirrors the stage labels on the hat page. */
 const STAGE_LABELS: Record<string, string> = {
@@ -60,18 +62,42 @@ export function AnalysisQueueCard() {
     },
   });
 
+  // Both runs move hats to 'pending' and CLEAR their failure text, so the
+  // failures list above is stale the moment either succeeds. It was not being
+  // invalidated at all: after "Re-analyze every hat" the card went on listing
+  // failures the run had just wiped, for the whole 30s staleTime.
+  const afterQueueing = () => {
+    qc.invalidateQueries({ queryKey: ['admin', 'analysis-queue'] });
+    qc.invalidateQueries({ queryKey: ['admin', 'analysis-failures'] });
+    qc.invalidateQueries({ queryKey: ['hats'] });
+  };
+
   const rerun = useMutation({
     mutationFn: () => reanalyzeAll(),
     onSuccess: () => {
       setConfirming(false);
-      qc.invalidateQueries({ queryKey: ['admin', 'analysis-queue'] });
-      qc.invalidateQueries({ queryKey: ['hats'] });
+      afterQueueing();
     },
+  });
+
+  // One mutation for both retry buttons; `variables` is the group reason (or
+  // undefined for "all failed"), which is also how each button knows whether
+  // the spinner belongs to it.
+  const retry = useMutation({
+    mutationFn: (reason: string | undefined) => retryFailedAnalysis(reason),
+    onSuccess: afterQueueing,
   });
 
   const data = queue.data;
   const backlog = data?.pending_count ?? 0;
   const stalled = backlog > 0 && data?.worker_alive === false;
+
+  // Retryable, not failed: a hat whose photo has gone is a failure the card
+  // must still show and a retry cannot fix, so summing `hat_count` here would
+  // put a number on the button that the button cannot deliver.
+  const totalRetryable = (failures.data ?? []).reduce(
+    (n, f) => n + f.retryable_count, 0,
+  );
 
   return (
     <div className="card mb-3">
@@ -176,6 +202,98 @@ export function AnalysisQueueCard() {
           </div>
         )}
 
+        {/* Failures come BEFORE the re-analyze-everything button on purpose.
+            Retrying 21 casualties of a transient overload is the cheap, correct
+            repair, and while it was the only button on this card the expensive
+            one was the one people reached for. */}
+        {(failures.data?.length ?? 0) > 0 && (
+          <div className="mb-3">
+            <div className="text-secondary small fw-semibold mb-1">
+              Why analysis is failing
+            </div>
+            {failures.data!.map(f => (
+              <div
+                key={f.reason}
+                className={`alert mb-2 small ${f.is_billing ? 'alert-warning' : 'alert-info'}`}
+              >
+                <div className="fw-semibold">
+                  {f.hat_count} hat{f.hat_count === 1 ? '' : 's'}
+                  {f.is_billing && ' · your Anthropic ACCOUNT, not your key'}
+                </div>
+                <div style={{ wordBreak: 'break-word' }}>{f.reason}</div>
+                {f.is_billing && (
+                  <div className="mt-1">
+                    The key is fine. Top up at{' '}
+                    <span className="font-mono">console.anthropic.com</span>{' '}
+                    → Plans &amp; Billing, then retry below.
+                  </div>
+                )}
+                <div className="text-muted" style={{ fontSize: '0.72rem' }}>
+                  e.g. hat{f.sample_hat_ids.length === 1 ? '' : 's'}{' '}
+                  {f.sample_hat_ids.map(id => `#${id}`).join(', ')}
+                </div>
+
+                {f.retryable_count > 0 ? (
+                  <>
+                    <button
+                      type="button"
+                      className="btn btn-outline-primary btn-sm mt-2"
+                      disabled={retry.isPending}
+                      onClick={() => retry.mutate(f.reason)}
+                    >
+                      {retry.isPending && retry.variables === f.reason
+                        ? 'Queueing…'
+                        : `Retry ${f.retryable_count} hat${f.retryable_count === 1 ? '' : 's'}`}
+                    </button>
+                    {f.retryable_count < f.hat_count && (
+                      <div className="text-muted mt-1" style={{ fontSize: '0.72rem' }}>
+                        {f.hat_count - f.retryable_count} of these{' '}
+                        {f.hat_count - f.retryable_count === 1 ? 'has' : 'have'} no
+                        photo left to analyze and can&rsquo;t be retried.
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="text-muted mt-2" style={{ fontSize: '0.72rem' }}>
+                    Nothing to retry — no photo left to analyze.
+                  </div>
+                )}
+              </div>
+            ))}
+
+            {/* Only worth its own button when the per-group ones don't already
+                cover everything in one press. */}
+            {failures.data!.length > 1 && totalRetryable > 0 && (
+              <button
+                type="button"
+                className="btn btn-outline-primary btn-sm w-100"
+                disabled={retry.isPending}
+                onClick={() => retry.mutate(undefined)}
+              >
+                {retry.isPending && retry.variables === undefined
+                  ? 'Queueing…'
+                  : `Retry all ${totalRetryable} failed hats`}
+              </button>
+            )}
+
+          </div>
+        )}
+
+        {/* Outside the failures block on purpose. A successful retry clears the
+            failures it just queued, so the list empties and unmounts — and a
+            banner nested inside it would disappear in the same render, leaving
+            the press with no acknowledgement at all. */}
+        {retry.data && (
+          <div className="alert alert-success mb-3 small">
+            {retry.data.queued > 0
+              ? `Queued ${retry.data.queued} hat${retry.data.queued === 1 ? '' : 's'} to retry.`
+              : 'Nothing left to retry — those hats are already queued.'}
+          </div>
+        )}
+        {retry.error && (
+          <div className="alert alert-danger mb-3 small">{String(retry.error)}</div>
+        )}
+
         <hr />
 
         {/* The checkbox that used to sit here ("Leave hand-entered prices
@@ -215,37 +333,6 @@ export function AnalysisQueueCard() {
                 onClick={() => setConfirming(false)}
               >Cancel</button>
             </div>
-          </div>
-        )}
-
-        {(failures.data?.length ?? 0) > 0 && (
-          <div className="mt-3">
-            <div className="text-secondary small fw-semibold mb-1">
-              Why analysis is failing
-            </div>
-            {failures.data!.map(f => (
-              <div
-                key={f.reason}
-                className={`alert mb-2 small ${f.is_billing ? 'alert-warning' : 'alert-info'}`}
-              >
-                <div className="fw-semibold">
-                  {f.hat_count} hat{f.hat_count === 1 ? '' : 's'}
-                  {f.is_billing && ' · your Anthropic ACCOUNT, not your key'}
-                </div>
-                <div style={{ wordBreak: 'break-word' }}>{f.reason}</div>
-                {f.is_billing && (
-                  <div className="mt-1">
-                    The key is fine. Top up at{' '}
-                    <span className="font-mono">console.anthropic.com</span>{' '}
-                    → Plans &amp; Billing, then Re-analyze.
-                  </div>
-                )}
-                <div className="text-muted" style={{ fontSize: '0.72rem' }}>
-                  e.g. hat{f.sample_hat_ids.length === 1 ? '' : 's'}{' '}
-                  {f.sample_hat_ids.map(id => `#${id}`).join(', ')}
-                </div>
-              </div>
-            ))}
           </div>
         )}
 
