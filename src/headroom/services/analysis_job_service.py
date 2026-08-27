@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.models.analysis_job import AnalysisJob
 from headroom.models.hat import Hat
+from headroom.services import hat_service
 from headroom.services.analysis_queue import PENDING
 
 RUNNING = "running"
@@ -109,17 +110,29 @@ async def recent_failures(db: AsyncSession, limit: int = 10) -> list[dict]:
         )
     ).all()
 
+    # What a retry could actually queue, taken from the very function the retry
+    # route calls rather than re-derived here. The two numbers differ for a real
+    # reason: "Photo missing before analysis could run." is a failure worth
+    # SEEING and impossible to retry, so filtering those rows out of this view
+    # would hide the one message that explains why a hat is stuck. Deriving the
+    # count instead of restating the rule means a button labeled "Retry 21"
+    # queues 21 — by construction, not by two filters agreeing today.
+    retryable = set(await hat_service.ids_for_reanalysis(db, failed_only=True))
+
     groups: dict[str, dict] = {}
     for hat_id, error, analyzed_at in rows:
         key = _reason_key(error or "")
         g = groups.setdefault(key, {
             "reason": key,
             "hat_count": 0,
+            "retryable_count": 0,
             "sample_hat_ids": [],
             "last_seen": None,
             "is_billing": any(m in key.lower() for m in _BILLING_MARKERS),
         })
         g["hat_count"] += 1
+        if hat_id in retryable:
+            g["retryable_count"] += 1
         if len(g["sample_hat_ids"]) < 5:
             g["sample_hat_ids"].append(hat_id)
         if analyzed_at and (g["last_seen"] is None or analyzed_at > g["last_seen"]):
@@ -127,6 +140,38 @@ async def recent_failures(db: AsyncSession, limit: int = 10) -> list[dict]:
 
     ordered = sorted(groups.values(), key=lambda g: -g["hat_count"])
     return ordered[:limit]
+
+
+async def ids_for_failure_reason(db: AsyncSession, reason: str) -> list[int]:
+    """Ids of the hats in ONE failure group — the inverse of `recent_failures`.
+
+    Retrying a whole collection to fix 21 hats is the thing this avoids: on a
+    234-hat shelf a transient `529 Overloaded` leaves a handful of casualties,
+    and re-running everything to catch them costs a Claude call per hat that
+    was already fine.
+
+    Matching happens in Python rather than SQL, and that is forced by what a
+    group IS: `_reason_key` is a CLEANED, truncated form of the raw failure
+    string. A `WHERE analysis_error = :reason` would match almost nothing,
+    since the stored text still carries the per-call request id the key strips
+    — which is exactly why grouping needs a key in the first place.
+
+    The incoming reason is re-keyed too. It arrives as a key already (the card
+    sends back what this module produced), and `_reason_key` is idempotent, so
+    this costs nothing and means a hand-made API call can pass raw error text
+    and still hit the right group.
+    """
+    rows = (
+        await db.execute(
+            select(Hat.id, Hat.analysis_error).where(
+                *hat_service.reanalyzable_filters(),
+                *hat_service.failed_analysis_filters(),
+            )
+        )
+    ).all()
+
+    key = _reason_key(reason)
+    return sorted(hat_id for hat_id, error in rows if _reason_key(error or "") == key)
 
 
 async def _counts(db: AsyncSession, job_id: int) -> tuple[int, int, int]:

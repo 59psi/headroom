@@ -362,3 +362,200 @@ async def test_analysis_failures_group_and_flag_a_billing_refusal(client, db_ses
 
     timeout = next(g for g in groups if "timed out" in g["reason"])
     assert timeout["is_billing"] is False
+
+
+# --------------------------------------------------------------------------- #
+# Retrying only what failed
+#
+# A transient `529 Overloaded` takes out a scattering of hats mid-run. The only
+# repair used to be "Re-analyze every hat", which spends a Claude call on the
+# 213 that were already right in order to fix the 21 that were not.
+# --------------------------------------------------------------------------- #
+
+#: A real 529, twice, differing only in the per-call request id. Grouping has to
+#: see one problem here, and so does the retry that acts on the group.
+_OVERLOAD = (
+    "Claude analysis failed: Anthropic API error: Error code: 529 - "
+    "{'type': 'error', 'error': {'type': 'overloaded_error', 'message': "
+    "'Overloaded'}, 'request_id': 'req_%s'} — basic fallback applied"
+)
+
+#: A different failure entirely: this one will fail again on retry, which is
+#: why it must stay separable from the overload group rather than share a button.
+_UNPARSED = (
+    "Claude analysis failed: Could not parse Claude response: string indices "
+    "must be integers, not 'str' — basic fallback applied"
+)
+
+
+async def _set_analysis(db_session, hat_id: int, *, status: str, error: str | None):
+    """Put a hat into a finished analysis state.
+
+    Uploading a photo runs the pipeline inline in tests (no worker), and with
+    no API key configured every hat lands on `skipped` WITH an error string —
+    so a hat is only 'healthy' here once that text is explicitly cleared.
+    """
+    from headroom.models.hat import Hat
+
+    row = await db_session.get(Hat, hat_id)
+    row.analysis_status = status
+    row.analysis_error = error
+    await db_session.commit()
+
+
+async def test_retry_failed_queues_only_the_hats_that_failed(client, db_session):
+    """The whole point: fix the casualties without paying for the survivors."""
+    healthy = [await _hat_with_photo(client) for _ in range(3)]
+    failed = [await _hat_with_photo(client) for _ in range(2)]
+
+    for hat_id in healthy:
+        await _set_analysis(db_session, hat_id, status="ok", error=None)
+    for i, hat_id in enumerate(failed):
+        await _set_analysis(
+            db_session, hat_id, status="fallback", error=_OVERLOAD % i
+        )
+
+    resp = await client.post("/api/admin/analysis/retry-failed")
+    assert resp.status_code == 200
+    assert resp.json()["queued"] == 2, (
+        "a retry must cover the failures only — re-running all five is the "
+        "cost this endpoint exists to avoid"
+    )
+
+    queue = (await client.get("/api/admin/analysis/queue")).json()
+    assert sorted(h["id"] for h in queue["pending"]) == sorted(failed)
+
+
+async def test_retry_can_target_a_single_failure_group(client, db_session):
+    """Groups are not interchangeable.
+
+    An overload wants retrying immediately; a response the parser choked on
+    will choke again and is a bug report. One button for the whole card would
+    force them to be treated the same.
+    """
+    overloaded = [await _hat_with_photo(client) for _ in range(3)]
+    unparsed = await _hat_with_photo(client)
+
+    for i, hat_id in enumerate(overloaded):
+        await _set_analysis(
+            db_session, hat_id, status="fallback", error=_OVERLOAD % i
+        )
+    await _set_analysis(db_session, unparsed, status="fallback", error=_UNPARSED)
+
+    groups = (await client.get("/api/admin/analysis/failures")).json()
+    overload_group = next(g for g in groups if "overloaded_error" in g["reason"])
+    assert overload_group["hat_count"] == 3
+
+    resp = await client.post(
+        "/api/admin/analysis/retry-failed",
+        params={"reason": overload_group["reason"]},
+    )
+    assert resp.json()["queued"] == 3, (
+        "three differing request ids are one problem — the retry must match "
+        "the same cleaned key the grouping does, not the raw error text"
+    )
+
+    queue = (await client.get("/api/admin/analysis/queue")).json()
+    assert sorted(h["id"] for h in queue["pending"]) == sorted(overloaded)
+
+    left = (await client.get("/api/admin/analysis/failures")).json()
+    assert [g["reason"] for g in left] == [
+        next(g["reason"] for g in groups if "parse" in g["reason"])
+    ], "retrying one group must leave the other exactly where it was"
+
+
+async def test_the_retry_count_is_the_count_the_card_shows(client, db_session):
+    """The button's number and the card's number cannot be allowed to drift.
+
+    They come from two different code paths — a grouped read and a queueing
+    write — and a button reading "Retry 21" that queues 18 is worse than no
+    button, because nothing says which three were left behind.
+    """
+    hats = [await _hat_with_photo(client) for _ in range(5)]
+    for i, hat_id in enumerate(hats):
+        await _set_analysis(
+            db_session,
+            hat_id,
+            status="fallback",
+            error=(_OVERLOAD % i) if i < 3 else _UNPARSED,
+        )
+
+    groups = (await client.get("/api/admin/analysis/failures")).json()
+    advertised = sum(g["retryable_count"] for g in groups)
+
+    queued = (await client.post("/api/admin/analysis/retry-failed")).json()["queued"]
+    assert queued == advertised == 5
+
+
+async def test_a_failure_that_cannot_be_retried_is_shown_but_not_promised(
+    client, db_session
+):
+    """"Photo missing" is a real failure, unfixable by a retry, and worth seeing.
+
+    Hiding it from the card would remove the one message explaining why a hat
+    is stuck; counting it as retryable would have the button promise work it
+    cannot do. So it appears, and `retryable_count` says zero.
+    """
+    photoless = (
+        await client.post(
+            "/api/hats", json={"condition": "new", "size": "classic", "style": "eagle"}
+        )
+    ).json()["id"]
+    await _set_analysis(
+        db_session,
+        photoless,
+        status="error",
+        error="Photo missing before analysis could run.",
+    )
+
+    groups = (await client.get("/api/admin/analysis/failures")).json()
+    stuck = next(g for g in groups if "Photo missing" in g["reason"])
+    assert stuck["hat_count"] == 1
+    assert stuck["retryable_count"] == 0
+
+    assert (await client.post("/api/admin/analysis/retry-failed")).json()["queued"] == 0
+
+
+async def test_retry_failed_skips_disposed_hats(client, db_session):
+    """A hat that failed a year ago and has since left the collection is gone.
+
+    Retrying it spends a Claude call on inventory that is no longer owned —
+    the same exclusion the whole-collection run makes, applying here because
+    this narrows that query rather than replacing it.
+    """
+    hat_id = await _hat_with_photo(client)
+    await _set_analysis(db_session, hat_id, status="fallback", error=_OVERLOAD % 1)
+
+    disposed = await client.post(f"/api/hats/{hat_id}/dispose", json={"via": "sold"})
+    # Asserted, not assumed: the first draft of this test posted the wrong field
+    # name, the request 422'd, and the hat it believed it had disposed was still
+    # active — so the test failed for a reason that had nothing to do with the
+    # exclusion it exists to pin.
+    assert disposed.status_code == 200
+    assert disposed.json()["disposed_at"] is not None
+
+    assert (await client.post("/api/admin/analysis/retry-failed")).json()["queued"] == 0
+    groups = (await client.get("/api/admin/analysis/failures")).json()
+    assert groups == [], "a disposed hat's old failure is not an outstanding problem"
+
+
+async def test_retrying_twice_finds_nothing_left_to_do(client, db_session):
+    """Pressing again must not re-queue what is already in flight.
+
+    `create_job` clears the failure text as it moves each hat to pending, so
+    the second press finds a smaller set — reported honestly as zero rather
+    than silently re-running the same work.
+    """
+    hats = [await _hat_with_photo(client) for _ in range(2)]
+    for i, hat_id in enumerate(hats):
+        await _set_analysis(
+            db_session, hat_id, status="fallback", error=_OVERLOAD % i
+        )
+
+    assert (await client.post("/api/admin/analysis/retry-failed")).json()["queued"] == 2
+    assert (await client.post("/api/admin/analysis/retry-failed")).json()["queued"] == 0
+
+
+async def test_retry_failed_requires_auth(anon_client):
+    resp = await anon_client.post("/api/admin/analysis/retry-failed")
+    assert resp.status_code == 401

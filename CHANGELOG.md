@@ -6,7 +6,48 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
-## [2.65.0] — 2026-08-27
+## [2.66.0] — 2026-08-26
+
+### Added
+- **Retry just the hats that failed, instead of re-analyzing all 234.** A
+  transient `529 Overloaded` from Anthropic takes out a scattering of hats
+  mid-run. Until now the only repair was "Re-analyze every hat", which spends a
+  Claude call on the 213 that were already correct in order to fix the 21 that
+  were not — so the cheap fix was priced like the expensive one and nobody
+  reached for it.
+
+  `POST /api/admin/analysis/retry-failed` covers the failures only. The
+  "Why analysis is failing" card now carries a **Retry** button per failure
+  group, plus one "Retry all N failed hats" when there is more than one group.
+
+  Per group rather than one button for the card, because the groups are not
+  interchangeable: an overload wants retrying immediately, while a response the
+  parser choked on will choke again and is a bug report, not a retry. Matching
+  a group re-uses the same cleaned reason key the grouping does, so three
+  failures differing only in their `request_id` stay one problem on the way
+  back out as well as on the way in.
+
+- **The card now says how many of a group can actually be retried.** A hat can
+  carry a failure string and have no photo left to analyze (`"Photo missing
+  before analysis could run."`) — a real failure, worth seeing, and one no
+  retry can fix. `AnalysisFailureGroup.retryable_count` is derived from the
+  very query the retry route calls rather than restating its rule, so a button
+  labeled "Retry 21" queues 21 by construction. Where the two differ the card
+  says which hats it cannot help with.
+
+### Fixed
+- **The failures list went stale after any re-analysis.** Both runs move hats
+  to `pending` and clear their failure text, but neither invalidated
+  `['admin','analysis-failures']` — so after "Re-analyze every hat" the card
+  went on listing failures the run had just wiped, for the full 30s
+  `staleTime`.
+
+### Changed
+- The failures list moved **above** the re-analyze-everything button in the
+  Analysis Queue card. While the expensive button was the only one on the card,
+  it was the one people reached for.
+
+## [2.65.0] — 2026-08-26
 
 Everything here came out of an adversarial review of 2.61.0–2.64.0. Two of the
 findings were bugs that defeated the fixes they shipped inside.
@@ -58,7 +99,7 @@ findings were bugs that defeated the fixes they shipped inside.
 
 - British spellings of "catalog" in the changelog, docs and tests.
 
-## [2.64.0] — 2026-08-27
+## [2.64.0] — 2026-08-26
 
 ### Added
 - **Appraisals now refresh on their own.** They never did. A hat's resale value
@@ -93,7 +134,7 @@ findings were bugs that defeated the fixes they shipped inside.
   `_DELAY_SECONDS` (default 1, spacing between calls to a public API that isn't
   ours) and `_BATCH_LIMIT`.
 
-## [2.63.0] — 2026-08-27
+## [2.63.0] — 2026-08-26
 
 ### Added
 - **Purchase History can now tell you how to get the JSON it wants.** The card
@@ -112,7 +153,7 @@ findings were bugs that defeated the fixes they shipped inside.
   `purchased_at` where the parser reads `order_date`, which would have imported
   cleanly with every order date silently discarded.
 
-## [2.62.0] — 2026-08-27
+## [2.62.0] — 2026-08-26
 
 ### Fixed
 - **The colorway picker showed 25 of 188 colorways.** The catalog was not

@@ -550,10 +550,22 @@ export interface PriceReleaseResult {
 export interface AnalysisFailureGroup {
   reason: string;
   hat_count: number;
+  /** How many of those a retry can actually re-queue — the number the Retry
+   *  button is labeled with. Lower than `hat_count` when a hat here has no
+   *  photo left to analyze, which is its own failure and cannot be retried. */
+  retryable_count: number;
   sample_hat_ids: number[];
   last_seen: string | null;
   /** Anthropic billing/quota — the failure that looks like a missing key. */
   is_billing: boolean;
+}
+
+/** What a re-analysis run queued. Shared by the whole-collection run and the
+ *  retry-failed run, which differ only in which hats go in. */
+export interface ReanalyzeResult {
+  queued: number;
+  worker_alive: boolean;
+  job: AnalysisJobRead | null;
 }
 
 /** Periodic re-pricing: is the sweep alive, and what did it last manage?

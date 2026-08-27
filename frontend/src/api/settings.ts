@@ -1,9 +1,10 @@
 import { apiFetch } from './client';
 import type {
-  ActivityRow, AnalysisJobRead, AnalysisQueueStatus, ApiKeyStatus, ApiKeyTestResult,
+  ActivityRow, AnalysisQueueStatus, ApiKeyStatus, ApiKeyTestResult,
   BackupHealth, BackupInfo, BackupUploadStatus, EbayCredsStatus, ImportJob, MdnsStatus, ModelStatus,
   TlsStatus, FrozenPriceRow, PriceReleaseResult, AnalysisFailureGroup,
   RecentError, TagBaseStatus, ConstructionAuditRow, ConstructionClearResult, RepricingStatus,
+  ReanalyzeResult,
 } from '../types';
 
 // Re-exported so existing imports from this module keep working; the
@@ -189,10 +190,22 @@ export function getAnalysisQueue() {
 /** Re-analyze every hat with a photo. Manual prices are protected server-side,
  *  so there is nothing to opt out of. */
 export function reanalyzeAll() {
-  return apiFetch<{ queued: number; worker_alive: boolean; job: AnalysisJobRead | null }>(
-    '/api/admin/analysis/reanalyze-all',
-    { method: 'POST' },
-  );
+  return apiFetch<ReanalyzeResult>('/api/admin/analysis/reanalyze-all', { method: 'POST' });
+}
+
+/**
+ * Re-analyze only the hats that FAILED, optionally just one failure group.
+ *
+ * The alternative was re-running the whole collection to repair a handful of
+ * hats a transient 529 knocked over — a Claude call per hat that was already
+ * fine. Pass a group's `reason` to narrow further: an overload wants retrying,
+ * a response the parser choked on will choke again.
+ */
+export function retryFailedAnalysis(reason?: string) {
+  const qs = reason ? `?reason=${encodeURIComponent(reason)}` : '';
+  return apiFetch<ReanalyzeResult>(`/api/admin/analysis/retry-failed${qs}`, {
+    method: 'POST',
+  });
 }
 
 /** What is actually in the colorway catalog — NOT the autocomplete feed.

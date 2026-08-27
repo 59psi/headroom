@@ -309,6 +309,11 @@ class AnalysisFailureGroup(BaseModel):
     #: The failure, trimmed to the part that identifies it.
     reason: str
     hat_count: int
+    #: How many of those a retry can actually re-queue — what the Retry button
+    #: will do. Lower than `hat_count` when a hat in the group has no photo to
+    #: re-analyze, which is its own failure ("Photo missing before analysis
+    #: could run.") and is worth showing precisely because it cannot be retried.
+    retryable_count: int = 0
     #: A few hat ids, so you can open one and see it for yourself.
     sample_hat_ids: list[int] = []
     #: Most recent time a hat hit this.

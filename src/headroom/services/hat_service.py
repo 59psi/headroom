@@ -4,6 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from sqlalchemy.sql.elements import ColumnElement
 
 from headroom.models.case import Case
 from headroom.models.hat import Hat
@@ -590,12 +591,47 @@ async def list_by_analysis_status(
     return list(result.scalars().all())
 
 
-async def ids_for_reanalysis(db: AsyncSession) -> list[int]:
+def reanalyzable_filters() -> tuple[ColumnElement[bool], ...]:
+    """Which rows a re-analysis run may touch at all, as SQL clauses.
+
+    One definition, three callers: the whole-collection run, the retry-failed
+    run, and `analysis_job_service.ids_for_failure_reason`, which maps a
+    failure group back to its hats. A second copy would drift, and the copy
+    that fell behind would queue hats the pipeline then refuses — a run
+    reporting work it cannot do.
+    """
+    return (Hat.photo_path.is_not(None), Hat.disposed_at.is_(None))
+
+
+def failed_analysis_filters() -> tuple[ColumnElement[bool], ...]:
+    """Which rows count as having FAILED analysis.
+
+    Carrying a failure string is the whole test, and it is deliberately the
+    same one `analysis_job_service.recent_failures` groups by — so "retry these
+    21" covers exactly the 21 the failures card is complaining about. A button
+    whose count disagrees with the list above it is worse than no button.
+
+    Keying on `analysis_status` instead would not work. `skipped` (no API key)
+    and `fallback` (Claude failed, colors came from the cutout) both carry a
+    reason and both want retrying, so the set is not one status; and the text
+    is what gets cleared on success, which makes it the field that actually
+    tracks whether the failure is still outstanding.
+    """
+    return (Hat.analysis_error.is_not(None), Hat.analysis_error != "")
+
+
+async def ids_for_reanalysis(db: AsyncSession, *, failed_only: bool = False) -> list[int]:
     """Ids of EVERY hat a bulk re-analysis covers: any hat with a photo.
 
     Ids rather than entities: the caller hands these to a queue, and the
     routes↔worker boundary passes identifiers so a worker never holds an ORM
     object from someone else's session.
+
+    `failed_only` narrows the run to hats that failed last time — the retry
+    path. It is a narrowing of THIS query rather than a query of its own so
+    that the exclusions below keep applying to it: a disposed hat that failed
+    analysis a year ago is still disposed, and retrying it still spends a
+    Claude call on inventory that is gone.
 
     Disposed hats are excluded — they are gone, and re-pricing them spends
     Claude calls on inventory that is no longer owned. That is the only
@@ -615,7 +651,9 @@ async def ids_for_reanalysis(db: AsyncSession) -> list[int]:
     only the remainder Claude still prices — 45 hats out of 234 in a real
     collection — under a button that says "Re-analyze every hat".
     """
-    stmt = select(Hat.id).where(Hat.photo_path.is_not(None), Hat.disposed_at.is_(None))
+    stmt = select(Hat.id).where(*reanalyzable_filters())
+    if failed_only:
+        stmt = stmt.where(*failed_analysis_filters())
     return list((await db.execute(stmt.order_by(Hat.id))).scalars().all())
 
 
