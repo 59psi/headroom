@@ -6,6 +6,45 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.68.0] — 2026-08-28
+
+### Fixed
+- **`headroom.local` still stalled on iPhone, and 2.61.0 did not fix it.**
+  Advertising both address families fixed AAAA and nothing else, because the
+  defect was never about addresses: zeroconf answers a query for a record type
+  it does not hold at our hostname with **silence**, and a resolver that gets
+  silence from a name it believes exists waits out its full timeout.
+
+  Probing the live advertisement, one record type at a time:
+
+  ```
+  A           answered in 0.002s
+  AAAA        answered in 0.001s   ← what 2.61.0 fixed
+  HTTPS/SVCB  NO ANSWER in 4.0s
+  SRV         NO ANSWER in 4.0s
+  ```
+
+  **iOS Safari queries the HTTPS record (type 65) before connecting**, so every
+  navigation to `https://headroom.local` paid that timeout — while `curl` and
+  `getaddrinfo`, which only ever ask for A and AAAA, measured 3ms and made it
+  look fixed. Verifying with curl is exactly why this was reported fixed twice
+  while the phone stayed broken.
+
+  RFC 6762 §6.1 requires a responder that owns a name to answer an absent type
+  with an **NSEC** record asserting which types do exist there. The app now
+  sends one, from a small responder that binds 5353 alongside zeroconf
+  (`SO_REUSEPORT` — the same arrangement avahi and zeroconf already share) and
+  answers **only** for our own hostname, and **only** for types zeroconf has no
+  answer for. It can never contradict or race the real advertisement.
+
+  This fixes the whole class, not just type 65 — SRV was stalling identically,
+  and so would anything else a future client asks for.
+
+  Upstream is still unfixable from outside: zeroconf 0.150.0 is the current
+  release, it builds its NSEC with the service-instance name instead of the
+  host, and it ships compiled Cython so the method cannot be overridden. A test
+  reproduces that exact mis-naming and fails on it.
+
 ## [2.67.0] — 2026-08-28
 
 ### Added
