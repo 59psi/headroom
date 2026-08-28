@@ -18,6 +18,7 @@ behavior.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from statistics import median
 from urllib.parse import urlencode
@@ -156,6 +157,53 @@ async def query_listings(params: dict) -> list[dict]:
     return resp.json().get("data", [])
 
 
+#: The API's maximum page size. Its `meta` block reports `totalItems` and
+#: `totalPages` alongside every response — both were discarded.
+_PAGE_SIZE = 100
+
+#: Pages walked per category before giving up. Six covers every melinrecap
+#: category with room to spare; the largest (odysea) holds 436 listings.
+_MAX_PAGES = 6
+
+#: Anything that is not a letter or digit is a separator, never part of a token.
+_TOKEN_SPLIT = re.compile(r"[^a-z0-9]+")
+
+
+def model_tokens(name: str | None) -> list[str]:
+    """Lowercase word tokens, punctuation stripped.
+
+    Splitting on whitespace alone left punctuation glued to the tokens. A hat
+    named ``Odysea Hydro "Have More Fun"`` then demanded the tokens ``"have``
+    and ``fun"``, which appear in no listing title that has ever existed — so
+    the model tier matched nothing and the hat fell through to a category
+    median. Applied to BOTH sides, or the normalization is one-sided and the
+    comparison is still between different alphabets.
+    """
+    return [t for t in _TOKEN_SPLIT.split((name or "").lower()) if t]
+
+
+async def query_all_listings(params: dict, max_pages: int = _MAX_PAGES) -> list[dict]:
+    """Every listing matching `params`, not just the first page.
+
+    `fetch_resale_stats` used to send one request and take what came back. The
+    odysea category holds **436** listings, so that read 23% of the market and
+    priced every Odysea in the collection off whichever quarter the API
+    happened to return first — 28 different hats landing on the identical
+    $115.00, which is the median of an arbitrary slice, not any hat's value.
+
+    Termination is a short page rather than `meta.totalPages`, so this keeps
+    `query_listings` as the single seam tests already patch instead of adding
+    a second one that only the real API populates.
+    """
+    out: list[dict] = []
+    for page in range(1, max_pages + 1):
+        rows = await query_listings({**params, "perPage": _PAGE_SIZE, "page": page})
+        out.extend(rows)
+        if len(rows) < _PAGE_SIZE:
+            break
+    return out
+
+
 # Payout rates (what a seller receives: 80% cash / 110% credit) deliberately
 # do NOT live here. They were defined in this module too, unused by anything,
 # and outside the reach of `tests/test_valuation_parity.py` — a third copy of a
@@ -237,7 +285,7 @@ async def fetch_resale_stats(
     "size_matched"} — `sample` is "model" or "category" for the display label.
     """
     category = STYLE_TO_CATEGORY.get(style.lower()) if style else None
-    params: dict = {"per_page": 100}
+    params: dict = {}
     if category:
         params["pub_category"] = category
     elif model_name:
@@ -245,36 +293,73 @@ async def fetch_resale_stats(
     else:
         return None
 
-    facts = [f for f in (_listing_facts(li) for li in await query_listings(params)) if f]
+    facts = [
+        f for f in (_listing_facts(li) for li in await query_all_listings(params)) if f
+    ]
     if not facts:
         return None
 
-    tokens = [t for t in (model_name or "").lower().split() if t]
+    tokens = model_tokens(model_name)
 
-    def narrow(by_model: bool, by_condition: bool, by_size: bool):
+    def narrow(prefix: tuple[str, ...], by_condition: bool, by_size: bool):
         rows = facts
-        if by_model and tokens:
-            rows = [f for f in rows if all(t in f[0].lower() for t in tokens)]
+        if prefix:
+            # Token containment on NORMALIZED tokens, both sides. Matching raw
+            # substrings of the lowercased title kept punctuation glued to the
+            # tokens, so a hat named `Odysea Hydro "Have More Fun"` demanded
+            # `"have` and `fun"` — strings that appear in no listing title ever
+            # — and every such hat fell silently through to the category median.
+            wanted = set(prefix)
+            rows = [f for f in rows if wanted <= set(model_tokens(f[0]))]
         if by_condition and condition:
             rows = [f for f in rows if f[2] == condition]
         if by_size and size:
             rows = [f for f in rows if f[3] == size]
         return rows
 
-    # Most specific first. Model+condition beats model alone, because a
-    # tagged and a beaten example of one hat are different products; size
-    # comes last because it moves price least.
-    tiers = [
-        (True, True, True), (True, True, False), (True, False, False),
-        (False, True, True), (False, True, False), (False, False, False),
-    ]
-    for by_model, by_condition, by_size in tiers:
-        rows = narrow(by_model, by_condition, by_size)
-        if len(rows) >= _MIN_MODEL_SAMPLE:
+    # Model specificity is surrendered ONE TOKEN AT A TIME, and entirely,
+    # before condition or size are given up at all.
+    #
+    # melin titles read `<line> <construction> - <colorway>`, and `model_name`
+    # comes from Claude reading a PHOTO — so the leading tokens are the product
+    # line and the trailing ones are whatever artwork was visible. Dropping the
+    # last token steps from "this exact design" to "this line", which is a real
+    # comparable: same product, different colorway.
+    #
+    # There used to be no such step. It went straight from "every token matches"
+    # to the median of the entire category, so `Odysea Rope Hydro (WATERCOLOR)`
+    # — whose parenthesized token could never match anything — was priced at the
+    # median of all 436 Odyseas, identically to 27 other hats. Measured over the
+    # real collection, this ladder finds a genuine line-level comp for 13 of 14
+    # hats that previously fell to the category.
+    for by_condition, by_size in ((True, True), (True, False), (False, False)):
+        for k in range(len(tokens), -1, -1):
+            prefix = tuple(tokens[:k])
+            rows = narrow(prefix, by_condition, by_size)
+            if len(rows) < _MIN_MODEL_SAMPLE:
+                continue
+
+            # A prefix is only a MODEL match if it either matched the hat's
+            # whole name, or actually narrowed the field. Token count cannot
+            # decide this: for an `a_game` hat the prefix `a game` has two
+            # tokens and still selects the entire aGame category, so calling it
+            # a model comp would dress the broadest possible comparison up as
+            # the narrowest. Asking whether it excluded anything is the same
+            # question, answered from the data instead of from the name.
+            everything = narrow((), by_condition, by_size)
+            narrowed = len(rows) < len(everything)
+            matched = (
+                " ".join(prefix).title()
+                if prefix and (len(prefix) == len(tokens) or narrowed)
+                else None
+            )
             return {
                 "median": round(median([f[1] for f in rows]), 2),
                 "count": len(rows),
-                "sample": "model" if (by_model and tokens) else "category",
+                "sample": "model" if matched else "category",
+                # The line actually compared against, so the label can name it
+                # instead of saying "model" and leaving which model unstated.
+                "matched": matched,
                 "condition_matched": bool(by_condition and condition),
                 "size_matched": bool(by_size and size),
             }
