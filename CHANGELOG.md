@@ -6,6 +6,32 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.69.1] — 2026-08-28
+
+### Fixed
+- **`httpx` was imported directly by three services and declared by none of
+  them.** `ebay_service`, `google_vision` and `melin_recap` all `import httpx`,
+  but it reached the environment only as a transitive dependency of
+  `anthropic`. That held by luck: attempting a routine `uv lock --upgrade`
+  resolves `anthropic` to 1.0.0, which no longer pulls httpx, and the lock
+  duly **removed it** — leaving three services that fail at import with
+  nothing in `pyproject.toml` to explain why. Now declared explicitly.
+
+  Found while handling Dependabot PR #118, not by it.
+
+### Notes
+- **Dependabot #118 (`pydantic-core` 2.46.4 → 2.48.0) is correctly blocked and
+  was left alone.** It edits `requirements.txt` only, which is *derived* from
+  `uv.lock`, and `[tool.uv] exclude-newer = "7 days"` deliberately holds that
+  version back — so the PR asks the derived file to move ahead of its source.
+  `tests/test_requirements_export.py` catches exactly that, and the PR fails
+  CI on both `backend (pytest)` and `docker image builds`. The guard working
+  is not a bug to fix.
+- **`anthropic` 1.0.0 is available and deliberately not taken here.** It is a
+  major version affecting the Vision tool-use call in `claude_analysis`, which
+  the test suite stubs — so a green suite would prove nothing about it. It
+  wants its own change with a real call verified against the API.
+
 ## [2.69.0] — 2026-08-28
 
 ### Fixed

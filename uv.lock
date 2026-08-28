@@ -683,13 +683,14 @@ wheels = [
 
 [[package]]
 name = "headroom"
-version = "2.69.0"
+version = "2.69.1"
 source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },
     { name = "anthropic" },
     { name = "argon2-cffi" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "onnxruntime" },
     { name = "pillow" },
     { name = "pillow-heif" },
@@ -718,6 +719,7 @@ requires-dist = [
     { name = "anthropic", specifier = ">=0.121.0" },
     { name = "argon2-cffi", specifier = ">=25.1.0" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "onnxruntime" },
     { name = "pillow" },
     { name = "pillow-heif" },
