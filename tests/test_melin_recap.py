@@ -134,7 +134,11 @@ async def test_refresh_melin_resale_persists_median(monkeypatch):
               model_name="A-Game Hydro")
     await refresh_melin_resale(hat)
     assert hat.resale_price == 90.0
-    assert "median of 3 live model listings" in hat.resale_price_source
+    # The label NAMES the line compared against rather than saying "model".
+    # The match is a prefix of the hat's name now, so "model listings" alone
+    # would hide that an `Odysea Rope Hydro (WATERCOLOR)` was priced against
+    # every `Odysea Rope Hydro` — a fair comp, and one worth being able to see.
+    assert "median of 3 live A Game Hydro listings" in hat.resale_price_source
     assert hat.resale_checked_at is not None
 
 
@@ -369,4 +373,164 @@ async def test_the_source_label_names_what_was_matched(monkeypatch):
     assert hat.resale_price == 90.0
     assert "classic" in hat.resale_price_source
     assert "worn" in hat.resale_price_source
-    assert "model listings" in hat.resale_price_source
+    # Names the line, not the bare word "model" — see the note in
+    # test_refresh_melin_resale_persists_median.
+    assert "A Game Hydro listings" in hat.resale_price_source
+    assert "category" not in hat.resale_price_source
+
+
+# --------------------------------------------------------------------------- #
+# Pricing against the right comparables
+#
+# Reported as "the resale values are all very wrong". Three separate defects,
+# measured against the live marketplace on the real collection:
+#
+#   * One unpaginated page. The odysea category holds 436 listings; the query
+#     read 100 and called it the market. `meta.totalItems` was in every
+#     response and discarded.
+#   * Punctuation glued to tokens, so `Odysea Hydro "Have More Fun"` demanded
+#     `"have` and `fun"` — strings in no listing title, guaranteeing zero
+#     matches.
+#   * No step between "every token matches" and "the whole category", so 28
+#     different hats were all priced at the identical $115.00.
+# --------------------------------------------------------------------------- #
+
+
+def _stub_pages(monkeypatch, pages):
+    """Serve a different page per call, so pagination is actually exercised."""
+    calls: list[dict] = []
+
+    async def _fake_query(params):
+        calls.append(dict(params))
+        idx = int(params.get("page", 1)) - 1
+        return pages[idx] if idx < len(pages) else []
+
+    monkeypatch.setattr("headroom.services.melin_recap.query_listings", _fake_query)
+    return calls
+
+
+async def test_every_page_of_the_category_is_read_not_just_the_first(monkeypatch):
+    """The odysea category has 436 listings and the app was reading 100.
+
+    Every Odysea in the collection was then priced off whichever quarter the
+    API happened to return first — which is how 28 different hats landed on
+    the identical $115.00.
+    """
+    import headroom.services.melin_recap as mr
+
+    monkeypatch.setattr(mr, "_PAGE_SIZE", 2)
+    calls = _stub_pages(monkeypatch, [
+        [_listing("Odysea Rope Hydro - A", 7000), _listing("Odysea Rope Hydro - B", 8000)],
+        [_listing("Odysea Rope Hydro - C", 9000), _listing("Odysea Rope Hydro - D", 10000)],
+        [_listing("Odysea Rope Hydro - E", 20000)],  # short page ends the walk
+    ])
+
+    rows = await mr.query_all_listings({"pub_category": "odysea"})
+
+    assert len(rows) == 5, "a short page ends the walk; everything before it counts"
+    assert [c["page"] for c in calls] == [1, 2, 3]
+    assert len(calls) == 3, "must stop at the short page, not keep asking forever"
+
+
+async def test_the_page_walk_is_bounded(monkeypatch):
+    """Somebody else's public API — a full page every time must not loop away."""
+    import headroom.services.melin_recap as mr
+
+    monkeypatch.setattr(mr, "_PAGE_SIZE", 1)
+    calls = _stub_pages(monkeypatch, [[_listing(f"Odysea {i}", 7000)] for i in range(50)])
+
+    await mr.query_all_listings({"pub_category": "odysea"}, max_pages=4)
+    assert len(calls) == 4
+
+
+async def test_punctuation_does_not_make_a_model_unmatchable(monkeypatch):
+    """`Odysea Hydro "Have More Fun"` demanded the tokens `"have` and `fun"`.
+
+    No listing title contains those, so the model tier matched nothing and the
+    hat fell silently to a category median — indistinguishable, in the UI, from
+    a real appraisal.
+    """
+    from headroom.services.melin_recap import fetch_resale_stats
+
+    _stub_query(monkeypatch, [
+        _listing("Odysea Hydro - Have More Fun", 8000),
+        _listing("Odysea Hydro - Have More Fun", 9000),
+        _listing("Odysea Hydro - Have More Fun", 10000),
+        _listing("Odysea Rope - Black", 2000),
+        _listing("Odysea Stacked - Grey", 2000),
+    ])
+
+    stats = await fetch_resale_stats("odysea", 'Odysea Hydro "Have More Fun"')
+    assert stats["sample"] == "model"
+    assert stats["count"] == 3
+    assert stats["median"] == 90.0
+
+
+async def test_an_unmatchable_design_falls_to_its_LINE_not_the_category(monkeypatch):
+    """The missing rung.
+
+    `Odysea Rope Hydro (WATERCOLOR)` has no listings of that exact artwork, so
+    the old code jumped straight to the median of all 436 Odyseas. Dropping one
+    token lands on `Odysea Rope Hydro` — same product, different colorway,
+    which is a real comparable.
+    """
+    from headroom.services.melin_recap import fetch_resale_stats
+
+    _stub_query(monkeypatch, [
+        _listing("Odysea Rope Hydro - Black", 7000),
+        _listing("Odysea Rope Hydro - Sand", 8000),
+        _listing("Odysea Rope Hydro - Navy", 9000),
+        _listing("Odysea Stacked Thermal - Camo", 30000),
+        _listing("Odysea Brimless - Red", 1000),
+        _listing("Odysea Coast - Blue", 1000),
+    ])
+
+    stats = await fetch_resale_stats("odysea", "Odysea Rope Hydro (WATERCOLOR)")
+    assert stats["sample"] == "model"
+    assert stats["matched"] == "Odysea Rope Hydro"
+    assert stats["count"] == 3
+    assert stats["median"] == 80.0, (
+        "the line's own median — not the category's, which the outliers skew"
+    )
+
+
+async def test_a_prefix_that_selects_the_whole_category_is_reported_as_category(
+    monkeypatch,
+):
+    """Honesty about how broad the comparison really was.
+
+    Token count cannot decide this: for an `a_game` hat the prefix `a game` has
+    two tokens and still selects the entire aGame category. Asking whether the
+    prefix excluded anything answers the same question from the data.
+    """
+    from headroom.services.melin_recap import fetch_resale_stats
+
+    _stub_query(monkeypatch, [
+        _listing("A-Game Hydro - Red", 8000),
+        _listing("A-Game Scout - Grey", 2000),
+        _listing("A-Game Classic - Navy", 5000),
+    ])
+
+    stats = await fetch_resale_stats("a_game", "A-Game Hydro")
+    assert stats["sample"] == "category"
+    assert stats["matched"] is None, (
+        "`a game` matched every listing here, so it is the category wearing a "
+        "model's name"
+    )
+
+
+async def test_condition_is_kept_while_the_model_is_shortened(monkeypatch):
+    """Condition comes off a listing as a fact; the model prefix is a guess
+    about naming. So the guess is relaxed first."""
+    from headroom.services.melin_recap import fetch_resale_stats
+
+    _stub_query(monkeypatch, [
+        _listing("Odysea Rope Hydro - A", 5000, condition="worn"),
+        _listing("Odysea Rope Hydro - B", 6000, condition="worn"),
+        _listing("Odysea Rope Hydro - C", 7000, condition="worn"),
+        _listing("Odysea Rope Hydro Watercolor - D", 30000, condition="new_with_tags"),
+    ])
+
+    stats = await fetch_resale_stats("odysea", "Odysea Rope Hydro Watercolor", "worn")
+    assert stats["condition_matched"] is True
+    assert stats["median"] == 60.0, "the worn line, not the one tagged example"

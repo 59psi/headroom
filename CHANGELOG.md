@@ -6,6 +6,50 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.69.0] — 2026-08-28
+
+### Fixed
+- **Resale values were wrong across the collection — three separate defects,
+  all of which made a hat look appraised when it had barely been looked at.**
+  Reported as "I don't know how you're checking resale but I'm pretty sure
+  they are all very wrong." They were.
+
+  **1. One page of the market was being read and called the market.** The
+  query sent a single request and took what came back. The `odysea` category
+  holds **436** listings; that read **100** of them — 23% — so every Odysea in
+  the collection was priced off whichever quarter the API happened to return
+  first. `meta.totalItems` was in every response and discarded. Correcting the
+  sample alone moves the Odysea median from **$100 to $79**.
+
+  **2. Punctuation made a model unmatchable.** Tokens were split on whitespace
+  only, so a hat named `Odysea Hydro "Have More Fun"` demanded the tokens
+  `"have` and `fun"` — strings that appear in no listing title that has ever
+  existed. The model tier matched nothing and the hat fell silently to a
+  category median.
+
+  **3. There was no rung between "this exact design" and "the entire
+  category".** melin titles read `<line> <construction> - <colorway>` and
+  `model_name` comes from Claude reading a *photo*, so it lands on the line
+  plus whatever artwork was visible. When that exact string had no listings,
+  pricing jumped straight to the median of the whole category — which is how
+  **28 different hats all sat at exactly $115.00**, and 26 more at exactly
+  $85.00.
+
+  Model specificity is now surrendered one token at a time, and entirely,
+  before condition or size are given up at all: `Odysea Rope Hydro
+  (WATERCOLOR)` prices against every `Odysea Rope Hydro` — same product,
+  different colorway, a real comparable. Measured live on the real collection,
+  **11 of 14** previously category-priced hats now price against a named line.
+
+  A prefix counts as a model match only if it matched the whole name **or
+  actually narrowed the field** — token count cannot decide it, because for an
+  `a_game` hat the prefix `a game` has two tokens and still selects the entire
+  aGame category.
+
+  The source label now **names the line compared against** (`median of 18 live
+  classic new-with-tags Odysea Rope Hydro listings`) instead of saying "model
+  listings" and leaving which model unstated.
+
 ## [2.68.0] — 2026-08-28
 
 ### Fixed

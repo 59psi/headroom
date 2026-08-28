@@ -341,9 +341,14 @@ async def refresh_melin_resale(hat: Hat) -> None:
             _CONDITION_WORDS.get(hat.condition, "") if stats["condition_matched"] else "",
         ) if part
     )
+    # Name the LINE that was compared against, not just the word "model" — the
+    # match is now a prefix of the hat's name, so "model listings" alone would
+    # hide that an `Odysea Rope Hydro (WATERCOLOR)` was priced against every
+    # `Odysea Rope Hydro`. Which is a fair comp, and worth being able to see.
+    what = stats.get("matched") or scope
     hat.resale_price_source = (
         f"Melin Recap · median of {stats['count']} live "
-        f"{qualifiers + ' ' if qualifiers else ''}{scope} listings"
+        f"{qualifiers + ' ' if qualifiers else ''}{what} listings"
     )
     hat.resale_checked_at = datetime.now(timezone.utc)
 
