@@ -50,14 +50,201 @@ negative would reinstate the multi-second stall this exists to remove, which is
 a far worse failure than one wasted round trip.
 """
 
+import asyncio
 import logging
 import os
 import socket
+import struct
 from urllib.parse import urlsplit
 
 from headroom.config import env_flag, env_int, settings
 
 logger = logging.getLogger(__name__)
+
+# --------------------------------------------------------------------------- #
+# Negative answers (NSEC) — the other half of the stall described above.
+#
+# Advertising both address families fixed AAAA. It could not fix anything else,
+# because the defect is not about addresses: zeroconf answers a query for a
+# type it does not hold at our hostname with SILENCE, and a resolver that gets
+# silence from a name it believes exists waits out its full timeout.
+#
+# That is not hypothetical and it is not only AAAA. Probing the live
+# advertisement for each record type:
+#
+#     A           answered in 0.002s
+#     AAAA        answered in 0.001s
+#     HTTPS/SVCB  NO ANSWER in 4.0s
+#     SRV         NO ANSWER in 4.0s
+#
+# iOS Safari queries the HTTPS record (type 65) before connecting, so every
+# navigation to https://headroom.local paid that timeout — while `curl` and
+# `getaddrinfo`, which only ever ask for A/AAAA, measured 3ms and looked
+# perfect. Testing with curl is what made this look fixed when it was not.
+#
+# RFC 6762 §6.1 is explicit: a responder that owns a name must answer a query
+# for an absent type with an NSEC record asserting which types DO exist at that
+# name. So we send one. This is a targeted addition, not a second responder —
+# it answers ONLY for our own hostname, and only for types zeroconf has no
+# answer for, so it can never contradict or race the real advertisement.
+# --------------------------------------------------------------------------- #
+
+_MDNS_GROUP = "224.0.0.251"
+_MDNS_PORT = 5353
+
+#: The record types our advertisement actually holds at the hostname. Anything
+#: else gets a negative answer. A/AAAA are excluded because zeroconf answers
+#: them itself; ANY is excluded because it is never a negative answer.
+_HELD_TYPES = (1, 28)
+_TYPE_NSEC = 47
+_QTYPE_ANY = 255
+
+#: RFC 6762 §10: 120s for records tied to a specific host.
+_NSEC_TTL = 120
+#: Cache-flush bit | class IN. We are authoritative for this name.
+_CLASS_FLUSH_IN = 0x8001
+
+_nsec_transport = None  # asyncio.DatagramTransport | None
+
+
+def _encode_name(name: str) -> bytes:
+    out = bytearray()
+    for label in name.rstrip(".").split("."):
+        raw = label.encode("utf-8")
+        out.append(len(raw))
+        out += raw
+    out.append(0)
+    return bytes(out)
+
+
+def _read_name(buf: bytes, off: int) -> tuple[str | None, int]:
+    """Decode a QNAME. Refuses compression pointers rather than guessing.
+
+    Questions do not use compression in practice, and a wrong guess here would
+    make us answer for a name we do not own — far worse than staying silent.
+    """
+    parts: list[str] = []
+    while True:
+        if off >= len(buf):
+            return None, off
+        n = buf[off]
+        if n == 0:
+            return ".".join(parts), off + 1
+        if n & 0xC0:
+            return None, off
+        off += 1
+        parts.append(buf[off:off + n].decode("utf-8", "replace"))
+        off += n
+
+
+def _type_bitmap(types: tuple[int, ...]) -> bytes:
+    """RFC 4034 §4.1.2 type bitmap. One window is enough — every type is < 256."""
+    length = max(types) // 8 + 1
+    bits = bytearray(length)
+    for t in types:
+        bits[t // 8] |= 0x80 >> (t % 8)
+    return bytes([0, length]) + bytes(bits)
+
+
+def nsec_payload(hostname: str) -> bytes:
+    """A response whose single answer is "this name has only A and AAAA"."""
+    owner = _encode_name(hostname)
+    rdata = owner + _type_bitmap(_HELD_TYPES)
+    header = struct.pack(">HHHHHH", 0, 0x8400, 0, 1, 0, 0)  # QR + AA, 1 answer
+    rr = owner + struct.pack(
+        ">HHIH", _TYPE_NSEC, _CLASS_FLUSH_IN, _NSEC_TTL, len(rdata)
+    ) + rdata
+    return header + rr
+
+
+def nsec_reply_for(query: bytes, hostname: str) -> tuple[bytes, bool] | None:
+    """`(payload, unicast)` if this query deserves a negative answer, else None.
+
+    Pure, so the decision is testable without a socket — which matters, because
+    the failure mode being fixed is *silence*, and silence is exactly what a
+    broken implementation of this would also produce.
+    """
+    if len(query) < 12:
+        return None
+    flags, qdcount = struct.unpack(">HH", query[2:6])
+    if flags & 0x8000 or qdcount == 0:
+        return None  # a response, or a query asking nothing
+
+    target = hostname.rstrip(".").lower()
+    off, matched, unicast = 12, False, False
+    for _ in range(qdcount):
+        name, off = _read_name(query, off)
+        if name is None or off + 4 > len(query):
+            return None
+        qtype, qclass = struct.unpack(">HH", query[off:off + 4])
+        off += 4
+        if name.lower() != target:
+            continue  # not our name — never answer for someone else's
+        if qtype in _HELD_TYPES or qtype == _QTYPE_ANY:
+            continue  # zeroconf has a real answer; ours would be a duplicate
+        matched = True
+        # QU bit: the querier asked for a unicast reply.
+        unicast = unicast or bool(qclass & 0x8000)
+
+    return (nsec_payload(hostname), unicast) if matched else None
+
+
+class _NsecProtocol(asyncio.DatagramProtocol):
+    """Answers only the queries zeroconf leaves unanswered, for our name only."""
+
+    def __init__(self, hostname: str) -> None:
+        self._hostname = hostname
+        self._transport = None
+
+    def connection_made(self, transport) -> None:
+        self._transport = transport
+
+    def datagram_received(self, data: bytes, addr) -> None:
+        if self._transport is None:
+            return
+        try:
+            reply = nsec_reply_for(data, self._hostname)
+        except Exception:  # noqa: BLE001 — a malformed packet must not kill us
+            return
+        if reply is None:
+            return
+        payload, unicast = reply
+        try:
+            self._transport.sendto(
+                payload, addr if unicast else (_MDNS_GROUP, _MDNS_PORT)
+            )
+        except OSError:
+            pass  # LAN convenience; a send failure is never fatal
+
+
+async def _start_nsec_responder(hostname: str, ip: str):
+    """Bind alongside zeroconf (and avahi) to serve negative answers.
+
+    SO_REUSEPORT is what lets several responders share 5353 — the Pi already
+    runs avahi and zeroconf on it together, so this is the arrangement already
+    in use rather than a new one. Multicast is delivered to every joined
+    socket, so all of them see each query and each answers for what it owns.
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+    except (AttributeError, OSError):
+        pass
+    sock.bind(("", _MDNS_PORT))
+    sock.setsockopt(
+        socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP,
+        socket.inet_aton(_MDNS_GROUP) + socket.inet_aton(ip),
+    )
+    sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(ip))
+    sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 255)
+    sock.setblocking(False)
+
+    loop = asyncio.get_running_loop()
+    transport, _ = await loop.create_datagram_endpoint(
+        lambda: _NsecProtocol(f"{hostname}.local"), sock=sock
+    )
+    return transport
 
 _aiozc = None  # zeroconf.asyncio.AsyncZeroconf | None — module-level singleton
 
@@ -229,6 +416,20 @@ async def start_mdns() -> None:
             "mDNS: advertising %s → %s (interfaces=%s)",
             _advertised_url(host, port), ", ".join(filter(None, (ip, ipv6))), interfaces,
         )
+
+        # Negative answers for every other record type. Separately guarded: if
+        # binding 5353 alongside zeroconf fails, the advertisement above is
+        # still good and the app still resolves — it just resolves slowly for
+        # clients that ask for a type we do not hold.
+        global _nsec_transport
+        try:
+            _nsec_transport = await _start_nsec_responder(host, ip)
+            logger.info("mDNS: answering absent-type queries for %s.local with NSEC", host)
+        except OSError as exc:
+            logger.warning(
+                "mDNS: could not serve NSEC for %s.local (%s) — clients asking "
+                "for HTTPS/SVCB records may stall", host, exc,
+            )
     except Exception as exc:  # noqa: BLE001 — LAN convenience, never fatal
         logger.warning("mDNS registration failed (%s.local): %s", host, exc)
         _error = str(exc)
@@ -241,7 +442,15 @@ async def start_mdns() -> None:
 
 async def stop_mdns() -> None:
     """Withdraw the advertisement (sends goodbye packets) and close sockets."""
-    global _aiozc, _ip, _ipv6
+    global _aiozc, _ip, _ipv6, _nsec_transport
+    # Closed first and unconditionally: it binds 5353, and leaving it open
+    # across a restart is what makes the next bind fail.
+    if _nsec_transport is not None:
+        try:
+            _nsec_transport.close()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("mDNS NSEC responder shutdown error: %s", exc)
+        _nsec_transport = None
     if _aiozc is None:
         return
     try:
