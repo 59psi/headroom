@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
@@ -655,6 +655,60 @@ async def ids_for_reanalysis(db: AsyncSession, *, failed_only: bool = False) -> 
     if failed_only:
         stmt = stmt.where(*failed_analysis_filters())
     return list((await db.execute(stmt.order_by(Hat.id))).scalars().all())
+
+
+#: Cap on the per-hat list a run detail returns. A run covers the whole
+#: collection, so the unbounded list is hundreds of rows nobody scrolls. The
+#: failures sort first because they are what a run gets opened for, and the
+#: totals beside the list are SQL COUNTs — never `len()` of this capped list.
+JOB_HAT_LIMIT = 100
+
+
+async def list_for_analysis_job(
+    db: AsyncSession, job_id: int, limit: int = JOB_HAT_LIMIT
+) -> list[Hat]:
+    """The hats still tagged to one run, worst first.
+
+    Entities rather than columns, and here rather than in the admin routes, for
+    the reason `list_by_analysis_status` gives: `display_id` walks `hat.case`,
+    so it cannot be selected, and it is the label a person recognizes.
+
+    "Still tagged" is the whole caveat. `analysis_job_id` is one column and
+    `create_job` overwrites it, so a hat belongs to the LATEST run that covered
+    it — an older run's rows drain away as newer runs claim them. The caller
+    pairs this with `count_for_analysis_job` and says so, rather than letting a
+    shrinking list read as a run that did nothing.
+    """
+    query = (
+        select(Hat)
+        .options(*_hat_loads())
+        .where(Hat.analysis_job_id == job_id)
+        .order_by(
+            # Failures first: a finished run is opened to find out what broke.
+            case((Hat.analysis_error.is_not(None), 0), else_=1),
+            Hat.analyzed_at.desc().nulls_first(),
+            Hat.id,
+        )
+    )
+    result = await db.execute(query.limit(max(1, min(limit, JOB_HAT_LIMIT))))
+    return list(result.scalars().all())
+
+
+async def count_for_analysis_job(db: AsyncSession, job_id: int) -> tuple[int, int]:
+    """(hats still tagged to this run, how many of those carry a failure).
+
+    A COUNT, not `len()` of the capped list above — the mistake this codebase
+    has now made four separate times.
+    """
+    row = (
+        await db.execute(
+            select(
+                func.count(Hat.id),
+                func.count(Hat.id).filter(*failed_analysis_filters()),
+            ).where(Hat.analysis_job_id == job_id)
+        )
+    ).one()
+    return int(row[0] or 0), int(row[1] or 0)
 
 
 async def count_by_analysis_status(db: AsyncSession, status: str) -> int:

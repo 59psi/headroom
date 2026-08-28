@@ -559,3 +559,64 @@ async def test_retrying_twice_finds_nothing_left_to_do(client, db_session):
 async def test_retry_failed_requires_auth(anon_client):
     resp = await anon_client.post("/api/admin/analysis/retry-failed")
     assert resp.status_code == 401
+
+
+# --------------------------------------------------------------------------- #
+# One run's log
+#
+# There is no separate log store, deliberately — a run's record IS the hats it
+# tagged, the same reason AnalysisJob keeps no counters. So the detail reads
+# them back.
+# --------------------------------------------------------------------------- #
+
+
+async def test_a_run_detail_lists_its_hats_failures_first(client, db_session):
+    """A finished run is opened to find out what broke, so that sorts first."""
+    ids = [await _hat_with_photo(client) for _ in range(3)]
+    job_id = (await client.post("/api/admin/analysis/reanalyze-all")).json()["job"]["id"]
+
+    await _set_analysis(
+        db_session, ids[1], status="error", error="boom: could not read photo"
+    )
+    for ok in (ids[0], ids[2]):
+        await _set_analysis(db_session, ok, status="ok", error=None)
+
+    body = (await client.get(f"/api/admin/analysis/jobs/{job_id}")).json()
+
+    assert body["still_tagged"] == 3
+    assert body["failed_count"] == 1
+    assert [h["id"] for h in body["hats"]][0] == ids[1], (
+        "the failure must lead — it is the reason anyone opens a run"
+    )
+    assert body["hats"][0]["analysis_error"] == "boom: could not read photo", (
+        "verbatim: the failures CARD groups on a cleaned key, but a single "
+        "hat's log is where the whole string belongs"
+    )
+    assert {h["id"] for h in body["hats"]} == set(ids)
+
+
+async def test_an_old_run_says_its_hats_moved_on_rather_than_looking_empty(client):
+    """`analysis_job_id` is ONE column and every later run overwrites it.
+
+    So an older run legitimately ends up with no hats attributed to it. Without
+    `still_tagged` and `total` that renders as an empty list and reads as a run
+    that did nothing, which is the opposite of what happened.
+    """
+    await _hat_with_photo(client)
+    first = (await client.post("/api/admin/analysis/reanalyze-all")).json()["job"]["id"]
+    second = (await client.post("/api/admin/analysis/reanalyze-all")).json()["job"]["id"]
+    assert first != second
+
+    body = (await client.get(f"/api/admin/analysis/jobs/{first}")).json()
+    assert body["still_tagged"] == 0
+    assert body["hats"] == []
+    assert body["total"] == 1, "it really did cover a hat at the time"
+
+
+async def test_run_detail_404s_for_a_run_that_does_not_exist(client):
+    resp = await client.get("/api/admin/analysis/jobs/999999")
+    assert resp.status_code == 404
+
+
+async def test_run_detail_requires_auth(anon_client):
+    assert (await anon_client.get("/api/admin/analysis/jobs/1")).status_code == 401

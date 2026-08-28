@@ -4,7 +4,7 @@ import type {
   BackupHealth, BackupInfo, BackupUploadStatus, EbayCredsStatus, ImportJob, MdnsStatus, ModelStatus,
   TlsStatus, FrozenPriceRow, PriceReleaseResult, AnalysisFailureGroup,
   RecentError, TagBaseStatus, ConstructionAuditRow, ConstructionClearResult, RepricingStatus,
-  ReanalyzeResult,
+  ReanalyzeResult, AnalysisJobDetail,
 } from '../types';
 
 // Re-exported so existing imports from this module keep working; the
@@ -333,6 +333,12 @@ export function releaseFrozenPrices(
   return apiFetch<PriceReleaseResult>(`/api/admin/prices/release?${qs}`, {
     method: 'POST',
   });
+}
+
+/** What one run did, hat by hat — the log behind a "Recent runs" row.
+ *  Failures sort first, because that is what a finished run gets opened for. */
+export function getAnalysisJob(jobId: number) {
+  return apiFetch<AnalysisJobDetail>(`/api/admin/analysis/jobs/${jobId}`);
 }
 
 /** Why hats are failing analysis, grouped, worst first. */

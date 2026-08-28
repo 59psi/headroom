@@ -1701,6 +1701,40 @@ kbd {
 .align-items-baseline { align-items: baseline !important; }
 .hr-plain-list { list-style: none; padding-left: 0; margin-bottom: 0; }
 
+/* A "Recent runs" row: a real <button> for keyboard and screen-reader access,
+   stripped back to look like the text line it replaced. Full width and 44px
+   tall so it is a legitimate tap target on a phone. */
+.hr-run-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  min-height: 44px;
+  padding: 0.25rem 0.35rem;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hr-run-row:hover,
+.hr-run-row:focus-visible { border-color: var(--border); color: var(--text); }
+
+.hr-run-caret { color: var(--color-accent); font-size: 0.7rem; }
+
+/* The expanded log. Bounded and scrollable: a run covers the whole collection,
+   and letting it grow unbounded would push every control below it off-screen. */
+.hr-run-log {
+  margin: 0.25rem 0 0.5rem 0.75rem;
+  padding: 0.6rem 0.75rem;
+  border-left: 2px solid var(--border);
+  max-height: 22rem;
+  overflow-y: auto;
+}
+
 /* Job progress bar — neon fill on a recessed track, matching the metric tiles. */
 .hr-progress {
   height: 8px;

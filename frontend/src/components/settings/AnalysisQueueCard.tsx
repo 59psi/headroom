@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import {
-  getAnalysisFailures, getAnalysisQueue, reanalyzeAll, retryFailedAnalysis,
+  getAnalysisFailures, getAnalysisJob, getAnalysisQueue, reanalyzeAll, retryFailedAnalysis,
 } from '../../api/settings';
 
 /** Mirrors the stage labels on the hat page. */
@@ -35,9 +35,84 @@ function since(iso: string): string {
   return `${Math.floor(secs / 86_400)}d ago`;
 }
 
+/**
+ * What one run actually did, hat by hat.
+ *
+ * Its own component with its own query so the request only happens when a run
+ * is expanded — the card is on a Settings page that already fires plenty, and
+ * a run's log is hundreds of rows nobody has asked for until they click.
+ */
+function RunLog({ jobId }: { jobId: number }) {
+  const q = useQuery({
+    queryKey: ['admin', 'analysis-job', jobId],
+    queryFn: () => getAnalysisJob(jobId),
+  });
+
+  if (q.isPending) return <div className="text-secondary small ps-3">Loading run…</div>;
+  if (q.error) {
+    return (
+      <div className="small ps-3" style={{ color: 'var(--neon-pink)' }}>
+        {String(q.error)}
+      </div>
+    );
+  }
+  const d = q.data;
+  if (!d) return null;
+
+  return (
+    <div className="hr-run-log">
+      <div className="text-secondary small mb-2">
+        {/* A run whose hats have all been re-analyzed since is NOT a run that
+            did nothing — `analysis_job_id` is one column and later runs take
+            ownership of it. Saying so is the difference between an empty list
+            that explains itself and one that looks broken. */}
+        {d.still_tagged === 0 ? (
+          <>Every hat from this run has been re-analyzed since, so none is still
+            attributed to it. It covered {d.total} at the time.</>
+        ) : (
+          <>
+            {d.still_tagged} of {d.total} still attributed to this run
+            {d.failed_count > 0 && ` · ${d.failed_count} still failing`}
+          </>
+        )}
+      </div>
+
+      {d.hats.length > 0 && (
+        <ul className="hr-plain-list">
+          {d.hats.map(h => (
+            <li key={h.id} className="mb-2 small">
+              <Link to={`/hats/${h.id}`}>
+                {h.display_id ?? h.label ?? `Hat #${h.id}`}
+              </Link>
+              <span className="text-secondary"> · {h.analysis_status ?? 'unknown'}</span>
+              {h.analysis_error && (
+                <div
+                  className="font-mono text-muted"
+                  style={{ fontSize: '0.7rem', wordBreak: 'break-word' }}
+                >
+                  {h.analysis_error}
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {/* Stated, never silent: the list is capped and the count above is a real
+          COUNT, so a truncated log must not read as the whole story. */}
+      {d.still_tagged > d.hats.length && (
+        <div className="text-muted" style={{ fontSize: '0.72rem' }}>
+          Showing the first {d.hats.length} of {d.still_tagged}, failures first.
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function AnalysisQueueCard() {
   const qc = useQueryClient();
   const [confirming, setConfirming] = useState(false);
+  const [openJob, setOpenJob] = useState<number | null>(null);
 
   // Why hats are failing, grouped. Before this the only place a failure was
   // legible was one hat's own page, and the banner there printed generic
@@ -191,13 +266,25 @@ export function AnalysisQueueCard() {
           <div className="mb-3">
             <div className="hr-metric-label mb-1">Recent runs</div>
             <ul className="hr-plain-list">
-              {data.recent_jobs.map(j => (
-                <li key={j.id} className="text-secondary small">
-                  {j.status === 'running' ? 'running' : since(j.finished_at ?? j.started_at)}
-                  {' · '}{j.done}/{j.total}
-                  {j.failed > 0 && ` · ${j.failed} failed`}
-                </li>
-              ))}
+              {data.recent_jobs.map(j => {
+                const open = openJob === j.id;
+                return (
+                  <li key={j.id} className="mb-1">
+                    <button
+                      type="button"
+                      className="hr-run-row"
+                      aria-expanded={open}
+                      onClick={() => setOpenJob(open ? null : j.id)}
+                    >
+                      <span aria-hidden="true" className="hr-run-caret">{open ? '▾' : '▸'}</span>
+                      {j.status === 'running' ? 'running' : since(j.finished_at ?? j.started_at)}
+                      {' · '}{j.done}/{j.total}
+                      {j.failed > 0 && ` · ${j.failed} failed`}
+                    </button>
+                    {open && <RunLog jobId={j.id} />}
+                  </li>
+                );
+              })}
             </ul>
           </div>
         )}
