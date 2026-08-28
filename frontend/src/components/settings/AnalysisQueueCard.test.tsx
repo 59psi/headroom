@@ -11,6 +11,7 @@ vi.mock('../../api/settings', () => ({
   getAnalysisFailures: vi.fn(async () => []),
   reanalyzeAll: vi.fn(),
   retryFailedAnalysis: vi.fn(),
+  getAnalysisJob: vi.fn(),
 }));
 
 const IDLE: AnalysisQueueStatus = {
@@ -239,5 +240,113 @@ describe('AnalysisQueueCard — retrying only what failed', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Retry 21 hats' }));
     expect(await screen.findByText(/already queued/)).toBeInTheDocument();
+  });
+});
+
+describe('AnalysisQueueCard — a run opens into its own log', () => {
+  const RUN = {
+    id: 7, total: 235, done: 213, failed: 22, status: 'done',
+    started_at: new Date(Date.now() - 90_000).toISOString(),
+    finished_at: new Date(Date.now() - 30_000).toISOString(),
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(settingsApi.getAnalysisFailures).mockResolvedValue([]);
+    vi.mocked(settingsApi.getAnalysisQueue).mockResolvedValue(queue({ recent_jobs: [RUN] }));
+  });
+
+  it('does not fetch a run until it is opened', async () => {
+    renderWithProviders(<AnalysisQueueCard />);
+    expect(await screen.findByText('Recent runs')).toBeInTheDocument();
+    // The card already fires several queries on a Settings page; a run's log is
+    // hundreds of rows nobody has asked for until they click.
+    expect(settingsApi.getAnalysisJob).not.toHaveBeenCalled();
+  });
+
+  it('shows each hat and its verbatim error when opened', async () => {
+    const user = userEvent.setup();
+    vi.mocked(settingsApi.getAnalysisJob).mockResolvedValue({
+      ...RUN,
+      still_tagged: 2,
+      failed_count: 1,
+      hats: [
+        {
+          id: 63, display_id: 'A1-2', label: 'melin Odysea', photo_path: null,
+          analysis_status: 'fallback',
+          analysis_error: "Could not parse Claude response: string indices must be integers, not 'str'",
+          analyzed_at: RUN.finished_at,
+        },
+        {
+          id: 64, display_id: 'A1-3', label: 'melin Coronado', photo_path: null,
+          analysis_status: 'ok', analysis_error: null, analyzed_at: RUN.finished_at,
+        },
+      ],
+    });
+
+    renderWithProviders(<AnalysisQueueCard />);
+    await user.click(await screen.findByRole('button', { name: /213\/235/ }));
+
+    expect(await screen.findByText('A1-2')).toBeInTheDocument();
+    expect(screen.getByText('A1-3')).toBeInTheDocument();
+    expect(settingsApi.getAnalysisJob).toHaveBeenCalledWith(7);
+    // Verbatim: the failures CARD groups on a cleaned key, but one hat's log is
+    // where the untruncated string belongs.
+    expect(screen.getByText(/string indices must be integers/)).toBeInTheDocument();
+  });
+
+  it('explains an old run whose hats a later run has since claimed', async () => {
+    // `analysis_job_id` is one column that every later run overwrites, so this
+    // is normal — and an unexplained empty list reads as a run that did nothing.
+    const user = userEvent.setup();
+    vi.mocked(settingsApi.getAnalysisJob).mockResolvedValue({
+      ...RUN, still_tagged: 0, failed_count: 0, hats: [],
+    });
+
+    renderWithProviders(<AnalysisQueueCard />);
+    await user.click(await screen.findByRole('button', { name: /213\/235/ }));
+
+    expect(await screen.findByText(/has been re-analyzed since/)).toBeInTheDocument();
+    expect(screen.getByText(/covered 235 at the time/)).toBeInTheDocument();
+  });
+
+  it('says when the log is truncated rather than implying it is complete', async () => {
+    const user = userEvent.setup();
+    vi.mocked(settingsApi.getAnalysisJob).mockResolvedValue({
+      ...RUN,
+      still_tagged: 235,
+      failed_count: 22,
+      hats: [{
+        id: 63, display_id: 'A1-2', label: null, photo_path: null,
+        analysis_status: 'error', analysis_error: 'boom', analyzed_at: null,
+      }],
+    });
+
+    renderWithProviders(<AnalysisQueueCard />);
+    await user.click(await screen.findByRole('button', { name: /213\/235/ }));
+
+    expect(await screen.findByText(/Showing the first 1 of 235/)).toBeInTheDocument();
+  });
+
+  it('toggles shut again', async () => {
+    const user = userEvent.setup();
+    vi.mocked(settingsApi.getAnalysisJob).mockResolvedValue({
+      ...RUN, still_tagged: 1, failed_count: 0,
+      hats: [{
+        id: 63, display_id: 'A1-2', label: null, photo_path: null,
+        analysis_status: 'ok', analysis_error: null, analyzed_at: null,
+      }],
+    });
+
+    renderWithProviders(<AnalysisQueueCard />);
+    const row = await screen.findByRole('button', { name: /213\/235/ });
+
+    await user.click(row);
+    expect(await screen.findByText('A1-2')).toBeInTheDocument();
+    expect(row).toHaveAttribute('aria-expanded', 'true');
+
+    await user.click(row);
+    expect(screen.queryByText('A1-2')).not.toBeInTheDocument();
+    expect(row).toHaveAttribute('aria-expanded', 'false');
   });
 });

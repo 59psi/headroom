@@ -182,6 +182,43 @@ class AnalysisJobRead(BaseModel):
     finished_at: datetime | None = None
 
 
+class AnalysisJobHat(BaseModel):
+    """What one run did to one hat — the row behind a run's log view."""
+
+    id: int
+    display_id: str | None = None
+    label: str | None = None
+    photo_path: str | None = None
+    analysis_status: str | None = None
+    #: The failure text, verbatim and untruncated. The failures CARD groups on a
+    #: cleaned key so one problem reads as one; here the point is the opposite —
+    #: this is the log for a single hat, so the whole string is what you came for.
+    analysis_error: str | None = None
+    analyzed_at: datetime | None = None
+
+
+class AnalysisJobDetail(AnalysisJobRead):
+    """A run plus what happened to each hat in it.
+
+    There is no separate log store: a run's record IS the hats it tagged, which
+    is the same reason `AnalysisJob` keeps no counters. So this reads them back.
+
+    `still_tagged` exists because `hats.analysis_job_id` is one column and every
+    new run overwrites it — a hat belongs to the LATEST run that covered it, so
+    an older run's rows drain away as newer runs claim them. Without this number
+    a run whose hats had all been re-analyzed since would render an empty list
+    and read as a run that did nothing, which is the opposite of the truth.
+    """
+
+    #: Hats still attributed to this run — a COUNT, never `len(hats)`, which is
+    #: capped at `hat_service.JOB_HAT_LIMIT`.
+    still_tagged: int
+    #: How many of those carry a failure. Also a COUNT.
+    failed_count: int
+    #: Failures first; capped.
+    hats: list[AnalysisJobHat] = []
+
+
 class AnalysisQueueStatus(BaseModel):
     """`queued` is the in-memory depth, `pending_count` what the DB says.
 

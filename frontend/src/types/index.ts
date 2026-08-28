@@ -560,6 +560,31 @@ export interface AnalysisFailureGroup {
   is_billing: boolean;
 }
 
+/** One hat's outcome inside a run — a row in that run's log. */
+export interface AnalysisJobHat {
+  id: number;
+  display_id: string | null;
+  label: string | null;
+  photo_path: string | null;
+  analysis_status: string | null;
+  /** Verbatim and untruncated. The failures CARD groups on a cleaned key so
+   *  one problem reads as one; here the whole string is the point. */
+  analysis_error: string | null;
+  analyzed_at: string | null;
+}
+
+/** A run plus what happened to each hat in it.
+ *
+ *  `still_tagged` matters: `hats.analysis_job_id` is one column that every
+ *  later run overwrites, so an older run's hats drain away as newer runs claim
+ *  them. Without it an old run renders an empty list and reads as a run that
+ *  did nothing. */
+export interface AnalysisJobDetail extends AnalysisJobRead {
+  still_tagged: number;
+  failed_count: number;
+  hats: AnalysisJobHat[];
+}
+
 /** What a re-analysis run queued. Shared by the whole-collection run and the
  *  retry-failed run, which differ only in which hats go in. */
 export interface ReanalyzeResult {

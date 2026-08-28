@@ -12,12 +12,14 @@ old one, and watching it drain is exactly what the queue view is for.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.database import get_db
 from headroom.schemas.admin import (
     AnalysisFailureGroup,
+    AnalysisJobDetail,
+    AnalysisJobHat,
     AnalysisJobRead,
     AnalysisQueueStatus,
     PendingHat,
@@ -163,6 +165,49 @@ async def retry_failed_analysis(
         else await hat_service.ids_for_reanalysis(db, failed_only=True)
     )
     return await _queue_run(db, hat_ids)
+
+
+@router.get("/analysis/jobs/{job_id}", response_model=AnalysisJobDetail)
+async def analysis_job_detail(job_id: int, db: AsyncSession = Depends(get_db)):
+    """What one run actually did, hat by hat.
+
+    There is no separate log store, and there deliberately isn't one: a run's
+    record IS the hats it tagged, for the same reason `AnalysisJob` keeps no
+    counters. So this reads them back — status and the verbatim failure text
+    per hat, failures first, because a finished run gets opened to find out
+    what broke.
+
+    `still_tagged` is published alongside because `hats.analysis_job_id` is a
+    single column that every later run overwrites. An old run's hats drain away
+    as newer runs claim them, so a run from last week can legitimately show an
+    empty list — and without that number it would read as a run that did
+    nothing, which is the opposite of what happened.
+    """
+    job = await analysis_job_service.job_by_id(db, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="No such analysis run")
+
+    progress = await analysis_job_service.progress_for(db, job)
+    hats = await hat_service.list_for_analysis_job(db, job_id)
+    still_tagged, failed_count = await hat_service.count_for_analysis_job(db, job_id)
+
+    return AnalysisJobDetail(
+        **_job_read(progress).model_dump(),
+        still_tagged=still_tagged,
+        failed_count=failed_count,
+        hats=[
+            AnalysisJobHat(
+                id=h.id,
+                display_id=h.display_id,
+                label=" ".join(p for p in (h.brand, h.model_name) if p) or None,
+                photo_path=h.thumb_path or h.photo_path,
+                analysis_status=h.analysis_status,
+                analysis_error=h.analysis_error,
+                analyzed_at=h.analyzed_at,
+            )
+            for h in hats
+        ],
+    )
 
 
 @router.get("/analysis/failures", response_model=list[AnalysisFailureGroup])

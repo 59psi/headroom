@@ -6,6 +6,34 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.67.0] — 2026-08-28
+
+### Added
+- **"Recent runs" entries are clickable, and open that run's log.** The card
+  listed five runs as bare text (`1d ago · 213/235`) with no way to find out
+  which hats a run covered or what the 22 failures actually said. Each row is
+  now a button that expands into the run's own log: every hat still attributed
+  to it, its analysis status, and its **verbatim, untruncated** error.
+
+  Verbatim on purpose. The "Why analysis is failing" card groups on a *cleaned*
+  key so that one problem reads as one problem; a single hat's log is the
+  opposite case, where the whole string is what you came for.
+
+  Backed by `GET /api/admin/analysis/jobs/{job_id}`. There is no separate log
+  store and deliberately isn't one — a run's record *is* the hats it tagged,
+  the same reason `AnalysisJob` keeps no counters — so this reads them back.
+  Failures sort first, because a finished run gets opened to find out what
+  broke. The request only fires when a row is opened.
+
+- **A run says when its hats have moved on, instead of looking empty.**
+  `hats.analysis_job_id` is a single column that every later run overwrites, so
+  an older run legitimately ends up with nothing attributed to it. The detail
+  publishes `still_tagged` alongside the run's original `total`, so that case
+  reads as *"every hat from this run has been re-analyzed since; it covered 235
+  at the time"* rather than as a run that did nothing. `still_tagged` and
+  `failed_count` are SQL `COUNT`s, never `len()` of the capped list — and when
+  the list is truncated the view says so.
+
 ## [2.66.0] — 2026-08-26
 
 ### Added

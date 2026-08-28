@@ -230,6 +230,13 @@ async def current_job(db: AsyncSession) -> JobProgress | None:
     return None if progress.job.status != RUNNING else progress
 
 
+async def job_by_id(db: AsyncSession, job_id: int) -> AnalysisJob | None:
+    """One run, by id. `None` when it has aged out or never existed."""
+    return (
+        await db.execute(select(AnalysisJob).where(AnalysisJob.id == job_id))
+    ).scalar_one_or_none()
+
+
 async def recent_jobs(db: AsyncSession, limit: int = RECENT_LIMIT) -> list[JobProgress]:
     jobs = (
         (
