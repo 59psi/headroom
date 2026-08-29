@@ -2,9 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../../test/utils';
+import { sweepProgressFixture } from '../../test/fixtures';
 import { ColorwayCatalogCard } from './ColorwayCatalogCard';
 import * as api from '../../api/settings';
-import type { CatalogStatus, SweepProgress } from '../../types';
+import type { CatalogStatus } from '../../types';
 
 vi.mock('../../api/settings', () => ({
   getColorwayStatus: vi.fn(),
@@ -13,18 +14,10 @@ vi.mock('../../api/settings', () => ({
 
 const mocked = vi.mocked(api);
 
-function progress(over: Partial<SweepProgress> = {}): SweepProgress {
-  return {
-    running: false, done: 0, total: 0, label: null,
-    started_at: null, finished_at: null, error: null, pct: 0,
-    ...over,
-  };
-}
-
 function status(over: Partial<CatalogStatus> = {}): CatalogStatus {
   return {
     entries: 550, models: 188, colorways: 188, last_harvest: null,
-    progress: progress(),
+    progress: sweepProgressFixture(),
     ...over,
   };
 }
@@ -37,7 +30,7 @@ describe('ColorwayCatalogCard — live harvest progress', () => {
     // only trace was a log line — from this page a working harvest and a dead
     // button looked exactly alike, and the card just said "reload in a minute".
     mocked.getColorwayStatus.mockResolvedValue(status({
-      progress: progress({
+      progress: sweepProgressFixture({
         running: true, done: 4, total: 9, pct: 44, label: 'odysea',
         started_at: new Date().toISOString(),
       }),
@@ -77,7 +70,7 @@ describe('ColorwayCatalogCard — live harvest progress', () => {
 
   it('surfaces a harvest that failed, after it has stopped', async () => {
     mocked.getColorwayStatus.mockResolvedValue(status({
-      progress: progress({
+      progress: sweepProgressFixture({
         running: false, error: 'Melin Recap query 429',
         finished_at: new Date().toISOString(),
       }),

@@ -6,6 +6,42 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.70.1] — 2026-08-29
+
+Everything here came out of a two-axis review of 2.66.0–2.70.0. Both axes
+independently found the same defect, and it is the one 2.70.0 shipped to
+prevent.
+
+### Fixed
+- **A failed sweep could not report that it had failed.** `SweepProgress.error`
+  was never set by anything: both call sites were a bare
+  `finally: progress.finish()`, so a crashed re-pricing sweep or colorway
+  harvest reported `running: false, error: null` — byte-identical to a clean
+  one. The card's "Last run failed" branch was unreachable, and two frontend
+  tests passed by mocking a state the server could not emit. The harvest case
+  was the worse one: it runs behind a 202 with nobody watching, so a 429 from
+  the marketplace rendered as an idle card — precisely the "dead button" state
+  the feature exists to remove.
+
+- **"Re-price now" showed no progress bar at all.** The poll only started once
+  `running` was already true, but `reprice_once` does not call
+  `progress.begin()` until it has taken the sweep lock and run its query — so
+  the status fetch issued on click answered `running: false`, polling stopped,
+  and the bar never appeared for the entire blocking run. It now uses the same
+  grace window the colorway card already had, and a test drives the real
+  click → bar sequence rather than seeding `running: true`.
+
+- `['admin','analysis-job', id]` was not invalidated after a retry, so a run
+  log left open described a set the retry had just re-tagged. Sibling key —
+  the same class the diff's own comment fixed for the failures list.
+
+### Changed
+- The `SweepProgress` fixture is now shared from `src/test/fixtures.ts`. Two
+  byte-identical copies had appeared in two card tests, which is exactly what
+  that module exists to prevent.
+- Dropped `SweepProgress.name` and the `new()` helper that existed only to set
+  it — the field appeared in neither the API payload nor any log.
+
 ## [2.70.0] — 2026-08-28
 
 ### Added

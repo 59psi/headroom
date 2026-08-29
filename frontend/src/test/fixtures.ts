@@ -31,3 +31,20 @@ export function hatFixture(over: Partial<HatRead> = {}): HatRead {
     ...over,
   };
 }
+
+
+/** Idle sweep progress — what the server sends when nothing is running.
+ *
+ *  Shared rather than rebuilt per test file: two byte-identical copies of this
+ *  shape already existed, so adding a field to `SweepProgress` would have
+ *  broken each independently — the exact failure this module exists to stop.
+ */
+export function sweepProgressFixture(
+  over: Partial<import('../types').SweepProgress> = {},
+): import('../types').SweepProgress {
+  return {
+    running: false, done: 0, total: 0, label: null,
+    started_at: null, finished_at: null, error: null, pct: 0,
+    ...over,
+  };
+}

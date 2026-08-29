@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getRepricing, runRepricing } from '../../api/settings';
 import { invalidateHatViews } from '../../lib/invalidate';
@@ -16,6 +17,7 @@ import { SweepProgressBar } from '../common/SweepProgressBar';
  */
 export function RepricingCard() {
   const qc = useQueryClient();
+  const [startedAt, setStartedAt] = useState<number | null>(null);
   const status = useQuery({
     queryKey: ['admin', 'repricing'],
     queryFn: getRepricing,
@@ -23,15 +25,25 @@ export function RepricingCard() {
     // isn't hitting the API forever. The scheduled sweep runs at boot and for
     // minutes afterwards, and this is the only way to see it happening — the
     // fields below it describe the last run that FINISHED.
-    refetchInterval: (q) => (q.state.data?.progress?.running ? 2000 : false),
+    refetchInterval: (q) => {
+      if (q.state.data?.progress?.running) return 2000;
+      // Grace window, the same one the colorway card needs and for the same
+      // reason. `reprice_once` does not call `progress.begin()` until it has
+      // taken the sweep lock and run its query, so a status fetch issued the
+      // instant the button is pressed still answers `running: false` — the
+      // interval would then return false and polling would stop for the whole
+      // blocking run, which is precisely when the bar is wanted.
+      if (startedAt && Date.now() - startedAt < 20_000) return 2000;
+      return false;
+    },
   });
 
   const run = useMutation({
     mutationFn: runRepricing,
     onMutate: () => {
-      // The manual run is a blocking request, so nothing would refresh until
-      // it returns. Kick a poll now so the bar appears while it works rather
-      // than only after it has finished.
+      // Opens the grace window above. A single invalidate here is not enough
+      // on its own: it races the POST and resolves `running: false`.
+      setStartedAt(Date.now());
       qc.invalidateQueries({ queryKey: ['admin', 'repricing'] });
     },
     onSuccess: () => {

@@ -138,7 +138,7 @@ MANUAL_SWEEP_LIMIT = 50
 #: Live progress of the sweep in flight. Complements `_health`, which answers
 #: "did the last one work"; this answers "is one happening right now, and how
 #: far along". Both process-local, for the reason RepricingHealth documents.
-progress = sweep_progress.new("repricing")
+progress = sweep_progress.SweepProgress()
 
 
 def health() -> RepricingHealth:
@@ -241,9 +241,16 @@ async def reprice_once(session_factory=None, limit: int | None = None) -> tuple[
         # the exact false signal the progress record exists to remove.
         progress.begin(len(hats))
         try:
-            return await _sweep(db, hats, delay)
-        finally:
-            progress.finish()
+            result = await _sweep(db, hats, delay)
+        except Exception as exc:
+            # The error has to be RECORDED, not merely survived. A bare
+            # `finally: finish()` left `error` permanently null, so a crashed
+            # sweep reported `running: false, error: null` — byte-identical to a
+            # clean one, and the card's failure branch was unreachable.
+            progress.finish(error=str(exc)[:300])
+            raise
+        progress.finish()
+        return result
 
 
 async def _sweep(db, hats: list, delay: float) -> tuple[int, int]:

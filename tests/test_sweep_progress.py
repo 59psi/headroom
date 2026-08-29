@@ -16,7 +16,7 @@ pytestmark = pytest.mark.anyio
 
 
 async def test_a_fresh_sweep_reports_itself_idle():
-    p = sweep_progress.new("x")
+    p = sweep_progress.SweepProgress()
     snap = p.snapshot()
     assert snap["running"] is False
     assert snap["done"] == 0 and snap["total"] == 0
@@ -25,7 +25,7 @@ async def test_a_fresh_sweep_reports_itself_idle():
 
 async def test_progress_advances_and_names_what_it_is_on():
     """A bare count says the sweep is alive; the label says it is not wedged."""
-    p = sweep_progress.new("x")
+    p = sweep_progress.SweepProgress()
     p.begin(4)
     assert p.snapshot()["running"] is True
 
@@ -36,7 +36,7 @@ async def test_progress_advances_and_names_what_it_is_on():
 
 
 async def test_finishing_clears_running_and_the_label():
-    p = sweep_progress.new("x")
+    p = sweep_progress.SweepProgress()
     p.begin(2)
     p.advance("a")
     p.finish()
@@ -48,7 +48,7 @@ async def test_finishing_clears_running_and_the_label():
 
 async def test_an_error_outlives_the_run_that_produced_it():
     """The record has to be readable AFTER the thing stops — that is the point."""
-    p = sweep_progress.new("x")
+    p = sweep_progress.SweepProgress()
     p.begin(1)
     p.finish(error="Melin Recap query 429")
     snap = p.snapshot()
@@ -59,7 +59,7 @@ async def test_an_error_outlives_the_run_that_produced_it():
 async def test_a_new_run_clears_the_previous_error_but_finishing_does_not():
     """Cleared on START, so a failure stays visible until something supersedes
     it. Clearing on finish would erase the failure at the moment it happened."""
-    p = sweep_progress.new("x")
+    p = sweep_progress.SweepProgress()
     p.begin(1)
     p.finish(error="boom")
     p.finish()  # a second finish must not wipe it
@@ -71,7 +71,7 @@ async def test_a_new_run_clears_the_previous_error_but_finishing_does_not():
 
 async def test_progress_never_exceeds_its_total():
     """A bar reading 241/235 reads as a bug in the thing being measured."""
-    p = sweep_progress.new("x")
+    p = sweep_progress.SweepProgress()
     p.begin(2)
     for _ in range(5):
         p.advance()
@@ -123,6 +123,33 @@ async def test_a_sweep_that_raises_does_not_stay_running_forever(monkeypatch):
     with pytest.raises(RuntimeError):
         await repricing.reprice_once(session_factory=_Factory())
 
-    assert repricing.progress.snapshot()["running"] is False, (
+    snap = repricing.progress.snapshot()
+    assert snap["running"] is False, (
         "try/finally, not a happy-path call at the bottom of the loop"
     )
+    # The first version of this only asserted `running`, and passed against a
+    # bare `finally: finish()` that could never set `error` — so a crashed
+    # sweep reported `running: false, error: null`, byte-identical to a clean
+    # one, while the UI carried an unreachable failure branch and two frontend
+    # tests mocked a state the server could not emit.
+    assert snap["error"] is not None, "a failed sweep must SAY it failed"
+    assert "mid-sweep failure" in snap["error"]
+
+
+async def test_a_failed_harvest_records_why(monkeypatch):
+    """Same defect, other sweep. This one runs behind a 202 with nobody
+    watching, so an unrecorded failure renders as an idle card — the exact
+    "dead button" state the module exists to distinguish."""
+    from headroom.services import catalog_service
+
+    async def _explode(db, now):
+        raise RuntimeError("Melin Recap query 429")
+
+    monkeypatch.setattr(catalog_service, "_harvest", _explode)
+
+    with pytest.raises(RuntimeError):
+        await catalog_service.harvest_catalog(None)
+
+    snap = catalog_service.progress.snapshot()
+    assert snap["running"] is False
+    assert snap["error"] == "Melin Recap query 429"

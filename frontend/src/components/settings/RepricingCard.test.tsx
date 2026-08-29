@@ -2,9 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../../test/utils';
+import { sweepProgressFixture } from '../../test/fixtures';
 import { RepricingCard } from './RepricingCard';
 import * as api from '../../api/settings';
-import type { RepricingStatus, SweepProgress } from '../../types';
+import type { RepricingStatus } from '../../types';
 
 vi.mock('../../api/settings', () => ({
   getRepricing: vi.fn(),
@@ -12,15 +13,6 @@ vi.mock('../../api/settings', () => ({
 }));
 
 const mocked = vi.mocked(api);
-
-/** Idle progress — what the server sends when nothing is sweeping. */
-export function idleProgress(over: Partial<SweepProgress> = {}): SweepProgress {
-  return {
-    running: false, done: 0, total: 0, label: null,
-    started_at: null, finished_at: null, error: null, pct: 0,
-    ...over,
-  };
-}
 
 /** The real payload shape — every field pydantic serializes, defaults included.
  *
@@ -31,7 +23,7 @@ function status(over: Partial<RepricingStatus> = {}): RepricingStatus {
   return {
     enabled: true, interval_hours: 24, last_run_at: null, last_success_at: null,
     last_error: null, consecutive_failures: 0, last_repriced: 0, last_considered: 0,
-    progress: idleProgress(),
+    progress: sweepProgressFixture(),
     ...over,
   };
 }
@@ -103,7 +95,7 @@ describe('RepricingCard — live progress', () => {
     // card could only describe the last run that FINISHED, so a sweep in
     // progress was indistinguishable from nothing happening at all.
     mocked.getRepricing.mockResolvedValue(status({
-      progress: idleProgress({
+      progress: sweepProgressFixture({
         running: true, done: 37, total: 235, pct: 16,
         label: 'Odysea Rope Hydro', started_at: new Date().toISOString(),
       }),
@@ -132,7 +124,7 @@ describe('RepricingCard — live progress', () => {
     // Nobody is watching at the moment it fails, so the error has to outlive
     // `running` going false or it can never be read at all.
     mocked.getRepricing.mockResolvedValue(status({
-      progress: idleProgress({
+      progress: sweepProgressFixture({
         running: false, error: 'Melin Recap query 429',
         finished_at: new Date().toISOString(),
       }),
@@ -141,4 +133,39 @@ describe('RepricingCard — live progress', () => {
     renderWithProviders(<RepricingCard />);
     expect(await screen.findByText(/Melin Recap query 429/)).toBeInTheDocument();
   });
+});
+
+describe('RepricingCard — the bar must appear from a CLICK, not only mid-sweep', () => {
+  it('keeps polling after the button is pressed, before running goes true', async () => {
+    // The shipped bug: `refetchInterval` only fired while `running` was already
+    // true, but `reprice_once` does not call `progress.begin()` until it has
+    // taken the sweep lock and run its query. The status fetch issued on click
+    // therefore answered `running: false`, polling stopped, and the bar never
+    // appeared for the whole blocking run — i.e. exactly when it was wanted.
+    const user = userEvent.setup();
+
+    let calls = 0;
+    mocked.getRepricing.mockImplementation(async () => {
+      calls += 1;
+      // First reads are idle — the sweep has not begun yet.
+      if (calls <= 2) return status();
+      return status({
+        progress: sweepProgressFixture({
+          running: true, done: 5, total: 50, pct: 10, label: 'Trenches Icon',
+        }),
+      });
+    });
+    mocked.runRepricing.mockImplementation(
+      () => new Promise(() => {}) as Promise<never>,  // never settles: a long run
+    );
+
+    renderWithProviders(<RepricingCard />);
+    await user.click(await screen.findByRole('button', { name: /Re-price now/ }));
+
+    // Without the grace window this never arrives.
+    expect(
+      await screen.findByRole('progressbar', { name: 'Sweep progress' }, { timeout: 8000 }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Trenches Icon')).toBeInTheDocument();
+  }, 15000);
 });
