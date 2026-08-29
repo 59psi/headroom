@@ -20,6 +20,7 @@ import { AccountCard } from '../components/settings/AccountCard';
 import { ShareLinksCard } from '../components/settings/ShareLinksCard';
 import { TagsCard } from '../components/settings/TagsCard';
 import { ConstructionAuditCard } from '../components/settings/ConstructionAuditCard';
+import { SharedPricesCard } from '../components/settings/SharedPricesCard';
 import { FrozenPricesCard } from '../components/settings/FrozenPricesCard';
 import { GuestViewCard } from '../components/settings/GuestViewCard';
 import { TrustCertCard } from '../components/settings/TrustCertCard';
@@ -62,6 +63,7 @@ export const SECTIONS = [
       ConstructionAuditCard,
       RepricingCard,
       FrozenPricesCard,
+      SharedPricesCard,
       ColorwayCatalogCard,
       PurchasesCard,
       EbayCredsCard,

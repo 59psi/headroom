@@ -412,6 +412,26 @@ class RepricingStatus(BaseModel):
     progress: SweepProgressRead = SweepProgressRead()
 
 
+class SharedPriceGroup(BaseModel):
+    """One resale price, and every hat carrying it.
+
+    The reported complaint was that values "are all very wrong" — they were not
+    individually implausible, they were IDENTICAL, and nothing in the app said
+    so. Each hat's page showed its own figure with its own source sentence;
+    only a query over the whole collection revealed that 54 shared one.
+    """
+
+    resale_price: float
+    #: The sentence shown beside the price on each of these hats.
+    source: str | None = None
+    hat_count: int
+    hat_ids: list[int] = []
+    display_ids: list[str] = []
+    #: How many carry no colorway — the actionable half. A missing colorway is
+    #: what prevents naming a product, and the one thing only the owner knows.
+    missing_colorway: int = 0
+
+
 class RepricingRunResult(BaseModel):
     repriced: int
     considered: int

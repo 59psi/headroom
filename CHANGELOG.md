@@ -6,6 +6,47 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.72.0] — 2026-08-29
+
+### Added
+- **A report of which prices describe a LINE rather than the hat beside them**
+  (Settings → Data → "Prices shared by many hats").
+
+  The original complaint was that resale values "are all very wrong". They were
+  not individually implausible — they were *identical*, and **nothing in the app
+  said so**: each hat's page shows its own figure with its own source sentence,
+  and only a query across the whole collection reveals that 54 of them share
+  one. The card groups active hats by the price and source they carry, biggest
+  group first, and names how many of each group are missing a colorway — which
+  is the actionable half.
+
+### Measured, and why this is a report rather than a fix
+  2.71.0 made pricing prefer melin's own product, which splits a line into its
+  real goods — but only for hats whose product can be identified. Four ways to
+  identify the rest were tried and measured against the real collection:
+
+  * **Purchase history.** 152 of 153 existing colorways came from a matched
+    purchase, but **59 of the 82** colorway-less hats have no eligible purchase
+    at all.
+  * **The marketplace product list.** **47 of 76** have *no candidate product*
+    — their model is not currently listed on melinrecap, so there is nothing to
+    pick even by hand.
+  * **Inferring a colorway from the photo's extracted colors.** Validated
+    against the 153 hats whose colorway is known: **12% precision** (4 right,
+    28 wrong), 56% ambiguous. Guessing would confidently price 28 hats off
+    somebody else's product — strictly worse than leaving it blank.
+  * Which leaves the owner, who owns the hats. Entering a colorway on the Edit
+    Hat form already lets that hat be priced against its own product.
+
+  So for a large minority a line median is genuinely the best available signal,
+  and the honest move is to say which numbers those are rather than invent
+  precision they do not have.
+
+  `manual` prices are excluded — a number the owner typed is theirs, and five
+  hats priced the same by hand are not a measurement error. Grouping is on
+  (price, source) together: two lines that happen to sit at the same median are
+  two facts, not one.
+
 ## [2.71.1] — 2026-08-29
 
 An adversarial review of 2.70.1–2.71.0. Two of the three hard findings are
