@@ -534,3 +534,153 @@ async def test_condition_is_kept_while_the_model_is_shortened(monkeypatch):
     stats = await fetch_resale_stats("odysea", "Odysea Rope Hydro Watercolor", "worn")
     assert stats["condition_matched"] is True
     assert stats["median"] == 60.0, "the worn line, not the one tagged example"
+
+
+# --------------------------------------------------------------------------- #
+# Pricing against melin's OWN product
+#
+# "can't you just get prices from recap?" — yes. Every listing publishes
+# `shopifyProductName` ("Trenches Icon Hydro - Prismatic") and a structured
+# `selectedVariantOptions.color`, on 986 of 986 listings across 510 distinct
+# products. Pricing ignored all of it and token-matched the freeform title, so a
+# short line matched everything in it and 76 hats shared one price.
+# --------------------------------------------------------------------------- #
+
+
+def _product(cents, name, color, condition="new_with_tags", size="C"):
+    """A listing as the marketplace really sends one.
+
+    The `title` mirrors `shopifyProductName` because that is what the real
+    payload does — an earlier version passed a stub title, which quietly made
+    the title-matching ladder unable to match anything and turned a fall-through
+    assertion into a fixture artifact.
+    """
+    li = _listing(name, cents, condition=condition, size=size)
+    li["attributes"]["publicData"]["shopifyProductName"] = name
+    li["attributes"]["publicData"]["selectedVariantOptions"] = {"color": color}
+    return li
+
+
+async def test_a_hat_is_priced_against_its_own_product_not_its_line(monkeypatch):
+    """The whole point. Two colorways of one line are different goods."""
+    from headroom.services.melin_recap import fetch_resale_stats
+
+    _stub_query(monkeypatch, [
+        _product(6700, "Trenches Icon Hydro - Faded Black", "Faded Black"),
+        _product(6800, "Trenches Icon Hydro - Faded Black", "Faded Black"),
+        _product(12000, "Trenches Icon Hydro - Prismatic", "Prismatic"),
+        _product(12000, "Trenches Icon Hydro - Prismatic", "Prismatic"),
+        _product(9000, "Trenches Icon Hydro - Navy", "Navy"),
+    ])
+
+    stats = await fetch_resale_stats(
+        "trenches", "Trenches Icon Hydro", "new_with_tags", "classic",
+        colorway="Faded Black",
+    )
+    assert stats["matched"] == "Trenches Icon Hydro - Faded Black"
+    assert stats["median"] == 67.5, "its own colorway, not the line's median"
+    assert stats["count"] == 2
+    assert stats["sample"] == "model"
+
+
+async def test_one_live_listing_of_the_right_product_beats_a_line_median(monkeypatch):
+    """No minimum sample for a product match.
+
+    On a fixed-price marketplace one listing of THIS product is a better answer
+    than the median of a line it merely belongs to — and `count` is published,
+    so a thin sample is visible rather than disguised.
+    """
+    from headroom.services.melin_recap import fetch_resale_stats
+
+    _stub_query(monkeypatch, [
+        _product(9950, "Trenches Icon Hydro - Prismatic", "Prismatic"),
+        _product(5000, "Trenches Icon Hydro - Black", "Black"),
+        _product(5000, "Trenches Icon Hydro - Navy", "Navy"),
+        _product(5000, "Trenches Icon Hydro - Sand", "Sand"),
+    ])
+
+    stats = await fetch_resale_stats(
+        "trenches", "Trenches Icon Hydro", "new_with_tags", "classic",
+        colorway="Prismatic",
+    )
+    assert stats["median"] == 99.5
+    assert stats["count"] == 1, "thin, and said so"
+
+
+async def test_without_a_colorway_there_is_no_product_to_identify(monkeypatch):
+    """A hat with no colorway names a LINE. Calling that a product match is how
+    319 listings across 131 products became one hat's 'exact' price."""
+    from headroom.services.melin_recap import fetch_resale_stats
+
+    _stub_query(monkeypatch, [
+        _product(6000, "Trenches Icon Hydro - Black", "Black"),
+        _product(8000, "Trenches Icon Hydro - Navy", "Navy"),
+        _product(10000, "Trenches Icon Hydro - Sand", "Sand"),
+    ])
+
+    stats = await fetch_resale_stats(
+        "trenches", "Trenches Icon Hydro", "new_with_tags", "classic", colorway=None,
+    )
+    # The numbers alone do not distinguish the two paths here — with the guard
+    # removed the product tier also matches all three and returns the same
+    # median, so an assertion on `median` passes either way. What separates
+    # them is WHAT was matched: the ladder names the line, the product tier
+    # names goods, and a melin product name always carries its colorway.
+    assert stats["matched"] == "Trenches Icon Hydro"
+    assert " - " not in (stats["matched"] or ""), (
+        "a line, not a product — without a colorway there is no item to name"
+    )
+
+
+async def test_matching_too_many_products_is_not_a_product_match(monkeypatch):
+    """Tokens that select a whole shelf named a line, not an item."""
+    from headroom.services.melin_recap import fetch_resale_stats
+
+    _stub_query(monkeypatch, [
+        _product(6000, f"Trenches Icon Hydro - Camo {i}", "Camo") for i in range(6)
+    ])
+
+    stats = await fetch_resale_stats(
+        "trenches", "Trenches Icon Hydro", "new_with_tags", "classic", colorway="Camo",
+    )
+    assert stats["matched"] != "Trenches Icon Hydro - Camo 0"
+
+
+async def test_a_stated_construction_vetoes_a_rival_product(monkeypatch):
+    """melin sells Icon Hydro and Icon Thermal as different goods at different
+    prices. Measured on the real collection, without this veto a hat matched
+    `Trenches Icon Thermal - Military` and moved $82.50 to $65.00 on one
+    listing of the wrong product. Same veto `catalog_service` already applies.
+    """
+    from headroom.services.melin_recap import fetch_resale_stats
+
+    _stub_query(monkeypatch, [
+        _product(6500, "Trenches Icon Thermal - Military", "Military"),
+        _product(8000, "Trenches Icon Hydro - Black", "Black"),
+        _product(8500, "Trenches Icon Hydro - Navy", "Navy"),
+        _product(9000, "Trenches Icon Hydro - Sand", "Sand"),
+    ])
+
+    stats = await fetch_resale_stats(
+        "trenches", "Trenches Icon", "new_with_tags", "classic",
+        colorway="Military", construction="HYDRO",
+    )
+    assert stats["matched"] != "Trenches Icon Thermal - Military", (
+        "a HYDRO hat must never be priced off a Thermal"
+    )
+
+
+async def test_a_blank_construction_vetoes_nothing(monkeypatch):
+    """A blank construction is "nobody has looked", which rules nothing out —
+    the same reading `_apply_construction` documents."""
+    from headroom.services.melin_recap import fetch_resale_stats
+
+    _stub_query(monkeypatch, [
+        _product(6500, "Trenches Icon Thermal - Military", "Military"),
+    ])
+
+    stats = await fetch_resale_stats(
+        "trenches", "Trenches Icon", "new_with_tags", "classic",
+        colorway="Military", construction=None,
+    )
+    assert stats["matched"] == "Trenches Icon Thermal - Military"
