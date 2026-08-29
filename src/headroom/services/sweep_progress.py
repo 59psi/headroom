@@ -27,8 +27,6 @@ from datetime import datetime, timezone
 class SweepProgress:
     """How far along one long-running sweep is, right now."""
 
-    #: What this sweep is called, for logs and for the API payload.
-    name: str = "sweep"
     running: bool = False
     done: int = 0
     total: int = 0
@@ -85,7 +83,3 @@ class SweepProgress:
             "error": self.error,
             "pct": round(100 * self.done / self.total) if self.total else 0,
         }
-
-
-def new(name: str) -> SweepProgress:
-    return SweepProgress(name=name)

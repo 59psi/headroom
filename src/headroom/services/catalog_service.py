@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 #: Live progress of a harvest. This endpoint returns 202 and runs in the
 #: background, so before this its only trace was a log line — from the Settings
 #: page a working harvest and a dead button looked identical.
-progress = sweep_progress.new("colorway-harvest")
+progress = sweep_progress.SweepProgress()
 
 _PER_PAGE = 100
 _MAX_PAGES_PER_CATEGORY = 50  # safety backstop; ~5000 listings/category
@@ -135,22 +135,29 @@ async def harvest_catalog(db: AsyncSession) -> dict:
     two thirds of its models looked exactly like a complete one.
     """
     now = datetime.now(timezone.utc)
-    seen_titles = 0
-    new_entries = 0
-    failed: list[str] = []
 
-    # try/finally: this runs as a BackgroundTask behind a 202, so an exception
+    # try/except/finally: this runs as a BackgroundTask behind a 202, so an exception
     # here reaches nobody. Leaving `running` true would make a crashed harvest
     # read as one still in flight, forever — the precise false signal the
     # progress record exists to remove.
     progress.begin(len(STYLE_TO_CATEGORY))
     try:
-        return await _harvest(db, now, seen_titles, new_entries, failed)
-    finally:
-        progress.finish()
+        result = await _harvest(db, now)
+    except Exception as exc:
+        # RECORDED, not merely survived. This runs behind a 202 with nobody
+        # watching, so a bare `finally: finish()` left `error` null and a
+        # crashed harvest reported `running: false, error: null` — identical to
+        # a clean one, and the card's failure branch was unreachable.
+        progress.finish(error=str(exc)[:300])
+        raise
+    progress.finish()
+    return result
 
 
-async def _harvest(db, now, seen_titles, new_entries, failed) -> dict:
+async def _harvest(db, now) -> dict:
+    seen_titles = 0
+    new_entries = 0
+    failed: list[str] = []
     for category in STYLE_TO_CATEGORY.values():
         progress.advance(category)
         try:

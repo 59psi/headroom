@@ -144,6 +144,9 @@ export function AnalysisQueueCard() {
   const afterQueueing = () => {
     qc.invalidateQueries({ queryKey: ['admin', 'analysis-queue'] });
     qc.invalidateQueries({ queryKey: ['admin', 'analysis-failures'] });
+    // Sibling key, not covered by the two above. A retry re-tags the hats it
+    // queues, so any run log left open is describing a set that just changed.
+    qc.invalidateQueries({ queryKey: ['admin', 'analysis-job'] });
     qc.invalidateQueries({ queryKey: ['hats'] });
   };
 
