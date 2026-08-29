@@ -86,6 +86,7 @@ vi.mock('../api/settings', () => ({
   ]),
   clearConstruction: vi.fn(),
   auditFrozenPrices: vi.fn(async () => []),
+  auditSharedPrices: vi.fn(async () => []),
   releaseFrozenPrices: vi.fn(),
 }));
 
@@ -132,6 +133,7 @@ const SECTION_CARDS: Record<string, string[]> = {
     'Construction audit',
     'Re-pricing',
     'Frozen prices',
+    'Prices shared by many hats',
     'Colorway Catalog',
     'Purchase History',
     'eBay Comparable Listings (optional)',
