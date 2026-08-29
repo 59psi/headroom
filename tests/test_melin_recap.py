@@ -684,3 +684,97 @@ async def test_a_blank_construction_vetoes_nothing(monkeypatch):
         colorway="Military", construction=None,
     )
     assert stats["matched"] == "Trenches Icon Thermal - Military"
+
+
+async def test_a_construction_word_in_the_COLORWAY_half_vetoes_nothing(monkeypatch):
+    """The inversion that shipped in 2.71.0.
+
+    `Denim`, `Canvas`, `Suede`, `Linen` and `Corduroy` are constructions AND
+    common colorway words, and melin names products `<Model> - <Colorway>`.
+    Reading the whole string made `Trenches Icon Hydro - Denim` look like a
+    Denim product, so a HYDRO hat was vetoed from its OWN item and fell back to
+    the line median — a correctly recorded construction made pricing WORSE than
+    leaving it blank. CLAUDE.md documents this trap with this same example.
+    """
+    from headroom.services.melin_recap import fetch_resale_stats
+
+    _stub_query(monkeypatch, [
+        _product(8200, "Trenches Icon Hydro - Denim", "Denim"),
+        _product(8300, "Trenches Icon Hydro - Denim", "Denim"),
+        _product(5000, "Trenches Icon Hydro - Black", "Black"),
+        _product(5000, "Trenches Icon Hydro - Navy", "Navy"),
+    ])
+
+    stats = await fetch_resale_stats(
+        "trenches", "Trenches Icon Hydro", "new_with_tags", "classic",
+        colorway="Denim", construction="HYDRO",
+    )
+    assert stats["matched"] == "Trenches Icon Hydro - Denim"
+    assert stats["median"] == 82.5
+
+
+async def test_a_construction_in_the_MODEL_half_still_vetoes(monkeypatch):
+    """Only the colorway half is exempt — the model half is the claim."""
+    from headroom.services.melin_recap import fetch_resale_stats
+
+    _stub_query(monkeypatch, [
+        _product(6500, "Trenches Icon Denim - Black", "Black"),
+        _product(8000, "Trenches Icon Hydro - Sand", "Sand"),
+        _product(8000, "Trenches Icon Hydro - Navy", "Navy"),
+        _product(8000, "Trenches Icon Hydro - Grey", "Grey"),
+    ])
+
+    stats = await fetch_resale_stats(
+        "trenches", "Trenches Icon", "new_with_tags", "classic",
+        colorway="Black", construction="HYDRO",
+    )
+    assert stats["matched"] != "Trenches Icon Denim - Black"
+
+
+async def test_hydro_and_hydrolite_veto_each_other(monkeypatch):
+    """`HYDRO` is a SUBSTRING of `HYDROLite` and they are different products at
+    different prices — the confusion CLAUDE.md warns about repeatedly."""
+    from headroom.services.melin_recap import _rival_construction
+
+    assert _rival_construction("Trenches Icon HYDROLite - Black", "HYDRO") is True
+    assert _rival_construction("Trenches Icon Hydro - Black", "HYDROLite") is True
+    assert _rival_construction("Trenches Icon Hydro - Black", "HYDRO") is False
+
+
+async def test_a_product_naming_no_construction_contradicts_nothing(monkeypatch):
+    """Veto on CONTRADICTION, not absence — the test `catalog_service` applies.
+
+    `Trenches Icon - Denim` is the case that discriminates BOTH halves of this
+    fix at once, and picking a plain colour here would have pinned neither:
+
+      * whole-string reading  -> theirs={Denim}, mine={HYDRO}, no overlap -> VETO
+      * model-half reading    -> theirs={},                            -> no veto
+
+    So a product that names no construction in its model half, with a
+    construction WORD as its colorway, is the only shape that fails if either
+    the split or the contradiction rule is reverted.
+    """
+    from headroom.services.melin_recap import _rival_construction
+
+    assert _rival_construction("Trenches Icon - Denim", "HYDRO") is False
+    assert _rival_construction("Trenches Icon - Black", "HYDRO") is False
+
+
+async def test_the_source_names_only_the_products_that_set_the_number(monkeypatch):
+    """`products` was computed BEFORE the condition/size narrowing, so a hat
+    priced by one listing was labelled with three — including a Thermal that
+    had no part in it."""
+    from headroom.services.melin_recap import fetch_resale_stats
+
+    _stub_query(monkeypatch, [
+        _product(9000, "Trenches Icon Hydro - Maroon", "Maroon", condition="new_with_tags"),
+        _product(4000, "Trenches Icon Hydro - Heather Maroon", "Maroon", condition="worn"),
+    ])
+
+    stats = await fetch_resale_stats(
+        "trenches", "Trenches Icon Hydro", "new_with_tags", "classic", colorway="Maroon",
+    )
+    assert stats["count"] == 1
+    assert stats["matched"] == "Trenches Icon Hydro - Maroon", (
+        "the worn Heather Maroon did not price this hat and must not be cited"
+    )

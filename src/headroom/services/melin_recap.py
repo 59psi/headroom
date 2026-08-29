@@ -242,22 +242,22 @@ class Listing(NamedTuple):
     A NamedTuple rather than a bare tuple because this grew from four fields to
     six and the call sites index into it positionally.
 
-    `product` and `color` are the important addition. Every listing carries
-    STRUCTURED product identity — `shopifyProductName` ("Trenches Hydrolite -
-    White") and `selectedVariantOptions.color` — on 986 of 986 listings across
-    510 distinct products. Pricing ignored all of it and matched the freeform
-    `title` with token containment instead, which is how 76 hats came to share
-    one price: a short model line matches every listing in it.
+    `product` is the important addition. Every listing publishes melin's own
+    `shopifyProductName` ("Trenches Hydrolite - White") — 986 of 986 across 510
+    distinct products — and pricing ignored it, matching the freeform `title`
+    instead. That is how 76 hats came to share one price: a short model line
+    matches every listing in it.
     """
 
     title: str
     price: float
     condition: str | None
     size: str | None
-    #: melin's own product name. The catalog identity, not prose.
+    #: melin's own product name — the catalog identity, and what pricing
+    #: matches on. `selectedVariantOptions.color` was captured here too and
+    #: read by nothing: the product name already ends in the colorway on
+    #: 990 of 995 listings, so it carried no signal the name did not.
     product: str | None
-    #: The variant colour, structured — not parsed out of the title.
-    color: str | None
 
 
 def _listing_facts(li: dict) -> Listing | None:
@@ -280,7 +280,6 @@ def _listing_facts(li: dict) -> Listing | None:
         _CONDITION_MAP.get(raw_condition, "worn" if raw_condition else None),
         _SIZE_MAP.get(raw_size),
         pub.get("shopifyProductName"),
-        (pub.get("selectedVariantOptions") or {}).get("color"),
     )
 
 
@@ -291,29 +290,46 @@ _MAX_PRODUCTS = 3
 
 
 def _rival_construction(product: str, construction: str | None) -> bool:
-    """Does this product name a DIFFERENT construction than the hat states?
+    """Does this product's MODEL half name a construction the hat contradicts?
 
-    The same veto `catalog_service._match_score` applies, and for the same
-    reason: melin sells `Trenches Icon Hydro` and `Trenches Icon Thermal` as
-    different goods at different prices, so a hat stating one must never be
-    priced off the other. Measured on the real collection, without this a
-    HYDRO hat matched `Trenches Icon Thermal - Military` and moved $82.50 to
-    $65.00 on a single listing of the wrong product.
+    melin sells `Trenches Icon Hydro` and `Trenches Icon Thermal` as different
+    goods at different prices, so a hat stating one must never be priced off
+    the other.
 
-    Only a stated construction can be contradicted — a blank one is "nobody has
-    looked", which rules nothing out.
+    Two things here are load-bearing and the first version got both wrong.
+
+    **Only the MODEL half is examined.** melin product names read
+    `<Model> - <Colorway>`, and `Denim`, `Canvas`, `Suede`, `Linen` and
+    `Corduroy` are all constructions AND common colorway words. Reading the
+    whole string made `Trenches Icon Hydro - Denim` look like a Denim product,
+    so a HYDRO hat was vetoed from its OWN item and fell back to the line
+    median — meaning a correctly recorded construction made pricing WORSE than
+    leaving it blank, the exact inversion of the point. CLAUDE.md documents
+    this trap with this very example.
+
+    **It vetoes on CONTRADICTION, not on absence** — the same test
+    `catalog_service._match_score` applies. A product whose model half names no
+    construction at all contradicts nothing; only a *different* one does.
     """
     if not construction:
         return False
     from headroom.schemas.hat import KNOWN_CONSTRUCTIONS  # noqa: PLC0415 — cycle
 
-    tokens = set(model_tokens(product))
-    mine = set(model_tokens(construction))
-    for known in KNOWN_CONSTRUCTIONS:
-        other = set(model_tokens(known))
-        if other and other <= tokens and not other <= mine:
-            return True
-    return False
+    # `<Model> - <Colorway>`; without a separator the whole string is the model.
+    model_half = product.split(" - ", 1)[0]
+    theirs = {
+        c for c in KNOWN_CONSTRUCTIONS
+        if set(model_tokens(c)) <= set(model_tokens(model_half))
+    }
+    if not theirs:
+        return False  # names no construction — contradicts nothing
+    mine = {
+        c for c in KNOWN_CONSTRUCTIONS
+        if set(model_tokens(c)) <= set(model_tokens(construction))
+    }
+    # HYDROLite contains "hydro" as a substring but tokenizes distinctly, so
+    # this stays exact — the confusion CLAUDE.md warns about repeatedly.
+    return bool(theirs) and not (theirs & mine)
 
 
 def _product_comp(
@@ -328,7 +344,7 @@ def _product_comp(
 
     melin names a product `<Model> - <Colorway>`, which is exactly the two
     columns a hat already carries, and every listing publishes that name in
-    `shopifyProductName` plus the variant colour in `selectedVariantOptions`.
+    `shopifyProductName`, which ends in the colorway.
     Matching those is what "just get the price from recap" means; the title
     matching below is a fallback for when it cannot be done.
 
@@ -348,9 +364,8 @@ def _product_comp(
         and wanted <= set(model_tokens(f.product))
         and not _rival_construction(f.product, construction)
     ]
-    products = {f.product for f in matched}
     # Too many products means the tokens named a LINE, not an item.
-    if not matched or len(products) > _MAX_PRODUCTS:
+    if not matched or len({f.product for f in matched}) > _MAX_PRODUCTS:
         return None
 
     # Condition then size, same order and same reason as the ladder below:
@@ -363,6 +378,11 @@ def _product_comp(
             rows = [f for f in rows if f.size == size]
         if not rows:
             continue
+        # Named from the rows that actually priced it, NOT from the wider
+        # pre-narrowing set: labelling a hat with three products when one
+        # listing set the number is a source sentence that cites goods which
+        # had no part in it.
+        products = {f.product for f in rows}
         # No minimum sample. On a fixed-price marketplace one live listing of
         # THIS product is a better answer than the median of a line it merely
         # belongs to — and `count` is published, so a thin sample is visible
@@ -440,11 +460,11 @@ async def fetch_resale_stats(
             # `"have` and `fun"` — strings that appear in no listing title ever
             # — and every such hat fell silently through to the category median.
             wanted = set(prefix)
-            rows = [f for f in rows if wanted <= set(model_tokens(f[0]))]
+            rows = [f for f in rows if wanted <= set(model_tokens(f.title))]
         if by_condition and condition:
-            rows = [f for f in rows if f[2] == condition]
+            rows = [f for f in rows if f.condition == condition]
         if by_size and size:
-            rows = [f for f in rows if f[3] == size]
+            rows = [f for f in rows if f.size == size]
         return rows
 
     # Model specificity is surrendered ONE TOKEN AT A TIME, and entirely,
@@ -484,7 +504,7 @@ async def fetch_resale_stats(
                 else None
             )
             return {
-                "median": round(median([f[1] for f in rows]), 2),
+                "median": round(median([f.price for f in rows]), 2),
                 "count": len(rows),
                 "sample": "model" if matched else "category",
                 # The line actually compared against, so the label can name it
