@@ -4,7 +4,7 @@ import type {
   BackupHealth, BackupInfo, BackupUploadStatus, EbayCredsStatus, ImportJob, MdnsStatus, ModelStatus,
   TlsStatus, FrozenPriceRow, PriceReleaseResult, AnalysisFailureGroup,
   RecentError, TagBaseStatus, ConstructionAuditRow, ConstructionClearResult, RepricingStatus,
-  ReanalyzeResult, AnalysisJobDetail, CatalogStatus,
+  ReanalyzeResult, AnalysisJobDetail, CatalogStatus, SharedPriceGroup,
 } from '../types';
 
 // Re-exported so existing imports from this module keep working; the
@@ -337,6 +337,11 @@ export function releaseFrozenPrices(
  *  Failures sort first, because that is what a finished run gets opened for. */
 export function getAnalysisJob(jobId: number) {
   return apiFetch<AnalysisJobDetail>(`/api/admin/analysis/jobs/${jobId}`);
+}
+
+/** Resale prices carried by more than a handful of hats at once. */
+export function auditSharedPrices() {
+  return apiFetch<SharedPriceGroup[]>('/api/admin/prices/shared');
 }
 
 /** Why hats are failing analysis, grouped, worst first. */

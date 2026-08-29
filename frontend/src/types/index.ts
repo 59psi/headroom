@@ -593,6 +593,21 @@ export interface ReanalyzeResult {
   job: AnalysisJobRead | null;
 }
 
+/** One resale price and every hat carrying it.
+ *  A figure shared by dozens of hats is the going rate for a LINE, not an
+ *  appraisal of any one of them — and nothing in the app said so. */
+export interface SharedPriceGroup {
+  resale_price: number;
+  /** The sentence shown beside the price on each of these hats. */
+  source: string | null;
+  hat_count: number;
+  hat_ids: number[];
+  display_ids: string[];
+  /** How many carry no colorway — the actionable half, and the one thing only
+   *  the owner can supply. */
+  missing_colorway: number;
+}
+
 /** Live state of a long in-process sweep (re-pricing, colorway harvest).
  *  `pct` is computed server-side so the cards that render it cannot disagree
  *  about how it rounds. */

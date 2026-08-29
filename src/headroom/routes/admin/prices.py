@@ -13,8 +13,8 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.database import get_db
-from headroom.schemas.admin import FrozenPriceRow, PriceReleaseResult
-from headroom.services import price_audit
+from headroom.schemas.admin import FrozenPriceRow, PriceReleaseResult, SharedPriceGroup
+from headroom.services import price_audit, shared_price_audit
 from headroom.services.activity_service import log_activity
 
 router = APIRouter()
@@ -35,6 +35,26 @@ def _row(entry: price_audit.FrozenPrice) -> FrozenPriceRow:
 async def audit_frozen_prices(db: AsyncSession = Depends(get_db)):
     """Every active hat whose price is immune to future analysis."""
     return [_row(r) for r in await price_audit.audit(db)]
+
+
+@router.get("/prices/shared", response_model=list[SharedPriceGroup])
+async def audit_shared_prices(db: AsyncSession = Depends(get_db)):
+    """Prices carried by more than a handful of hats at once.
+
+    A source sentence covering fifty hats is not an appraisal of any one of
+    them. Reports only — the owner is who knows which hat is which.
+    """
+    return [
+        SharedPriceGroup(
+            resale_price=g.resale_price,
+            source=g.source,
+            hat_count=g.hat_count,
+            hat_ids=g.hat_ids,
+            display_ids=g.display_ids,
+            missing_colorway=g.missing_colorway,
+        )
+        for g in await shared_price_audit.audit(db)
+    ]
 
 
 @router.post("/prices/release", response_model=PriceReleaseResult)
