@@ -6,6 +6,51 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.70.0] — 2026-08-28
+
+### Added
+- **The two buttons that start minutes of work now show what they are doing.**
+  "Re-price now" and the colorway "Refresh from Melin Recap" each kick off
+  hundreds of sequential external calls and then said nothing at all.
+
+  The harvest was the worse of the two: it answers **202** and runs as a
+  background task, so its only trace was a log line. From the Settings page a
+  working harvest and a button that did nothing looked identical — the card
+  could only offer *"reload in a minute or two"*, which is what having no
+  progress forces you to write.
+
+  Both now report a live bar with counts **and what they are working on right
+  now** — the hat being re-priced, the category being harvested. A count says
+  the sweep is alive; the label says it is not wedged on one item.
+
+  Also visible for the first time: the **scheduled** re-pricing sweep, which
+  starts at boot and runs for minutes. The fields beside it describe the last
+  run that *finished*, so until now a sweep in flight was indistinguishable
+  from nothing happening.
+
+  One `SweepProgress` type serves both, rather than two counters that drift.
+  The analysis queue is deliberately not folded in: its progress is derived
+  from `hats.analysis_job_id` and survives a restart, because that worker's
+  work outlives the request. These two sweeps run inside the process and die
+  with it, so they are process-local — the same reasoning `RepricingHealth`
+  documents.
+
+  `pct` is computed server-side so the two cards cannot disagree about how it
+  rounds, `done` is capped at `total` (a bar reading 241/235 reads as a bug in
+  the thing being measured), and an error **outlives** `running` going false —
+  nobody is watching at the moment a background sweep fails, so a failure that
+  vanished with the run could never be read at all.
+
+  Each sweep wraps its body in `try/finally`, because one that raises and
+  leaves `running` true reads as permanently in flight — the exact false
+  signal the record exists to remove.
+
+### Fixed
+- `RepricingCard`'s test fixture was cast with `as RepricingStatus`, so adding
+  a required field to that type left the fixture silently incomplete with
+  typecheck still green — the one failure the fixture exists to prevent. The
+  cast is gone and the object is complete.
+
 ## [2.69.1] — 2026-08-28
 
 ### Fixed

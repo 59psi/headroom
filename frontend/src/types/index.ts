@@ -593,6 +593,34 @@ export interface ReanalyzeResult {
   job: AnalysisJobRead | null;
 }
 
+/** Live state of a long in-process sweep (re-pricing, colorway harvest).
+ *  `pct` is computed server-side so the cards that render it cannot disagree
+ *  about how it rounds. */
+export interface SweepProgress {
+  running: boolean;
+  done: number;
+  total: number;
+  /** What it is working on this instant — a count says it is alive, this says
+   *  it is not wedged on one item. */
+  label: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  /** Survives `running` going false; nobody is watching when it fails. */
+  error: string | null;
+  pct: number;
+}
+
+/** The colorway catalog's real size, plus any harvest in flight.
+ *  The refresh returns 202 and runs in the background, so `progress` is the
+ *  only way to tell a running harvest from a button that did nothing. */
+export interface CatalogStatus {
+  entries: number;
+  models: number;
+  colorways: number;
+  last_harvest: string | null;
+  progress: SweepProgress;
+}
+
 /** Periodic re-pricing: is the sweep alive, and what did it last manage?
  *  Process-local by design — the durable answer is `resale_checked_at` on each
  *  hat, so how stale prices are is readable from the hats themselves. */
@@ -607,4 +635,7 @@ export interface RepricingStatus {
    *  sweep, and reporting the visit count would hide a sweep that writes nothing. */
   last_repriced: number;
   last_considered: number;
+  /** The sweep in flight, if any. Distinct from the fields above, which
+   *  describe the last one that FINISHED. */
+  progress: SweepProgress;
 }

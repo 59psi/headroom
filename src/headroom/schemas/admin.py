@@ -265,6 +265,29 @@ class PurchaseRead(BaseModel):
     source: str | None = None
 
 
+class SweepProgressRead(BaseModel):
+    """How far along a long in-process sweep is, right now.
+
+    Shared by re-pricing and the colorway harvest because they pose the same
+    question and a second copy of the shape is a second thing to keep in step.
+    `pct` is computed server-side so the two cards that render it cannot
+    disagree about how it rounds.
+    """
+
+    running: bool = False
+    done: int = 0
+    total: int = 0
+    #: What it is working on this instant. "37 of 235" says it is alive;
+    #: naming the item says it is not wedged on one.
+    label: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    #: Survives `running` going false — the point is to still be readable
+    #: after the thing has stopped.
+    error: str | None = None
+    pct: int = 0
+
+
 class CatalogStatus(BaseModel):
     """The catalog's real size, for the Settings card."""
 
@@ -272,6 +295,9 @@ class CatalogStatus(BaseModel):
     models: int
     colorways: int
     last_harvest: str | None
+    #: The harvest returns 202 and runs in the background, so without this the
+    #: card cannot tell a running sweep from a button that did nothing.
+    progress: SweepProgressRead = SweepProgressRead()
 
 
 class CatalogRefreshStarted(BaseModel):
@@ -380,6 +406,10 @@ class RepricingStatus(BaseModel):
     #: make a dead market look like busy work.
     last_repriced: int = 0
     last_considered: int = 0
+    #: Live state of the sweep in flight. Distinct from the fields above, which
+    #: describe the last one that FINISHED — a scheduled sweep starts at boot
+    #: and runs for minutes, and without this the card cannot show it happening.
+    progress: SweepProgressRead = SweepProgressRead()
 
 
 class RepricingRunResult(BaseModel):

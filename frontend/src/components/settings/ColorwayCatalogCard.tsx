@@ -1,8 +1,11 @@
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getColorwayStatus, refreshColorwayCatalog } from '../../api/settings';
+import { SweepProgressBar } from '../common/SweepProgressBar';
 
 export function ColorwayCatalogCard() {
   const qc = useQueryClient();
+  const [startedAt, setStartedAt] = useState<number | null>(null);
   // The catalog's real size. This used to read `len(GET /api/meta/colorways)`,
   // which is the AUTOCOMPLETE feed and caps at its own default limit — so the
   // figure sat at 25 no matter how many models had actually been harvested,
@@ -10,6 +13,15 @@ export function ColorwayCatalogCard() {
   const status = useQuery({
     queryKey: ['admin', 'colorway-status'],
     queryFn: getColorwayStatus,
+    refetchInterval: (q) => {
+      if (q.state.data?.progress?.running) return 2000;
+      // Grace window. The endpoint answers 202 and the harvest starts as a
+      // BackgroundTask AFTER the response, so `running` is briefly false right
+      // after a start — without this the poll would give up before the sweep it
+      // just kicked off ever appeared, and the card would look dead again.
+      if (startedAt && Date.now() - startedAt < 30_000) return 2000;
+      return false;
+    },
   });
 
   const refreshMut = useMutation({
@@ -18,6 +30,7 @@ export function ColorwayCatalogCard() {
     // holding the connection open past whatever proxy sits in front of us.
     mutationFn: () => refreshColorwayCatalog(),
     onSuccess: () => {
+      setStartedAt(Date.now());
       qc.invalidateQueries({ queryKey: ['meta', 'colorways'] });
       qc.invalidateQueries({ queryKey: ['admin', 'colorway-status'] });
     },
@@ -47,12 +60,16 @@ export function ColorwayCatalogCard() {
               : '—'}
           </span>
         </div>
-        {refreshMut.data && (
-          <div className="alert alert-success small mt-3 mb-0">
-            ✓ {refreshMut.data.detail} The model count above updates once it lands —
-            reload in a minute or two.
-          </div>
-        )}
+        <div className="mt-3">
+          <SweepProgressBar
+            progress={status.data?.progress}
+            idleLabel={
+              refreshMut.isSuccess
+                ? 'Harvest finished — the counts above are current.'
+                : undefined
+            }
+          />
+        </div>
         {refreshMut.error && (
           <div className="alert alert-danger small mt-3 mb-0">{String(refreshMut.error)}</div>
         )}
