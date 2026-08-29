@@ -6,6 +6,52 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.71.0] — 2026-08-29
+
+### Fixed
+- **Hats are priced against melin's own PRODUCT now, not the line they belong
+  to.** 2.69.0 fixed the sample and the labelling but not the symptom: measured
+  across the real collection afterwards, **168 of 235 hats still shared just
+  five prices** — 76 at $85.00, 34 at $79.00, 21 at $82.50. The scope read
+  `model`, but `Trenches Hydro` matches 76 different hats.
+
+  The cause was that pricing token-matched the freeform listing `title` and
+  ignored the structured product identity every listing already carries.
+  Measured on the live marketplace: **986 of 986 listings publish
+  `shopifyProductName`** ("Trenches Icon Hydro - Prismatic") and
+  `selectedVariantOptions.color`, across **510 distinct products**.
+
+  melin names a product `<Model> - <Colorway>`, which is exactly the two
+  columns a hat already carries. Matching those first gives a hat the price of
+  *its own item*. On the real collection this takes the collection from 5
+  distinct prices for 168 hats to **33 distinct prices**, and moves 46 of them
+  — `Trenches Icon Hydro - Faded Black` to $67.50, `- Prismatic` to $99.50,
+  `- Black Camo` to $50.00, where all four previously read $85.00 or $82.50.
+
+  **A colorway is required.** Without one there is no product to identify, only
+  a line — and calling that a product match is how "Odysea Hydro" came to match
+  319 listings across 131 products. Matching more than `_MAX_PRODUCTS` is
+  likewise treated as a line, not an item.
+
+  **No minimum sample for a product match.** On a fixed-price marketplace one
+  live listing of *this* product is a better answer than the median of a line
+  it merely belongs to, and `count` is published so a thin sample is visible
+  rather than disguised.
+
+  **A stated construction vetoes a rival product** — the same veto
+  `catalog_service._match_score` already applies, because melin sells
+  `Trenches Icon Hydro` and `Trenches Icon Thermal` as different goods at
+  different prices. Without it a HYDRO hat matched a Thermal and moved $82.50
+  to $65.00 on one listing of the wrong item. A *blank* construction vetoes
+  nothing: it means nobody has looked, which rules nothing out.
+
+  Sold history is not available — the API ignores `states=closed` and returns
+  the same open listings — so live asks remain the only signal.
+
+### Changed
+- `_listing_facts` returns a `Listing` NamedTuple rather than a bare 4-tuple.
+  It grew to six fields and every call site indexed it positionally.
+
 ## [2.70.1] — 2026-08-29
 
 Everything here came out of a two-axis review of 2.66.0–2.70.0. Both axes

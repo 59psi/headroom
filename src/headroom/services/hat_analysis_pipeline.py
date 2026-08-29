@@ -316,8 +316,12 @@ async def refresh_melin_resale(hat: Hat) -> None:
         # Condition and size are the hat's own, so the median comes back from
         # listings of the same thing in the same shape rather than from the
         # whole category averaged together and adjusted by a guess.
+        # `colorway` is what turns a line into a product: melin names its
+        # goods `<Model> - <Colorway>`, so the two columns together identify
+        # the exact item on the marketplace instead of the family it is in.
         stats = await fetch_resale_stats(
-            hat.style, hat.model_name, condition=hat.condition, size=hat.size
+            hat.style, hat.model_name, condition=hat.condition, size=hat.size,
+            colorway=hat.colorway, construction=hat.construction,
         )
     except MelinRecapError as exc:
         logger.info("Melin Recap stats skipped for hat=%s: %s", hat.id, exc)

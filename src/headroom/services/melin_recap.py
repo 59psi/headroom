@@ -23,6 +23,8 @@ import time
 from statistics import median
 from urllib.parse import urlencode
 
+from typing import NamedTuple
+
 import httpx
 
 from headroom.config import settings
@@ -234,8 +236,32 @@ _SIZE_MAP: dict[str, str] = {
 }
 
 
-def _listing_facts(li: dict) -> tuple[str, float, str | None, str | None] | None:
-    """(title, dollars, condition, size) for one listing, or None if unusable."""
+class Listing(NamedTuple):
+    """One marketplace listing, reduced to what pricing needs.
+
+    A NamedTuple rather than a bare tuple because this grew from four fields to
+    six and the call sites index into it positionally.
+
+    `product` and `color` are the important addition. Every listing carries
+    STRUCTURED product identity — `shopifyProductName` ("Trenches Hydrolite -
+    White") and `selectedVariantOptions.color` — on 986 of 986 listings across
+    510 distinct products. Pricing ignored all of it and matched the freeform
+    `title` with token containment instead, which is how 76 hats came to share
+    one price: a short model line matches every listing in it.
+    """
+
+    title: str
+    price: float
+    condition: str | None
+    size: str | None
+    #: melin's own product name. The catalog identity, not prose.
+    product: str | None
+    #: The variant colour, structured — not parsed out of the title.
+    color: str | None
+
+
+def _listing_facts(li: dict) -> Listing | None:
+    """One listing reduced to `Listing`, or None if unusable."""
     attrs = li.get("attributes") or {}
     amount = (attrs.get("price") or {}).get("amount")
     if not amount:
@@ -243,7 +269,7 @@ def _listing_facts(li: dict) -> tuple[str, float, str | None, str | None] | None
     pub = attrs.get("publicData") or {}
     raw_size = (pub.get("size") or "").strip().lower()
     raw_condition = (pub.get("condition") or "").strip().lower()
-    return (
+    return Listing(
         attrs.get("title", ""),
         amount / 100,
         # A condition that is STATED but unrecognized falls to "worn": the
@@ -253,7 +279,103 @@ def _listing_facts(li: dict) -> tuple[str, float, str | None, str | None] | None
         # A condition that is ABSENT stays None — unknown, not worn.
         _CONDITION_MAP.get(raw_condition, "worn" if raw_condition else None),
         _SIZE_MAP.get(raw_size),
+        pub.get("shopifyProductName"),
+        (pub.get("selectedVariantOptions") or {}).get("color"),
     )
+
+
+#: Most distinct products a hat may match and still count as identified. A hat
+#: with no colorway matches its whole line — 319 listings across 131 products
+#: for "Odysea Hydro" — which is the line median wearing a product's name.
+_MAX_PRODUCTS = 3
+
+
+def _rival_construction(product: str, construction: str | None) -> bool:
+    """Does this product name a DIFFERENT construction than the hat states?
+
+    The same veto `catalog_service._match_score` applies, and for the same
+    reason: melin sells `Trenches Icon Hydro` and `Trenches Icon Thermal` as
+    different goods at different prices, so a hat stating one must never be
+    priced off the other. Measured on the real collection, without this a
+    HYDRO hat matched `Trenches Icon Thermal - Military` and moved $82.50 to
+    $65.00 on a single listing of the wrong product.
+
+    Only a stated construction can be contradicted — a blank one is "nobody has
+    looked", which rules nothing out.
+    """
+    if not construction:
+        return False
+    from headroom.schemas.hat import KNOWN_CONSTRUCTIONS  # noqa: PLC0415 — cycle
+
+    tokens = set(model_tokens(product))
+    mine = set(model_tokens(construction))
+    for known in KNOWN_CONSTRUCTIONS:
+        other = set(model_tokens(known))
+        if other and other <= tokens and not other <= mine:
+            return True
+    return False
+
+
+def _product_comp(
+    facts: list[Listing],
+    model_name: str | None,
+    colorway: str | None,
+    condition: str | None,
+    size: str | None,
+    construction: str | None = None,
+) -> dict | None:
+    """Price against melin's OWN product, matched on structured fields.
+
+    melin names a product `<Model> - <Colorway>`, which is exactly the two
+    columns a hat already carries, and every listing publishes that name in
+    `shopifyProductName` plus the variant colour in `selectedVariantOptions`.
+    Matching those is what "just get the price from recap" means; the title
+    matching below is a fallback for when it cannot be done.
+
+    Requires a colorway. Without one there is no product to identify — only a
+    line — and pretending otherwise is how 76 hats came to share $85.00.
+    """
+    if not (model_name and colorway):
+        return None
+
+    wanted = set(model_tokens(model_name)) | set(model_tokens(colorway))
+    if not wanted:
+        return None
+
+    matched = [
+        f for f in facts
+        if f.product
+        and wanted <= set(model_tokens(f.product))
+        and not _rival_construction(f.product, construction)
+    ]
+    products = {f.product for f in matched}
+    # Too many products means the tokens named a LINE, not an item.
+    if not matched or len(products) > _MAX_PRODUCTS:
+        return None
+
+    # Condition then size, same order and same reason as the ladder below:
+    # a tagged and a beaten example of one product are different goods.
+    for by_condition, by_size in ((True, True), (True, False), (False, False)):
+        rows = matched
+        if by_condition and condition:
+            rows = [f for f in rows if f.condition == condition]
+        if by_size and size:
+            rows = [f for f in rows if f.size == size]
+        if not rows:
+            continue
+        # No minimum sample. On a fixed-price marketplace one live listing of
+        # THIS product is a better answer than the median of a line it merely
+        # belongs to — and `count` is published, so a thin sample is visible
+        # rather than disguised.
+        return {
+            "median": round(median([f.price for f in rows]), 2),
+            "count": len(rows),
+            "sample": "model",
+            "matched": sorted(products)[0] if len(products) == 1 else " / ".join(sorted(products)),
+            "condition_matched": bool(by_condition and condition),
+            "size_matched": bool(by_size and size),
+        }
+    return None
 
 
 async def fetch_resale_stats(
@@ -261,6 +383,8 @@ async def fetch_resale_stats(
     model_name: str | None = None,
     condition: str | None = None,
     size: str | None = None,
+    colorway: str | None = None,
+    construction: str | None = None,
 ) -> dict | None:
     """Median live price for genuinely comparable listings, or None.
 
@@ -298,6 +422,12 @@ async def fetch_resale_stats(
     ]
     if not facts:
         return None
+
+    # melin's own product first. Falling back to title matching is what the
+    # ladder below is for, and it is a LINE-level answer by construction.
+    exact = _product_comp(facts, model_name, colorway, condition, size, construction)
+    if exact:
+        return exact
 
     tokens = model_tokens(model_name)
 
