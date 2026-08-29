@@ -240,17 +240,20 @@ async def reprice_once(session_factory=None, limit: int | None = None) -> tuple[
         # and leaves `running` true reads as permanently in flight, which is
         # the exact false signal the progress record exists to remove.
         progress.begin(len(hats))
+        # try/FINALLY, with the error recorded in `except`. An `except
+        # Exception` alone does not catch CancelledError, which is a
+        # BaseException — and the blocking POST behind "Re-price now" runs for
+        # ~50s, so a phone disconnecting mid-sweep left `running` true forever
+        # and the card polling a phantom sweep every 2s. That is the exact
+        # false signal this record exists to remove.
+        error: str | None = None
         try:
-            result = await _sweep(db, hats, delay)
+            return await _sweep(db, hats, delay)
         except Exception as exc:
-            # The error has to be RECORDED, not merely survived. A bare
-            # `finally: finish()` left `error` permanently null, so a crashed
-            # sweep reported `running: false, error: null` — byte-identical to a
-            # clean one, and the card's failure branch was unreachable.
-            progress.finish(error=str(exc)[:300])
+            error = str(exc)[:300]
             raise
-        progress.finish()
-        return result
+        finally:
+            progress.finish(error=error)
 
 
 async def _sweep(db, hats: list, delay: float) -> tuple[int, int]:

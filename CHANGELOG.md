@@ -6,6 +6,51 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.71.1] — 2026-08-29
+
+An adversarial review of 2.70.1–2.71.0. Two of the three hard findings are
+defects that 2.71.0 shipped, and one of them made the feature it shipped
+actively worse.
+
+### Fixed
+- **The construction veto was inverted: it rejected a hat from its OWN
+  product.** `Denim`, `Canvas`, `Suede`, `Linen` and `Corduroy` are
+  constructions *and* common colorway words, and melin names products
+  `<Model> - <Colorway>`. Reading the whole string made `Trenches Icon Hydro -
+  Denim` look like a Denim product, so a HYDRO hat was vetoed from its own item
+  and fell back to the line median — meaning a **correctly recorded
+  construction made pricing worse than leaving it blank**. Only the model half
+  is read now, and the veto fires on contradiction rather than on absence.
+  CLAUDE.md already documented this exact `denim`-in-the-colorway-half trap for
+  `catalog_service`; the new code walked into it anyway.
+
+- **A cancelled sweep reported itself as running forever.** 2.71.0 replaced
+  `try/finally` with `try/except Exception`, and `CancelledError` is a
+  `BaseException`. "Re-price now" is a ~50s blocking POST, so a phone
+  disconnecting mid-sweep left `progress.running` true permanently with the
+  card polling a phantom sweep every 2s — the precise false signal the record
+  exists to remove, reintroduced by the release that added it.
+
+- The source sentence named products that had not priced the hat: the product
+  set was computed *before* the condition/size narrowing, so a hat priced by
+  one listing could be labeled with three, including a Thermal.
+
+### Changed
+- Removed `Listing.color`. It was captured, documented as "the important
+  addition", and read by nothing — the product name already ends in the
+  colorway on 990 of 995 listings.
+- Finished the `Listing` NamedTuple refactor; the ladder still indexed it
+  positionally (`f[0]`, `f[1]`, `f[2]`, `f[3]`).
+
+### Corrected
+- **2.71.0's release note overstated its own result.** It said "from 5 distinct
+  prices covering 168 of 235 hats to 33", which compares a coverage count with
+  a cardinality. Measured properly over the whole collection, the top five
+  prices covered **168 hats before and 135 after** — a real improvement, and a
+  smaller one than the note implied. The largest cluster, **54 hats at
+  $85.00, is unchanged**: those hats have no colorway recorded, so there is no
+  product to identify. Only 48 of 235 hats reach the product matcher at all.
+
 ## [2.71.0] — 2026-08-29
 
 ### Fixed

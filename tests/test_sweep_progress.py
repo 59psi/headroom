@@ -153,3 +153,48 @@ async def test_a_failed_harvest_records_why(monkeypatch):
     snap = catalog_service.progress.snapshot()
     assert snap["running"] is False
     assert snap["error"] == "Melin Recap query 429"
+
+
+async def test_a_cancelled_sweep_does_not_stay_running_forever(monkeypatch):
+    """`except Exception` is not enough: CancelledError is a BaseException.
+
+    "Re-price now" is a ~50s blocking POST, so a phone disconnecting mid-sweep
+    cancels the task — and the version that shipped left `running` true
+    permanently, with the card polling a phantom sweep every 2s. That is the
+    exact false signal this record exists to remove, reintroduced by replacing
+    `try/finally` with `try/except Exception`.
+    """
+    import asyncio
+
+    from headroom.services import repricing
+
+    async def _hang(db, hats, delay):
+        await asyncio.sleep(30)
+
+    async def _three(db, limit=None):
+        return [1, 2, 3]
+
+    monkeypatch.setattr(repricing, "_sweep", _hang)
+    monkeypatch.setattr(repricing, "_eligible_hats", _three)
+
+    class _Factory:
+        def __call__(self):
+            return self
+
+        async def __aenter__(self):
+            return None
+
+        async def __aexit__(self, *exc):
+            return False
+
+    task = asyncio.create_task(repricing.reprice_once(session_factory=_Factory()))
+    await asyncio.sleep(0.05)
+    assert repricing.progress.snapshot()["running"] is True
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert repricing.progress.snapshot()["running"] is False, (
+        "a cancelled sweep must not report itself as still in flight"
+    )

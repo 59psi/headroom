@@ -141,17 +141,18 @@ async def harvest_catalog(db: AsyncSession) -> dict:
     # read as one still in flight, forever — the precise false signal the
     # progress record exists to remove.
     progress.begin(len(STYLE_TO_CATEGORY))
+    # try/FINALLY, with the error recorded in `except` — see the same shape in
+    # `repricing.reprice_once`. `except Exception` alone misses CancelledError
+    # (a BaseException), which would leave a cancelled harvest reporting itself
+    # as running forever.
+    error: str | None = None
     try:
-        result = await _harvest(db, now)
+        return await _harvest(db, now)
     except Exception as exc:
-        # RECORDED, not merely survived. This runs behind a 202 with nobody
-        # watching, so a bare `finally: finish()` left `error` null and a
-        # crashed harvest reported `running: false, error: null` — identical to
-        # a clean one, and the card's failure branch was unreachable.
-        progress.finish(error=str(exc)[:300])
+        error = str(exc)[:300]
         raise
-    progress.finish()
-    return result
+    finally:
+        progress.finish(error=error)
 
 
 async def _harvest(db, now) -> dict:
