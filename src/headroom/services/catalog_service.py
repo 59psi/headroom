@@ -30,6 +30,7 @@ from sqlalchemy.orm import selectinload
 from headroom.models.catalog import ColorwayEntry, Purchase
 from headroom.models.hat import Hat
 from headroom.schemas.hat import KNOWN_CONSTRUCTIONS
+from headroom.services import sweep_progress
 from headroom.services.activity_service import log_and_commit
 from headroom.services.melin_recap import (
     STYLE_TO_CATEGORY,
@@ -38,6 +39,11 @@ from headroom.services.melin_recap import (
 )
 
 logger = logging.getLogger(__name__)
+
+#: Live progress of a harvest. This endpoint returns 202 and runs in the
+#: background, so before this its only trace was a log line — from the Settings
+#: page a working harvest and a dead button looked identical.
+progress = sweep_progress.new("colorway-harvest")
 
 _PER_PAGE = 100
 _MAX_PAGES_PER_CATEGORY = 50  # safety backstop; ~5000 listings/category
@@ -133,7 +139,20 @@ async def harvest_catalog(db: AsyncSession) -> dict:
     new_entries = 0
     failed: list[str] = []
 
+    # try/finally: this runs as a BackgroundTask behind a 202, so an exception
+    # here reaches nobody. Leaving `running` true would make a crashed harvest
+    # read as one still in flight, forever — the precise false signal the
+    # progress record exists to remove.
+    progress.begin(len(STYLE_TO_CATEGORY))
+    try:
+        return await _harvest(db, now, seen_titles, new_entries, failed)
+    finally:
+        progress.finish()
+
+
+async def _harvest(db, now, seen_titles, new_entries, failed) -> dict:
     for category in STYLE_TO_CATEGORY.values():
+        progress.advance(category)
         try:
             seen, new = await _sweep_category(db, category, now)
         except MelinRecapError as exc:
@@ -183,6 +202,7 @@ async def catalog_stats(db: AsyncSession) -> dict:
     )).scalar_one()
     last_seen = (await db.execute(select(func.max(ColorwayEntry.last_seen)))).scalar_one()
     return {
+        "progress": progress.snapshot(),
         "entries": entries,
         "models": models,
         "colorways": colorways,

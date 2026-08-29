@@ -4,7 +4,7 @@ import type {
   BackupHealth, BackupInfo, BackupUploadStatus, EbayCredsStatus, ImportJob, MdnsStatus, ModelStatus,
   TlsStatus, FrozenPriceRow, PriceReleaseResult, AnalysisFailureGroup,
   RecentError, TagBaseStatus, ConstructionAuditRow, ConstructionClearResult, RepricingStatus,
-  ReanalyzeResult, AnalysisJobDetail,
+  ReanalyzeResult, AnalysisJobDetail, CatalogStatus,
 } from '../types';
 
 // Re-exported so existing imports from this module keep working; the
@@ -214,9 +214,7 @@ export function retryFailedAnalysis(reason?: string) {
  *  is still a bounded autocomplete list and still the wrong thing to count:
  *  a COUNT is the only honest answer to "how big is the catalog". */
 export function getColorwayStatus() {
-  return apiFetch<{ entries: number; models: number; colorways: number; last_harvest: string | null }>(
-    '/api/admin/colorways/status',
-  );
+  return apiFetch<CatalogStatus>('/api/admin/colorways/status');
 }
 
 /** Kick off the colorway harvest. 202 — the work continues in the background. */

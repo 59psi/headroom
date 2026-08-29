@@ -41,6 +41,7 @@ from sqlalchemy import select
 
 from headroom.config import env_flag, env_float, env_int
 from headroom.models.hat import Hat
+from headroom.services import sweep_progress
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +135,12 @@ _sweep_lock = asyncio.Lock()
 MANUAL_SWEEP_LIMIT = 50
 
 
+#: Live progress of the sweep in flight. Complements `_health`, which answers
+#: "did the last one work"; this answers "is one happening right now, and how
+#: far along". Both process-local, for the reason RepricingHealth documents.
+progress = sweep_progress.new("repricing")
+
+
 def health() -> RepricingHealth:
     return _health
 
@@ -149,6 +156,7 @@ def status() -> dict:
         "consecutive_failures": _health.consecutive_failures,
         "last_repriced": _health.last_repriced,
         "last_considered": _health.last_considered,
+        "progress": progress.snapshot(),
     }
 
 
@@ -218,48 +226,64 @@ async def reprice_once(session_factory=None, limit: int | None = None) -> tuple[
     — it works in production and silently talks to the wrong database
     everywhere else.
     """
-    from headroom.services.hat_analysis_pipeline import refresh_melin_resale
-
     if session_factory is None:
         from headroom.database import async_session  # noqa: PLC0415 — import cycle
 
         session_factory = async_session
 
     delay = repricing_delay_seconds()
-    repriced = 0
 
     # One sweep at a time — see `_sweep_lock`.
     async with _sweep_lock, session_factory() as db:
         hats = await _eligible_hats(db, limit=limit)
-        for index, hat in enumerate(hats):
-            before = hat.resale_price
-            try:
-                await refresh_melin_resale(hat)
-            except Exception as exc:  # noqa: BLE001 — one hat must not stop the sweep
-                logger.info("Re-pricing skipped for hat=%s: %s", hat.id, exc)
-            else:
-                if hat.resale_price != before:
-                    repriced += 1
-            # Stamp the attempt WHETHER OR NOT it produced a price.
-            #
-            # `refresh_melin_resale` only sets `resale_checked_at` on the path
-            # that finds listings; it returns early for a non-melin brand, an
-            # API error, or an empty result. Those hats therefore keep a NULL
-            # timestamp forever, and since the query orders `nulls_first` they
-            # permanently own the head of the queue — a capped sweep would
-            # re-visit the same never-priceable rows every cycle and never
-            # reach the rest. The column means "when the marketplace was last
-            # checked for this hat", which is exactly what this records.
-            #
-            # Safe against `price_audit`, whose `was_market_priced` hint reads
-            # this field: that report covers only `manual`-scope hats, which
-            # this sweep excludes outright.
-            hat.resale_checked_at = datetime.now(timezone.utc)
-            # Commit as we go. A sweep is minutes long; holding every change to
-            # the end means a restart in the middle throws all of it away.
-            await db.commit()
-            if delay and index + 1 < len(hats):
-                await asyncio.sleep(delay)
+        # try/finally, not a happy-path call at the bottom: a sweep that raises
+        # and leaves `running` true reads as permanently in flight, which is
+        # the exact false signal the progress record exists to remove.
+        progress.begin(len(hats))
+        try:
+            return await _sweep(db, hats, delay)
+        finally:
+            progress.finish()
+
+
+async def _sweep(db, hats: list, delay: float) -> tuple[int, int]:
+    """The loop itself, split out so `reprice_once` owns only the bookkeeping."""
+    from headroom.services.hat_analysis_pipeline import refresh_melin_resale
+
+    repriced = 0
+    for index, hat in enumerate(hats):
+        before = hat.resale_price
+        # Plain columns only. `display_id` walks `hat.case`, and these rows
+        # are loaded without `selectinload`, so touching it would fire a
+        # lazy load on an async session and blow up mid-sweep.
+        progress.advance(hat.model_name or f"Hat #{hat.id}")
+        try:
+            await refresh_melin_resale(hat)
+        except Exception as exc:  # noqa: BLE001 — one hat must not stop the sweep
+            logger.info("Re-pricing skipped for hat=%s: %s", hat.id, exc)
+        else:
+            if hat.resale_price != before:
+                repriced += 1
+        # Stamp the attempt WHETHER OR NOT it produced a price.
+        #
+        # `refresh_melin_resale` only sets `resale_checked_at` on the path
+        # that finds listings; it returns early for a non-melin brand, an
+        # API error, or an empty result. Those hats therefore keep a NULL
+        # timestamp forever, and since the query orders `nulls_first` they
+        # permanently own the head of the queue — a capped sweep would
+        # re-visit the same never-priceable rows every cycle and never
+        # reach the rest. The column means "when the marketplace was last
+        # checked for this hat", which is exactly what this records.
+        #
+        # Safe against `price_audit`, whose `was_market_priced` hint reads
+        # this field: that report covers only `manual`-scope hats, which
+        # this sweep excludes outright.
+        hat.resale_checked_at = datetime.now(timezone.utc)
+        # Commit as we go. A sweep is minutes long; holding every change to
+        # the end means a restart in the middle throws all of it away.
+        await db.commit()
+        if delay and index + 1 < len(hats):
+            await asyncio.sleep(delay)
 
     return repriced, len(hats)
 

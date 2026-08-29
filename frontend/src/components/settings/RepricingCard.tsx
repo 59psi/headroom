@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getRepricing, runRepricing } from '../../api/settings';
 import { invalidateHatViews } from '../../lib/invalidate';
+import { SweepProgressBar } from '../common/SweepProgressBar';
 
 /**
  * Periodic re-pricing.
@@ -15,10 +16,24 @@ import { invalidateHatViews } from '../../lib/invalidate';
  */
 export function RepricingCard() {
   const qc = useQueryClient();
-  const status = useQuery({ queryKey: ['admin', 'repricing'], queryFn: getRepricing });
+  const status = useQuery({
+    queryKey: ['admin', 'repricing'],
+    queryFn: getRepricing,
+    // Poll only while a sweep is actually in flight, so an idle Settings page
+    // isn't hitting the API forever. The scheduled sweep runs at boot and for
+    // minutes afterwards, and this is the only way to see it happening — the
+    // fields below it describe the last run that FINISHED.
+    refetchInterval: (q) => (q.state.data?.progress?.running ? 2000 : false),
+  });
 
   const run = useMutation({
     mutationFn: runRepricing,
+    onMutate: () => {
+      // The manual run is a blocking request, so nothing would refresh until
+      // it returns. Kick a poll now so the bar appears while it works rather
+      // than only after it has finished.
+      qc.invalidateQueries({ queryKey: ['admin', 'repricing'] });
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['admin', 'repricing'] });
       // Prices changed underneath every hat view. Hand-rolling ['hats']/['hat']
@@ -40,6 +55,8 @@ export function RepricingCard() {
           it needs no Claude call and keeps working when analysis can&rsquo;t.
           Prices you entered yourself are never touched.
         </p>
+
+        <SweepProgressBar progress={s?.progress} />
 
         {s && (
           <div className="hr-metric mb-3">
