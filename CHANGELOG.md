@@ -6,6 +6,42 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.75.0] — 2026-08-30
+
+### Added
+- **"Re-price all" — the whole shelf, in the background.**
+
+  `POST /api/admin/repricing/run` is bounded to `MANUAL_SWEEP_LIMIT`, and that
+  bound is right for it: it runs inline because the caller wants the number
+  back, and uncapped it is a multi-minute request against somebody else's
+  public API — a dead spinner on a phone, then a proxy timeout, after which the
+  result is discarded and nothing is recorded.
+
+  The mistake was that blocking was the **only** option, so re-pricing the
+  collection meant pressing a button repeatedly or waiting up to 24 hours for
+  the scheduler. Same shape as the gap `catalog_service.unclaimed_from_purchases`
+  documents: a useful operation reachable only from inside a bigger one.
+
+  `POST /api/admin/repricing/run-all` answers **202** and sweeps uncapped in the
+  background, exactly like the colorway harvest. Progress was already
+  observable — `repricing.progress` is published on `GET /api/admin/repricing`
+  and drawn by `SweepProgressBar` — so the card needed no new machinery.
+
+  * It **refuses to start a second sweep** while one is in flight. `_sweep_lock`
+    would serialize them safely, but queueing a second full pass behind the
+    first is never what the press meant, and the card would show one progress
+    bar for two runs. `started` and `already_running` are separate booleans
+    because "not started" has two meanings and only one is a problem.
+  * A failure is **recorded, not swallowed** — nobody is watching a background
+    sweep, so a failure that vanished with the run could never be read.
+  * `record_success(..., scheduled=False)`: a button press proves the code
+    works, not that the background loop is alive, so a manual full sweep must
+    not clear a standing failure.
+  * The card invalidates hat views on the **true → false edge** of `running`,
+    not in the mutation's `onSuccess` — a 202 arrives long before any price
+    changes. That edge is also reached when the *scheduled* sweep finishes,
+    so the collection refreshes either way.
+
 ## [2.74.1] — 2026-08-30
 
 ### Fixed

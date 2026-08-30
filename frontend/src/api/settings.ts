@@ -5,7 +5,7 @@ import type {
   TlsStatus, FrozenPriceRow, PriceReleaseResult, AnalysisFailureGroup,
   RecentError, TagBaseStatus, ConstructionAuditRow, ConstructionClearResult, RepricingStatus,
   ReanalyzeResult, AnalysisJobDetail, CatalogStatus, SharedPriceGroup,
-  UnclaimedFromPurchases,
+  UnclaimedFromPurchases, RepricingSweepStarted,
 } from '../types';
 
 // Re-exported so existing imports from this module keep working; the
@@ -343,6 +343,12 @@ export function getAnalysisJob(jobId: number) {
 /** Resale prices carried by more than a handful of hats at once. */
 export function auditSharedPrices() {
   return apiFetch<SharedPriceGroup[]>('/api/admin/prices/shared');
+}
+
+/** Sweep the WHOLE collection in the background. Answers 202 immediately;
+ *  progress arrives via `getRepricing().progress`. */
+export function runRepricingAll() {
+  return apiFetch<RepricingSweepStarted>('/api/admin/repricing/run-all', { method: 'POST' });
 }
 
 /** What re-running matching would fill in from orders already imported. */

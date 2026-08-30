@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getRepricing, runRepricing } from '../../api/settings';
+import { getRepricing, runRepricing, runRepricingAll } from '../../api/settings';
 import { invalidateHatViews } from '../../lib/invalidate';
 import { SweepProgressBar } from '../common/SweepProgressBar';
 
@@ -38,6 +38,16 @@ export function RepricingCard() {
     },
   });
 
+  const runAll = useMutation({
+    mutationFn: runRepricingAll,
+    onSuccess: result => {
+      // Only opens the polling window when a sweep actually started; a refused
+      // press (one already running) must not restart the grace timer.
+      if (result.started) setStartedAt(Date.now());
+      qc.invalidateQueries({ queryKey: ['admin', 'repricing'] });
+    },
+  });
+
   const run = useMutation({
     mutationFn: runRepricing,
     onMutate: () => {
@@ -60,6 +70,24 @@ export function RepricingCard() {
   });
 
   const s = status.data;
+
+  // A background sweep is in flight. Derived from the SERVER's progress record
+  // rather than from mutation state, so it stays true across a reload and
+  // however the sweep was started — the scheduled one counts too.
+  const sweeping = s?.progress?.running ?? false;
+
+  // A background sweep answers 202 long before any price changes, so the
+  // mutation's onSuccess is the wrong place to refresh hat data. Invalidate on
+  // the true -> false edge instead, which is the moment the work is actually
+  // done and is also reached when the SCHEDULED sweep finishes under us.
+  const wasSweeping = useRef(false);
+  useEffect(() => {
+    if (wasSweeping.current && !sweeping) {
+      qc.invalidateQueries({ queryKey: ['admin', 'shared-prices'] });
+      invalidateHatViews(qc);
+    }
+    wasSweeping.current = sweeping;
+  }, [sweeping, qc]);
 
   return (
     <div className="card mb-3">
@@ -99,14 +127,39 @@ export function RepricingCard() {
           </div>
         )}
 
-        <button
-          type="button"
-          className="btn btn-outline-primary btn-sm"
-          onClick={() => run.mutate()}
-          disabled={run.isPending}
-        >
-          {run.isPending ? 'Re-pricing…' : 'Re-price now'}
-        </button>
+        <div className="d-flex gap-2 flex-wrap">
+          <button
+            type="button"
+            className="btn btn-outline-primary btn-sm"
+            onClick={() => run.mutate()}
+            disabled={run.isPending || sweeping}
+          >
+            {run.isPending ? 'Re-pricing…' : 'Re-price now'}
+          </button>
+          {/* Two buttons because they answer different questions: "fix these
+              few now, and tell me the number" versus "go do the whole shelf".
+              The first is bounded and inline; uncapped it is a multi-minute
+              request that a proxy times out, discarding the result. The second
+              runs in the background and reports through the progress bar. */}
+          <button
+            type="button"
+            className="btn btn-outline-secondary btn-sm"
+            onClick={() => runAll.mutate()}
+            disabled={runAll.isPending || sweeping || run.isPending}
+          >
+            {sweeping ? 'Sweeping…' : 'Re-price all'}
+          </button>
+        </div>
+        {runAll.data?.already_running && (
+          <p className="text-secondary small mb-0 mt-2">
+            A sweep is already running — watch the bar above.
+          </p>
+        )}
+        {runAll.isError && (
+          <p className="small mb-0 mt-2" style={{ color: 'var(--neon-pink)' }}>
+            {(runAll.error as Error).message}
+          </p>
+        )}
         {run.isSuccess && (
           <p className="text-secondary small mb-0 mt-2">
             {run.data.repriced} of {run.data.considered} hats changed price.

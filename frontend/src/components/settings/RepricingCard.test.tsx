@@ -10,6 +10,7 @@ import type { RepricingStatus } from '../../types';
 vi.mock('../../api/settings', () => ({
   getRepricing: vi.fn(),
   runRepricing: vi.fn(),
+  runRepricingAll: vi.fn(),
 }));
 
 const mocked = vi.mocked(api);
@@ -168,4 +169,45 @@ describe('RepricingCard — the bar must appear from a CLICK, not only mid-sweep
     ).toBeInTheDocument();
     expect(screen.getByText('Trenches Icon')).toBeInTheDocument();
   }, 15000);
+});
+
+
+describe('RepricingCard — re-price all', () => {
+  it('offers a whole-shelf sweep beside the bounded one', async () => {
+    // Two buttons because they answer different questions: "fix these few now,
+    // and tell me the number" versus "go do the whole shelf". The bounded one
+    // must stay — uncapped and inline it is a multi-minute request a proxy
+    // times out, discarding the result.
+    mocked.getRepricing.mockResolvedValue(status());
+    mocked.runRepricingAll.mockResolvedValue({ started: true, already_running: false });
+
+    renderWithProviders(<RepricingCard />);
+
+    await screen.findByRole('button', { name: 'Re-price now' });
+    await userEvent.click(await screen.findByRole('button', { name: 'Re-price all' }));
+    expect(mocked.runRepricingAll).toHaveBeenCalled();
+  });
+
+  it('says a sweep is already running rather than looking like a dud press', async () => {
+    mocked.getRepricing.mockResolvedValue(status());
+    mocked.runRepricingAll.mockResolvedValue({ started: false, already_running: true });
+
+    renderWithProviders(<RepricingCard />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Re-price all' }));
+
+    expect(await screen.findByText(/already running/)).toBeInTheDocument();
+  });
+
+  it('disables both buttons while the server says a sweep is in flight', async () => {
+    // Derived from the SERVER's progress record, so it is true for the
+    // scheduled sweep too — not just one this tab started.
+    mocked.getRepricing.mockResolvedValue(status({
+      progress: sweepProgressFixture({ running: true, done: 12, total: 235 }),
+    }));
+
+    renderWithProviders(<RepricingCard />);
+
+    expect(await screen.findByRole('button', { name: 'Sweeping…' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Re-price now' })).toBeDisabled();
+  });
 });

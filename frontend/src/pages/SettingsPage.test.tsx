@@ -90,6 +90,7 @@ vi.mock('../api/settings', () => ({
   getUnclaimedFromPurchases: vi.fn(async () => (
     { colorways: 0, prices: 0, hat_ids: [], ambiguous: 0 })),
   releaseFrozenPrices: vi.fn(),
+  runRepricingAll: vi.fn(),
 }));
 
 vi.mock('../api/auth', () => ({

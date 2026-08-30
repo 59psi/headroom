@@ -593,6 +593,14 @@ export interface ReanalyzeResult {
   job: AnalysisJobRead | null;
 }
 
+/** Answer to "re-price everything": did a sweep start, or was one running?
+ *  Two booleans because "not started" has two meanings, and a sweep already in
+ *  flight is the normal case when someone presses twice — not a failure. */
+export interface RepricingSweepStarted {
+  started: boolean;
+  already_running: boolean;
+}
+
 /** What re-running matching would fill in from orders already imported.
  *  Matching runs at the end of an import and nowhere else, so a better matcher
  *  — or a re-analysis that finally gives a hat a model_name — creates pairs

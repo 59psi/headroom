@@ -479,3 +479,15 @@ class RepricingRunResult(BaseModel):
     #: this the card cannot say whether pressing the button again would do
     #: anything — and "50 of 234" reads like a failure rather than a page.
     remaining: int = 0
+
+
+class RepricingSweepStarted(BaseModel):
+    """Answer to "re-price everything": did a sweep start, or was one running?
+
+    Two booleans rather than one, because "not started" has two meanings and
+    the card says different things for each — a sweep already in flight is the
+    normal case when someone presses twice, and is not a failure.
+    """
+
+    started: bool
+    already_running: bool = False
