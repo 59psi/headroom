@@ -557,20 +557,44 @@ async def test_an_unrecognized_failure_is_passed_through_untouched():
     assert _explain("some novel disaster") == "some novel disaster"
 
 
-async def test_the_synology_setup_names_the_right_checkbox():
-    """The documentation bug that produced the report.
+async def test_the_synology_setup_does_not_demand_netbackup():
+    """The steps used to insist on a module the operator does not need.
 
-    'Enable rsync service' is SSH and defines no modules; only 'Enable network
-    backup service' creates `NetBackup`. Getting this wrong sends someone to a
-    checkbox that cannot work.
+    They claimed only 'Enable network backup service' creates a module, and
+    that the double colon is "what selects the network backup service rather
+    than SSH". Both are wrong, and the second contradicted the step above it,
+    which already said DSM exposes your SHARED FOLDERS as modules.
+
+    Confirmed against a real NAS: `NetBackup` is not required — any shared
+    folder the daemon lists works, and the double colon is about the TRANSPORT
+    (daemon on port 873 vs a tunnel over SSH), not about a DSM feature.
     """
     steps = " ".join(backup_service.UPLOAD_PROVIDERS["synology"].setup).lower()
 
     # Must tell the operator to LOOK, not assert a module name: DSM exposes
     # shared folders as modules, so the name varies per install.
     assert "do not assume it" in steps
-    assert "enable network backup service" in steps
     assert "openrsync" in steps, "macOS rsync cannot do daemon syntax"
+
+    # NetBackup may be MENTIONED — it is a real module if you tick the box —
+    # but never as the requirement.
+    assert "you do not need" in steps, "NetBackup must be offered, not demanded"
+    assert "not a requirement" in steps
+
+    # The double colon is about transport, not about a DSM checkbox.
+    assert "daemon" in steps and "873" in steps
+    assert "selects the network backup service" not in steps
+
+
+async def test_the_synology_example_does_not_name_netbackup():
+    """The example is the thing people copy.
+
+    Leaving `::NetBackup/...` there reinstates the demand the steps just
+    dropped, whatever the prose says around it.
+    """
+    assert "netbackup" not in backup_service.UPLOAD_PROVIDERS["synology"].example.lower()
+    # Still a DAEMON destination, or the example teaches the wrong transport.
+    assert "::" in backup_service.UPLOAD_PROVIDERS["synology"].example
 
 
 async def test_the_module_host_is_parsed_from_the_destination(monkeypatch):

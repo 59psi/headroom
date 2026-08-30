@@ -1,7 +1,7 @@
 {
   "name": "headroom-frontend",
   "private": true,
-  "version": "2.74.0",
+  "version": "2.74.1",
   "type": "module",
   "engines": {
     "node": ">=22.22"

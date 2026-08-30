@@ -938,7 +938,7 @@ UPLOAD_PROVIDERS: dict[str, UploadProvider] = {
         # the first path segment is a MODULE name, not a directory.
         destination_re=re.compile(r"^[A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+::[A-Za-z0-9_./ -]+$"),
         destination_hint="user@host::module/path",
-        example="backup@synology.local::NetBackup/headroom",
+        example="backup@synology.local::backups/headroom",
         binary="rsync",
         # noqa S106: this is the NAME of an environment variable, not a
         # password. The value is read from the host at upload time and is
@@ -951,10 +951,12 @@ UPLOAD_PROVIDERS: dict[str, UploadProvider] = {
             "SHARED FOLDERS as modules, so a real NAS lists things like "
             "`home`, `homes`, `photo`, `video`, `docker` — the name varies per "
             "install. Guessing gives `@ERROR: Unknown module '…'`.",
-            "`NetBackup` exists only if you tick Control Panel → File "
-            "Services → rsync → **Enable network backup service**, which is a "
-            "DIFFERENT checkbox from 'Enable rsync service'. Either enable it, "
-            "or point at a shared folder you already have.",
+            "**You do not need `NetBackup`.** Any shared folder the daemon "
+            "lists works as a module, so point at one you already have. "
+            "Control Panel → File Services → rsync → **Enable network backup "
+            "service** simply adds one MORE module, named `NetBackup`, "
+            "alongside your shared folders — it is an option, not a "
+            "requirement, and the list from step 1 is what to trust.",
             "Control Panel → File Services → rsync → rsync Account: add an "
             "account and password. This is a separate rsync account, not your "
             "DSM login.",
@@ -966,8 +968,11 @@ UPLOAD_PROVIDERS: dict[str, UploadProvider] = {
             "which does not parse `user@host::module` and reports the whole "
             "thing as an unresolvable hostname. Use GNU rsync — the one in "
             "this container is 3.4.1.",
-            "Destination above uses TWO colons — `user@host::NetBackup/folder` "
-            "— which is what selects the network backup service rather than SSH.",
+            "Destination above uses TWO colons — `user@host::module/path`. "
+            "That is what makes rsync talk to the DAEMON on port 873 instead "
+            "of tunnelling over SSH, and it makes the first segment a MODULE "
+            "name rather than a directory. It has nothing to do with the "
+            "network backup service checkbox.",
         ),
     ),
 }
