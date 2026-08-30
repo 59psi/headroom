@@ -19,6 +19,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import asyncio
+import contextlib
 
 import pytest
 
@@ -39,6 +40,54 @@ def _fresh_health():
 def _no_pacing(monkeypatch):
     """The inter-hat delay is real behavior, not something to sit through."""
     monkeypatch.setattr(repricing, "repricing_delay_seconds", lambda: 0.0)
+
+
+@pytest.fixture(autouse=True)
+async def _free_slot():
+    """No sweep — and no claim — may outlive the test that started it.
+
+    Two module globals leak across tests here. The claim is one: it is a plain
+    bool, so a test that leaves it held makes every later one see a sweep in
+    flight and refuse, which reads as a failure in whatever ran next rather
+    than in whatever leaked.
+
+    The task is the other, and it arrived with `create_task`. `/repricing/run-all`
+    no longer runs inside the request, so a sweep can still be mid-flight when
+    the test returns — and `setup_db` drops every table on teardown, leaving a
+    detached coroutine querying a schema that no longer exists. It would fail
+    into `record_failure` and be swallowed, surfacing later as an unrelated
+    flake. Awaiting them here is what makes that impossible rather than
+    unlikely.
+    """
+    repricing.release_full_sweep()
+    yield
+    from headroom.routes.admin import repricing as repricing_routes
+
+    for task in list(repricing_routes._running_sweeps):
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await task
+    repricing.release_full_sweep()
+
+
+async def _drain_sweeps():
+    """Await every in-flight background sweep, deterministically.
+
+    Polling `full_sweep_in_flight()` with `await asyncio.sleep(0)` is NOT a
+    wait. It yields to the event loop and runs whatever is already ready, but it
+    does not wait for I/O — and a sweep sitting on an aiosqlite worker thread is
+    exactly that. The poll burns its whole iteration budget in microseconds and
+    reports the sweep unfinished. It passed on a fast local machine and failed
+    in CI, which is the signature of a timing assumption rather than a wait.
+
+    `create_task` hands back the task, so there is nothing to poll for: await it.
+    """
+    from headroom.routes.admin import repricing as repricing_routes
+
+    for task in list(repricing_routes._running_sweeps):
+        # Bounded, so a sweep that genuinely wedges fails here with a timeout
+        # instead of hanging until the CI job is killed with no useful output.
+        await asyncio.wait_for(task, timeout=30)
 
 
 def _factory(session):
@@ -367,53 +416,133 @@ async def test_re_pricing_everything_covers_more_than_the_bounded_run(
     resp = await client.post("/api/admin/repricing/run-all")
     assert resp.status_code == 202, resp.text
     assert resp.json() == {"started": True, "already_running": False}
-    # BackgroundTasks run after the response is sent; httpx's ASGI transport
-    # awaits them, so by here the sweep has completed.
+    # The sweep is a `create_task`, so the 202 does not wait for it — that is
+    # the point of the endpoint, and it is why this has to drain rather than
+    # read `seen` straight after the response. It used to work by accident:
+    # httpx's ASGI transport awaits BackgroundTasks, which made every request
+    # here synchronous and hid the race the sibling test is named for.
+    await _drain_sweeps()
     assert len(seen) == 5, "the background sweep covers the whole shelf"
 
 
-async def test_a_second_press_does_not_start_a_second_sweep(
-    client, db_session, monkeypatch
-):
-    """Two presses, no faked state — the race as it actually happens.
+async def test_a_second_press_does_not_start_a_second_sweep(client, monkeypatch):
+    """Two presses against the real endpoint, in the window the guard exists for.
 
-    The first version of this test pre-called `progress.begin()`, which is the
-    one arrangement that CANNOT fail: it made the sweep visible before the
-    second request arrived. In production nothing does that. `progress.begin()`
-    fires inside `reprice_once`, after the sweep lock is taken and the eligible
-    query has run, and a BackgroundTask does not start until the response has
-    been sent — so both presses read `running: False`, both returned
-    `started: True`, and both ran a full uncapped pass, serialized by the lock
-    into twice the work. The guard promised to refuse exactly that.
+    This test has been wrong twice, in two different ways, and BOTH versions
+    passed while the guard they named was broken. Worth recording, because the
+    failure mode is the same each time: the arrangement quietly moved to a
+    moment where even a broken guard looks right.
 
-    This drives the real endpoint twice and asserts on the second answer.
+    v1 pre-called `progress.begin()` — the one arrangement that cannot fail,
+    since it makes the sweep visible before the second request arrives. Nothing
+    in production does that.
+
+    v2 replaced it with two real requests and then asserted `started is True`
+    for BOTH and `swept == 6`: that each press swept the whole shelf, which is
+    the opposite of the name on the door. It passed identically with the old
+    `progress.running` guard restored, because httpx's ASGI transport awaits
+    BackgroundTasks — so the two requests were strictly sequential and there was
+    never a race to lose. The comment explaining that sat in the test, reading
+    as a justification rather than the admission it was.
+
+    v3 held the sweep open at its first HAT. That fails under sabotage, but for
+    the wrong reason: a hat is reached AFTER `progress.begin()`, so the old
+    guard correctly refused there too, and only the drained-slot assertion
+    caught it.
+
+    The window that matters is **claimed and scheduled, but not yet begun** —
+    the only moment when `progress.running` is False while a sweep is genuinely
+    on its way. So `reprice_once` is stubbed to block before it, and the test
+    ASSERTS it is in that window before pressing again.
     """
-    from headroom.services import hat_analysis_pipeline
+    gate = asyncio.Event()
+    entered = asyncio.Event()
+    calls = 0
 
-    for i in range(3):
-        db_session.add(_hat(model_name=f"Hat{i}", resale_price=10.0))
-    await db_session.commit()
+    async def held_sweep(*a, **kw):
+        # Blocks BEFORE `progress.begin()`. That is the whole point: the window
+        # this guard closes is "claimed and scheduled, but not yet begun", and
+        # it is the ONLY window in which `progress.running` is still False while
+        # a sweep is genuinely on its way. Holding the sweep open at its first
+        # HAT — which an earlier draft of this test did — is already past
+        # `begin()`, so a progress-guard looks correct there and the test proves
+        # nothing about the race it is named for.
+        nonlocal calls
+        calls += 1
+        entered.set()
+        await gate.wait()
+        return (0, 0)
 
-    started = 0
-
-    async def slow_refresh(hat):
-        # Yields control, so the second request is handled while the first
-        # sweep is genuinely mid-flight rather than already finished.
-        nonlocal started
-        started += 1
-        await asyncio.sleep(0)
-
-    monkeypatch.setattr(hat_analysis_pipeline, "refresh_melin_resale", slow_refresh)
+    monkeypatch.setattr(repricing, "reprice_once", held_sweep)
 
     first = await client.post("/api/admin/repricing/run-all")
-    second = await client.post("/api/admin/repricing/run-all")
+    assert first.json() == {"started": True, "already_running": False}
 
-    assert first.json()["started"] is True
-    # httpx's ASGI transport awaits BackgroundTasks, so by the time `first`
-    # returns its sweep has finished and the slot is released — which is why
-    # this asserts on the CLAIM being released rather than on a refusal here.
-    assert second.json()["started"] is True
-    assert started == 6, "each press swept the whole shelf exactly once"
+    await asyncio.wait_for(entered.wait(), timeout=2)
+    # The discriminator. If this is ever True here, the arrangement has drifted
+    # back to testing the easy case and the assertion below stops meaning
+    # anything — so it is asserted, not assumed.
+    assert repricing.progress.snapshot()["running"] is False, (
+        "the sweep must be in flight but not yet begun, or this is not the race"
+    )
+
+    second = await client.post("/api/admin/repricing/run-all")
+    assert second.json() == {"started": False, "already_running": True}
+
+    gate.set()
+    await _drain_sweeps()
+    assert not repricing.full_sweep_in_flight(), "the slot was never released"
+    assert calls == 1, "the shelf was swept once, not twice"
+
+
+async def test_the_scheduled_sweep_holds_the_slot_the_buttons_check(
+    client, monkeypatch
+):
+    """The nightly sweep is a full sweep and must claim like any other.
+
+    The claim was written for two presses of one button, so it asked what that
+    button does and never what else takes `_sweep_lock`. `_loop()` does — for
+    minutes, every cycle, unattended — and while it ran the slot read free.
+    "Re-price all" would start a second full pass (the one thing it promises to
+    refuse), and "Re-price now" would skip its 409 and block on the lock for the
+    whole nightly run, which is the dead spinner and proxy timeout its own cap
+    exists to prevent. Both routes asserted a property the code did not have.
+
+    `reprice_once` is stubbed rather than run: what changed is the loop's claim
+    around it, and calling the real one would reach for the module-level
+    `async_session` — the wrong database, the mistake `error_handler` documents.
+    """
+    import contextlib
+
+    entered = asyncio.Event()
+    gate = asyncio.Event()
+
+    async def held_sweep(*a, **kw):
+        entered.set()
+        await gate.wait()
+        return (0, 0)
+
+    monkeypatch.setattr(repricing, "reprice_once", held_sweep)
+
+    loop_task = asyncio.create_task(repricing._loop())
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        assert repricing.full_sweep_in_flight(), "the scheduled sweep did not claim"
+
+        assert (await client.post("/api/admin/repricing/run-all")).json() == {
+            "started": False,
+            "already_running": True,
+        }
+        assert (await client.post("/api/admin/repricing/run")).status_code == 409
+    finally:
+        gate.set()
+        loop_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await loop_task
+
+    # A cancelled scheduler must release, or shutdown leaves the slot held and
+    # every later press is refused for the life of the process.
+    assert not repricing.full_sweep_in_flight()
 
 
 async def test_the_claim_refuses_a_second_sweep_while_one_is_queued(client):

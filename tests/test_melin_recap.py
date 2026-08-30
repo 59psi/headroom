@@ -745,7 +745,7 @@ async def test_a_product_naming_no_construction_contradicts_nothing(monkeypatch)
     """Veto on CONTRADICTION, not absence — the test `catalog_service` applies.
 
     `Trenches Icon - Denim` is the case that discriminates BOTH halves of this
-    fix at once, and picking a plain colour here would have pinned neither:
+    fix at once, and picking a plain color here would have pinned neither:
 
       * whole-string reading  -> theirs={Denim}, mine={HYDRO}, no overlap -> VETO
       * model-half reading    -> theirs={},                            -> no veto

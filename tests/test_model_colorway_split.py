@@ -124,8 +124,19 @@ async def test_the_backfill_records_what_it_destroyed(client, db_session):
     `retail_prices_v2` re-derives a price that can be re-derived again;
     "Trenches (Curl Surf)" -> "Trenches" discards the only record that the drop
     was a Curl Surf. It runs once, unattended, behind a flag, with no dry run —
-    so the activity log IS the undo, and without it the split is unrecoverable
-    by any means.
+    so the activity log is the undo, and without it the split is unrecoverable
+    from inside the app.
+
+    The record is written in the SAME transaction as the change. It used to
+    commit the truncated names first and log afterwards, which left a window
+    where the damage was durable and its only record was not — a crash there
+    destroyed the names with nothing saying what they had been, which is the
+    exact failure keeping a record is supposed to prevent.
+
+    The field is `dropped`, not `colorway_dropped`: the splitter also takes
+    parentheses, and those carry sizes and pack counts as often as artwork.
+    Recording "(Small)" under a key called colorway would assert a
+    classification nothing at this point has made.
     """
     import json
 
@@ -148,8 +159,48 @@ async def test_the_backfill_records_what_it_destroyed(client, db_session):
         "hat_id": hat_id,
         "was": "Trenches (Curl Surf)",
         "now": "Trenches",
-        "colorway_dropped": "Curl Surf",
+        "dropped": "Curl Surf",
     }], "the original name and the dropped half must both be recoverable"
+
+
+async def test_the_record_and_the_damage_land_together(client, db_session, monkeypatch):
+    """Atomicity, not ordering — pinned because the ordering bug was invisible.
+
+    Committing the names and then logging leaves the destruction durable while
+    its only undo is still uncommitted. Nothing observable distinguishes that
+    from the correct version on a run that succeeds, which is why it survived
+    a release: the test asserted the row EXISTS, and it did.
+
+    Here the commit is made to fail. The names must still be intact — a repair
+    that cannot record what it did must not do it.
+    """
+    from headroom.models.hat import Hat
+    from headroom.services import activity_service
+    from headroom.services.hat_analysis_pipeline import backfill_split_model_names
+
+    body = {"condition": "new", "size": "classic", "style": "trenches"}
+    hat_id = (await client.post("/api/hats", json=body)).json()["id"]
+    row = await db_session.get(Hat, hat_id)
+    row.model_name = "Trenches (Curl Surf)"
+    await db_session.commit()
+
+    async def refuse(*a, **kw):
+        raise RuntimeError("could not record the repair")
+
+    # Patched at `activity_service`, not at the pipeline: the backfill imports
+    # the name inside the function, so a module-level rebind there is replaced
+    # on every call and the patch would silently do nothing.
+    monkeypatch.setattr(activity_service, "log_activity", refuse)
+
+    with pytest.raises(RuntimeError):
+        await backfill_split_model_names(db_session)
+    await db_session.rollback()
+
+    row = await db_session.get(Hat, hat_id)
+    await db_session.refresh(row)
+    assert row.model_name == "Trenches (Curl Surf)", (
+        "the name must survive a repair that could not record itself"
+    )
 
 
 async def test_the_backfill_logs_nothing_when_it_changes_nothing(client, db_session):

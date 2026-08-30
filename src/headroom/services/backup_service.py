@@ -970,7 +970,7 @@ UPLOAD_PROVIDERS: dict[str, UploadProvider] = {
             "this container is 3.4.1.",
             "Destination above uses TWO colons — `user@host::module/path`. "
             "That is what makes rsync talk to the DAEMON on port 873 instead "
-            "of tunnelling over SSH, and it makes the first segment a MODULE "
+            "of tunneling over SSH, and it makes the first segment a MODULE "
             "name rather than a directory. It has nothing to do with the "
             "network backup service checkbox.",
         ),
