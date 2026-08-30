@@ -322,3 +322,122 @@ async def test_a_manual_run_is_bounded_and_says_what_is_left(
     body = (await client.post("/api/admin/repricing/run")).json()
     assert body["considered"] == 2, body
     assert body["remaining"] == 5, body  # a COUNT, not len() of the capped list
+
+
+# ------------- "Re-price all": the whole shelf, off the request -------------- #
+#
+# `/repricing/run` is bounded to MANUAL_SWEEP_LIMIT and that bound is right for
+# it: it runs inline because the caller wants the number back, and uncapped that
+# is a multi-minute request against somebody else's public API — a dead spinner,
+# then a proxy timeout, after which the result is discarded and nothing is
+# recorded. The mistake was that blocking was the ONLY option, so re-pricing
+# everything meant pressing repeatedly or waiting for the 24h scheduler.
+
+
+async def test_re_pricing_everything_covers_more_than_the_bounded_run(
+    client, db_session, monkeypatch
+):
+    """The point of the endpoint: no MANUAL_SWEEP_LIMIT.
+
+    Carries a CONTROL — the bounded run over the same shelf — because asserting
+    only that the background sweep touched everything passes just as well if the
+    limit were removed from BOTH, which would reintroduce the timeout this
+    endpoint exists to avoid.
+    """
+    from headroom.services import hat_analysis_pipeline, repricing
+
+    monkeypatch.setattr(repricing, "MANUAL_SWEEP_LIMIT", 2)
+    for i in range(5):
+        db_session.add(_hat(model_name=f"Hat{i}", resale_price=10.0))
+    await db_session.commit()
+
+    seen: list[str] = []
+
+    async def fake_refresh(hat):
+        seen.append(hat.model_name)
+
+    monkeypatch.setattr(hat_analysis_pipeline, "refresh_melin_resale", fake_refresh)
+
+    bounded = (await client.post("/api/admin/repricing/run")).json()
+    assert bounded["considered"] == 2, "the inline run stays bounded"
+
+    seen.clear()
+    resp = await client.post("/api/admin/repricing/run-all")
+    assert resp.status_code == 202, resp.text
+    assert resp.json() == {"started": True, "already_running": False}
+    # BackgroundTasks run after the response is sent; httpx's ASGI transport
+    # awaits them, so by here the sweep has completed.
+    assert len(seen) == 5, "the background sweep covers the whole shelf"
+
+
+async def test_a_second_press_does_not_start_a_second_sweep(
+    client, db_session, monkeypatch
+):
+    """`_sweep_lock` would serialize them, but queueing a second full pass
+    behind the first is never what the press meant — and the card would show
+    one progress bar for two runs."""
+    from headroom.services import repricing
+
+    db_session.add(_hat(model_name="Anything", resale_price=10.0))
+    await db_session.commit()
+
+    repricing.progress.begin(10)
+    try:
+        resp = await client.post("/api/admin/repricing/run-all")
+        assert resp.status_code == 202
+        assert resp.json() == {"started": False, "already_running": True}
+    finally:
+        repricing.progress.finish()
+
+
+async def test_a_failed_background_sweep_is_recorded_not_swallowed(
+    client, db_session, monkeypatch
+):
+    """Nobody is watching a background sweep, so a failure that vanished with
+    the run could never be read — the same blindness the health record exists
+    to remove."""
+    from headroom.services import repricing
+
+    db_session.add(_hat(model_name="Doomed", resale_price=10.0))
+    await db_session.commit()
+
+    async def boom(*a, **kw):
+        raise RuntimeError("the whole sweep died")
+
+    monkeypatch.setattr(repricing, "reprice_once", boom)
+
+    resp = await client.post("/api/admin/repricing/run-all")
+    assert resp.status_code == 202
+
+    status = (await client.get("/api/admin/repricing")).json()
+    assert "the whole sweep died" in (status["last_error"] or "")
+
+
+async def test_a_manual_full_sweep_does_not_clear_a_standing_failure(
+    client, db_session, monkeypatch
+):
+    """`scheduled=False`. A button press proves the code works, not that the
+    background loop is alive — otherwise a sweep failing nightly for a month
+    reads "swept just now, 0 failures" after one click, hiding exactly the
+    dead-task condition the record exists to expose."""
+    from headroom.services import hat_analysis_pipeline, repricing
+
+    repricing.health().record_failure("nightly sweep has been dead for weeks")
+
+    db_session.add(_hat(model_name="Fine", resale_price=10.0))
+    await db_session.commit()
+
+    async def fake_refresh(hat):
+        hat.resale_price = 42.0
+
+    monkeypatch.setattr(hat_analysis_pipeline, "refresh_melin_resale", fake_refresh)
+
+    await client.post("/api/admin/repricing/run-all")
+
+    status = (await client.get("/api/admin/repricing")).json()
+    assert status["last_error"] == "nightly sweep has been dead for weeks"
+    assert status["consecutive_failures"] == 1
+
+
+async def test_the_full_sweep_requires_auth(anon_client):
+    assert (await anon_client.post("/api/admin/repricing/run-all")).status_code == 401
