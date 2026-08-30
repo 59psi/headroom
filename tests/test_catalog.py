@@ -1153,3 +1153,70 @@ async def test_reading_the_backlog_writes_nothing_even_in_one_session(client, db
 
 async def test_the_backlog_requires_auth(anon_client):
     assert (await anon_client.get("/api/admin/purchases/unclaimed")).status_code == 401
+
+
+# --------- validating an analyzer-read colorway against reality ---------- #
+
+
+async def _catalog(db_session, pairs):
+    from headroom.models.catalog import ColorwayEntry
+
+    for model, colorway in pairs:
+        db_session.add(ColorwayEntry(
+            model_name=model, colorway=colorway,
+            title=f"{model} - {colorway}", category="trenches",
+        ))
+    await db_session.commit()
+
+
+async def test_a_colorway_is_accepted_only_when_the_product_is_real(client, db_session):
+    """Claude reads a colorway off the hat, which is not the same as inferring
+    one from its colours — but it is still a reading.
+
+    A wrong colorway prices the hat as somebody else's product, which is
+    strictly worse than the blank it replaced. Validating against the harvested
+    catalog turns the answer into a lookup: whatever survives names a real good.
+
+    Deliberately NOT done by handing Claude a candidate list — a menu invites a
+    forced choice, and a wrong pick is indistinguishable from a right one. A
+    validator applied afterwards can only ever reject.
+    """
+    from headroom.services.catalog_service import is_real_product
+
+    await _catalog(db_session, [("Trenches Icon Hydro", "Deep Dive")])
+
+    assert await is_real_product(db_session, "Trenches Icon Hydro", "Deep Dive")
+    assert not await is_real_product(db_session, "Trenches Icon Hydro", "Hawaii 808 Camo"), (
+        "a colorway melin does not sell for this model must be refused"
+    )
+    assert not await is_real_product(db_session, "Odysea Rope Hydro", "Deep Dive"), (
+        "the right colorway on the wrong model is still not a product"
+    )
+
+
+async def test_a_hat_named_for_the_family_still_validates(client, db_session):
+    """`model_name` comes from a PHOTO, which cannot show the sub-line.
+
+    So it lands on the family ("Odysea Hydro") where the catalog carries the
+    full product ("Odysea Packable Hydro"). Token containment, the same
+    asymmetry `_model_tier` uses — the hat's tokens must appear in the
+    catalog's, never the reverse.
+    """
+    from headroom.services.catalog_service import is_real_product
+
+    await _catalog(db_session, [("Odysea Packable Hydro", "Rain Camo")])
+
+    assert await is_real_product(db_session, "Odysea Hydro", "Rain Camo")
+    assert not await is_real_product(db_session, "Odysea Packable Rope Hydro", "Rain Camo"), (
+        "a hat named MORE specifically than the catalog is not a match"
+    )
+
+
+async def test_a_missing_half_is_never_a_product(client, db_session):
+    from headroom.services.catalog_service import is_real_product
+
+    await _catalog(db_session, [("Trenches Icon Hydro", "Deep Dive")])
+
+    assert not await is_real_product(db_session, "Trenches Icon Hydro", None)
+    assert not await is_real_product(db_session, None, "Deep Dive")
+    assert not await is_real_product(db_session, "Trenches Icon Hydro", "")

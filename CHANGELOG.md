@@ -6,6 +6,61 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.74.0] — 2026-08-30
+
+### Fixed
+- **The analyzer had nowhere to put a colorway, so it put it in the model
+  name — and the model name is the field every match gates on.**
+
+  melin names its goods `<Model> - <Colorway>`. The Claude tool schema carried
+  `model_name` and **no `colorway` field**, so a colorway plainly readable off
+  the hat (embroidered, printed, on the woven label) was appended to
+  `model_name`: `Trenches Hydro — Hawaii 808 Camo`, `Odysea Rope Hydro
+  (WATERCOLOR)`, `Trenches Hydro (GoPro)`.
+
+  That field is the gate for **both** purchase matching (every hat token must
+  appear in the receipt) and product pricing (every model token must appear in
+  the product). One foreign word — `camo`, `808`, `watercolor` — makes a hat
+  unmatchable against its own receipt and unpriceable against its own product.
+  This is the root of the "bad matching": the matcher is provably optimal under
+  its gate, and the gate was being fed corrupted input.
+
+  Measured against the 568 real products harvested from melinrecap: **89 of
+  235** stored model names matched no melin product at all, and 35 carried a
+  literal separator.
+
+  Four parts to the fix:
+  * `colorway` is now a **required** field on the tool schema (null is a valid
+    answer), described as the colorway half of melin's naming, to be READ off
+    the hat and never inferred from its colours.
+  * The system prompt states the `<Model> - <Colorway>` convention and forbids
+    a dash, em-dash or parentheses in `model_name`.
+  * A stored name is split on an explicit separator. **Only a spaced
+    separator counts** — `A-Game` is a melin line and the most common one in
+    the collection, so a naive split on `-` would break every A-Game hat and
+    make things worse than the bug.
+  * A one-time repair runs from lifespan behind `model_names_split_v1`, for
+    the same reason `retail_pricing.backfill_retail_prices` exists: fixing the
+    schema alone would leave a hat's name depending on *when* it was analyzed.
+    Splitting alone takes usable names from **146 to 174 of 235**, with no API
+    call.
+
+### Added
+- **An analyzer-read colorway is validated before it is believed.**
+  `catalog_service.is_real_product()` checks `<model> - <colorway>` against the
+  harvested catalog, so a colorway that survives names a good melin actually
+  sells. Deliberately **not** done by handing Claude a candidate list — a menu
+  invites a forced choice and a wrong pick is indistinguishable from a right
+  one, where a validator applied afterwards can only ever reject. A colorway
+  already on the hat is never overwritten: that came from a matched receipt or
+  from the owner, and both outrank a photo.
+
+  The leaked halves recovered from existing names are deliberately **dropped
+  rather than stored** — measured against the live catalog, none of them
+  validate. They are collab and limited-run drops ("Hawaii 808 Camo", "Maui
+  Strong") that no longer appear on the resale market, and storing them would
+  trust a string exactly where there is no evidence for it.
+
 ## [2.73.0] — 2026-08-30
 
 ### Added
