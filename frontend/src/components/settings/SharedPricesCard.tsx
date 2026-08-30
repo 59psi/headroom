@@ -1,6 +1,8 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
-import { auditSharedPrices } from '../../api/settings';
+import { auditSharedPrices, getUnclaimedFromPurchases } from '../../api/settings';
+import { rematchPurchases } from '../../api/purchases';
+import { invalidateHatViews } from '../../lib/invalidate';
 
 /**
  * Which resale prices describe a LINE rather than the hat beside them.
@@ -22,9 +24,30 @@ import { auditSharedPrices } from '../../api/settings';
 const SAMPLE_LIMIT = 8;
 
 export function SharedPricesCard() {
+  const qc = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: ['admin', 'shared-prices'],
     queryFn: auditSharedPrices,
+  });
+
+  // Matching runs at the end of an IMPORT and nowhere else, so a better
+  // matcher — or a re-analysis that finally gives a hat a model_name — leaves
+  // pairs nothing ever looks at again. On the real collection that was 17
+  // colorways and 16 prices sitting in already-imported orders while this very
+  // card told the owner a colorway was theirs alone to supply.
+  const unclaimed = useQuery({
+    queryKey: ['admin', 'unclaimed-purchases'],
+    queryFn: getUnclaimedFromPurchases,
+  });
+
+  const fill = useMutation({
+    mutationFn: rematchPurchases,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin', 'unclaimed-purchases'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'shared-prices'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'purchases'] });
+      invalidateHatViews(qc);
+    },
   });
 
   const groups = data ?? [];
@@ -45,6 +68,46 @@ export function SharedPricesCard() {
 
         {isLoading && <div className="text-secondary small">Loading…</div>}
 
+        {/* Outside the groups block on purpose: an unclaimed backlog is worth
+            offering whether or not any price is currently shared, and burying
+            it inside the "there are groups" branch would hide the offer in the
+            one state where acting early prevents the problem. */}
+        {(unclaimed.data?.colorways ?? 0) > 0 && (
+          <div className="alert alert-info py-2 px-3 mb-3">
+            <div className="small mb-2">
+              <strong>
+                {unclaimed.data!.colorways} colorway
+                {unclaimed.data!.colorways === 1 ? '' : 's'} can be filled from
+                your own order history
+              </strong>{' '}
+              — purchases already imported, never matched to a hat.
+              {unclaimed.data!.prices > 0 && (
+                <> The same run sets {unclaimed.data!.prices} purchase
+                  price{unclaimed.data!.prices === 1 ? '' : 's'}.</>
+              )}
+              {unclaimed.data!.ambiguous > 0 && (
+                <> {unclaimed.data!.ambiguous} of them were a tie between
+                  equally good candidates — still better than a line median,
+                  but worth checking afterwards.</>
+              )}
+            </div>
+            <button
+              className="btn btn-sm btn-primary"
+              onClick={() => fill.mutate()}
+              disabled={fill.isPending}
+            >
+              {fill.isPending
+                ? 'Matching…'
+                : `Fill ${unclaimed.data!.colorways} from purchase history`}
+            </button>
+            {fill.isError && (
+              <div className="text-danger small mt-2">
+                Matching failed. Nothing was changed.
+              </div>
+            )}
+          </div>
+        )}
+
         {!isLoading && groups.length === 0 && (
           <div className="text-secondary small">
             Nothing shared by more than a few hats — every price is describing
@@ -64,9 +127,11 @@ export function SharedPricesCard() {
               <div className="col-6">
                 <div className="hr-metric">
                   {/* The actionable half. A missing colorway is what stops a
-                      product being named, and it is the one thing only the
-                      owner can supply — it cannot be inferred from the photo
-                      (measured: 12% precision) or from an unmatched receipt. */}
+                      product being named. It cannot be inferred from the photo
+                      (measured: 12% precision) — but SOME of them are sitting
+                      in the owner's own order history, which is the callout
+                      below. This card used to claim the owner was the only
+                      possible source, which was false for 17 of 82 hats. */}
                   <div className="hr-metric-label">Missing a colorway</div>
                   <div className="hr-metric-value font-mono">{fixable}</div>
                 </div>
@@ -75,9 +140,9 @@ export function SharedPricesCard() {
 
             {fixable > 0 && (
               <p className="text-secondary small mb-3">
-                Hats with no colorway are listed first and link straight to their
-                edit form. Adding a colorway there lets that hat be priced
-                against its own product instead of its line.
+                The rest need you: hats with no colorway are listed first and
+                link straight to their edit form. Adding a colorway there lets
+                that hat be priced against its own product instead of its line.
               </p>
             )}
 

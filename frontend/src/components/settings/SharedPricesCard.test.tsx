@@ -1,15 +1,28 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../../test/utils';
 import { SharedPricesCard } from './SharedPricesCard';
 import * as api from '../../api/settings';
-import type { SharedPriceGroup, SharedPriceHat } from '../../types';
+import * as purchaseApi from '../../api/purchases';
+import type {
+  SharedPriceGroup, SharedPriceHat, UnclaimedFromPurchases,
+} from '../../types';
 
 vi.mock('../../api/settings', () => ({
   auditSharedPrices: vi.fn(),
+  getUnclaimedFromPurchases: vi.fn(),
+}));
+vi.mock('../../api/purchases', () => ({
+  rematchPurchases: vi.fn(),
 }));
 
 const mocked = vi.mocked(api);
+const purchases = vi.mocked(purchaseApi);
+
+function unclaimed(over: Partial<UnclaimedFromPurchases> = {}): UnclaimedFromPurchases {
+  return { colorways: 0, prices: 0, hat_ids: [], ambiguous: 0, ...over };
+}
 
 function hat(over: Partial<SharedPriceHat> = {}): SharedPriceHat {
   return { hat_id: 1, display_id: null, has_colorway: false, ...over };
@@ -26,7 +39,10 @@ function group(over: Partial<SharedPriceGroup> = {}): SharedPriceGroup {
   };
 }
 
-beforeEach(() => { vi.clearAllMocks(); });
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocked.getUnclaimedFromPurchases.mockResolvedValue(unclaimed());
+});
 
 describe('SharedPricesCard', () => {
   it('draws each hat its OWN label, so a caseless one cannot shift the rest', async () => {
@@ -95,6 +111,54 @@ describe('SharedPricesCard', () => {
     mocked.auditSharedPrices.mockResolvedValue([]);
     renderWithProviders(<SharedPricesCard />);
     expect(await screen.findByText(/every price is describing its own hat/))
+      .toBeInTheDocument();
+  });
+
+  it('offers to fill the colorways sitting unclaimed in the order history', async () => {
+    // The card used to say a colorway was the one thing only the owner could
+    // supply. On the real collection that was false for 17 of 82 hats: the
+    // answers were in already-imported purchases that matching had never been
+    // re-run over, because matching runs at the end of an import and nowhere
+    // else.
+    mocked.auditSharedPrices.mockResolvedValue([group()]);
+    mocked.getUnclaimedFromPurchases.mockResolvedValue(
+      unclaimed({ colorways: 17, prices: 16, ambiguous: 4 }),
+    );
+
+    renderWithProviders(<SharedPricesCard />);
+
+    const button = await screen.findByRole('button', {
+      name: /Fill 17 from purchase history/,
+    });
+    expect(screen.getByText(/17 colorways can be filled/)).toBeInTheDocument();
+    // Applying does more than colorways, and the count of coin-toss matches is
+    // stated rather than hidden.
+    expect(screen.getByText(/sets 16 purchase prices/)).toBeInTheDocument();
+    expect(screen.getByText(/4 of them were a tie/)).toBeInTheDocument();
+
+    await userEvent.click(button);
+    expect(purchases.rematchPurchases).toHaveBeenCalled();
+  });
+
+  it('offers nothing when the backlog is empty', async () => {
+    // A standing button that does nothing trains you to ignore it.
+    mocked.auditSharedPrices.mockResolvedValue([group()]);
+    mocked.getUnclaimedFromPurchases.mockResolvedValue(unclaimed());
+
+    renderWithProviders(<SharedPricesCard />);
+    await screen.findByText(/Prices shared by many hats/);
+    expect(screen.queryByRole('button', { name: /purchase history/ }))
+      .not.toBeInTheDocument();
+  });
+
+  it('offers the backlog even when no price is shared yet', async () => {
+    // The offer lives outside the "there are groups" branch: acting early is
+    // what stops these hats landing on a line median in the first place.
+    mocked.auditSharedPrices.mockResolvedValue([]);
+    mocked.getUnclaimedFromPurchases.mockResolvedValue(unclaimed({ colorways: 3 }));
+
+    renderWithProviders(<SharedPricesCard />);
+    expect(await screen.findByRole('button', { name: /Fill 3 from purchase history/ }))
       .toBeInTheDocument();
   });
 });

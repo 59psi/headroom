@@ -87,6 +87,8 @@ vi.mock('../api/settings', () => ({
   clearConstruction: vi.fn(),
   auditFrozenPrices: vi.fn(async () => []),
   auditSharedPrices: vi.fn(async () => []),
+  getUnclaimedFromPurchases: vi.fn(async () => (
+    { colorways: 0, prices: 0, hat_ids: [], ambiguous: 0 })),
   releaseFrozenPrices: vi.fn(),
 }));
 
