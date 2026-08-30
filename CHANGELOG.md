@@ -6,6 +6,30 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.74.1] — 2026-08-30
+
+### Fixed
+- **The Synology setup steps demanded a module you do not need, and
+  contradicted themselves doing it.**
+
+  Step 1 correctly said DSM exposes your **shared folders** as modules and told
+  you to discover the real list. The steps below it then insisted `NetBackup`
+  was the thing to enable, and closed by claiming the double colon is "what
+  selects the network backup service rather than SSH".
+
+  Both are wrong. Confirmed against a real NAS: any shared folder the daemon
+  lists works as a module, and `NetBackup` is simply one *more* module that the
+  "Enable network backup service" checkbox adds — an option, not a
+  requirement. The double colon is about **transport**: it makes rsync talk to
+  the daemon on port 873 instead of tunnelling over SSH, and makes the first
+  segment a module name rather than a directory. It has nothing to do with any
+  DSM feature.
+
+  The example destination no longer names `NetBackup` either — the example is
+  the part people copy, so leaving it there would reinstate the demand whatever
+  the prose around it said. `docs/OPERATIONS.md` carried the same framing and
+  is corrected to match.
+
 ## [2.74.0] — 2026-08-30
 
 ### Fixed

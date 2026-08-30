@@ -328,7 +328,7 @@ archive exists nowhere but the card it is protecting against.
 |---|---|---|
 | Cloud storage (rclone) | `box:Headroom-Backups` | `rclone config` on the host + the rclone overlay |
 | rsync over SSH | `pi@nas.local:/volume1/backups/headroom` | an SSH key + the rsync overlay |
-| Synology NAS (rsync service) | `backup@nas.local::NetBackup/headroom` | DSM's rsync service + `HEADROOM_BACKUP_RSYNC_PASSWORD` |
+| Synology NAS (rsync service) | `backup@nas.local::backups/headroom` | DSM's rsync service + `HEADROOM_BACKUP_RSYNC_PASSWORD` |
 
 `rsync` and `ssh` ship **in the image**; rclone is ~50 MB and stays a bind
 mount. The browser never sends a command — it sends a provider name and a
@@ -343,12 +343,19 @@ silently switched transport would fail with credentials nobody configured and
 look like a broken NAS.
 
 **Synology, without enabling SSH:** Control Panel → File Services → rsync →
-**Enable network backup service** — that is the checkbox that creates the
-`NetBackup` shared folder, and it is *not* the neighboring *Enable rsync
-service*. Ticking only the latter leaves no module to connect to and rsync
-answers `@ERROR: Unknown module`, which reads like a broken NAS rather than a
-missing checkbox. Then add an rsync account under the same page — it is
-separate from your DSM login. Allow
+**Enable rsync service**. DSM then exposes your **shared folders** as modules,
+so the module name is install-specific — `home`, `photo`, `docker`, whatever
+you have. Discover the real list rather than guessing it: the app does this for
+you (`list_rsync_modules`, which the card runs anonymously, since module
+listing happens before authentication), or run `rsync rsync://HOST/` yourself
+from a box with GNU rsync. Guessing gives `@ERROR: Unknown module '…'`, which
+reads like a broken NAS rather than a wrong name.
+
+**You do not need the `NetBackup` module.** The neighboring *Enable network
+backup service* checkbox simply adds one more module by that name alongside
+your shared folders; it is an option, not a requirement, and pointing at a
+shared folder you already have works exactly as well. Then add an rsync account
+under the same page — it is separate from your DSM login. Allow
 port 873 if the NAS firewall is on. Put that account's password in `.env` as
 `HEADROOM_BACKUP_RSYNC_PASSWORD`; it is read from the host at upload time,
 mapped to rsync's own `RSYNC_PASSWORD`, and never stored by Headroom or
