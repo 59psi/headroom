@@ -147,6 +147,14 @@ def claim_full_sweep() -> bool:
 
     Check-and-set with no await between the two, so a second request cannot
     land in the middle of it.
+
+    **Every full sweep claims — the scheduler as well as the button.** Written
+    for two presses of one button, this originally asked only what that button
+    did and never what else takes `_sweep_lock`. `_loop()` does, for minutes,
+    every cycle, unattended: while it ran the slot read free, so "Re-price all"
+    would start a second full pass and "Re-price now" would skip its 409 and
+    block on the lock for the whole nightly run. A guard that only one of three
+    callers respects is not a guard.
     """
     global _full_sweep_claimed
     if _full_sweep_claimed:
@@ -346,17 +354,38 @@ async def _loop() -> None:
         repricing_interval_hours(), repricing_delay_seconds(),
     )
     while True:
-        try:
-            repriced, considered = await reprice_once()
-            _health.record_success(repriced, considered, scheduled=True)
-            logger.info(
-                "Re-pricing sweep done: %s of %s hats changed price", repriced, considered
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001 — the loop must outlive any cycle
-            _health.record_failure(exc)
-            logger.error("Re-pricing sweep failed: %s", exc)
+        # The scheduled sweep claims the SAME slot the button does, and that is
+        # a correctness fix rather than tidiness. The claim was added for two
+        # quick presses of "Re-price all" and asked only what that button does
+        # — never what else takes `_sweep_lock`. This loop does, for minutes at
+        # a time, every cycle, unattended. While it ran, `full_sweep_in_flight()`
+        # answered False and both routes lied: "Re-price all" started a second
+        # full pass (the one thing it promises to refuse) and "Re-price now"
+        # skipped its 409 and blocked on the lock for the whole nightly run —
+        # the dead spinner and proxy timeout its own cap exists to prevent.
+        # The sweep nobody watches was the sweep nothing accounted for.
+        if not claim_full_sweep():
+            # A manual full sweep holds the slot. It covers the same shelf this
+            # cycle would, so skipping loses nothing, where queueing behind it
+            # would run those minutes twice.
+            logger.info("Re-pricing sweep skipped: a full sweep is already running")
+        else:
+            try:
+                repriced, considered = await reprice_once()
+                _health.record_success(repriced, considered, scheduled=True)
+                logger.info(
+                    "Re-pricing sweep done: %s of %s hats changed price", repriced, considered
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 — the loop must outlive any cycle
+                _health.record_failure(exc)
+                logger.error("Re-pricing sweep failed: %s", exc)
+            finally:
+                # `finally`, not the happy path: CancelledError is a
+                # BaseException and re-raised above, and a cancelled scheduler
+                # that kept the slot would refuse every later press.
+                release_full_sweep()
         await asyncio.sleep(interval)
 
 

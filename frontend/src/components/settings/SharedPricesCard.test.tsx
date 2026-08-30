@@ -21,7 +21,7 @@ const mocked = vi.mocked(api);
 const purchases = vi.mocked(purchaseApi);
 
 function unclaimed(over: Partial<UnclaimedFromPurchases> = {}): UnclaimedFromPurchases {
-  return { colorways: 0, prices: 0, hat_ids: [], ambiguous: 0, ...over };
+  return { colorways: 0, prices: 0, ambiguous: 0, ...over };
 }
 
 function hat(over: Partial<SharedPriceHat> = {}): SharedPriceHat {
@@ -95,7 +95,7 @@ describe('SharedPricesCard', () => {
 
   it('states how many hats it did not name, rather than truncating silently', async () => {
     // A truncated list reads exactly like a short one — the same trap the
-    // colorway catalogue and the analysis pending count both fell into.
+    // colorway catalog and the analysis pending count both fell into.
     mocked.auditSharedPrices.mockResolvedValue([group({
       hat_count: 30,
       missing_colorway: 30,

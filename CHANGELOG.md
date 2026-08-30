@@ -6,6 +6,93 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.75.3] — 2026-08-30
+
+A second, adversarial two-axis review of the same range (2.72.0 → 2.75.2), with
+both axes told to assume the code is wrong and to verify by running it rather
+than by reading it. Every finding below was confirmed by execution before it was
+acted on. Three of them are defects in 2.75.2 — the release that fixed the
+*first* review's findings — and two of those are in its tests.
+
+### Fixed
+- **`is_real_product` leaked in the other direction, and the test could not see
+  it.** 2.75.2 fixed containment on the colorway half by pointing it
+  `catalog ⊆ hat`; that accepts a colorway carrying EXTRA words. Against a
+  catalog holding only `Odysea Rope Hydro - Camo`, the colorway
+  `Hawaii 808 Camo` validated as a real product — the exact string the leaked-
+  colorway repair produces, so the guard was blindest at the input it was
+  written for. `Rain Camo` and `Camo Camo` passed too. The sibling test passed
+  throughout because its fixture colorway is `Deep Dive`: at two tokens,
+  containment happens to fail. **Single-word colorways are the common case**
+  (Camo, Black, Navy, Bone) and every one of them validated anything containing
+  it. Not cosmetic — whatever survives is WRITTEN to the hat, and a stored
+  colorway is a **veto** in `_match_score`, so an invented one rules the hat out
+  of its own receipt: the feature made matching worse in precisely the way it
+  existed to fix. The colorway half is now token-set **equality**, which is what
+  the docstring already promised; the model half keeps its `hat ⊆ catalog`
+  asymmetry, which the photo justifies. New test uses one-token fixtures.
+- **The scheduled sweep never claimed the full-sweep slot.** `claim_full_sweep`
+  was reachable only from the route, so during the nightly `_loop()` —  minutes
+  long, every cycle, unattended — `full_sweep_in_flight()` answered False and
+  both routes asserted a property the code did not have: `/repricing/run-all`
+  would start a **second** full pass (the one thing it promises to refuse) and
+  `/repricing/run` would skip its 409 and block on `_sweep_lock` for the whole
+  nightly run, which is the dead spinner and proxy timeout its own cap exists to
+  prevent. The guard was written for two presses of one button and never asked
+  what else takes the lock. Every full sweep claims now, scheduler included.
+- **The regression test named for the sweep race did not test the race.** It
+  asserted `started is True` for BOTH presses and `swept == 6` — that each press
+  swept the whole shelf, the opposite of the name on the door — and passed
+  identically with the old broken `progress.running` guard restored, because
+  httpx's ASGI transport awaits BackgroundTasks and the two requests were
+  therefore strictly sequential. The comment explaining that sat inside the test,
+  reading as justification rather than as the admission it was. Rewritten to
+  block **before** `progress.begin()`, the only window in which a sweep is
+  claimed and scheduled but not yet visible, and it now asserts it is in that
+  window before pressing again.
+- **`run-all` could disable itself permanently.** Starlette runs a BackgroundTask
+  only after the response body is sent; if that send fails, the task never runs,
+  nothing releases the claim, and both routes are dead for the life of the
+  process with no way back but a restart. Scheduled with `asyncio.create_task`
+  now, which the event loop runs regardless of the response. (The colorway
+  harvest can keep its BackgroundTask precisely because it claims nothing.)
+- **The model-name backfill committed the destruction before writing its own
+  undo.** It is the one repair in the app that destroys information rather than
+  recomputing it, and a crash between the two commits — or a failure in the
+  second — left the truncated names durable with no record of what they had
+  been. Record and mutation now land in one transaction. The docstring also
+  stopped implying the undo is permanent: activity rows prune at
+  `HEADROOM_ACTIVITY_LOG_RETENTION_DAYS` (default 90).
+- **The backfill logged sizes as colorways.** The splitter also takes
+  parentheses, and those hold `(Small)`, `(S/M)`, `(Classic)` and `(2-Pack)` as
+  often as artwork. Stripping them from `model_name` is right either way — a
+  size in the name breaks token containment against the receipt — but the audit
+  field is now `dropped`, not `colorway_dropped`, because only the catalog check
+  decides whether a string is a colorway and it runs later.
+- **13 British spellings**, six of them inside the `SYSTEM_PROMPT` and tool
+  schema sent to Claude (`colour`, `colours`, `recognise`), plus `tunnelling` in
+  the backup setup steps and `catalogue` in a test. `CLAUDE.md` requires American
+  spelling in code, docs, UI and prose.
+- **`CLAUDE.md` asserted a hazard that does not exist.** It said `display_id`
+  walks `hat.case` on rows loaded without `selectinload` and so fires a lazy load
+  mid-sweep. `Hat.case` is declared `lazy="selectin"`, so `display_id` resolves
+  on a plain `select(Hat)` — verified by execution. The new `shared_price_audit`
+  comment already said the opposite; the doc was the stale one.
+
+### Removed
+- `UnclaimedFromPurchases.hat_ids` — shipped over the wire with no reader
+  anywhere in the frontend. The two tests that consumed it now assert the
+  stronger thing: they run the fill and check which hat actually changed, rather
+  than reading an id list back out of the query that produced the count.
+
+### Internal
+- `tests/test_repricing.py` gained an autouse fixture that releases the claim and
+  drains in-flight sweeps. With `create_task` a sweep can outlive its test, and
+  `setup_db` drops every table on teardown — a detached coroutine querying a
+  dropped schema would fail into `record_failure`, be swallowed, and surface
+  later as an unrelated flake.
+- Backend 953 → **956**; frontend 239.
+
 ## [2.75.2] — 2026-08-30
 
 Two-axis code review of 2.72.1 → 2.75.1.
@@ -72,11 +159,11 @@ Two-axis code review of 2.72.1 → 2.75.1.
   and the addresses behind it — and was being forced through `hr-metric`, which
   has **two** slots. So the state and the IPv4 were fused into a single label
   (`Advertising → 10.0.111.4`), and the IPv6, added later with dual-stack
-  advertising, was bolted underneath at a different size and colour. Two
+  advertising, was bolted underneath at a different size and color. Two
   addresses of the same kind ended up reading as two unrelated things.
 
   Now: a state line with a live dot (green and glowing only when actually
-  advertising, so the colour carries the state and not just the words), the
+  advertising, so the color carries the state and not just the words), the
   URL as the one thing you click, and IPv4/IPv6 as an aligned pair below a
   divider — same family, same size, labels in one column so the values share an
   edge. A missing IPv6 still occupies its row, italic and muted, because its
@@ -137,7 +224,7 @@ Two-axis code review of 2.72.1 → 2.75.1.
   lists works as a module, and `NetBackup` is simply one *more* module that the
   "Enable network backup service" checkbox adds — an option, not a
   requirement. The double colon is about **transport**: it makes rsync talk to
-  the daemon on port 873 instead of tunnelling over SSH, and makes the first
+  the daemon on port 873 instead of tunneling over SSH, and makes the first
   segment a module name rather than a directory. It has nothing to do with any
   DSM feature.
 
@@ -172,7 +259,7 @@ Two-axis code review of 2.72.1 → 2.75.1.
   Four parts to the fix:
   * `colorway` is now a **required** field on the tool schema (null is a valid
     answer), described as the colorway half of melin's naming, to be READ off
-    the hat and never inferred from its colours.
+    the hat and never inferred from its colors.
   * The system prompt states the `<Model> - <Colorway>` convention and forbids
     a dash, em-dash or parentheses in `model_name`.
   * A stored name is split on an explicit separator. **Only a spaced
@@ -229,7 +316,7 @@ Two-axis code review of 2.72.1 → 2.75.1.
 - **The shared-price card claimed a colorway was the one thing only the owner
   could supply.** That was false for 17 of the 82 colorway-less hats: the app
   already held the answer in its own purchase table. The card now offers those
-  first and asks for the rest — which remain genuinely owner-only, since colour
+  first and asks for the rest — which remain genuinely owner-only, since color
   inference measured 12% precision and most have no candidate product at all.
 
 ## [2.72.1] — 2026-08-29

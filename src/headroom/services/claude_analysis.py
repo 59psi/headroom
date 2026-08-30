@@ -49,10 +49,10 @@ When given a single hat photo you will:
      "melin x OluKai"). Leave it null rather than guessing.
   2b. Put the colorway in `colorway`, READ off the hat — the embroidery, the
      print, the woven label, the artwork. Do not infer a colorway from the
-     colours you can see: that was measured at 12% precision, and a wrong
+     colors you can see: that was measured at 12% precision, and a wrong
      colorway prices the hat as somebody else's product, which is strictly
      worse than leaving it null. Null unless you are actually reading it or
-     you recognise the exact design.
+     you recognize the exact design.
   3. Describe the silhouette / style (e.g. "fitted snapback", "5-panel
      trucker", "cuffed beanie").
   4. Extract the dominant primary, secondary, and tertiary colors with both
@@ -179,7 +179,7 @@ HAT_ANALYSIS_TOOL = {
                     "The PRODUCT LINE ONLY, e.g. 'A-Game Hydro', 'Trenches Icon"
                     " Hydro', 'Odysea Rope Hydro'. melin names goods"
                     " '<Model> - <Colorway>', and ONLY the model half belongs"
-                    " here — put the artwork, place, collab or colour name in"
+                    " here — put the artwork, place, collab or color name in"
                     " `colorway` instead. 'Trenches Hydro - Hawaii 808 Camo' is"
                     " WRONG in this field; it is model 'Trenches Hydro' and"
                     " colorway 'Hawaii 808 Camo'. Never include a dash, an"
@@ -197,14 +197,14 @@ HAT_ANALYSIS_TOOL = {
                 "type": ["string", "null"],
                 "description": (
                     "The colorway half of melin's '<Model> - <Colorway>' name:"
-                    " the artwork, place, collaboration or colour treatment"
+                    " the artwork, place, collaboration or color treatment"
                     " printed, embroidered or woven on this hat — 'Hawaii 808"
                     " Camo', 'Rain Camo', 'Prismatic', 'Heather Grey', 'Deep"
                     " Dive'. Read it off the hat; do NOT infer one from the"
-                    " colours you see. A colorway you cannot actually read is"
+                    " colors you see. A colorway you cannot actually read is"
                     " worth far less than null, because it will be used to"
                     " price this hat against a specific product. Null unless"
-                    " you are reading it or you recognise the exact design."
+                    " you are reading it or you recognize the exact design."
                 ),
             },
             "model_confidence": {
@@ -302,7 +302,7 @@ class HatAnalysis:
     construction: str | None = None
     artist_series: str | None = None
     # The colorway half of melin's "<Model> - <Colorway>" naming, READ off the
-    # hat rather than inferred from its colours. Added in 2.74 because the tool
+    # hat rather than inferred from its colors. Added in 2.74 because the tool
     # schema had no home for it, so Claude appended it to `model_name` instead
     # — and `model_name` tokens are the gate for BOTH purchase matching and
     # product pricing, so one stray colorway word ("camo", "808") made the hat

@@ -1069,9 +1069,11 @@ async def test_the_unclaimed_backlog_is_visible_without_re_importing(client, db_
     unclaimed = (await client.get("/api/admin/purchases/unclaimed")).json()
     assert unclaimed["colorways"] == 1, "the backlog now has something for this hat"
     assert unclaimed["prices"] == 1
-    assert unclaimed["hat_ids"] == [hat_id]
 
-    # And the existing action claims it.
+    # And the existing action claims it — asserted on the HAT, not on an id list
+    # in the projection. The count is only meaningful if it is a count of the
+    # right hat, and the outcome proves that where an echoed id merely restates
+    # what the same query already said.
     assert (await client.post("/api/admin/purchases/match")).json()["matched"] == 1
     assert (await client.get(f"/api/hats/{hat_id}")).json()["colorway"] == "Rain Camo"
 
@@ -1103,10 +1105,14 @@ async def test_the_offer_counts_only_what_it_would_actually_fill(client, db_sess
     blank = await _hat_named(client, db_session, "Trenches Icon Hydro")
 
     unclaimed = (await client.get("/api/admin/purchases/unclaimed")).json()
-    assert unclaimed["hat_ids"] == [blank], (
-        "only the hat that would gain a colorway is offered"
-    )
-    assert unclaimed["colorways"] == 1
+    assert unclaimed["colorways"] == 1, "the filled hat is not an offer"
+
+    # WHICH hat, proved by running the fill rather than by reading an id list
+    # back out of the same query that produced the count. The blank gains a
+    # colorway; the one that already had a colorway keeps its own.
+    assert (await client.post("/api/admin/purchases/match")).json()["matched"] >= 1
+    assert (await client.get(f"/api/hats/{blank}")).json()["colorway"] == "Deep Dive"
+    assert (await client.get(f"/api/hats/{filled}")).json()["colorway"] == "Rain Camo"
 
 
 async def test_reading_the_backlog_writes_nothing_even_in_one_session(client, db_session):
@@ -1171,7 +1177,7 @@ async def _catalog(db_session, pairs):
 
 async def test_a_colorway_is_accepted_only_when_the_product_is_real(client, db_session):
     """Claude reads a colorway off the hat, which is not the same as inferring
-    one from its colours — but it is still a reading.
+    one from its colors — but it is still a reading.
 
     A wrong colorway prices the hat as somebody else's product, which is
     strictly worse than the blank it replaced. Validating against the harvested
@@ -1191,6 +1197,47 @@ async def test_a_colorway_is_accepted_only_when_the_product_is_real(client, db_s
     )
     assert not await is_real_product(db_session, "Odysea Rope Hydro", "Deep Dive"), (
         "the right colorway on the wrong model is still not a product"
+    )
+
+
+async def test_a_single_word_colorway_does_not_validate_anything_containing_it(
+    client, db_session
+):
+    """The shape that hid the leak: a ONE-TOKEN catalog colorway.
+
+    The sibling test above passes under a broken validator, and it took two
+    reviews to see why. Its catalog colorway is `Deep Dive` — two tokens — and
+    the bug was containment (`catalog ⊆ hat`), which two tokens happen to
+    defeat. Single-word colorways are the common case (Camo, Black, Navy,
+    Bone), and every one of them validated anything that merely CONTAINED it:
+    `{camo} ⊆ {hawaii, 808, camo}`, so `Hawaii 808 Camo` named a real product
+    on the strength of a catalog that had never heard of it.
+
+    That is the exact string the leaked-colorway repair produces, so the guard
+    was blindest at precisely the input it was written for. And the cost is not
+    a cosmetic false positive: `_apply_analyzed_colorway` WRITES what survives,
+    and a stored colorway VETOES a purchase match in `_match_score` — the
+    feature would have ruled hats out of their own receipts.
+
+    Fixtures here are deliberately one token. A test whose fixture is more
+    specific than production is a test that cannot see production's bug.
+    """
+    from headroom.services.catalog_service import is_real_product
+
+    await _catalog(db_session, [("Odysea Rope Hydro", "Camo")])
+
+    assert await is_real_product(db_session, "Odysea Rope Hydro", "Camo")
+    assert not await is_real_product(
+        db_session, "Odysea Rope Hydro", "Hawaii 808 Camo"
+    ), "a colorway carrying words the catalog does not have names no product"
+    assert not await is_real_product(db_session, "Odysea Rope Hydro", "Rain Camo"), (
+        "adding a word to a real colorway does not make a second real product"
+    )
+    # The vaguer direction, which the previous fix closed — pinned here too, so
+    # one test covers both ways this comparison has now been wrong.
+    await _catalog(db_session, [("Trenches Icon Hydro", "Rain Camo")])
+    assert not await is_real_product(db_session, "Trenches Icon Hydro", "Rain"), (
+        "a colorway vaguer than the product is not that product"
     )
 
 

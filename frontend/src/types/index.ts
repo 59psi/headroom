@@ -610,7 +610,6 @@ export interface UnclaimedFromPurchases {
   colorways: number;
   /** Hats that would gain a purchase price. Applying does both. */
   prices: number;
-  hat_ids: number[];
   /** How many colorway fills the matcher flagged as tied between equal
    *  candidates — still better than a line median, but worth knowing. */
   ambiguous: number;

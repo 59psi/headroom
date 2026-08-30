@@ -1530,7 +1530,7 @@ kbd {
    the NAME devices resolve, and the addresses behind it. It used to be forced
    through `hr-metric`, which has two slots — so the state and the IPv4 were
    fused into one label ("Advertising → 10.0.111.4") and the IPv6, added later,
-   was bolted underneath in a different size and colour. Two addresses are the
+   was bolted underneath in a different size and color. Two addresses are the
    same kind of fact and looked like two unrelated ones. */
 
 .hr-net-state {
@@ -1553,7 +1553,7 @@ kbd {
   flex: none;
 }
 
-/* Live gets the glow. The colour carries the state on its own, so the label
+/* Live gets the glow. The color carries the state on its own, so the label
    beside it is not the only thing distinguishing the two. */
 .hr-net-dot.is-live {
   background: var(--neon-green);

@@ -623,7 +623,7 @@ async def _apply_analyzed_colorway(
       pair against the harvested catalog, so a colorway that survives names a
       good melin actually sells. A wrong one would price this hat as somebody
       else's product, which is strictly worse than the blank it replaced —
-      the same reasoning that keeps colour-inferred colorways out entirely.
+      the same reasoning that keeps color-inferred colorways out entirely.
     """
     from headroom.services import catalog_service
 
@@ -771,13 +771,23 @@ async def backfill_split_model_names(db) -> int:
     trusting a string precisely where there is no evidence for it, which is how
     a hat gets priced as somebody else's product.
 
-    **Every change is written to the activity log with the ORIGINAL name**, and
-    that is not decoration. This is the one repair in this app that destroys
-    information rather than recomputing it: `retail_prices_v2` re-derives a
-    price that can be re-derived again, but "Trenches (Curl Surf)" → "Trenches"
-    discards the only record that the drop was a Curl Surf. It runs once,
-    unattended, behind a flag, with no dry run — so the log IS the undo, and
-    without it the split would be unrecoverable by any means.
+    **Every change is written to the activity log with the ORIGINAL name, in the
+    SAME transaction as the change**, and that is not decoration. This is the
+    one repair in this app that destroys information rather than recomputing it:
+    `retail_prices_v2` re-derives a price that can be re-derived again, but
+    "Trenches (Curl Surf)" → "Trenches" discards the only record that the drop
+    was a Curl Surf. It runs once, unattended, behind a flag, with no dry run,
+    so the log is the undo — and it commits with the mutation rather than after
+    it, because a window where the damage is durable and the record is not
+    inverts the whole reason for keeping one.
+
+    **The undo is time-bounded, and that is worth saying rather than implying
+    otherwise.** `activity_service` prunes daily at
+    `HEADROOM_ACTIVITY_LOG_RETENTION_DAYS` (default 90), so these rows age out
+    like any others. The window is generous relative to the repair — it runs at
+    the first boot after upgrading and the names are visible immediately — but
+    "the log IS the undo" is only true for ninety days, and a backup taken
+    before the upgrade is the durable copy.
     """
     from sqlalchemy import select
 
@@ -789,19 +799,32 @@ async def backfill_split_model_names(db) -> int:
 
     repaired: list[dict] = []
     for hat in hats:
-        model, leaked = _split_model_and_colorway(hat.model_name)
-        if leaked and model and model != hat.model_name:
+        model, dropped = _split_model_and_colorway(hat.model_name)
+        if dropped and model and model != hat.model_name:
+            # `dropped`, not `colorway_dropped`. The suffix is usually a leaked
+            # colorway, which is what this repair is for — but the splitter also
+            # takes parentheses, and those hold sizes and pack counts as often
+            # as artwork: "(Small)", "(S/M)", "(Classic)", "(2-Pack)". Removing
+            # them from `model_name` is right either way (a size in the name
+            # breaks token containment against the receipt), but recording a
+            # size under a field called `colorway` states a classification
+            # nothing here has made. Only `_apply_analyzed_colorway`'s catalog
+            # check decides whether a string is a colorway, and it runs later.
             repaired.append({"hat_id": hat.id, "was": hat.model_name, "now": model,
-                             "colorway_dropped": leaked})
+                             "dropped": dropped})
             hat.model_name = model
     if repaired:
-        await db.commit()
-        # Caller commits, per `log_activity`'s contract — and this one is a
-        # lifespan task with nobody to surface a failure to, so it is
-        # fire-and-forget like every other call site.
+        # ONE commit, with the record inside it. This used to commit the
+        # truncated names first and write the log row afterwards, so a crash
+        # between the two — or a failure in the second commit — destroyed the
+        # only copy of the original names with nothing recording what they were.
+        # The record is this repair's undo; a window where the damage is durable
+        # and the undo is not inverts the entire point of keeping one.
+        # `log_activity` adds to the caller's transaction and never raises, so
+        # this is atomic: either both land or neither does.
         await log_activity(
             db, kind="hat.model_name_split", entity_type="system", entity_id=None,
-            summary=f"Split a leaked colorway out of {len(repaired)} model name(s)",
+            summary=f"Split a trailing colorway out of {len(repaired)} model name(s)",
             details={"repaired": repaired},
         )
         await db.commit()

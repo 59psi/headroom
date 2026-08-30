@@ -1136,7 +1136,6 @@ async def unclaimed_from_purchases(db: AsyncSession) -> dict:
         # truncated sample — a low number here reads as "nothing to do".
         "colorways": len({p["hat_id"] for p in proposals if p["sets_colorway"]}),
         "prices": len({p["hat_id"] for p in proposals if p["sets_price"]}),
-        "hat_ids": sorted({p["hat_id"] for p in proposals if p["sets_colorway"]}),
         #: Proposals the matcher itself flagged as tied. Reported, not hidden:
         #: applying them is still better than a line median, but the owner
         #: should know which ones were a coin toss between equal candidates.
@@ -1149,7 +1148,7 @@ async def is_real_product(db: AsyncSession, model_name: str | None, colorway: st
 
     The check that lets the analyzer's colorway be USED rather than trusted.
     Claude reads a colorway off the hat, which is a different act from
-    inferring one from the photo's colours (measured at 12% precision) — but it
+    inferring one from the photo's colors (measured at 12% precision) — but it
     is still a reading, and a wrong colorway prices the hat as somebody else's
     product. Validating against the harvested catalog turns the answer into a
     lookup: a colorway that survives this names a real good.
@@ -1172,11 +1171,25 @@ async def is_real_product(db: AsyncSession, model_name: str | None, colorway: st
       which cannot show the sub-line, so it lands on the family ("Odysea
       Hydro") where the catalog carries the product ("Odysea Packable Hydro").
       Same direction as `_model_tier`, for the same reason.
-    * **Colorway: catalog tokens ⊆ hat tokens.** A colorway is READ off the
-      hat, so a correct reading is at least as specific as the catalog's name —
-      never less. This is what rejects `Camo` standing in for `Rain Camo`.
-      Equality would be defensible too, but this also accepts a reading that
-      carries an extra word the listing title omits.
+    * **Colorway: token-set EQUALITY.** This half was containment, in the
+      direction that let a reading carry EXTRA words — and that is a leak the
+      tests could not see. `{camo} ⊆ {hawaii, 808, camo}`, so a catalog holding
+      `Odysea Rope Hydro - Camo` validated the colorway `Hawaii 808 Camo`,
+      which names no product. It survived review because the fixture colorway
+      was `Deep Dive`: at two tokens, containment happens to fail. **Single-word
+      colorways are the common case** — Camo, Black, Navy, Bone — and every one
+      of them accepted anything containing it, including `Camo Camo`.
+
+      That is not a cosmetic false positive. `_apply_analyzed_colorway` WRITES
+      whatever survives, and a stored colorway is a VETO in `_match_score` — so
+      a colorway invented here rules the hat out of its own receipt. The
+      feature exists to make matching better and this made it worse.
+
+      Equality is what the docstring above already promises: whatever survives
+      names a real good. A reading that is vaguer than the catalog's name is
+      not that product; a reading carrying a word the catalog does not have is
+      not that product either. Both are now refused, and the ONLY asymmetry
+      left is the model's, which is justified by the photo.
     """
     if not model_name or not colorway:
         return False
@@ -1192,12 +1205,12 @@ async def is_real_product(db: AsyncSession, model_name: str | None, colorway: st
         )
     ).all()
     for cat_model, cat_colorway in rows:
-        # Note the directions: the model is contained BY the catalog entry,
-        # the colorway CONTAINS it. See the docstring — they are opposite on
-        # purpose, and having both the same way round is what let `Camo` pass
-        # as `Rain Camo`.
-        if want_model <= set(_model_tokens(cat_model)) and set(
-            _model_tokens(cat_colorway)
-        ) <= want_colorway:
+        # The model is contained BY the catalog entry (a photo cannot show the
+        # sub-line); the colorway must match it EXACTLY. Containment in either
+        # direction on this half admits a colorway naming no product — see the
+        # docstring, both directions have now been wrong once.
+        if want_model <= set(_model_tokens(cat_model)) and (
+            set(_model_tokens(cat_colorway)) == want_colorway
+        ):
             return True
     return False

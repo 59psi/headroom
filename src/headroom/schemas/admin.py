@@ -427,7 +427,6 @@ class UnclaimedFromPurchases(BaseModel):
     colorways: int = 0
     #: Hats that would gain a purchase price. Applying does both.
     prices: int = 0
-    hat_ids: list[int] = []
     #: How many of the colorway fills the matcher itself flagged as tied.
     #: Reported rather than hidden: still better than a line median, but the
     #: owner should know which were a coin toss between equal candidates.
