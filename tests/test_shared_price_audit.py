@@ -30,6 +30,10 @@ async def _price(db_session, hat_id, price, source, colorway=None):
     await db_session.commit()
 
 
+def _ids(group):
+    return {h["hat_id"] for h in group["hats"]}
+
+
 async def test_a_price_carried_by_many_hats_is_reported(client, db_session):
     ids = [await _hat(client) for _ in range(5)]
     for hat_id in ids:
@@ -39,16 +43,69 @@ async def test_a_price_carried_by_many_hats_is_reported(client, db_session):
     assert len(groups) == 1
     assert groups[0]["resale_price"] == 85.0
     assert groups[0]["hat_count"] == 5
-    assert set(groups[0]["hat_ids"]) == set(ids)
+    assert _ids(groups[0]) == set(ids)
 
 
 async def test_a_handful_sharing_a_price_is_not_reported(client, db_session):
     """Two examples of one product genuinely cost the same. It takes a crowd
-    before the number stops being about the hat."""
-    for _ in range(3):
-        await _price(db_session, await _hat(client), 85.0, "src")
+    before the number stops being about the hat.
 
-    assert (await client.get("/api/admin/prices/shared")).json() == []
+    Pins the boundary in BOTH directions. `MAX_UNREMARKABLE` is compared with
+    `>`, and the constant it replaced (`SHARED_THRESHOLD = 3`) read as "three
+    or more" while meaning four or more — a test that only checked the quiet
+    side would keep passing whichever the code meant.
+    """
+    ids = [await _hat(client) for _ in range(3)]
+    for hat_id in ids:
+        await _price(db_session, hat_id, 85.0, "src")
+
+    assert (await client.get("/api/admin/prices/shared")).json() == [], (
+        "three hats sharing a number is ordinary"
+    )
+
+    await _price(db_session, await _hat(client), 85.0, "src")
+    groups = (await client.get("/api/admin/prices/shared")).json()
+    assert [g["hat_count"] for g in groups] == [4], "a fourth makes it a crowd"
+
+
+async def test_one_line_stays_one_group_when_the_live_count_moves(client, db_session):
+    """The source sentence quotes how many listings were live at that moment,
+    and that number MOVES.
+
+    Re-pricing is sequential, paced a second apart, oldest-first and resumable,
+    so hats priced against one line off one median routinely carry different
+    counts. Grouping on the raw sentence split the very cluster this report
+    exists to reveal — into fragments that each fell under the threshold and
+    vanished, leaving a collection of identical prices looking healthy.
+    """
+    for count in (13, 13, 14, 15):
+        await _price(
+            db_session, await _hat(client), 85.0,
+            f"Melin Recap · median of {count} live classic new Trenches Hydro listings",
+        )
+
+    groups = (await client.get("/api/admin/prices/shared")).json()
+    assert len(groups) == 1, "one line, one group, whatever the count said that second"
+    assert groups[0]["hat_count"] == 4
+    assert "median of" in groups[0]["source"], "the sentence is shown verbatim, not the key"
+
+
+async def test_a_different_line_is_still_a_different_group(client, db_session):
+    """The control for the test above: neutralizing the count must not blur two
+    genuinely different comparisons into one."""
+    for _ in range(4):
+        await _price(
+            db_session, await _hat(client), 85.0,
+            "Melin Recap · median of 9 live Trenches Hydro listings",
+        )
+    for _ in range(4):
+        await _price(
+            db_session, await _hat(client), 85.0,
+            "Melin Recap · median of 9 live Odysea Rope listings",
+        )
+
+    groups = (await client.get("/api/admin/prices/shared")).json()
+    assert len(groups) == 2
 
 
 async def test_hats_priced_by_hand_are_left_alone(client, db_session):
@@ -78,7 +135,7 @@ async def test_hats_priced_by_hand_are_left_alone(client, db_session):
     assert [g["resale_price"] for g in groups] == [70.0], (
         "the scraped group must be reported and the manual one must not"
     )
-    assert set(groups[0]["hat_ids"]) == set(scraped)
+    assert _ids(groups[0]) == set(scraped)
 
 
 async def test_the_missing_colorway_count_is_the_actionable_half(client, db_session):
@@ -94,6 +151,47 @@ async def test_the_missing_colorway_count_is_the_actionable_half(client, db_sess
     group = (await client.get("/api/admin/prices/shared")).json()[0]
     assert group["hat_count"] == 6
     assert group["missing_colorway"] == 4
+
+
+async def test_hats_missing_a_colorway_come_first(client, db_session):
+    """The card names only the first few of a group, so the sample it truncates
+    to must be the rows worth opening.
+
+    The two priced hats are created FIRST, so they hold the lower ids — without
+    the sort they would head the list and a group of thirty would show eight
+    hats nothing can be done about.
+    """
+    for _ in range(2):
+        await _price(db_session, await _hat(client), 85.0, "src", colorway="Prismatic")
+    for _ in range(3):
+        await _price(db_session, await _hat(client), 85.0, "src")
+
+    group = (await client.get("/api/admin/prices/shared")).json()[0]
+    assert [h["has_colorway"] for h in group["hats"]] == [False, False, False, True, True]
+
+
+async def test_a_hat_with_no_case_keeps_its_neighbours_labels_straight(client, db_session):
+    """A hat carries its OWN label, so ids and labels cannot fall out of step.
+
+    They did: the group appended every id but only the display_ids that were
+    set, and the card indexed the two side by side. A hat with no case has no
+    display_id — the normal state for a room-stored or freshly-added hat — so
+    one of those shifted every later label onto the wrong hat's link, pointing
+    at hat A under hat B's shelf id.
+    """
+    case = (await client.post("/api/cases", json={"case_type": "archive"})).json()
+    cased = await _hat(client, case_id=case["id"])
+    loose = [await _hat(client) for _ in range(3)]
+
+    for hat_id in [cased, *loose]:
+        await _price(db_session, hat_id, 85.0, "src")
+
+    group = (await client.get("/api/admin/prices/shared")).json()[0]
+    labels = {h["hat_id"]: h["display_id"] for h in group["hats"]}
+
+    assert labels[cased] == f"{case['display_id']}-01"
+    for hat_id in loose:
+        assert labels[hat_id] is None, "a caseless hat reports no label, rather than borrowing one"
 
 
 async def test_the_same_price_from_different_sources_is_not_one_group(client, db_session):

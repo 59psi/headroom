@@ -412,6 +412,21 @@ class RepricingStatus(BaseModel):
     progress: SweepProgressRead = SweepProgressRead()
 
 
+class SharedPriceHat(BaseModel):
+    """One hat inside a shared-price group.
+
+    One object rather than parallel id/label lists on the group: a hat with no
+    case has no `display_id`, so the two lists fell out of step and the card
+    drew one hat's shelf label on another hat's link.
+    """
+
+    hat_id: int
+    display_id: str | None = None
+    #: False is the actionable state — no colorway means no product can be
+    #: named for this hat, and the owner is the only source for it.
+    has_colorway: bool
+
+
 class SharedPriceGroup(BaseModel):
     """One resale price, and every hat carrying it.
 
@@ -422,11 +437,14 @@ class SharedPriceGroup(BaseModel):
     """
 
     resale_price: float
-    #: The sentence shown beside the price on each of these hats.
+    #: A representative sentence, verbatim, as shown on these hats' pages.
+    #: Members are grouped on a cleaned form of it that neutralizes the live
+    #: listing count, so another member may quote a different count.
     source: str | None = None
     hat_count: int
-    hat_ids: list[int] = []
-    display_ids: list[str] = []
+    #: Hats missing a colorway come first — the sample the card shows should be
+    #: the rows worth opening.
+    hats: list[SharedPriceHat] = []
     #: How many carry no colorway — the actionable half. A missing colorway is
     #: what prevents naming a product, and the one thing only the owner knows.
     missing_colorway: int = 0

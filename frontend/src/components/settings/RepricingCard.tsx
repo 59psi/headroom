@@ -48,6 +48,10 @@ export function RepricingCard() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['admin', 'repricing'] });
+      // A SIBLING key, not covered by the one above: a sweep rewrites the very
+      // (price, source) pairs the shared-price report groups on, so leaving it
+      // alone left that card asserting a grouping this run just replaced.
+      qc.invalidateQueries({ queryKey: ['admin', 'shared-prices'] });
       // Prices changed underneath every hat view. Hand-rolling ['hats']/['hat']
       // here missed the case, room and valuation keys that carry hat data —
       // CLAUDE.md names this helper as the single place that knows them all.

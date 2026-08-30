@@ -593,16 +593,30 @@ export interface ReanalyzeResult {
   job: AnalysisJobRead | null;
 }
 
+/** One hat inside a shared-price group. One object rather than parallel
+ *  id/label arrays: a hat with no case has no `display_id`, so the two fell
+ *  out of step and a label was drawn on the wrong hat's link. */
+export interface SharedPriceHat {
+  hat_id: number;
+  display_id: string | null;
+  /** False is the actionable state — no colorway means no product can be
+   *  named, and the owner is the only source for it. */
+  has_colorway: boolean;
+}
+
 /** One resale price and every hat carrying it.
  *  A figure shared by dozens of hats is the going rate for a LINE, not an
  *  appraisal of any one of them — and nothing in the app said so. */
 export interface SharedPriceGroup {
   resale_price: number;
-  /** The sentence shown beside the price on each of these hats. */
+  /** A representative sentence, verbatim. Members are grouped on a cleaned
+   *  form that neutralizes the live listing count, so another member may
+   *  quote a different count. */
   source: string | null;
   hat_count: number;
-  hat_ids: number[];
-  display_ids: string[];
+  /** Hats missing a colorway come first — the truncated sample the card shows
+   *  should be the rows worth opening. */
+  hats: SharedPriceHat[];
   /** How many carry no colorway — the actionable half, and the one thing only
    *  the owner can supply. */
   missing_colorway: number;

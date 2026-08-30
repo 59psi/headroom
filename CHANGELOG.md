@@ -6,6 +6,50 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.72.1] — 2026-08-29
+
+Two-axis code review of 2.72.0. Both axes independently found the same
+mislabelling bug, from different directions.
+
+### Fixed
+- **The shared-price report could hide the very cluster it exists to reveal.**
+  It grouped on the source sentence verbatim, and that sentence quotes how many
+  listings were live at the moment each hat was priced — "median of **18** live
+  … listings". Re-pricing is sequential, paced a second apart, oldest-first and
+  resumable, so hats priced against one line off one median routinely carry
+  different counts. One cluster therefore split into fragments that each fell
+  under the "more than three hats" threshold and disappeared, leaving a
+  collection of identical prices looking healthy. Grouping now runs on a
+  cleaned key that neutralizes that one integer, and the sentence is still
+  displayed verbatim — the same shape as `analysis_job_service._reason_key`.
+  Deliberately narrow: the size and condition qualifiers are stable facts about
+  the hat and mark genuinely different comparisons, so they still separate.
+- **A link in the report could point at the wrong hat.** Ids and shelf labels
+  were two parallel arrays, and a hat with no case contributed an id but no
+  label — the normal state for a room-stored or freshly-added hat. Every later
+  label slid up one, so a row read as hat B's shelf id while linking to hat A.
+  Each hat now carries its own label on one object, so the two cannot drift.
+  It was invisible in tests because every fixture hat was caseless, leaving the
+  label array empty and the two trivially "aligned"; there is now a test with
+  both kinds in one group.
+- **The report went stale after the two mutations that change it.** Re-pricing
+  rewrites the exact (price, source) pairs it groups on, and releasing a
+  `manual` price makes those hats newly eligible for it — neither invalidated
+  `['admin','shared-prices']`, a sibling key not covered by the ones they did.
+
+### Changed
+- **The missing-colorway hats are now reachable, not just counted.** They sort
+  to the front of each group, so the truncated sample names the rows worth
+  opening, and they link to the hat's **edit form** — where a colorway is
+  actually entered — rather than to its read-only page. Naming the fix without
+  offering it was half an answer.
+- `SHARED_THRESHOLD = 3` compared with `>` read as "three or more" and meant
+  four or more; it is now `MAX_UNREMARKABLE`, named for what it bounds.
+- The service dataclass is `PriceCluster`, no longer a second, differently
+  shaped `SharedPriceGroup` beside the pydantic schema of that name.
+- The `/prices/shared` handler maps through `_shared_row()` beside the existing
+  `_row()`, instead of inlining the field list.
+
 ## [2.72.0] — 2026-08-29
 
 ### Added
@@ -20,7 +64,7 @@ All notable changes are documented here. This project follows
   group first, and names how many of each group are missing a colorway — which
   is the actionable half.
 
-### Measured, and why this is a report rather than a fix
+  **Measured, and why this is a report rather than a fix.**
   2.71.0 made pricing prefer melin's own product, which splits a line into its
   real goods — but only for hats whose product can be identified. Four ways to
   identify the rest were tried and measured against the real collection:

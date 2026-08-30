@@ -13,7 +13,12 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.database import get_db
-from headroom.schemas.admin import FrozenPriceRow, PriceReleaseResult, SharedPriceGroup
+from headroom.schemas.admin import (
+    FrozenPriceRow,
+    PriceReleaseResult,
+    SharedPriceGroup,
+    SharedPriceHat,
+)
 from headroom.services import price_audit, shared_price_audit
 from headroom.services.activity_service import log_activity
 
@@ -37,6 +42,23 @@ async def audit_frozen_prices(db: AsyncSession = Depends(get_db)):
     return [_row(r) for r in await price_audit.audit(db)]
 
 
+def _shared_row(cluster: shared_price_audit.PriceCluster) -> SharedPriceGroup:
+    return SharedPriceGroup(
+        resale_price=cluster.resale_price,
+        source=cluster.source,
+        hat_count=cluster.hat_count,
+        hats=[
+            SharedPriceHat(
+                hat_id=h.hat_id,
+                display_id=h.display_id,
+                has_colorway=h.has_colorway,
+            )
+            for h in cluster.hats
+        ],
+        missing_colorway=cluster.missing_colorway,
+    )
+
+
 @router.get("/prices/shared", response_model=list[SharedPriceGroup])
 async def audit_shared_prices(db: AsyncSession = Depends(get_db)):
     """Prices carried by more than a handful of hats at once.
@@ -44,17 +66,7 @@ async def audit_shared_prices(db: AsyncSession = Depends(get_db)):
     A source sentence covering fifty hats is not an appraisal of any one of
     them. Reports only — the owner is who knows which hat is which.
     """
-    return [
-        SharedPriceGroup(
-            resale_price=g.resale_price,
-            source=g.source,
-            hat_count=g.hat_count,
-            hat_ids=g.hat_ids,
-            display_ids=g.display_ids,
-            missing_colorway=g.missing_colorway,
-        )
-        for g in await shared_price_audit.audit(db)
-    ]
+    return [_shared_row(c) for c in await shared_price_audit.audit(db)]
 
 
 @router.post("/prices/release", response_model=PriceReleaseResult)
