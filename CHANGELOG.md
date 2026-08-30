@@ -6,6 +6,28 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.75.1] — 2026-08-30
+
+### Changed
+- **The LAN Discovery card now looks like it was designed rather than
+  accumulated.** It reads as three facts — a state, the name devices resolve,
+  and the addresses behind it — and was being forced through `hr-metric`, which
+  has **two** slots. So the state and the IPv4 were fused into a single label
+  (`Advertising → 10.0.111.4`), and the IPv6, added later with dual-stack
+  advertising, was bolted underneath at a different size and colour. Two
+  addresses of the same kind ended up reading as two unrelated things.
+
+  Now: a state line with a live dot (green and glowing only when actually
+  advertising, so the colour carries the state and not just the words), the
+  URL as the one thing you click, and IPv4/IPv6 as an aligned pair below a
+  divider — same family, same size, labels in one column so the values share an
+  edge. A missing IPv6 still occupies its row, italic and muted, because its
+  **absence is the diagnosis**: with no IPv6 record every lookup of the name
+  stalls for the client's full resolver timeout, which reads as a slow or dead
+  site rather than a missing record. Omitting the row would hide exactly that.
+
+  The card had no tests; it has four now.
+
 ## [2.75.0] — 2026-08-30
 
 ### Added
