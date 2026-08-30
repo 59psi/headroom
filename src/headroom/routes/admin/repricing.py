@@ -7,7 +7,7 @@ is what had been happening for weeks.
 
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from headroom.schemas.admin import (
     RepricingRunResult,
@@ -43,6 +43,15 @@ async def run_repricing(request: Request):
     The session factory comes off `app.state`, the seam tests swap, rather than
     from the module-level one.
     """
+    # A full sweep holds `_sweep_lock` for minutes, so running inline here
+    # would block on it — the multi-minute request, dead spinner and proxy
+    # timeout this route's own cap exists to prevent. The card disables the
+    # button, but a direct call must not be able to walk into it.
+    if repricing.full_sweep_in_flight():
+        raise HTTPException(
+            status_code=409,
+            detail="A full re-pricing sweep is already running — watch its progress instead.",
+        )
     factory = request.app.state.session_factory
     try:
         repriced, considered = await repricing.reprice_once(
@@ -85,8 +94,14 @@ async def run_repricing_all(background: BackgroundTasks, request: Request):
     Refuses to start a second sweep while one is in flight. `_sweep_lock` would
     serialize them safely, but queueing a second full pass behind the first is
     never what the press meant, and the card would show one bar for two runs.
+
+    The claim is taken SYNCHRONOUSLY here, not by reading `progress.running`.
+    `progress.begin()` fires inside `reprice_once` after the lock is taken, and
+    a BackgroundTask does not start until the response has been sent — so a
+    guard on `progress` has a window where a sweep is queued but invisible, and
+    two quick presses both saw False and both ran a full pass.
     """
-    if repricing.progress.snapshot()["running"]:
+    if not repricing.claim_full_sweep():
         return RepricingSweepStarted(started=False, already_running=True)
 
     # Captured here: the request's `app.state` is the seam tests swap, and the
@@ -104,12 +119,18 @@ async def _sweep_everything(session_factory) -> None:
     success. `scheduled=False` — a button press proves the code works, not that
     the background loop is alive, so it must not clear a standing failure.
     """
+    # try/FINALLY: the slot must be released however this ends, or one crashed
+    # sweep refuses every later press for the life of the process. `finally`
+    # rather than `except Exception`, because CancelledError is a BaseException
+    # — the same trap `sweep_progress` documents.
     try:
         repriced, considered = await repricing.reprice_once(session_factory=session_factory)
     except Exception as exc:  # noqa: BLE001 — a failed run must be RECORDED
         repricing.health().record_failure(exc)
         logger.warning("Full re-pricing sweep failed: %s", exc)
         return
+    finally:
+        repricing.release_full_sweep()
     repricing.health().record_success(repriced, considered, scheduled=False)
     logger.info(
         "Full re-pricing sweep finished: %d price(s) changed across %d hat(s)",

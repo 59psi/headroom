@@ -34,3 +34,23 @@ export function invalidateHatViews(qc: QueryClient, hatId?: number) {
   if (hatId !== undefined) keys.push(['hat', hatId]);
   return Promise.all(keys.map(queryKey => qc.invalidateQueries({ queryKey })));
 }
+
+/**
+ * Keys DERIVED from purchase→hat matching, which live on other cards.
+ *
+ * Matching is run from three places in the Purchases card (import, re-run
+ * matching, unlink all) and every one of them changes what the shared-price
+ * report and the "unclaimed colorways" offer are describing — matching writes
+ * colorways and prices, which is exactly what those two group and count.
+ *
+ * They are SIBLING keys, covered by nothing the Purchases card already
+ * invalidates. Left alone, the offer went on advertising "Fill 17 from
+ * purchase history" straight after the button that consumed the backlog — the
+ * same class as the `['admin','recent-errors']` / `-count` trap CLAUDE.md
+ * names. One helper because three call sites cannot be relied on to keep the
+ * list in step.
+ */
+export function invalidatePurchaseDerived(qc: QueryClient) {
+  qc.invalidateQueries({ queryKey: ['admin', 'unclaimed-purchases'] });
+  qc.invalidateQueries({ queryKey: ['admin', 'shared-prices'] });
+}

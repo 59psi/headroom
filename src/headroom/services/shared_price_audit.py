@@ -40,9 +40,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.models.hat import Hat
 
-#: A source shared by MORE than this many hats is describing a line. One or two
-#: hats sharing a number is ordinary — two examples of one product genuinely
-#: cost the same. It takes a crowd before the number stops being about the hat.
+#: A source shared by MORE than this many hats is describing a line. Up to
+#: THREE hats sharing a number is ordinary — two or three examples of one
+#: product genuinely cost the same. It takes a crowd before the number stops
+#: being about the hat.
 #: Named for what it bounds (the unremarkable case) rather than for the crowd,
 #: because `SHARED_THRESHOLD = 3` compared with `>` read as "three or more" and
 #: meant four or more.

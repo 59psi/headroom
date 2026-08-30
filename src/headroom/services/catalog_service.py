@@ -1159,9 +1159,24 @@ async def is_real_product(db: AsyncSession, model_name: str | None, colorway: st
     indistinguishable from a right one. A validator applied afterwards has the
     opposite property: it can only ever reject.
 
-    Token containment in both halves, matching `_model_tier`, so a hat named
-    for the family ("Odysea Hydro") still validates against the catalog's
-    fuller product name ("Odysea Packable Hydro").
+    **The two halves need OPPOSITE asymmetries**, and containment on both was
+    wrong in the direction that matters. Measured against a catalog holding
+    only `Trenches Icon Hydro - Rain Camo`, subset-on-both accepted the
+    colorways `Camo`, `Rain` and even `Rain` on a shortened model — none of
+    which is a product melin sells. So the guard the whole feature rests on
+    passed exactly the vague readings it exists to reject, while its own tests
+    recorded that the real leaked colorways ("Hawaii 808 Camo") failed. It
+    rejected the specific and accepted the vague.
+
+    * **Model: hat tokens ⊆ catalog tokens.** `model_name` comes from a PHOTO,
+      which cannot show the sub-line, so it lands on the family ("Odysea
+      Hydro") where the catalog carries the product ("Odysea Packable Hydro").
+      Same direction as `_model_tier`, for the same reason.
+    * **Colorway: catalog tokens ⊆ hat tokens.** A colorway is READ off the
+      hat, so a correct reading is at least as specific as the catalog's name —
+      never less. This is what rejects `Camo` standing in for `Rain Camo`.
+      Equality would be defensible too, but this also accepts a reading that
+      carries an extra word the listing title omits.
     """
     if not model_name or not colorway:
         return False
@@ -1177,8 +1192,12 @@ async def is_real_product(db: AsyncSession, model_name: str | None, colorway: st
         )
     ).all()
     for cat_model, cat_colorway in rows:
-        if want_model <= set(_model_tokens(cat_model)) and want_colorway <= set(
+        # Note the directions: the model is contained BY the catalog entry,
+        # the colorway CONTAINS it. See the docstring — they are opposite on
+        # purpose, and having both the same way round is what let `Camo` pass
+        # as `Rain Camo`.
+        if want_model <= set(_model_tokens(cat_model)) and set(
             _model_tokens(cat_colorway)
-        ):
+        ) <= want_colorway:
             return True
     return False
