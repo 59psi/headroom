@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import asyncio
+
 import pytest
 
 from headroom.models.hat import Hat
@@ -373,21 +375,83 @@ async def test_re_pricing_everything_covers_more_than_the_bounded_run(
 async def test_a_second_press_does_not_start_a_second_sweep(
     client, db_session, monkeypatch
 ):
-    """`_sweep_lock` would serialize them, but queueing a second full pass
-    behind the first is never what the press meant — and the card would show
-    one progress bar for two runs."""
-    from headroom.services import repricing
+    """Two presses, no faked state — the race as it actually happens.
 
-    db_session.add(_hat(model_name="Anything", resale_price=10.0))
+    The first version of this test pre-called `progress.begin()`, which is the
+    one arrangement that CANNOT fail: it made the sweep visible before the
+    second request arrived. In production nothing does that. `progress.begin()`
+    fires inside `reprice_once`, after the sweep lock is taken and the eligible
+    query has run, and a BackgroundTask does not start until the response has
+    been sent — so both presses read `running: False`, both returned
+    `started: True`, and both ran a full uncapped pass, serialized by the lock
+    into twice the work. The guard promised to refuse exactly that.
+
+    This drives the real endpoint twice and asserts on the second answer.
+    """
+    from headroom.services import hat_analysis_pipeline
+
+    for i in range(3):
+        db_session.add(_hat(model_name=f"Hat{i}", resale_price=10.0))
     await db_session.commit()
 
-    repricing.progress.begin(10)
+    started = 0
+
+    async def slow_refresh(hat):
+        # Yields control, so the second request is handled while the first
+        # sweep is genuinely mid-flight rather than already finished.
+        nonlocal started
+        started += 1
+        await asyncio.sleep(0)
+
+    monkeypatch.setattr(hat_analysis_pipeline, "refresh_melin_resale", slow_refresh)
+
+    first = await client.post("/api/admin/repricing/run-all")
+    second = await client.post("/api/admin/repricing/run-all")
+
+    assert first.json()["started"] is True
+    # httpx's ASGI transport awaits BackgroundTasks, so by the time `first`
+    # returns its sweep has finished and the slot is released — which is why
+    # this asserts on the CLAIM being released rather than on a refusal here.
+    assert second.json()["started"] is True
+    assert started == 6, "each press swept the whole shelf exactly once"
+
+
+async def test_the_claim_refuses_a_second_sweep_while_one_is_queued(client):
+    """The claim is taken SYNCHRONOUSLY in the handler, before the task runs.
+
+    That is the whole fix: a guard reading `progress.running` cannot see a
+    sweep that is queued but not yet started, and BackgroundTasks do not start
+    until the response is sent.
+    """
+    from headroom.services import repricing
+
+    assert repricing.claim_full_sweep() is True
     try:
         resp = await client.post("/api/admin/repricing/run-all")
         assert resp.status_code == 202
         assert resp.json() == {"started": False, "already_running": True}
     finally:
-        repricing.progress.finish()
+        repricing.release_full_sweep()
+
+    # Released, so the next press is allowed again — a crashed sweep must not
+    # refuse every later press for the life of the process.
+    assert repricing.claim_full_sweep() is True
+    repricing.release_full_sweep()
+
+
+async def test_the_bounded_run_refuses_to_queue_behind_a_full_sweep(client):
+    """A full sweep holds `_sweep_lock` for minutes, so running the bounded
+    route inline during one would block on it — the multi-minute request, dead
+    spinner and proxy timeout that route's own cap exists to prevent. The card
+    disables the button; a direct call must not be able to walk into it."""
+    from headroom.services import repricing
+
+    assert repricing.claim_full_sweep() is True
+    try:
+        resp = await client.post("/api/admin/repricing/run")
+        assert resp.status_code == 409, resp.text
+    finally:
+        repricing.release_full_sweep()
 
 
 async def test_a_failed_background_sweep_is_recorded_not_swallowed(

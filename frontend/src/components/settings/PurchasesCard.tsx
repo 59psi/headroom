@@ -4,7 +4,7 @@ import {
   importPurchases, listPurchases, previewImport, rematchPurchases, unmatchAllPurchases,
 } from '../../api/purchases';
 import type { ImportPreview } from '../../types';
-import { invalidateHatViews } from '../../lib/invalidate';
+import { invalidateHatViews, invalidatePurchaseDerived } from '../../lib/invalidate';
 
 /** Accepts either a bare array of line items or `{items: [...]}`. */
 function readItems(text: string): Record<string, unknown>[] {
@@ -127,6 +127,7 @@ export function PurchasesCard() {
     mutationFn: importPurchases,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['admin', 'purchases'] });
+      invalidatePurchaseDerived(qc);
       invalidateHatViews(qc);
       reset();
     },
@@ -136,6 +137,7 @@ export function PurchasesCard() {
     mutationFn: rematchPurchases,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['admin', 'purchases'] });
+      invalidatePurchaseDerived(qc);
       invalidateHatViews(qc);
     },
   });
@@ -144,6 +146,7 @@ export function PurchasesCard() {
     mutationFn: unmatchAllPurchases,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['admin', 'purchases'] });
+      invalidatePurchaseDerived(qc);
       invalidateHatViews(qc);
     },
   });

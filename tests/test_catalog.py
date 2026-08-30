@@ -1220,3 +1220,34 @@ async def test_a_missing_half_is_never_a_product(client, db_session):
     assert not await is_real_product(db_session, "Trenches Icon Hydro", None)
     assert not await is_real_product(db_session, None, "Deep Dive")
     assert not await is_real_product(db_session, "Trenches Icon Hydro", "")
+
+
+async def test_a_vaguer_colorway_than_the_product_is_refused(client, db_session):
+    """The direction that was wrong, and the reason the guard existed at all.
+
+    Containment on BOTH halves meant any SHORTER colorway validated: with only
+    `Trenches Icon Hydro - Rain Camo` in the catalog, the colorways `Camo` and
+    `Rain` both passed as real products. So the check rejected the specific
+    readings it was meant to keep and accepted the vague ones it was meant to
+    stop — precisely inverted.
+
+    The two halves need OPPOSITE asymmetries. A model comes from a photo that
+    cannot show the sub-line, so hat ⊆ catalog. A colorway is READ off the hat,
+    so a correct reading is at least as specific as the catalog's: catalog ⊆
+    hat.
+    """
+    from headroom.services.catalog_service import is_real_product
+
+    await _catalog(db_session, [("Trenches Icon Hydro", "Rain Camo")])
+
+    assert await is_real_product(db_session, "Trenches Icon Hydro", "Rain Camo"), (
+        "the real product still validates"
+    )
+    assert not await is_real_product(db_session, "Trenches Icon Hydro", "Camo"), (
+        "a colorway vaguer than the product is not that product"
+    )
+    assert not await is_real_product(db_session, "Trenches Icon Hydro", "Rain")
+    # And the model half keeps its own, opposite asymmetry.
+    assert await is_real_product(db_session, "Trenches Hydro", "Rain Camo"), (
+        "a hat named for the family still matches the fuller catalog name"
+    )

@@ -6,6 +6,64 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.75.2] — 2026-08-30
+
+Two-axis code review of 2.72.1 → 2.75.1.
+
+### Fixed
+- **`is_real_product` was inverted, and it is the guard the whole
+  colorway-writing feature rests on.** It required token containment in *both*
+  halves, which meant any **shorter** colorway validated: against a catalog
+  holding only `Trenches Icon Hydro - Rain Camo`, the colorways `Camo` and
+  `Rain` both passed as real products. It rejected the specific readings it
+  existed to keep and accepted the vague ones it existed to stop.
+
+  The two halves need **opposite** asymmetries. A `model_name` comes from a
+  photo, which cannot show the sub-line, so hat ⊆ catalog (as `_model_tier`
+  already does). A colorway is *read off the hat*, so a correct reading is at
+  least as specific as the catalog's name — catalog ⊆ hat.
+
+- **"Re-price all" could start twice.** The guard read `progress.running`, but
+  `progress.begin()` fires inside `reprice_once` *after* the sweep lock is
+  taken, and a BackgroundTask does not start until the response has been sent.
+  Two quick presses both read `False`, both returned `started: true`, and both
+  ran a full uncapped pass — serialized by the lock into twice the work, which
+  is exactly what the guard promised to refuse. The slot is now claimed
+  **synchronously in the handler** (`claim_full_sweep()`; no `await` between
+  check and set, so it is atomic on the event loop) and released in a
+  `finally`. The old test pre-called `progress.begin()`, the one arrangement
+  that could not fail; it now drives the real endpoint.
+
+- **`POST /api/admin/repricing/run` now 409s during a full sweep** instead of
+  blocking on `_sweep_lock` for minutes — the multi-minute request, dead
+  spinner and proxy timeout that route's own cap exists to prevent. The card
+  already disabled the button; a direct call could still walk into it.
+
+- **The "unclaimed colorways" offer went stale after the button that consumes
+  it.** `PurchasesCard`'s import / re-run matching / unlink-all invalidated
+  only `['admin','purchases']`, so the offer went on advertising "Fill 17 from
+  purchase history" immediately after matching had claimed them. New
+  `invalidatePurchaseDerived()` helper covers both sibling keys from all three
+  call sites.
+
+- **The model-name backfill destroyed information silently.** It is the one
+  repair here that cannot be re-derived — `"Trenches (Curl Surf)" → "Trenches"`
+  discards the only record that the drop was a Curl Surf — and it runs once,
+  unattended, with no dry run. It now writes every change to the activity log
+  with the original name and the dropped half, so the log **is** the undo.
+
+### Changed
+- `_apply_analysis` no longer writes back into its `analysis` argument. It
+  returns the leaked colorway, which the caller passes on explicitly — the
+  previous arrangement coupled two functions through a mutated parameter that
+  neither signature admitted to, and swapping the two calls would have silently
+  dropped the value.
+- The `unclaimed` query carries a `staleTime`: answering it runs the whole
+  matcher (a full bipartite assignment), so it is not a free read to repeat on
+  every mount.
+- `MAX_UNREMARKABLE`'s comment said "one or two hats sharing a number is
+  ordinary" while the code treats three as ordinary too.
+
 ## [2.75.1] — 2026-08-30
 
 ### Changed

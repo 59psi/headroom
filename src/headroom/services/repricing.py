@@ -126,6 +126,47 @@ _health = RepricingHealth()
 #: lock is sufficient.
 _sweep_lock = asyncio.Lock()
 
+#: Is a FULL sweep queued or running? Distinct from `progress.running`, and the
+#: distinction is the whole point.
+#:
+#: `progress.begin()` fires inside `reprice_once`, AFTER the sweep lock is taken
+#: and the eligible-hat query has run — and a BackgroundTask does not start
+#: until the response has been sent. So a route guarding on `progress.running`
+#: has a window in which a sweep is queued but invisible: two quick presses both
+#: read False, both schedule, and both run a full uncapped pass, serialized by
+#: `_sweep_lock` into twice the work. Exactly what the guard promised to refuse.
+#:
+#: Claimed SYNCHRONOUSLY in the request handler instead. The event loop cannot
+#: interleave between the check and the set (there is no await between them), so
+#: this is atomic without a lock, and it is released by the task's `finally`.
+_full_sweep_claimed = False
+
+
+def claim_full_sweep() -> bool:
+    """Reserve the full-sweep slot. False when one is already queued or running.
+
+    Check-and-set with no await between the two, so a second request cannot
+    land in the middle of it.
+    """
+    global _full_sweep_claimed
+    if _full_sweep_claimed:
+        return False
+    _full_sweep_claimed = True
+    return True
+
+
+def release_full_sweep() -> None:
+    """Free the slot. Must run in a `finally` — a sweep that raised and never
+    released would refuse every later press for the life of the process."""
+    global _full_sweep_claimed
+    _full_sweep_claimed = False
+
+
+def full_sweep_in_flight() -> bool:
+    """Whether a full sweep is queued or running, for callers that must not
+    block behind one."""
+    return _full_sweep_claimed
+
 
 #: How many hats a MANUAL sweep touches by default. Bounded because the route
 #: runs inline: uncapped, ~235 hats at one second apart is a four-minute HTTP

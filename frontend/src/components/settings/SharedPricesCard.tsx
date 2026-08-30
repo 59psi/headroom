@@ -38,6 +38,11 @@ export function SharedPricesCard() {
   const unclaimed = useQuery({
     queryKey: ['admin', 'unclaimed-purchases'],
     queryFn: getUnclaimedFromPurchases,
+    // Answering this runs the whole matcher — a full bipartite assignment over
+    // every unmatched purchase and every hat — so it is not a free read to
+    // repeat on each mount. The backlog only moves when matching runs, and the
+    // three places that run it invalidate this key explicitly.
+    staleTime: 5 * 60_000,
   });
 
   const fill = useMutation({

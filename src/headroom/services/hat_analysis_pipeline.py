@@ -218,9 +218,9 @@ async def finalize_hat_photo(
             return hat
         t_claude = time.monotonic() - t_claude0
 
-        _apply_analysis(hat, analysis)
+        leaked = _apply_analysis(hat, analysis)
         await _canonicalize_analysis_text(db, hat)
-        await _apply_analyzed_colorway(db, hat, analysis)
+        await _apply_analyzed_colorway(db, hat, analysis, leaked)
         await _publish_stage(hat.id, STAGE_PRICING)
         t_ebay0 = time.monotonic()
         await _refresh_ebay_comps(db, hat)
@@ -286,9 +286,9 @@ async def reanalyze_existing_photo(
             )
             return True
 
-        _apply_analysis(hat, analysis)
+        leaked = _apply_analysis(hat, analysis)
         await _canonicalize_analysis_text(db, hat)
-        await _apply_analyzed_colorway(db, hat, analysis)
+        await _apply_analyzed_colorway(db, hat, analysis, leaked)
         await _publish_stage(hat.id, STAGE_PRICING)
         await _refresh_ebay_comps(db, hat)
         await _publish_stage(hat.id, STAGE_RESALE)
@@ -603,7 +603,9 @@ async def _known_series(db) -> list[str]:
     return await vocabulary.distinct_values(db, Hat.artist_series)
 
 
-async def _apply_analyzed_colorway(db, hat: Hat, analysis: HatAnalysis) -> None:
+async def _apply_analyzed_colorway(
+    db, hat: Hat, analysis: HatAnalysis, leaked: str | None = None
+) -> None:
     """Fill a blank colorway from the analyzer, but only if it names a REAL product.
 
     Claude gained a `colorway` field in 2.74. Before it, the tool schema had no
@@ -625,17 +627,18 @@ async def _apply_analyzed_colorway(db, hat: Hat, analysis: HatAnalysis) -> None:
     """
     from headroom.services import catalog_service
 
-    if hat.colorway or not analysis.colorway:
-        return
-    if await catalog_service.is_real_product(db, hat.model_name, analysis.colorway):
-        hat.colorway = await _canonical_colorway(db, analysis.colorway)
-
-
-async def _canonical_colorway(db, value: str) -> str:
-    """Snap to the spelling already on record, like every other free-text write."""
     from headroom.services import vocabulary
 
-    return await vocabulary.canonicalize(db, Hat.colorway, value)
+    # `leaked` is the colorway half of a model name Claude wrote the old way,
+    # split out by `_apply_analysis`. Claude's own field wins when it has one.
+    candidate = analysis.colorway or leaked
+    if hat.colorway or not candidate:
+        return
+    if await catalog_service.is_real_product(db, hat.model_name, candidate):
+        # Snapped to the spelling already on record, like every other
+        # analysis-written free-text field — see `_canonicalize_analysis_text`,
+        # which does the same for artist_series and construction.
+        hat.colorway = await vocabulary.canonicalize(db, Hat.colorway, candidate)
 
 
 def _split_model_and_colorway(model_name: str | None) -> tuple[str | None, str | None]:
@@ -694,7 +697,7 @@ async def _canonicalize_analysis_text(db, hat: Hat) -> None:
             hat.set_construction(canonical)
 
 
-def _apply_analysis(hat: Hat, analysis: HatAnalysis) -> None:
+def _apply_analysis(hat: Hat, analysis: HatAnalysis) -> str | None:
     hat.brand = _keep_on_null(analysis.brand, hat.brand)
     hat.logo_detected = analysis.logo_detected
     hat.artist_series = _keep_on_null(analysis.artist_series, hat.artist_series)
@@ -703,9 +706,6 @@ def _apply_analysis(hat: Hat, analysis: HatAnalysis) -> None:
     hat.model_name = _strip_contradicting_construction(
         _keep_on_null(model_name, hat.model_name), hat.construction
     )
-    # Carried on the analysis so the async colorway step below can use it when
-    # Claude filled `model_name` the old way and left `colorway` null.
-    analysis.colorway = analysis.colorway or leaked
     hat.model_confidence = analysis.model_confidence
     hat.style_descriptor = analysis.style_descriptor
     hat.design_notes = analysis.design_notes
@@ -742,6 +742,12 @@ def _apply_analysis(hat: Hat, analysis: HatAnalysis) -> None:
     # Resale pointer (Melin only, by current rules)
     _apply_resale_pointer(hat)
 
+    # RETURNED rather than written back onto `analysis`. Mutating the argument
+    # and having a different function read it two lines later at the call site
+    # is a dependency nothing in either signature admits to — and this one is
+    # temporal: swap the two calls and the colorway silently vanishes.
+    return leaked
+
 
 async def backfill_split_model_names(db) -> int:
     """Split a leaked colorway out of every stored `model_name`. Returns how many changed.
@@ -757,26 +763,46 @@ async def backfill_split_model_names(db) -> int:
     an API call — every one of those hats becomes matchable against its receipt
     and priceable against its own product.
 
-    Only the MODEL half is written. The colorway half is deliberately dropped
-    rather than stored: `_apply_analyzed_colorway` gates on the harvested
+    Only the MODEL half is written to `model_name`. The colorway half is not
+    stored on the hat: `_apply_analyzed_colorway` gates on the harvested
     catalog, and measured against it **none** of the leaked halves validate —
     they are collab and limited-run drops ("Hawaii 808 Camo", "Maui Strong")
     that no longer appear on the resale market. Writing them anyway would be
     trusting a string precisely where there is no evidence for it, which is how
     a hat gets priced as somebody else's product.
+
+    **Every change is written to the activity log with the ORIGINAL name**, and
+    that is not decoration. This is the one repair in this app that destroys
+    information rather than recomputing it: `retail_prices_v2` re-derives a
+    price that can be re-derived again, but "Trenches (Curl Surf)" → "Trenches"
+    discards the only record that the drop was a Curl Surf. It runs once,
+    unattended, behind a flag, with no dry run — so the log IS the undo, and
+    without it the split would be unrecoverable by any means.
     """
     from sqlalchemy import select
+
+    from headroom.services.activity_service import log_activity
 
     hats = (
         await db.execute(select(Hat).where(Hat.model_name.is_not(None)))
     ).scalars().all()
 
-    changed = 0
+    repaired: list[dict] = []
     for hat in hats:
         model, leaked = _split_model_and_colorway(hat.model_name)
         if leaked and model and model != hat.model_name:
+            repaired.append({"hat_id": hat.id, "was": hat.model_name, "now": model,
+                             "colorway_dropped": leaked})
             hat.model_name = model
-            changed += 1
-    if changed:
+    if repaired:
         await db.commit()
-    return changed
+        # Caller commits, per `log_activity`'s contract — and this one is a
+        # lifespan task with nobody to surface a failure to, so it is
+        # fire-and-forget like every other call site.
+        await log_activity(
+            db, kind="hat.model_name_split", entity_type="system", entity_id=None,
+            summary=f"Split a leaked colorway out of {len(repaired)} model name(s)",
+            details={"repaired": repaired},
+        )
+        await db.commit()
+    return len(repaired)

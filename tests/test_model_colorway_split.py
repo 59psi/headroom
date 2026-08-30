@@ -116,3 +116,55 @@ async def test_the_backfill_does_not_store_the_leaked_colorway(client, db_sessio
     hat = await db_session.get(Hat, hat_id)
     assert hat.model_name == "Trenches Hydro"
     assert hat.colorway is None, "an unvalidated colorway is worse than a blank"
+
+
+async def test_the_backfill_records_what_it_destroyed(client, db_session):
+    """This is the one repair in the app that DESTROYS information.
+
+    `retail_prices_v2` re-derives a price that can be re-derived again;
+    "Trenches (Curl Surf)" -> "Trenches" discards the only record that the drop
+    was a Curl Surf. It runs once, unattended, behind a flag, with no dry run —
+    so the activity log IS the undo, and without it the split is unrecoverable
+    by any means.
+    """
+    import json
+
+    from headroom.models.hat import Hat
+    from headroom.services.hat_analysis_pipeline import backfill_split_model_names
+
+    body = {"condition": "new", "size": "classic", "style": "trenches"}
+    hat_id = (await client.post("/api/hats", json=body)).json()["id"]
+    row = await db_session.get(Hat, hat_id)
+    row.model_name = "Trenches (Curl Surf)"
+    await db_session.commit()
+
+    await backfill_split_model_names(db_session)
+
+    rows = (await client.get("/api/admin/activity-log")).json()
+    entry = next(r for r in rows if r["kind"] == "hat.model_name_split")
+    repaired = json.loads(entry["details"])["repaired"]
+
+    assert repaired == [{
+        "hat_id": hat_id,
+        "was": "Trenches (Curl Surf)",
+        "now": "Trenches",
+        "colorway_dropped": "Curl Surf",
+    }], "the original name and the dropped half must both be recoverable"
+
+
+async def test_the_backfill_logs_nothing_when_it_changes_nothing(client, db_session):
+    """An audit row for a no-op run is noise in the one log someone reads when
+    something has gone wrong."""
+    from headroom.models.hat import Hat
+    from headroom.services.hat_analysis_pipeline import backfill_split_model_names
+
+    body = {"condition": "new", "size": "classic", "style": "trenches"}
+    hat_id = (await client.post("/api/hats", json=body)).json()["id"]
+    row = await db_session.get(Hat, hat_id)
+    row.model_name = "Trenches Icon Hydro"
+    await db_session.commit()
+
+    assert await backfill_split_model_names(db_session) == 0
+
+    rows = (await client.get("/api/admin/activity-log")).json()
+    assert not [r for r in rows if r["kind"] == "hat.model_name_split"]
