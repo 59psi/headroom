@@ -1027,3 +1027,129 @@ async def test_the_assignment_is_maximum_not_merely_greedy():
         "up the small hat so the sized line can have it"
     )
     assert assigned[id(specific)].hat is small
+
+
+# ---------------- the backlog nothing ever looks at again -------------- #
+
+
+async def _hat_named(client, db_session, model_name, **over):
+    """A hat Claude has identified but that carries no colorway yet."""
+    from headroom.models.hat import Hat
+
+    body = {"condition": "new", "size": "classic", "style": "a_game", **over}
+    hat_id = (await client.post("/api/hats", json=body)).json()["id"]
+    row = await db_session.get(Hat, hat_id)
+    row.model_name = model_name
+    await db_session.commit()
+    return hat_id
+
+
+async def test_the_unclaimed_backlog_is_visible_without_re_importing(client, db_session):
+    """Matching runs at the end of an IMPORT and nowhere else.
+
+    So a purchase that had no hat to match at import time is never looked at
+    again — not when a better matcher ships, and not when a re-analysis finally
+    gives a hat the `model_name` that would have paired them. On the real
+    collection that left **17 colorways and 16 prices** sitting in orders that
+    were already imported, while the shared-price card told the owner a
+    colorway was the one thing only they could supply.
+
+    Reproduced here in the order it actually happens: import first, hat second.
+    """
+    await client.post(
+        "/api/admin/purchases/import",
+        json={"items": [{"item_title": "Odysea Hydro - Rain Camo", "price": 79.0}]},
+    )
+    # Nothing to match at import time.
+    assert (await client.get("/api/admin/purchases/unclaimed")).json()["colorways"] == 0
+
+    # The hat shows up afterwards — a re-analysis naming it, or a late add.
+    hat_id = await _hat_named(client, db_session, "Odysea Hydro")
+
+    unclaimed = (await client.get("/api/admin/purchases/unclaimed")).json()
+    assert unclaimed["colorways"] == 1, "the backlog now has something for this hat"
+    assert unclaimed["prices"] == 1
+    assert unclaimed["hat_ids"] == [hat_id]
+
+    # And the existing action claims it.
+    assert (await client.post("/api/admin/purchases/match")).json()["matched"] == 1
+    assert (await client.get(f"/api/hats/{hat_id}")).json()["colorway"] == "Rain Camo"
+
+    # Reporting only what is left, so the offer disappears once taken.
+    assert (await client.get("/api/admin/purchases/unclaimed")).json()["colorways"] == 0
+
+
+async def test_the_offer_counts_only_what_it_would_actually_fill(client, db_session):
+    """A hat that already has a colorway is not an offer.
+
+    Without this the callout would promise work it does not do — the matcher
+    links the purchase either way, but only writes a colorway into a blank.
+    """
+    from headroom.models.hat import Hat
+
+    # Import FIRST, with no hats on the shelf — the order the real failure
+    # happens in. An import runs matching itself, so importing last would leave
+    # no backlog to measure and the test would pass for the wrong reason.
+    await client.post("/api/admin/purchases/import", json={"items": [
+        {"item_title": "Odysea Hydro - Rain Camo", "price": 79.0},
+        {"item_title": "Trenches Icon Hydro - Deep Dive", "price": 79.0},
+    ]})
+
+    filled = await _hat_named(client, db_session, "Odysea Hydro")
+    row = await db_session.get(Hat, filled)
+    row.colorway = "Rain Camo"
+    await db_session.commit()
+
+    blank = await _hat_named(client, db_session, "Trenches Icon Hydro")
+
+    unclaimed = (await client.get("/api/admin/purchases/unclaimed")).json()
+    assert unclaimed["hat_ids"] == [blank], (
+        "only the hat that would gain a colorway is offered"
+    )
+    assert unclaimed["colorways"] == 1
+
+
+async def test_reading_the_backlog_writes_nothing_even_in_one_session(client, db_session):
+    """It is a GET driving the matcher's DRY RUN, so it must not link.
+
+    Written at the service level deliberately. Two HTTP calls cannot detect
+    this — each request gets its own session, so a dirty identity map is
+    discarded with it and the test passes however broken the dry run is. The
+    request-level version of this test survived sabotage; this one does not.
+
+    What it pins is a PAIR, and neither half alone is a defect: today the dry
+    run `continue`s before it mutates anything, AND it calls `expire_all()`
+    before returning. Remove either one and this still passes — removing the
+    mutation guard leaves nothing to discard, removing `expire_all` leaves
+    nothing that mutated. It fails only in the state that is actually broken:
+    a dry run that writes to the identity map and no longer expires it, where
+    the next `commit()` on that session flushes a match nobody applied.
+    """
+    from headroom.models.hat import Hat
+    from headroom.services import catalog_service
+
+    hat_id = await _hat_named(client, db_session, "Odysea Hydro")
+    await client.post(
+        "/api/admin/purchases/import",
+        json={"items": [{"item_title": "Odysea Hydro - Rain Camo", "price": 79.0}]},
+    )
+    # The import matched it already; unmatch to leave a real backlog.
+    await client.post("/api/admin/purchases/unmatch-all")
+
+    db_session.expire_all()
+    assert (await db_session.get(Hat, hat_id)).colorway is None
+
+    unclaimed = await catalog_service.unclaimed_from_purchases(db_session)
+    assert unclaimed["colorways"] == 1, "there is something to offer"
+
+    # The dangerous moment: anything the preview mutated would flush HERE.
+    await db_session.commit()
+    db_session.expire_all()
+
+    assert (await db_session.get(Hat, hat_id)).colorway is None, (
+        "reading the offer must not take it"
+    )
+
+
+async def test_the_backlog_requires_auth(anon_client):
+    assert (await anon_client.get("/api/admin/purchases/unclaimed")).status_code == 401

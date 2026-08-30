@@ -1107,3 +1107,38 @@ def _matched_on(purchase: Purchase, hat: Hat) -> list[str]:
     if purchase.size and hat.size:
         fields.append("size")
     return fields
+
+
+async def unclaimed_from_purchases(db: AsyncSession) -> dict:
+    """What the existing purchase backlog would fill in, if matching were re-run.
+
+    Matching is reachable only from an IMPORT — it runs at the end of one, and
+    nowhere else on its own schedule. So every improvement to the matcher, and
+    every re-analysis that finally gives a hat a `model_name`, creates pairs
+    that nothing will ever look at again unless somebody happens to press
+    "Re-run matching". Measured on the real collection: **17 colorways and 16
+    purchase prices** were sitting in already-imported orders, unclaimed, while
+    the shared-price report told the owner a colorway was something only they
+    could supply. It was the app's own data.
+
+    This is the same shape as the bug `repricing` documents — a useful
+    operation reachable only from inside a bigger one, so it stops happening
+    the moment nobody runs the bigger one.
+
+    Derived from `match_purchases_to_hats(dry_run=True)` rather than restating
+    its rule: a second implementation of "what would matching do" is a second
+    thing to keep in step, and the one that drifts is the one making the offer.
+    """
+    result = await match_purchases_to_hats(db, dry_run=True)
+    proposals = result["proposals"]
+    return {
+        # SQL-free but still a count of the WHOLE proposal set, never a
+        # truncated sample — a low number here reads as "nothing to do".
+        "colorways": len({p["hat_id"] for p in proposals if p["sets_colorway"]}),
+        "prices": len({p["hat_id"] for p in proposals if p["sets_price"]}),
+        "hat_ids": sorted({p["hat_id"] for p in proposals if p["sets_colorway"]}),
+        #: Proposals the matcher itself flagged as tied. Reported, not hidden:
+        #: applying them is still better than a line median, but the owner
+        #: should know which ones were a coin toss between equal candidates.
+        "ambiguous": sum(1 for p in proposals if p["sets_colorway"] and p["ambiguous"]),
+    }

@@ -593,6 +593,21 @@ export interface ReanalyzeResult {
   job: AnalysisJobRead | null;
 }
 
+/** What re-running matching would fill in from orders already imported.
+ *  Matching runs at the end of an import and nowhere else, so a better matcher
+ *  — or a re-analysis that finally gives a hat a model_name — creates pairs
+ *  nothing ever looks at again. */
+export interface UnclaimedFromPurchases {
+  /** Hats that would gain a colorway. */
+  colorways: number;
+  /** Hats that would gain a purchase price. Applying does both. */
+  prices: number;
+  hat_ids: number[];
+  /** How many colorway fills the matcher flagged as tied between equal
+   *  candidates — still better than a line median, but worth knowing. */
+  ambiguous: number;
+}
+
 /** One hat inside a shared-price group. One object rather than parallel
  *  id/label arrays: a hat with no case has no `display_id`, so the two fell
  *  out of step and a label was drawn on the wrong hat's link. */

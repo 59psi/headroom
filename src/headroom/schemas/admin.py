@@ -412,6 +412,28 @@ class RepricingStatus(BaseModel):
     progress: SweepProgressRead = SweepProgressRead()
 
 
+class UnclaimedFromPurchases(BaseModel):
+    """What re-running matching would fill in from orders already imported.
+
+    Matching runs at the end of an import and nowhere else, so a better matcher
+    — or a re-analysis that finally gives a hat a `model_name` — creates pairs
+    nothing ever looks at again. Measured on the real collection: 17 colorways
+    and 16 prices sat unclaimed while the app told the owner a colorway was
+    something only they could supply.
+    """
+
+    #: Hats that would gain a colorway. The whole set, never a sample — a low
+    #: number here reads as "nothing to do".
+    colorways: int = 0
+    #: Hats that would gain a purchase price. Applying does both.
+    prices: int = 0
+    hat_ids: list[int] = []
+    #: How many of the colorway fills the matcher itself flagged as tied.
+    #: Reported rather than hidden: still better than a line median, but the
+    #: owner should know which were a coin toss between equal candidates.
+    ambiguous: int = 0
+
+
 class SharedPriceHat(BaseModel):
     """One hat inside a shared-price group.
 

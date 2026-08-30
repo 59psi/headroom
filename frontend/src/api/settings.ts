@@ -5,6 +5,7 @@ import type {
   TlsStatus, FrozenPriceRow, PriceReleaseResult, AnalysisFailureGroup,
   RecentError, TagBaseStatus, ConstructionAuditRow, ConstructionClearResult, RepricingStatus,
   ReanalyzeResult, AnalysisJobDetail, CatalogStatus, SharedPriceGroup,
+  UnclaimedFromPurchases,
 } from '../types';
 
 // Re-exported so existing imports from this module keep working; the
@@ -342,6 +343,11 @@ export function getAnalysisJob(jobId: number) {
 /** Resale prices carried by more than a handful of hats at once. */
 export function auditSharedPrices() {
   return apiFetch<SharedPriceGroup[]>('/api/admin/prices/shared');
+}
+
+/** What re-running matching would fill in from orders already imported. */
+export function getUnclaimedFromPurchases() {
+  return apiFetch<UnclaimedFromPurchases>('/api/admin/purchases/unclaimed');
 }
 
 /** Why hats are failing analysis, grouped, worst first. */

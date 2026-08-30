@@ -15,6 +15,7 @@ from headroom.schemas.admin import (
     CatalogStatus,
     PurchaseImport,
     PurchaseRead,
+    UnclaimedFromPurchases,
 )
 from headroom.services import catalog_service
 from headroom.services.melin_recap import MelinRecapError
@@ -93,6 +94,20 @@ async def list_purchases(db: AsyncSession = Depends(get_db)):
         await db.execute(select(Purchase).order_by(Purchase.order_date.desc()))
     ).scalars().all()
     return list(rows)
+
+
+# Registered BEFORE `{purchase_id}` for the same reason `unmatch-all` is: a
+# literal segment that can be read as an id is how `/api/hats/import` got
+# shadowed once already.
+@router.get("/purchases/unclaimed", response_model=UnclaimedFromPurchases)
+async def unclaimed_from_purchases(db: AsyncSession = Depends(get_db)):
+    """What re-running matching would fill in from orders already imported.
+
+    Matching runs at the end of an import and nowhere else, so a better matcher
+    or a newly analyzed `model_name` creates pairs nothing looks at again. This
+    is what makes that backlog visible instead of leaving it to be guessed at.
+    """
+    return UnclaimedFromPurchases(**await catalog_service.unclaimed_from_purchases(db))
 
 
 @router.post("/purchases/match")

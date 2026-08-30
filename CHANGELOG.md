@@ -6,6 +6,37 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.73.0] — 2026-08-30
+
+### Added
+- **The colorways sitting unclaimed in your own order history are now offered,
+  with a button.** Measured against the live collection: **17 colorways and 16
+  purchase prices** were already in the database, in orders imported weeks ago,
+  waiting on a match that nothing was ever going to run.
+
+  Purchase→hat matching happens at the end of an **import** and nowhere else.
+  So every improvement to the matcher, and every re-analysis that finally gives
+  a hat the `model_name` that would have paired it, creates matchable pairs
+  that nothing looks at again unless somebody happens to press "Re-run
+  matching" in the Purchases card — with no indication it would do anything.
+  This is the same shape as the bug `repricing` was written to fix: a useful
+  operation reachable only from inside a bigger one, so it stops happening the
+  moment nobody runs the bigger one.
+
+  `GET /api/admin/purchases/unclaimed` reports what a re-run would fill, and
+  the shared-price card offers it. Derived from
+  `match_purchases_to_hats(dry_run=True)` rather than restating its rule — a
+  second implementation of "what would matching do" is a second thing to keep
+  in step, and the one that drifts is the one making the offer. Ambiguous
+  matches are counted and stated rather than hidden.
+
+### Fixed
+- **The shared-price card claimed a colorway was the one thing only the owner
+  could supply.** That was false for 17 of the 82 colorway-less hats: the app
+  already held the answer in its own purchase table. The card now offers those
+  first and asks for the rest — which remain genuinely owner-only, since colour
+  inference measured 12% precision and most have no candidate product at all.
+
 ## [2.72.1] — 2026-08-29
 
 Two-axis code review of 2.72.0. Both axes independently found the same
