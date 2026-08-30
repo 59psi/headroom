@@ -70,6 +70,26 @@ async def _free_slot():
     repricing.release_full_sweep()
 
 
+async def _drain_sweeps():
+    """Await every in-flight background sweep, deterministically.
+
+    Polling `full_sweep_in_flight()` with `await asyncio.sleep(0)` is NOT a
+    wait. It yields to the event loop and runs whatever is already ready, but it
+    does not wait for I/O — and a sweep sitting on an aiosqlite worker thread is
+    exactly that. The poll burns its whole iteration budget in microseconds and
+    reports the sweep unfinished. It passed on a fast local machine and failed
+    in CI, which is the signature of a timing assumption rather than a wait.
+
+    `create_task` hands back the task, so there is nothing to poll for: await it.
+    """
+    from headroom.routes.admin import repricing as repricing_routes
+
+    for task in list(repricing_routes._running_sweeps):
+        # Bounded, so a sweep that genuinely wedges fails here with a timeout
+        # instead of hanging until the CI job is killed with no useful output.
+        await asyncio.wait_for(task, timeout=30)
+
+
 def _factory(session):
     """Hand `reprice_once` the test session without closing it."""
     from contextlib import asynccontextmanager
@@ -401,10 +421,7 @@ async def test_re_pricing_everything_covers_more_than_the_bounded_run(
     # read `seen` straight after the response. It used to work by accident:
     # httpx's ASGI transport awaits BackgroundTasks, which made every request
     # here synchronous and hid the race the sibling test is named for.
-    for _ in range(200):
-        await asyncio.sleep(0)
-        if not repricing.full_sweep_in_flight():
-            break
+    await _drain_sweeps()
     assert len(seen) == 5, "the background sweep covers the whole shelf"
 
 
@@ -473,10 +490,7 @@ async def test_a_second_press_does_not_start_a_second_sweep(client, monkeypatch)
     assert second.json() == {"started": False, "already_running": True}
 
     gate.set()
-    for _ in range(200):
-        await asyncio.sleep(0)
-        if not repricing.full_sweep_in_flight():
-            break
+    await _drain_sweeps()
     assert not repricing.full_sweep_in_flight(), "the slot was never released"
     assert calls == 1, "the shelf was swept once, not twice"
 

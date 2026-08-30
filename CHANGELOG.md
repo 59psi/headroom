@@ -91,6 +91,16 @@ acted on. Three of them are defects in 2.75.2 — the release that fixed the
   `setup_db` drops every table on teardown — a detached coroutine querying a
   dropped schema would fail into `record_failure`, be swallowed, and surface
   later as an unrelated flake.
+- **Sweeps are awaited, not polled for.** The first version of that drain span
+  `await asyncio.sleep(0)` until `full_sweep_in_flight()` went false, which is
+  not a wait: it yields to the event loop and runs what is already ready, but it
+  does not wait for I/O, and a sweep sitting on an aiosqlite worker thread is
+  exactly that. It burned its whole iteration budget in microseconds and
+  reported the sweep unfinished — passing on a fast local machine three times in
+  a row and failing in CI, the signature of a timing assumption rather than a
+  wait. `create_task` hands back the task, so there is nothing to poll: `_drain_sweeps`
+  awaits it, bounded, so a genuinely wedged sweep fails with a timeout instead of
+  hanging until the job is killed.
 - Backend 953 → **956**; frontend 239.
 
 ## [2.75.2] — 2026-08-30
