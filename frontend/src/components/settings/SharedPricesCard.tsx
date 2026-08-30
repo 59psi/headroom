@@ -16,6 +16,11 @@ import { auditSharedPrices } from '../../api/settings';
  * guessing was measured at 12% precision, so the honest move is to say which
  * numbers are line-level rather than invent precision they do not have.
  */
+
+/** How many hats of a group to name inline. The server sorts colorway-less
+ *  hats first, so a truncated sample is the actionable end of the group. */
+const SAMPLE_LIMIT = 8;
+
 export function SharedPricesCard() {
   const { data, isLoading } = useQuery({
     queryKey: ['admin', 'shared-prices'],
@@ -68,6 +73,14 @@ export function SharedPricesCard() {
               </div>
             </div>
 
+            {fixable > 0 && (
+              <p className="text-secondary small mb-3">
+                Hats with no colorway are listed first and link straight to their
+                edit form. Adding a colorway there lets that hat be priced
+                against its own product instead of its line.
+              </p>
+            )}
+
             <ul className="hr-plain-list">
               {groups.map(g => (
                 <li key={`${g.resale_price}-${g.source ?? ''}`} className="mb-3">
@@ -91,25 +104,43 @@ export function SharedPricesCard() {
                     </div>
                   )}
                   <div className="small">
-                    {g.hat_ids.slice(0, 8).map((id, i) => (
-                      <span key={id}>
+                    {/* Each hat carries its own label, so nothing is indexed
+                        against a second array that can fall out of step. A hat
+                        with no case has no display_id — normal for a
+                        room-stored one — and shows its id instead. */}
+                    {g.hats.slice(0, SAMPLE_LIMIT).map((h, i) => (
+                      <span key={h.hat_id}>
                         {i > 0 && ' · '}
-                        <Link to={`/hats/${id}`}>
-                          {g.display_ids[i] ?? `#${id}`}
+                        <Link
+                          to={h.has_colorway
+                            ? `/hats/${h.hat_id}`
+                            : `/hats/${h.hat_id}/edit`}
+                          title={h.has_colorway
+                            ? undefined
+                            : 'No colorway recorded — add one to price this hat on its own product'}
+                        >
+                          {h.display_id ?? `#${h.hat_id}`}
+                          {!h.has_colorway && ' *'}
                         </Link>
                       </span>
                     ))}
                     {/* Stated, never silent — a truncated list must not read
                         as the whole group. */}
-                    {g.hat_ids.length > 8 && (
+                    {g.hat_count > SAMPLE_LIMIT && (
                       <span className="text-muted">
-                        {' '}and {g.hat_ids.length - 8} more
+                        {' '}and {g.hat_count - SAMPLE_LIMIT} more
                       </span>
                     )}
                   </div>
                 </li>
               ))}
             </ul>
+
+            {fixable > 0 && (
+              <div className="text-muted" style={{ fontSize: '0.72rem' }}>
+                * no colorway recorded
+              </div>
+            )}
           </>
         )}
       </div>

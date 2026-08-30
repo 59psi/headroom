@@ -32,6 +32,10 @@ export function FrozenPricesCard() {
       setSelected(new Set());
       invalidateHatViews(qc);
       qc.invalidateQueries({ queryKey: ['admin', 'frozen-prices'] });
+      // Releasing a `manual` scope makes those hats newly ELIGIBLE for the
+      // shared-price report, which excludes manual prices — so this mutation
+      // can only ever add rows there, and never told it.
+      qc.invalidateQueries({ queryKey: ['admin', 'shared-prices'] });
     },
   });
 
