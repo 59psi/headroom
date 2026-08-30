@@ -1142,3 +1142,43 @@ async def unclaimed_from_purchases(db: AsyncSession) -> dict:
         #: should know which ones were a coin toss between equal candidates.
         "ambiguous": sum(1 for p in proposals if p["sets_colorway"] and p["ambiguous"]),
     }
+
+
+async def is_real_product(db: AsyncSession, model_name: str | None, colorway: str | None) -> bool:
+    """Does `<model_name> - <colorway>` name a product melin actually sells?
+
+    The check that lets the analyzer's colorway be USED rather than trusted.
+    Claude reads a colorway off the hat, which is a different act from
+    inferring one from the photo's colours (measured at 12% precision) — but it
+    is still a reading, and a wrong colorway prices the hat as somebody else's
+    product. Validating against the harvested catalog turns the answer into a
+    lookup: a colorway that survives this names a real good.
+
+    Deliberately NOT done by handing Claude a candidate list. `_known_series_context`
+    documents why — a menu invites a forced choice, and a wrong pick is
+    indistinguishable from a right one. A validator applied afterwards has the
+    opposite property: it can only ever reject.
+
+    Token containment in both halves, matching `_model_tier`, so a hat named
+    for the family ("Odysea Hydro") still validates against the catalog's
+    fuller product name ("Odysea Packable Hydro").
+    """
+    if not model_name or not colorway:
+        return False
+
+    want_model = set(_model_tokens(model_name))
+    want_colorway = set(_model_tokens(colorway))
+    if not want_model or not want_colorway:
+        return False
+
+    rows = (
+        await db.execute(
+            select(ColorwayEntry.model_name, ColorwayEntry.colorway)
+        )
+    ).all()
+    for cat_model, cat_colorway in rows:
+        if want_model <= set(_model_tokens(cat_model)) and want_colorway <= set(
+            _model_tokens(cat_colorway)
+        ):
+            return True
+    return False

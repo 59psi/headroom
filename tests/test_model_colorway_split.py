@@ -1,0 +1,118 @@
+"""The analyzer had nowhere to put a colorway, so it put it in the model name.
+
+melin names its goods `<Model> - <Colorway>`. The Claude tool schema carried
+`model_name` and no `colorway`, so a colorway plainly readable off the hat —
+embroidered, printed, on the woven label — was appended to `model_name`.
+
+That field is the GATE for both purchase matching (`_model_tier` requires every
+hat token to appear in the receipt) and product pricing (`_product_comp`
+requires every model token to appear in the product). One foreign token makes a
+hat unmatchable and unpriceable.
+
+Measured on the real collection before the fix: **89 of 235** model names
+matched no melin product at all, 35 carried a literal separator, and the
+foreign tokens were colorway words — `camo`, `808`, `watercolor`, `gopro`,
+`maui strong`. Splitting on the separator alone took usable names from **146 to
+174 of 235** with no API call.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from headroom.services.hat_analysis_pipeline import _split_model_and_colorway
+
+pytestmark = pytest.mark.anyio
+
+
+@pytest.mark.parametrize(
+    ("stored", "model", "colorway"),
+    [
+        # The shapes actually found in the live collection.
+        ("Trenches Hydro — Hawaii 808 Camo", "Trenches Hydro", "Hawaii 808 Camo"),
+        ("Odysea Hydro — 23XI Racing", "Odysea Hydro", "23XI Racing"),
+        ("Odysea Rope Hydro (WATERCOLOR)", "Odysea Rope Hydro", "WATERCOLOR"),
+        ("Trenches Hydro (GoPro)", "Trenches Hydro", "GoPro"),
+        ("Trenches (Curl Surf)", "Trenches", "Curl Surf"),
+        ("A-Game Hydro - Heather Grey", "A-Game Hydro", "Heather Grey"),
+        # Left alone: no separator means nothing marks where the model ends,
+        # and guessing is how a correct name gets truncated.
+        ("Trenches Icon Camo", "Trenches Icon Camo", None),
+        ("Odysea Mesh Trucker", "Odysea Mesh Trucker", None),
+        # A hyphenated model is NOT a separator — this is the trap.
+        ("A-Game Hydro", "A-Game Hydro", None),
+        ("A-Game", "A-Game", None),
+        (None, None, None),
+    ],
+)
+async def test_a_leaked_colorway_is_split_off_the_model(stored, model, colorway):
+    assert _split_model_and_colorway(stored) == (model, colorway)
+
+
+async def test_the_hyphen_in_a_game_is_not_a_separator():
+    """The single most dangerous false positive.
+
+    `A-Game` is a melin line and the most common one in the collection. A naive
+    split on "-" turns it into model "A" plus colorway "Game", which matches no
+    product and would break every A-Game hat — trading 35 broken names for a
+    larger number of newly broken ones. Only a SPACED separator counts.
+    """
+    assert _split_model_and_colorway("A-Game Hydro") == ("A-Game Hydro", None)
+    assert _split_model_and_colorway("A-Game HYDROLite") == ("A-Game HYDROLite", None)
+
+
+async def test_the_backfill_repairs_stored_names_without_an_api_call(client, db_session):
+    """Fixing the schema alone leaves a name depending on WHEN it was analyzed.
+
+    Same reason `retail_pricing.backfill_retail_prices` exists, same one-time
+    lifespan flag.
+    """
+    from headroom.models.hat import Hat
+    from headroom.services.hat_analysis_pipeline import backfill_split_model_names
+
+    async def _hat(model_name):
+        body = {"condition": "new", "size": "classic", "style": "trenches"}
+        hat_id = (await client.post("/api/hats", json=body)).json()["id"]
+        row = await db_session.get(Hat, hat_id)
+        row.model_name = model_name
+        await db_session.commit()
+        return hat_id
+
+    leaked = await _hat("Trenches Hydro — Hawaii 808 Camo")
+    clean = await _hat("Trenches Icon Hydro")
+    a_game = await _hat("A-Game Hydro")
+
+    changed = await backfill_split_model_names(db_session)
+    assert changed == 1, "only the name carrying a separator is touched"
+
+    db_session.expire_all()
+    assert (await db_session.get(Hat, leaked)).model_name == "Trenches Hydro"
+    assert (await db_session.get(Hat, clean)).model_name == "Trenches Icon Hydro"
+    assert (await db_session.get(Hat, a_game)).model_name == "A-Game Hydro"
+
+
+async def test_the_backfill_does_not_store_the_leaked_colorway(client, db_session):
+    """The colorway half is dropped, not saved.
+
+    `_apply_analyzed_colorway` accepts a colorway only when the pair names a
+    real harvested product. Measured against the live catalog, NONE of the
+    leaked halves do — they are collab and limited-run drops that no longer
+    appear on the resale market. Storing them anyway would trust a string
+    exactly where there is no evidence for it, and a wrong colorway prices the
+    hat as somebody else's product.
+    """
+    from headroom.models.hat import Hat
+    from headroom.services.hat_analysis_pipeline import backfill_split_model_names
+
+    body = {"condition": "new", "size": "classic", "style": "trenches"}
+    hat_id = (await client.post("/api/hats", json=body)).json()["id"]
+    row = await db_session.get(Hat, hat_id)
+    row.model_name = "Trenches Hydro — Hawaii 808 Camo"
+    await db_session.commit()
+
+    await backfill_split_model_names(db_session)
+
+    db_session.expire_all()
+    hat = await db_session.get(Hat, hat_id)
+    assert hat.model_name == "Trenches Hydro"
+    assert hat.colorway is None, "an unvalidated colorway is worse than a blank"

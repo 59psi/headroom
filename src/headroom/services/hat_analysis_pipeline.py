@@ -220,6 +220,7 @@ async def finalize_hat_photo(
 
         _apply_analysis(hat, analysis)
         await _canonicalize_analysis_text(db, hat)
+        await _apply_analyzed_colorway(db, hat, analysis)
         await _publish_stage(hat.id, STAGE_PRICING)
         t_ebay0 = time.monotonic()
         await _refresh_ebay_comps(db, hat)
@@ -287,6 +288,7 @@ async def reanalyze_existing_photo(
 
         _apply_analysis(hat, analysis)
         await _canonicalize_analysis_text(db, hat)
+        await _apply_analyzed_colorway(db, hat, analysis)
         await _publish_stage(hat.id, STAGE_PRICING)
         await _refresh_ebay_comps(db, hat)
         await _publish_stage(hat.id, STAGE_RESALE)
@@ -601,6 +603,66 @@ async def _known_series(db) -> list[str]:
     return await vocabulary.distinct_values(db, Hat.artist_series)
 
 
+async def _apply_analyzed_colorway(db, hat: Hat, analysis: HatAnalysis) -> None:
+    """Fill a blank colorway from the analyzer, but only if it names a REAL product.
+
+    Claude gained a `colorway` field in 2.74. Before it, the tool schema had no
+    home for one, so a colorway read off the hat was appended to `model_name`
+    — and `model_name` tokens are the gate for both purchase matching and
+    product pricing. Measured on the real collection: 89 of 235 model names
+    matched no melin product, the foreign tokens being colorway words like
+    "camo", "808", "watercolor".
+
+    Two guards, and both matter:
+
+    * **Never overwrite.** A colorway already on the hat came from a matched
+      receipt or from the owner, and both outrank a photo.
+    * **Validate, do not trust.** `catalog_service.is_real_product` checks the
+      pair against the harvested catalog, so a colorway that survives names a
+      good melin actually sells. A wrong one would price this hat as somebody
+      else's product, which is strictly worse than the blank it replaced —
+      the same reasoning that keeps colour-inferred colorways out entirely.
+    """
+    from headroom.services import catalog_service
+
+    if hat.colorway or not analysis.colorway:
+        return
+    if await catalog_service.is_real_product(db, hat.model_name, analysis.colorway):
+        hat.colorway = await _canonical_colorway(db, analysis.colorway)
+
+
+async def _canonical_colorway(db, value: str) -> str:
+    """Snap to the spelling already on record, like every other free-text write."""
+    from headroom.services import vocabulary
+
+    return await vocabulary.canonicalize(db, Hat.colorway, value)
+
+
+def _split_model_and_colorway(model_name: str | None) -> tuple[str | None, str | None]:
+    """Split "Trenches Hydro — Hawaii 808" into its two halves.
+
+    Defensive, and it repairs the shape at the source. The tool schema now
+    forbids a separator in `model_name`, but 35 of 235 stored names carried
+    one, and a model that agrees with no real product is the single most
+    expensive thing this pipeline can write — every downstream gate is token
+    containment on it.
+
+    Only splits on an explicit separator. A name like "Trenches Icon Camo"
+    carries a colorway word with nothing marking it, and guessing where the
+    model ends is how a correct name gets truncated.
+    """
+    if not model_name:
+        return model_name, None
+    for sep in (" — ", " – ", " - "):
+        if sep in model_name:
+            model, _, colorway = model_name.partition(sep)
+            return model.strip() or None, colorway.strip() or None
+    if "(" in model_name and model_name.rstrip().endswith(")"):
+        model, _, rest = model_name.partition("(")
+        return model.strip() or None, rest.rstrip().rstrip(")").strip() or None
+    return model_name, None
+
+
 async def _canonicalize_analysis_text(db, hat: Hat) -> None:
     """Snap analysis-written free text to the spelling already on record.
 
@@ -637,9 +699,13 @@ def _apply_analysis(hat: Hat, analysis: HatAnalysis) -> None:
     hat.logo_detected = analysis.logo_detected
     hat.artist_series = _keep_on_null(analysis.artist_series, hat.artist_series)
     _apply_construction(hat, analysis.construction)
+    model_name, leaked = _split_model_and_colorway(analysis.model_name)
     hat.model_name = _strip_contradicting_construction(
-        _keep_on_null(analysis.model_name, hat.model_name), hat.construction
+        _keep_on_null(model_name, hat.model_name), hat.construction
     )
+    # Carried on the analysis so the async colorway step below can use it when
+    # Claude filled `model_name` the old way and left `colorway` null.
+    analysis.colorway = analysis.colorway or leaked
     hat.model_confidence = analysis.model_confidence
     hat.style_descriptor = analysis.style_descriptor
     hat.design_notes = analysis.design_notes
@@ -675,3 +741,42 @@ def _apply_analysis(hat: Hat, analysis: HatAnalysis) -> None:
 
     # Resale pointer (Melin only, by current rules)
     _apply_resale_pointer(hat)
+
+
+async def backfill_split_model_names(db) -> int:
+    """Split a leaked colorway out of every stored `model_name`. Returns how many changed.
+
+    Fixing the tool schema alone would leave a collection where a hat's model
+    name depends on *when* it was analyzed — the same reason
+    `retail_pricing.backfill_retail_prices` exists, and the same one-time
+    lifespan flag.
+
+    Measured on the real collection before this ran: 89 of 235 model names
+    matched no melin product, and 35 carried a literal separator. Splitting on
+    that separator alone takes usable names from **146 to 174 of 235**, without
+    an API call — every one of those hats becomes matchable against its receipt
+    and priceable against its own product.
+
+    Only the MODEL half is written. The colorway half is deliberately dropped
+    rather than stored: `_apply_analyzed_colorway` gates on the harvested
+    catalog, and measured against it **none** of the leaked halves validate —
+    they are collab and limited-run drops ("Hawaii 808 Camo", "Maui Strong")
+    that no longer appear on the resale market. Writing them anyway would be
+    trusting a string precisely where there is no evidence for it, which is how
+    a hat gets priced as somebody else's product.
+    """
+    from sqlalchemy import select
+
+    hats = (
+        await db.execute(select(Hat).where(Hat.model_name.is_not(None)))
+    ).scalars().all()
+
+    changed = 0
+    for hat in hats:
+        model, leaked = _split_model_and_colorway(hat.model_name)
+        if leaked and model and model != hat.model_name:
+            hat.model_name = model
+            changed += 1
+    if changed:
+        await db.commit()
+    return changed

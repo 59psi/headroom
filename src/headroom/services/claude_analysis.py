@@ -36,10 +36,23 @@ When given a single hat photo you will:
      liner prints, distinctive shapes). Separately record `logo_detected`
      ONLY when a mark is genuinely visible in frame, naming the mark and its
      owning brand — that field is evidence, while `brand` may be an inference.
-  2. Identify the specific model name when the brand has named lines. If it is
-     a signature collaboration or artist series, name the collaborator in
-     `artist_series` — melin names these for the partner (e.g. "Skye Walker",
+  2. Identify the specific model name when the brand has named lines, and put
+     the LINE ONLY in `model_name`. melin names its goods
+     "<Model> - <Colorway>" — "Trenches Icon Hydro - Hawaii 808 Camo" is the
+     model "Trenches Icon Hydro" and the colorway "Hawaii 808 Camo". Those go
+     in two different fields and MUST NOT be combined: a model_name carrying
+     a colorway word matches no real product, and the app matches on this
+     field to identify the hat, price it, and link it to its receipt. Never
+     write a dash, an em-dash or parentheses into `model_name`.
+     If it is a signature collaboration or artist series, name the collaborator
+     in `artist_series` — melin names these for the partner (e.g. "Skye Walker",
      "melin x OluKai"). Leave it null rather than guessing.
+  2b. Put the colorway in `colorway`, READ off the hat — the embroidery, the
+     print, the woven label, the artwork. Do not infer a colorway from the
+     colours you can see: that was measured at 12% precision, and a wrong
+     colorway prices the hat as somebody else's product, which is strictly
+     worse than leaving it null. Null unless you are actually reading it or
+     you recognise the exact design.
   3. Describe the silhouette / style (e.g. "fitted snapback", "5-panel
      trucker", "cuffed beanie").
   4. Extract the dominant primary, secondary, and tertiary colors with both
@@ -163,14 +176,35 @@ HAT_ANALYSIS_TOOL = {
             "model_name": {
                 "type": ["string", "null"],
                 "description": (
-                    "Specific product name within the brand (e.g. 'A-Game Hydro')."
-                    " If the owner stated a model line or a construction, this"
-                    " MUST agree with them: for a Trenches in Thermal, 'Trenches"
-                    " Thermal' or 'Thermal Trenches Icon' are right and"
-                    " 'A-Game HYDROLite' is wrong on both counts. Naming a"
-                    " different build here contradicts what they recorded even"
-                    " though it is a separate field, and this is the name they"
-                    " will read and quote. Null if unknown."
+                    "The PRODUCT LINE ONLY, e.g. 'A-Game Hydro', 'Trenches Icon"
+                    " Hydro', 'Odysea Rope Hydro'. melin names goods"
+                    " '<Model> - <Colorway>', and ONLY the model half belongs"
+                    " here — put the artwork, place, collab or colour name in"
+                    " `colorway` instead. 'Trenches Hydro - Hawaii 808 Camo' is"
+                    " WRONG in this field; it is model 'Trenches Hydro' and"
+                    " colorway 'Hawaii 808 Camo'. Never include a dash, an"
+                    " em-dash or parentheses here. If the owner stated a model"
+                    " line or a construction, this MUST agree with them: for a"
+                    " Trenches in Thermal, 'Trenches Thermal' or 'Thermal"
+                    " Trenches Icon' are right and 'A-Game HYDROLite' is wrong"
+                    " on both counts. Naming a different build here contradicts"
+                    " what they recorded even though it is a separate field,"
+                    " and this is the name they will read and quote. Null if"
+                    " unknown."
+                ),
+            },
+            "colorway": {
+                "type": ["string", "null"],
+                "description": (
+                    "The colorway half of melin's '<Model> - <Colorway>' name:"
+                    " the artwork, place, collaboration or colour treatment"
+                    " printed, embroidered or woven on this hat — 'Hawaii 808"
+                    " Camo', 'Rain Camo', 'Prismatic', 'Heather Grey', 'Deep"
+                    " Dive'. Read it off the hat; do NOT infer one from the"
+                    " colours you see. A colorway you cannot actually read is"
+                    " worth far less than null, because it will be used to"
+                    " price this hat against a specific product. Null unless"
+                    " you are reading it or you recognise the exact design."
                 ),
             },
             "model_confidence": {
@@ -226,6 +260,12 @@ HAT_ANALYSIS_TOOL = {
             # invites a confident guess where null is the honest reply.
             "artist_series",
             "model_name",
+            # Required for the same reason `artist_series` is: null is a valid
+            # answer, and demanding one is what stops the colorway being
+            # smuggled into `model_name` because there was nowhere else to put
+            # it. That was the actual failure — 89 of 235 model names matched
+            # no real melin product.
+            "colorway",
             "model_confidence",
             "style_descriptor",
             "design_notes",
@@ -261,6 +301,14 @@ class HatAnalysis:
     # Null means "could not tell", which leaves the stored value untouched.
     construction: str | None = None
     artist_series: str | None = None
+    # The colorway half of melin's "<Model> - <Colorway>" naming, READ off the
+    # hat rather than inferred from its colours. Added in 2.74 because the tool
+    # schema had no home for it, so Claude appended it to `model_name` instead
+    # — and `model_name` tokens are the gate for BOTH purchase matching and
+    # product pricing, so one stray colorway word ("camo", "808") made the hat
+    # unmatchable. Measured before the fix: 89 of 235 model names matched no
+    # real melin product, and 35 carried a literal separator.
+    colorway: str | None = None
     colors: list[AnalyzedColor] = field(default_factory=list)
     raw: dict | None = None
 
@@ -485,6 +533,7 @@ async def analyze_hat_image(
             construction=payload.get("construction"),
             artist_series=payload.get("artist_series"),
             model_name=payload.get("model_name"),
+            colorway=payload.get("colorway"),
             model_confidence=payload.get("model_confidence", "low"),
             style_descriptor=payload.get("style_descriptor", ""),
             design_notes=payload.get("design_notes", ""),

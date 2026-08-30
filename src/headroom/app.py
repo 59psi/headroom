@@ -139,6 +139,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     "Re-priced %d hat(s) from the melin retail table "
                     "(the old prompt anchors were years stale)", repriced,
                 )
+        if await settings_service.get_setting(db, "model_names_split_v1") is None:
+            from headroom.services import hat_analysis_pipeline
+
+            split = await hat_analysis_pipeline.backfill_split_model_names(db)
+            await settings_service.set_setting(db, "model_names_split_v1", "done")
+            if split:
+                logger.info(
+                    "Split a leaked colorway out of %d model name(s) — the tool "
+                    "schema had no colorway field, so Claude appended it to the "
+                    "one field every match gates on", split,
+                )
         if await settings_service.get_setting(db, "color_names_normalized_v1") is None:
             changed = await hat_service.normalize_existing_colors(db)
             await settings_service.set_setting(db, "color_names_normalized_v1", "done")
