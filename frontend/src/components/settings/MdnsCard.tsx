@@ -22,12 +22,22 @@ export function MdnsCard() {
         </p>
         {mdns.data && (
           <div className="hr-metric">
-            <div className="hr-metric-label">
+            {/* Three facts, three slots. This used to run through `hr-metric`'s
+                two, which fused the STATE and the IPv4 into one label
+                ("Advertising → 10.0.111.4") and left the IPv6 bolted on
+                underneath in a different size — two addresses of the same kind
+                reading as two unrelated things. */}
+            <div className="hr-net-state">
+              <span
+                className={`hr-net-dot${mdns.data.advertising ? ' is-live' : ''}`}
+                aria-hidden="true"
+              />
               {mdns.data.advertising
-                ? `Advertising → ${mdns.data.ip}`
+                ? 'Advertising on your LAN'
                 : mdns.data.enabled ? 'Enabled — not advertising' : 'Disabled'}
             </div>
-            <div className="hr-metric-value font-mono">
+
+            <div className="hr-net-name">
               {mdns.data.url ? (
                 <a href={mdns.data.url} target="_blank" rel="noopener noreferrer">
                   {mdns.data.url}
@@ -36,14 +46,20 @@ export function MdnsCard() {
                 mdns.data.error ?? mdns.data.hostname
               )}
             </div>
-            {/* Shown because its ABSENCE is the diagnosis: without an IPv6
-                record every lookup of the name stalls for the client's full
-                resolver timeout, which reads as a slow or dead site. */}
+
             {mdns.data.advertising && (
-              <div className="text-secondary small font-mono hr-mdns-v6">
-                {mdns.data.ipv6
-                  ? `IPv6 → ${mdns.data.ipv6}`
-                  : 'IPv6 → none on this host (lookups may be slow)'}
+              <div className="hr-net-list">
+                <span className="hr-net-label">IPv4</span>
+                <span className="hr-net-value">{mdns.data.ip ?? '—'}</span>
+
+                {/* Listed even when absent, because the ABSENCE is the
+                    diagnosis: with no IPv6 record every lookup of the name
+                    stalls for the client's full resolver timeout, which reads
+                    as a slow or dead site rather than a missing record. */}
+                <span className="hr-net-label">IPv6</span>
+                <span className={`hr-net-value${mdns.data.ipv6 ? '' : ' is-absent'}`}>
+                  {mdns.data.ipv6 ?? 'none on this host — lookups may be slow'}
+                </span>
               </div>
             )}
           </div>

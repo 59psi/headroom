@@ -1526,11 +1526,82 @@ kbd {
   color: var(--text);
 }
 
+/* The mDNS card reads as three facts, not two: a STATE (advertising or not),
+   the NAME devices resolve, and the addresses behind it. It used to be forced
+   through `hr-metric`, which has two slots — so the state and the IPv4 were
+   fused into one label ("Advertising → 10.0.111.4") and the IPv6, added later,
+   was bolted underneath in a different size and colour. Two addresses are the
+   same kind of fact and looked like two unrelated ones. */
+
+.hr-net-state {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-family: var(--font-heading);
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  margin-bottom: 0.35rem;
+}
+
+.hr-net-dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex: none;
+}
+
+/* Live gets the glow. The colour carries the state on its own, so the label
+   beside it is not the only thing distinguishing the two. */
+.hr-net-dot.is-live {
+  background: var(--neon-green);
+  box-shadow: 0 0 6px rgba(57, 255, 20, 0.8);
+}
+
+.hr-net-name {
+  font-family: var(--font-mono);
+  font-size: 1.05rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+/* Two columns so the labels align and the values start on one edge — the
+   thing that makes a pair read as a set rather than as two stray lines. */
+.hr-net-list {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.15rem 0.75rem;
+  margin-top: 0.6rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--border);
+}
+
+.hr-net-label {
+  font-family: var(--font-heading);
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  align-self: center;
+}
+
 /* A full IPv6 address is a single unbreakable token to most wrapping rules and
    is wider than a phone. Break it anywhere rather than let it push the card. */
-.hr-mdns-v6 {
-  margin-top: 0.35rem;
+.hr-net-value {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--text-secondary);
   overflow-wrap: anywhere;
+}
+
+/* Missing IPv6 is a DIAGNOSIS, not a blank — without it every lookup of the
+   name stalls for the client's full resolver timeout. Muted so it reads as an
+   absence rather than an address. */
+.hr-net-value.is-absent {
+  color: var(--text-muted);
+  font-style: italic;
 }
 
 /* Same problem, same fix: headroom-backup-2026-08-26T05-41-08Z.tar.gz has no
