@@ -220,7 +220,7 @@ export function getColorwayStatus() {
 
 /** Kick off the colorway harvest. 202 — the work continues in the background. */
 export function refreshColorwayCatalog() {
-  return apiFetch<{ started: boolean; detail: string }>(
+  return apiFetch<{ started: boolean; already_running: boolean; detail: string }>(
     '/api/admin/colorways/refresh', { method: 'POST' },
   );
 }

@@ -583,6 +583,39 @@ async def test_a_hat_is_priced_against_its_own_product_not_its_line(monkeypatch)
     assert stats["sample"] == "model"
 
 
+async def test_a_colorway_token_may_not_be_satisfied_by_the_model_half(monkeypatch):
+    """`<Model> - <Colorway>` has two halves and they mean different things.
+
+    The product match used to union the hat's model tokens with its colorway
+    tokens and test the whole set against the whole product name. That let a
+    token satisfy the WRONG side: a hat whose model is `Trenches Hydro` and
+    whose colorway is `Icon` produced `{trenches, hydro, icon}`, which is a
+    subset of `Trenches Icon Hydro - Camo` — so the hat priced as a product
+    whose colorway is Camo, purely because "icon" appears in the model half.
+
+    melin's naming convention is the reason this module can price a hat as its
+    own item at all; ignoring which half a word came from throws that away.
+    Here the only Camo listing is expensive and the Icon ones are cheap, so a
+    cross-half match is visible in the number rather than only in the label.
+    """
+    from headroom.services.melin_recap import fetch_resale_stats
+
+    _stub_query(monkeypatch, [
+        _product(20000, "Trenches Icon Hydro - Camo", "Camo"),
+        _product(6000, "Trenches Hydro - Icon", "Icon"),
+        _product(6000, "Trenches Hydro - Icon", "Icon"),
+    ])
+
+    stats = await fetch_resale_stats(
+        "trenches", "Trenches Hydro", "new_with_tags", "classic", colorway="Icon",
+    )
+    assert stats["matched"] == "Trenches Hydro - Icon", (
+        "the product whose COLORWAY half is Icon — not the one that merely "
+        "contains the word in its model half"
+    )
+    assert stats["median"] == 60.0
+
+
 async def test_one_live_listing_of_the_right_product_beats_a_line_median(monkeypatch):
     """No minimum sample for a product match.
 

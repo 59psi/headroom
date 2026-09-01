@@ -29,7 +29,11 @@ export function ColorwayCatalogCard() {
     // in the background, so this returns as soon as it has started rather than
     // holding the connection open past whatever proxy sits in front of us.
     mutationFn: () => refreshColorwayCatalog(),
-    onSuccess: () => {
+    onSuccess: res => {
+      // `started` false means a harvest was already in flight and this press
+      // began nothing. Treating a refusal as a start would set the poll window
+      // and then show "Harvest finished" for somebody else's run.
+      if (res.already_running) return;
       setStartedAt(Date.now());
       qc.invalidateQueries({ queryKey: ['meta', 'colorways'] });
       qc.invalidateQueries({ queryKey: ['admin', 'colorway-status'] });
@@ -54,6 +58,11 @@ export function ColorwayCatalogCard() {
           >
             {refreshMut.isPending ? 'Starting…' : 'Refresh from Melin Recap'}
           </button>
+          {refreshMut.data?.already_running && (
+            <span className="text-secondary small">
+              Already running — watch the progress below.
+            </span>
+          )}
           <span className="text-secondary small font-mono">
             {status.data
               ? `${status.data.models} models · ${status.data.colorways} colorways · ${status.data.entries} listings`
@@ -64,7 +73,12 @@ export function ColorwayCatalogCard() {
           <SweepProgressBar
             progress={status.data?.progress}
             idleLabel={
-              refreshMut.isSuccess
+              // `isSuccess` is true for a REFUSAL too — 202 with
+              // `already_running` is a successful request that started
+              // nothing. Keying the finished message on it announced a harvest
+              // this press never began, and would have reported someone else's
+              // run as this one's result.
+              refreshMut.data?.started
                 ? 'Harvest finished — the counts above are current.'
                 : undefined
             }

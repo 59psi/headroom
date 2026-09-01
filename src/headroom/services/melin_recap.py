@@ -354,14 +354,34 @@ def _product_comp(
     if not (model_name and colorway):
         return None
 
-    wanted = set(model_tokens(model_name)) | set(model_tokens(colorway))
-    if not wanted:
+    # The two halves are checked SEPARATELY against the two halves of the
+    # product name. Unioning them and testing the whole string let a token
+    # satisfy the wrong side: a hat whose model is `Trenches Hydro` and whose
+    # colorway is `Icon` produced `{trenches, hydro, icon}`, which is a subset
+    # of `Trenches Icon Hydro - Camo` — so it priced as a product whose
+    # colorway is Camo, on the strength of finding "icon" in the model half.
+    # melin's name is `<Model> - <Colorway>` precisely so the halves mean
+    # different things, and this is the one place that has to respect that.
+    want_model = set(model_tokens(model_name))
+    want_colorway = set(model_tokens(colorway))
+    if not want_model or not want_colorway:
         return None
+
+    def _halves_match(product: str) -> bool:
+        model_half, _, colorway_half = product.partition(" - ")
+        if not colorway_half:
+            # No separator means no colorway is being named, so there is no
+            # product here to identify — only a line.
+            return False
+        return (
+            want_model <= set(model_tokens(model_half))
+            and want_colorway <= set(model_tokens(colorway_half))
+        )
 
     matched = [
         f for f in facts
         if f.product
-        and wanted <= set(model_tokens(f.product))
+        and _halves_match(f.product)
         and not _rival_construction(f.product, construction)
     ]
     # Too many products means the tokens named a LINE, not an item.
@@ -498,6 +518,16 @@ async def fetch_resale_stats(
             # question, answered from the data instead of from the name.
             everything = narrow((), by_condition, by_size)
             narrowed = len(rows) < len(everything)
+            # The whole-name disjunct is deliberate and was re-examined in
+            # 2.76: a review proposed dropping it so a comparison that narrowed
+            # nothing could never be labelled a model comp. That is right for a
+            # SHORTENED prefix, which is what the paragraph above is about, and
+            # wrong for the full name. If the hat's complete model name selects
+            # every listing in the category, the comparison really is "listings
+            # of this model" — the category happening to contain nothing else
+            # is a fact about the market, not a mislabel, and reporting
+            # "category" there would hide which model was compared. Four tests
+            # pinned this and were correct to.
             matched = (
                 " ".join(prefix).title()
                 if prefix and (len(prefix) == len(tokens) or narrowed)

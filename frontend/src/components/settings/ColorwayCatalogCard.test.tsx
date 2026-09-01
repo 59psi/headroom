@@ -56,7 +56,7 @@ describe('ColorwayCatalogCard — live harvest progress', () => {
     const user = userEvent.setup();
     mocked.getColorwayStatus.mockResolvedValue(status());
     mocked.refreshColorwayCatalog.mockResolvedValue({
-      started: true, detail: 'Harvest started.',
+      started: true, already_running: false, detail: 'Harvest started.',
     });
 
     renderWithProviders(<ColorwayCatalogCard />);
@@ -66,6 +66,24 @@ describe('ColorwayCatalogCard — live harvest progress', () => {
     // Once it lands, the counts on the card are the report — the old copy told
     // you to reload the page, which is what having no progress forces.
     expect(await screen.findByText(/Harvest finished/)).toBeInTheDocument();
+  });
+
+  it('says so when a harvest was already running, instead of claiming it started one', async () => {
+    // The server refuses a second harvest now — two concurrent runs interleave
+    // inserts of the same listing title and one dies on a UNIQUE violation.
+    // The card must not treat that refusal as a start: doing so would open the
+    // poll window and then announce "Harvest finished" for somebody else's run.
+    const user = userEvent.setup();
+    mocked.getColorwayStatus.mockResolvedValue(status());
+    mocked.refreshColorwayCatalog.mockResolvedValue({
+      started: false, already_running: true, detail: 'Already running.',
+    });
+
+    renderWithProviders(<ColorwayCatalogCard />);
+    await user.click(await screen.findByRole('button', { name: /Refresh from Melin Recap/ }));
+
+    expect(await screen.findByText(/Already running/)).toBeInTheDocument();
+    expect(screen.queryByText(/Harvest finished/)).not.toBeInTheDocument();
   });
 
   it('surfaces a harvest that failed, after it has stopped', async () => {
