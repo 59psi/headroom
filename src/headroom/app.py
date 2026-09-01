@@ -20,9 +20,11 @@ from headroom.services import (
     activity_service,
     analysis_queue,
     backup_service,
+    ca_vault,
     import_service,
     mdns_service,
     repricing,
+    tls_health,
 )
 
 logger = logging.getLogger(__name__)
@@ -264,11 +266,82 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     prune_task = asyncio.create_task(_prune_loop())
 
+    async def _tls_watch_loop():
+        """Daily: is the served certificate still valid, and is the CA still ours?
+
+        Both answers already existed and **neither had a caller that was not a
+        request handler**. `tls_health.check_certificate` and
+        `ca_vault.check_root` ran only when somebody opened Settings → Device,
+        which is the one moment an operator is already looking. The failure
+        this is for is the opposite: a certificate that quietly expired and
+        served for **37 days** while every other signal stayed green.
+
+        Seeding the root fingerprint at BOOT is the sharper half. `check_root`
+        records the served root the first time it sees one and reports a
+        mismatch forever after — but it was reached only by that page, so a
+        root regenerated before anyone opened the card was recorded as the
+        expected one and the alarm was permanently disarmed. Recording at boot
+        makes the first sighting happen when the CA is whatever the last
+        working deployment left, not whenever somebody happens to click.
+
+        Logs and does not enforce, for the reason `tls_health` documents: the
+        certificate belongs to Caddy, so failing readiness here would
+        restart-loop the app without fixing anything.
+        """
+        while True:
+            try:
+                status = await asyncio.to_thread(tls_health.check_certificate)
+                # `applicable` is False on every deployment without an HTTPS
+                # front door, which is most of them. Not a fault, and logging
+                # it as one would train the operator to ignore this line.
+                if status.applicable:
+                    if status.error:
+                        logger.error(
+                            "TLS: could not read the certificate served for %s: %s",
+                            status.host, status.error,
+                        )
+                    elif status.expired:
+                        logger.error(
+                            "TLS: the certificate served for %s has EXPIRED — "
+                            "every browser is refusing this site", status.host,
+                        )
+                    elif status.needs_attention:
+                        logger.error(
+                            "TLS: certificate for %s expires in %.0f day(s) and "
+                            "renewal has evidently stopped",
+                            status.host, status.days_remaining or 0.0,
+                        )
+                    elif status.hostname_ok is False:
+                        logger.error(
+                            "TLS: the certificate served for %s does not cover that "
+                            "name — a browser rejects it exactly as hard as an "
+                            "expired one", status.host,
+                        )
+                    async with async_session() as db:
+                        changed, expected = await ca_vault.check_root(
+                            db, status.ca_sha256
+                        )
+                    if changed:
+                        logger.error(
+                            "TLS: the local CA root CHANGED — every device that "
+                            "trusted %s must install the new one", expected,
+                        )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 — a probe must outlive any cycle
+                logger.warning("TLS watch loop error: %s", exc)
+            try:
+                await asyncio.sleep(24 * 3600)
+            except asyncio.CancelledError:
+                raise
+
+    tls_task = asyncio.create_task(_tls_watch_loop())
+
     try:
         yield
     finally:
         for task in (backup_task, app.state.repricing_task, prune_task,
-                     mdns_task, thumbs_task, exports_task):
+                     mdns_task, thumbs_task, exports_task, tls_task):
             if task is not None:
                 task.cancel()
                 try:

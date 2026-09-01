@@ -31,6 +31,16 @@ from headroom.utils import disk
 
 logger = logging.getLogger(__name__)
 
+
+class UploadConfigError(Exception):
+    """A destination IS configured and no longer resolves to a runnable argv.
+
+    Distinct from `resolve_upload_argv` returning None, which means nothing is
+    configured at all. Collapsing the two is how a stored destination that had
+    stopped validating produced a silent skip every cycle while the off-site
+    card went on showing the previous success.
+    """
+
 BACKUP_DIR_NAME = "backups"
 BACKUP_PREFIX = "headroom-backup-"
 BACKUP_SUFFIX = ".tar.gz"
@@ -614,9 +624,18 @@ async def _run_upload_hook(path: Path, argv: list[str] | None = None) -> None:
             async with async_session() as db:
                 argv = await resolve_upload_argv(db, path)
         except Exception as exc:  # noqa: BLE001 — never break the backup
+            # RECORDED, not just logged. Nobody is reading the container log at
+            # 3am; the off-site card is the surface that answers "does a copy of
+            # my data exist off this box". Returning silently here left that
+            # card showing the last success indefinitely — the exact false
+            # confidence the persisted upload record was built to remove.
             logger.error("Could not resolve the backup upload command: %s", exc)
+            _health.record_upload(False, f"Upload not attempted: {exc}"[:500], path.name)
             return
     if not argv:
+        # No destination configured at all. Correctly silent — an operator who
+        # has never set one up is not experiencing a failure, and recording one
+        # would put a permanent red state on a feature they declined.
         return
     timeout = backup_upload_timeout()
     try:
@@ -1095,8 +1114,17 @@ async def resolve_upload_argv(db, path: Path) -> list[str] | None:
     except ValueError as exc:
         # A stored value that no longer validates is a configuration error, not
         # a reason to run something unexpected.
+        #
+        # RAISED rather than returned as None, because None already means
+        # "nothing is configured" and the two must not look alike to the
+        # caller. They did: an operator who had set up an off-site copy and
+        # then changed provider without re-entering the destination got a
+        # silent skip on every cycle, while `BackupHealth` kept showing the
+        # last SUCCESS — a green card asserting a copy that had stopped being
+        # made. Silence is the right answer to "no destination"; it is the
+        # wrong answer to "the destination you configured no longer works".
         logger.error("Stored backup destination is invalid, upload skipped: %s", exc)
-        return None
+        raise UploadConfigError(str(exc)) from exc
     return [tok.replace("{path}", str(path)).replace("{dest}", dest) for tok in spec.argv]
 
 

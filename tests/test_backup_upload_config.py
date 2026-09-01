@@ -222,10 +222,92 @@ async def test_a_stored_destination_that_no_longer_validates_is_refused(
     )
     await db_session.commit()
 
-    argv = await backup_service.resolve_upload_argv(db_session, Path("/tmp/x.tar.gz"))
-
-    assert argv is None
+    with pytest.raises(backup_service.UploadConfigError):
+        await backup_service.resolve_upload_argv(db_session, Path("/tmp/x.tar.gz"))
     assert any("invalid" in r.getMessage().lower() for r in caplog.records)
+
+
+async def test_an_unusable_destination_is_recorded_not_merely_skipped(
+    client, db_session, monkeypatch, tmp_path
+):
+    """A configured destination that stops working must turn the card RED.
+
+    This used to return None — the same value that means "nothing is
+    configured" — so `_run_upload_hook` returned silently and `BackupHealth`
+    went on reporting the last SUCCESS. An operator who set up an off-site copy
+    and later switched provider without re-entering the destination had a green
+    card asserting a copy that had stopped being made, which is precisely the
+    false confidence the persisted upload record exists to remove.
+
+    The two states stay distinguishable: "nothing configured" is still silent
+    (asserted below), because someone who declined the feature is not failing.
+    """
+    from pathlib import Path
+
+    from headroom.services import settings_service
+
+    backup_service._health = backup_service.BackupHealth()
+    monkeypatch.setattr(backup_service, "_upload_state_path", lambda: tmp_path / ".up")
+
+    await settings_service.set_setting(
+        db_session, backup_service.UPLOAD_PROVIDER_KEY, "rclone"
+    )
+    await settings_service.set_setting(
+        db_session, backup_service.UPLOAD_DESTINATION_KEY, "--config=/etc/x"
+    )
+    await db_session.commit()
+
+    await backup_service._run_upload_hook(Path("/tmp/headroom-x.tar.gz"))
+
+    health = backup_service._health
+    assert health.last_upload_ok is False, "an unusable destination must read as failed"
+    assert health.last_upload_error, "and must say why"
+
+
+async def test_no_destination_configured_stays_silent(client, monkeypatch, tmp_path):
+    """The other half of the pair. Declining the feature is not a failure.
+
+    `resolve_upload_argv` is stubbed rather than left to read the database,
+    because `_run_upload_hook` resolves through the module-level
+    `async_session` — the real database, not the test one. That is worth
+    noting: it is the seam mistake `error_handler` documents, and here it
+    means an unreachable database is indistinguishable from an unconfigured
+    one unless the branch is exercised directly.
+    """
+    from pathlib import Path
+
+    backup_service._health = backup_service.BackupHealth()
+    monkeypatch.setattr(backup_service, "_upload_state_path", lambda: tmp_path / ".up")
+
+    async def nothing_configured(db, path):
+        return None
+
+    monkeypatch.setattr(backup_service, "resolve_upload_argv", nothing_configured)
+    monkeypatch.setattr(
+        "headroom.database.async_session", _null_session_factory()
+    )
+
+    await backup_service._run_upload_hook(Path("/tmp/headroom-x.tar.gz"))
+
+    assert backup_service._health.last_upload_ok is None, (
+        "no destination is not a failed upload"
+    )
+
+
+def _null_session_factory():
+    """A session factory that yields nothing usable but does not raise.
+
+    The hook only needs a context manager to hand to `resolve_upload_argv`,
+    which is stubbed above; this keeps the test off the real database without
+    pretending the seam problem does not exist.
+    """
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _f():
+        yield None
+
+    return _f
 
 
 async def test_the_environment_wins_over_the_stored_setting(

@@ -74,13 +74,19 @@ async def ready(request: Request, db: AsyncSession = Depends(get_db)):
     if not space.ok:
         overall_ok = False
 
-    # 4. Are the background workers actually running? This is the ONLY check
-    # here that the container healthcheck can act on, and until it existed the
-    # container could not go unhealthy because the analysis or import worker
-    # had died — so `restart: unless-stopped`, the one piece of automated
-    # recovery in the system, was blind to the two failures most likely across
-    # weeks of unattended running. Gated on `worker_expected()` so a worker
-    # switched off on purpose is not reported as a fault.
+    # 4. Are the background workers actually running? Until this existed the
+    # container could not report unhealthy because the analysis or import
+    # worker had died — the two failures most likely across weeks of
+    # unattended running. Gated on `worker_expected()` so a worker switched
+    # off on purpose is not reported as a fault.
+    #
+    # **This reports; it does not recover, and the comment here used to claim
+    # otherwise.** It said `restart: unless-stopped` acts on this. It does
+    # not: Docker restart policies fire when the container *exits*, never when
+    # a healthcheck goes `unhealthy`, so for as long as the process stays up
+    # with a dead worker inside it, nothing in the base compose responds. The
+    # signal was real and had no consumer — see `docker-compose.autoheal.yml`
+    # and docs/OPERATIONS.md §7 for the two ways to give it one.
     workers_ok = not (
         (import_service.worker_expected() and not import_service.worker_alive())
         or (analysis_queue.worker_expected() and not analysis_queue.worker_alive())

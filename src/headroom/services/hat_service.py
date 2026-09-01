@@ -712,8 +712,51 @@ async def count_for_analysis_job(db: AsyncSession, job_id: int) -> tuple[int, in
 
 
 async def count_by_analysis_status(db: AsyncSession, status: str) -> int:
-    """How many hats sit in one analysis status. Backs the nav error badge."""
+    """How many hats sit in one analysis status."""
     result = await db.execute(
         select(func.count(Hat.id)).where(Hat.analysis_status == status)
+    )
+    return int(result.scalar() or 0)
+
+
+async def list_failed_analyses(
+    db: AsyncSession, limit: int = 20, newest_first: bool = True
+) -> list[Hat]:
+    """Hats whose analysis FAILED — by `failed_analysis_filters`, not by status.
+
+    The nav badge and the Settings error list both used
+    `analysis_status == "error"`, which is the predicate the docstring on
+    `failed_analysis_filters` exists to warn against, six hundred lines up in
+    this same file. The two disagreed in exactly the case that matters most:
+    when Claude is unreachable the pipeline degrades to **`fallback`**, not
+    `error`, so during a total analysis outage the badge read **0** while the
+    failures card read every hat in the collection. The one signal that is
+    supposed to say "go look" was silent precisely when everything had broken.
+
+    `skipped` (no API key) is the same shape. Carrying a failure string is the
+    whole test, and it is what gets cleared on success — so it is the field
+    that tracks whether a failure is still outstanding.
+    """
+    query = (
+        select(Hat)
+        .options(*_hat_loads())
+        .where(*failed_analysis_filters())
+    )
+    if newest_first:
+        query = query.order_by(Hat.analyzed_at.desc().nulls_last(), Hat.id.desc())
+    else:
+        query = query.order_by(Hat.id)
+    result = await db.execute(query.limit(max(1, min(limit, 100))))
+    return list(result.scalars().all())
+
+
+async def count_failed_analyses(db: AsyncSession) -> int:
+    """How many hats carry an outstanding analysis failure. Backs the nav badge.
+
+    A SQL COUNT over the whole set, never `len()` of the capped list above —
+    the badge is a count and a truncated one would be a lie.
+    """
+    result = await db.execute(
+        select(func.count(Hat.id)).where(*failed_analysis_filters())
     )
     return int(result.scalar() or 0)
