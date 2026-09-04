@@ -64,8 +64,14 @@ export const RETAIL_RETENTION: Record<string, number> = {
   worn: 0.30,
 };
 
-/** Applied when a hat's condition isn't one of the three known values. */
-const FALLBACK_RETENTION = 0.4;
+/** Applied when a hat's condition isn't one of the three known values.
+ *
+ *  EXPORTED so `tests/test_valuation_parity.py` can read it. It was module-
+ *  private on both sides, which put it outside the parity check — and mutation
+ *  testing proved that invisible: swinging it 125% left the whole suite green.
+ *  A constant that decides money and that no test can see is the shape this
+ *  parity file exists to prevent. */
+export const FALLBACK_RETENTION = 0.4;
 
 export type ValueBasis = 'manual' | 'comp' | 'retail' | 'category' | 'none';
 

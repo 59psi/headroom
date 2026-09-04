@@ -19,8 +19,16 @@ import { LoadingSpinner } from '../components/common/LoadingSpinner';
  * `//evil.example` is protocol-relative and a browser reads it as a host.
  */
 export function safeNext(raw: string | null): string {
-  if (!raw || !raw.startsWith('/') || raw.startsWith('//')) return '/';
-  return raw;
+  if (!raw) return '/';
+  // Backslashes are normalized to forward slashes FIRST. Browsers treat `\` as
+  // `/` in the authority position, so `/\evil.example` is protocol-relative to
+  // a browser while passing a `startsWith('//')` check written against the
+  // literal characters. Not exploitable here — the only consumer is
+  // react-router's `navigate()`, which is same-origin by construction — but
+  // the guard should hold on its own terms rather than on its caller's.
+  const normalized = raw.replace(/\\/g, '/');
+  if (!normalized.startsWith('/') || normalized.startsWith('//')) return '/';
+  return normalized;
 }
 
 export function LoginPage() {

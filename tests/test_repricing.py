@@ -357,7 +357,19 @@ async def test_unpriceable_hats_do_not_starve_the_queue(db_session, monkeypatch)
 async def test_a_manual_run_is_bounded_and_says_what_is_left(
     client, db_session, monkeypatch
 ):
-    """Uncapped this is a four-minute HTTP request — a dead spinner on a phone."""
+    """Uncapped this is a four-minute HTTP request — a dead spinner on a phone.
+
+    `remaining` must be what a further press would still visit. It used to
+    count every eligible hat in the collection, so it read 5 both before and
+    after sweeping 2 of them — identical however many times the button was
+    pressed, which is indistinguishable from a button that does nothing. The
+    assertion here pinned that: it asserted 5 after a run that had just
+    processed 2, with a comment defending it as "a COUNT, not len()", which was
+    true and beside the point.
+
+    The sweep stamps `resale_checked_at` on every attempt, so "not checked
+    since this run started" is exactly the outstanding set.
+    """
     from headroom.services import hat_analysis_pipeline
 
     monkeypatch.setattr(repricing, "MANUAL_SWEEP_LIMIT", 2)
@@ -372,7 +384,14 @@ async def test_a_manual_run_is_bounded_and_says_what_is_left(
 
     body = (await client.post("/api/admin/repricing/run")).json()
     assert body["considered"] == 2, body
-    assert body["remaining"] == 5, body  # a COUNT, not len() of the capped list
+    # Still a SQL COUNT over the whole set, never len() of the capped list —
+    # but of the hats actually left to do.
+    assert body["remaining"] == 3, body
+
+    # And it goes DOWN as the shelf is worked through, which is the property
+    # that makes "press again" honest advice.
+    second = (await client.post("/api/admin/repricing/run")).json()
+    assert second["remaining"] == 1, second
 
 
 # ------------- "Re-price all": the whole shelf, off the request -------------- #

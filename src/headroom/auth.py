@@ -45,7 +45,19 @@ _OPEN_PREFIXES = (
 )
 
 # Prefixes that carry collection data and therefore require auth.
-_PROTECTED_PREFIXES = ("/api/", "/uploads/")
+#
+# `/openapi.json`, `/docs` and `/redoc` are here because they are the one part
+# of the app that describes the app, and they begin with none of the prefixes
+# above — so a gate written as "everything under /api/" published 101 paths,
+# every schema and every field name to any anonymous caller. On the LAN that is
+# an oddity; on the Let's Encrypt overlay it is a complete map of the attack
+# surface, handed out on request. It also sat directly against the posture of
+# the rest of this module: `/health/ready` goes to deliberate trouble to redact
+# filesystem paths and key sources from anonymous callers, while `/openapi.json`
+# next door gave away the shape of everything.
+_PROTECTED_PREFIXES = (
+    "/api/", "/uploads/", "/openapi.json", "/docs", "/redoc",
+)
 
 
 async def resolve_user(request: Request) -> User | None:

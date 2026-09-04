@@ -50,6 +50,42 @@ async def test_harvest_upserts_and_counts(client, db_session, monkeypatch):
     assert result["catalog_total"] == 3
 
 
+async def test_a_second_harvest_is_refused_while_one_is_in_flight(client):
+    """The sibling endpoint had this for three releases; this one did not.
+
+    `/repricing/run-all` claims a slot, refuses a second press and explains why
+    at length. `/colorways/refresh` — structurally the same endpoint, 202 plus
+    a background task over minutes of external calls — had neither claim nor
+    lock, and the asymmetry was acknowledged nowhere.
+
+    It is not theoretical. The harvest commits per page and upserts on `title`,
+    so two runs interleave inserts of the same listing and one loses the race
+    between its own SELECT and its INSERT, dying on
+    `UNIQUE constraint failed: colorway_catalog.title`. That escapes the
+    per-category isolation whose entire purpose is that one bad category cannot
+    abandon the sweep — and since both runs share `progress`, the bar then
+    reads 100% with a SQL error behind it.
+
+    Reachable by ordinary use: the card re-enables as soon as the 202 lands.
+    """
+    from headroom.services import catalog_service
+
+    assert catalog_service.claim_harvest() is True
+    try:
+        resp = await client.post("/api/admin/colorways/refresh")
+        assert resp.status_code == 202
+        body = resp.json()
+        assert body["started"] is False
+        assert body["already_running"] is True
+    finally:
+        catalog_service.release_harvest()
+
+    # Released, so the next press is allowed — a crashed harvest must not
+    # refuse every later one for the life of the process.
+    assert catalog_service.claim_harvest() is True
+    catalog_service.release_harvest()
+
+
 async def test_colorway_autocomplete_endpoint(client, db_session, monkeypatch):
     from headroom.services.catalog_service import harvest_catalog
 
@@ -835,7 +871,12 @@ async def test_matching_achieves_the_maximum_possible(client, db_session):
     first, and in file order it takes the Classic hat on a tie-break, leaving
     the Classic line with nothing — one link where two were possible.
 
-    Sabotage-checked: replacing `_by_scarcity` with file order fails this.
+    What actually carries this is `assign_purchases`'s augmenting paths, not an
+    input ordering. The docstring here used to say "Sabotage-checked: replacing
+    `_by_scarcity` with file order fails this" — a check that could not have
+    been performed, because `_by_scarcity` had no call site. It has since been
+    deleted. Cardinality is order-independent under Kuhn's, which is exactly
+    why the ordering could rot without any test noticing.
     """
     from headroom.models.catalog import Purchase
     from headroom.services.catalog_service import match_purchases_to_hats
@@ -1027,6 +1068,40 @@ async def test_the_assignment_is_maximum_not_merely_greedy():
         "up the small hat so the sized line can have it"
     )
     assert assigned[id(specific)].hat is small
+
+
+async def test_the_best_evidenced_purchase_wins_a_contended_hat():
+    """Cardinality is not the only thing being decided — a PRICE is.
+
+    Kuhn's guarantees the maximum NUMBER of links and nothing more. Among the
+    many assignments of that same size, which purchase got which hat was
+    settled by candidate count and then by the order rows came out of the
+    database. So a receipt agreeing with the hat on colorway, size AND price
+    could lose it to a line that merely shared a model name and happened to be
+    listed first — and the loser's cost basis is what gets written.
+
+    Here both lines fit the one hat. `exact` agrees on colorway and size and
+    costs $79; `vague` agrees on nothing further and costs $999. Both
+    assignments have size 1, so the maximum-matching proof says nothing about
+    which one is returned. The evidence does.
+    """
+    exact = Purchase(item_title="Odysea Hydro - Rain Camo", model_name="Odysea Hydro",
+                     colorway="Rain Camo", size="classic", price=79.0)
+    vague = Purchase(item_title="Odysea Hydro", model_name="Odysea Hydro",
+                     colorway=None, size=None, price=999.0)
+    hat = _hat(model_name="Odysea Hydro", size="classic", colorway="Rain Camo")
+    hat.colors = []
+
+    # `vague` FIRST, so file order favors the wrong answer — the arrangement
+    # that produced a $999 cost basis where $79 was provable.
+    assigned = catalog_service.assign_purchases([vague, exact], [hat])
+
+    assert len(assigned) == 1, "only one purchase can have the one hat"
+    assert id(exact) in assigned, (
+        "the hat must go to the line that matches it on colorway, size and "
+        "price — not to whichever line was listed first"
+    )
+    assert assigned[id(exact)].hat is hat
 
 
 # ---------------- the backlog nothing ever looks at again -------------- #

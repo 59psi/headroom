@@ -57,7 +57,10 @@ RETAIL_RETENTION: dict[str, float] = {
     "worn": 0.30,
 }
 
-_FALLBACK_RETENTION = 0.4
+#: Applied when a hat's condition is not one of the three known values.
+#: Public, and named identically to the TS side, so `test_valuation_parity`
+#: can compare them — see the note in `lib/valuation.ts`.
+FALLBACK_RETENTION = 0.4
 
 #: Display names for each basis, matching the UI's `BASIS_LABEL`.
 BASIS_LABEL: dict[str, str] = {
@@ -95,7 +98,7 @@ def value_hat(hat: Hat) -> HatValue:
         return HatValue(ask, "comp")
 
     if retail > 0:
-        retention = RETAIL_RETENTION.get(condition, _FALLBACK_RETENTION)
+        retention = RETAIL_RETENTION.get(condition, FALLBACK_RETENTION)
         return HatValue(retail * retention, "retail")
 
     if ask > 0:

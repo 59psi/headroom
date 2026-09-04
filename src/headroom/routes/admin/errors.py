@@ -26,9 +26,18 @@ def _safe_display_id(hat: Hat) -> str | None:
 
 @router.get("/recent-errors", response_model=list[RecentError])
 async def recent_errors(limit: int = 20, db: AsyncSession = Depends(get_db)):
-    """Most recent hats with analysis_status='error', newest first."""
-    rows = await hat_service.list_by_analysis_status(
-        db, "error", limit=limit, newest_first=True
+    """Most recent hats carrying an analysis failure, newest first.
+
+    Keyed on the failure TEXT (`hat_service.failed_analysis_filters`), not on
+    `analysis_status == "error"`. The status predicate misses `fallback` and
+    `skipped`, which both carry a reason — and `fallback` is where every hat
+    lands when Claude is unreachable, so during a total outage this list and
+    the badge below it were empty while the failures card listed the whole
+    collection. The correct predicate had been sitting in `hat_service` the
+    whole time with a docstring explaining why this one was wrong.
+    """
+    rows = await hat_service.list_failed_analyses(
+        db, limit=limit, newest_first=True
     )
     return [
         RecentError(
@@ -44,5 +53,10 @@ async def recent_errors(limit: int = 20, db: AsyncSession = Depends(get_db)):
 
 @router.get("/recent-errors/count")
 async def recent_errors_count(db: AsyncSession = Depends(get_db)):
-    """Cheap count for nav-badge display."""
-    return {"count": await hat_service.count_by_analysis_status(db, "error")}
+    """Cheap count for nav-badge display. Same predicate as the list above.
+
+    A badge that counts a different set from the list it links to is worse
+    than no badge — and that was the state: both read `analysis_status`, so
+    both went quiet together in the one situation worth surfacing.
+    """
+    return {"count": await hat_service.count_failed_analyses(db)}

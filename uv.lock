@@ -683,22 +683,26 @@ wheels = [
 
 [[package]]
 name = "headroom"
-version = "2.75.3"
+version = "2.76.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },
     { name = "anthropic" },
     { name = "argon2-cffi" },
+    { name = "cryptography" },
     { name = "fastapi" },
     { name = "httpx" },
+    { name = "numpy" },
     { name = "onnxruntime" },
     { name = "pillow" },
     { name = "pillow-heif" },
+    { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "python-multipart" },
     { name = "qrcode" },
     { name = "rembg", extra = ["cpu"] },
     { name = "sqlalchemy", extra = ["asyncio"] },
+    { name = "starlette" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "webauthn" },
     { name = "zeroconf" },
@@ -718,16 +722,20 @@ requires-dist = [
     { name = "aiosqlite" },
     { name = "anthropic", specifier = ">=0.121.0" },
     { name = "argon2-cffi", specifier = ">=25.1.0" },
+    { name = "cryptography" },
     { name = "fastapi" },
     { name = "httpx" },
+    { name = "numpy" },
     { name = "onnxruntime" },
     { name = "pillow" },
     { name = "pillow-heif" },
+    { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "python-multipart" },
     { name = "qrcode", specifier = ">=8.2" },
     { name = "rembg", extras = ["cpu"], specifier = ">=2.0.78" },
     { name = "sqlalchemy", extras = ["asyncio"] },
+    { name = "starlette" },
     { name = "uvicorn", extras = ["standard"] },
     { name = "webauthn", specifier = ">=3.0.0" },
     { name = "zeroconf", specifier = ">=0.150.0" },

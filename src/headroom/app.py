@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import re
 import shutil
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -20,9 +21,11 @@ from headroom.services import (
     activity_service,
     analysis_queue,
     backup_service,
+    ca_vault,
     import_service,
     mdns_service,
     repricing,
+    tls_health,
 )
 
 logger = logging.getLogger(__name__)
@@ -32,12 +35,59 @@ FRONTEND_DIST = (PROJECT_ROOT / "frontend" / "dist").resolve()
 SEED_BRANDING = PROJECT_ROOT / "seed" / "branding"
 
 
+#: Any share-link token appearing in a logged URL path.
+#:
+#: A share token is a 256-bit bearer credential and it is a PATH parameter
+#: (`/api/public/share/{token}`), so uvicorn's access log writes it in clear at
+#: INFO on every public request — into the same rotated json-file the operator
+#: greps, and into anything shipping those logs onward. This is the same class
+#: as the documented `?key=` incident that moved the Google Vision key out of a
+#: query string, one layer down: `error_handler` already logs `path` and never
+#: the full URL "because query strings carry search terms and tokens", and that
+#: mitigation misses its own case because the secret is not in the query.
+#:
+#: Redacting is the fix that does not break every link already handed out.
+_SHARE_TOKEN_IN_PATH = re.compile(r"(/(?:api/public/)?share/)[A-Za-z0-9_\-]{16,}")
+
+
+class _RedactShareTokens(logging.Filter):
+    """Replace share tokens in any log record with a marker.
+
+    Applied to the access logger rather than the message site, because the
+    record is created inside uvicorn where this app has no call site to change.
+    Mutates `record.args` when the path arrives as an argument (uvicorn's
+    access log uses %-style args) and `record.msg` when it is already
+    interpolated, so it catches both shapes.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple):
+            record.args = tuple(
+                _SHARE_TOKEN_IN_PATH.sub(r"\1<redacted>", a) if isinstance(a, str) else a
+                for a in record.args
+            )
+        if isinstance(record.msg, str):
+            record.msg = _SHARE_TOKEN_IN_PATH.sub(r"\1<redacted>", record.msg)
+        return True
+
+
 def _configure_logging() -> None:
     """Apply a sane default logger config so warnings actually reach stdout.
 
     Only runs if the root logger has no handlers — uvicorn / pytest may have
     already configured logging, in which case we defer to them.
     """
+    # These two run whether or not we own the root handler: both are about
+    # other libraries' loggers, and deferring to uvicorn's config does not mean
+    # inheriting its verbosity or its habit of logging our credentials.
+    #
+    # httpx logs the full request URL at INFO for every outbound call — the
+    # marketplace, eBay, Google, Anthropic — which is noise that buries the
+    # app's own lines and is the mechanism by which a secret in a URL becomes a
+    # secret in a log file.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("uvicorn.access").addFilter(_RedactShareTokens())
+
     if logging.getLogger().handlers:
         return
     level = os.environ.get("HEADROOM_LOG_LEVEL", "INFO").upper()
@@ -264,11 +314,82 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     prune_task = asyncio.create_task(_prune_loop())
 
+    async def _tls_watch_loop():
+        """Daily: is the served certificate still valid, and is the CA still ours?
+
+        Both answers already existed and **neither had a caller that was not a
+        request handler**. `tls_health.check_certificate` and
+        `ca_vault.check_root` ran only when somebody opened Settings → Device,
+        which is the one moment an operator is already looking. The failure
+        this is for is the opposite: a certificate that quietly expired and
+        served for **37 days** while every other signal stayed green.
+
+        Seeding the root fingerprint at BOOT is the sharper half. `check_root`
+        records the served root the first time it sees one and reports a
+        mismatch forever after — but it was reached only by that page, so a
+        root regenerated before anyone opened the card was recorded as the
+        expected one and the alarm was permanently disarmed. Recording at boot
+        makes the first sighting happen when the CA is whatever the last
+        working deployment left, not whenever somebody happens to click.
+
+        Logs and does not enforce, for the reason `tls_health` documents: the
+        certificate belongs to Caddy, so failing readiness here would
+        restart-loop the app without fixing anything.
+        """
+        while True:
+            try:
+                status = await asyncio.to_thread(tls_health.check_certificate)
+                # `applicable` is False on every deployment without an HTTPS
+                # front door, which is most of them. Not a fault, and logging
+                # it as one would train the operator to ignore this line.
+                if status.applicable:
+                    if status.error:
+                        logger.error(
+                            "TLS: could not read the certificate served for %s: %s",
+                            status.host, status.error,
+                        )
+                    elif status.expired:
+                        logger.error(
+                            "TLS: the certificate served for %s has EXPIRED — "
+                            "every browser is refusing this site", status.host,
+                        )
+                    elif status.needs_attention:
+                        logger.error(
+                            "TLS: certificate for %s expires in %.0f day(s) and "
+                            "renewal has evidently stopped",
+                            status.host, status.days_remaining or 0.0,
+                        )
+                    elif status.hostname_ok is False:
+                        logger.error(
+                            "TLS: the certificate served for %s does not cover that "
+                            "name — a browser rejects it exactly as hard as an "
+                            "expired one", status.host,
+                        )
+                    async with async_session() as db:
+                        changed, expected = await ca_vault.check_root(
+                            db, status.ca_sha256
+                        )
+                    if changed:
+                        logger.error(
+                            "TLS: the local CA root CHANGED — every device that "
+                            "trusted %s must install the new one", expected,
+                        )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 — a probe must outlive any cycle
+                logger.warning("TLS watch loop error: %s", exc)
+            try:
+                await asyncio.sleep(24 * 3600)
+            except asyncio.CancelledError:
+                raise
+
+    tls_task = asyncio.create_task(_tls_watch_loop())
+
     try:
         yield
     finally:
         for task in (backup_task, app.state.repricing_task, prune_task,
-                     mdns_task, thumbs_task, exports_task):
+                     mdns_task, thumbs_task, exports_task, tls_task):
             if task is not None:
                 task.cancel()
                 try:

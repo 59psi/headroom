@@ -57,6 +57,47 @@ async def test_recent_errors_count_endpoint(client):
     assert resp.json() == {"count": 0}
 
 
+async def test_the_badge_sees_a_failure_that_is_not_status_error(client, db_session):
+    """The outage case. `fallback` is a failure and used to be invisible.
+
+    Both endpoints keyed on `analysis_status == "error"`. When Claude is
+    unreachable the pipeline does not set `error` — it degrades, writes the
+    reason, and sets **`fallback`**. So in the one situation where every hat in
+    the collection has failed, the nav badge read 0 and the error list was
+    empty, while the analysis-failures card listed all of them.
+
+    `skipped` (no API key configured) has the same shape and is included for
+    the same reason: it carries a reason and it wants retrying.
+
+    `failed_analysis_filters()` — the predicate whose own docstring explains
+    that keying on status "would not work" — was already in `hat_service` when
+    these two routes were written against status anyway.
+    """
+    from headroom.models.hat import Hat
+
+    db_session.add(Hat(
+        condition="new", size="classic", style="a_game",
+        analysis_status="fallback", analysis_error="529 Overloaded",
+    ))
+    db_session.add(Hat(
+        condition="new", size="classic", style="a_game",
+        analysis_status="skipped", analysis_error="No API key configured.",
+    ))
+    # Succeeded: no failure text, so it must NOT be counted however it is
+    # labelled — the text is what gets cleared on success.
+    db_session.add(Hat(
+        condition="new", size="classic", style="a_game",
+        analysis_status="ok", analysis_error=None,
+    ))
+    await db_session.commit()
+
+    assert (await client.get("/api/admin/recent-errors/count")).json() == {"count": 2}
+    rows = (await client.get("/api/admin/recent-errors")).json()
+    assert {r["analysis_error"] for r in rows} == {
+        "529 Overloaded", "No API key configured.",
+    }, "the badge and the list must describe the same set"
+
+
 # ---- Backup --------------------------------------------------------- #
 
 

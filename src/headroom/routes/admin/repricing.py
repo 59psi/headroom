@@ -7,6 +7,7 @@ is what had been happening for weeks.
 
 import asyncio
 import logging
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -61,6 +62,22 @@ async def run_repricing(request: Request):
             detail="A full re-pricing sweep is already running — watch its progress instead.",
         )
     factory = request.app.state.session_factory
+    # `remaining` means "still DUE", not "eligible at all". Without a cutoff it
+    # counted every non-manual hat in the collection, so it read the same
+    # before and after a run — pressing the button repeatedly reported an
+    # unchanging 234, which is indistinguishable from a button that does
+    # nothing.
+    #
+    # The horizon is the scheduler's own interval: a hat checked more recently
+    # than that is current, and everything else is owed a visit. That makes the
+    # number fall to zero as the shelf is worked through and grow back on its
+    # own, which is the behavior "press again" advice depends on. Anchoring it
+    # to the start of THIS request instead looked right and was not — hats
+    # stamped by an earlier press are always older than a later request, so the
+    # count stalled partway down and never reached zero.
+    due_before = datetime.now(timezone.utc) - timedelta(
+        hours=repricing.repricing_interval_hours()
+    )
     try:
         repriced, considered = await repricing.reprice_once(
             session_factory=factory, limit=repricing.MANUAL_SWEEP_LIMIT
@@ -74,7 +91,7 @@ async def run_repricing(request: Request):
     # scheduled=False: a button press proves the code works, not that the
     # background loop is alive, so it must not clear a standing failure.
     repricing.health().record_success(repriced, considered, scheduled=False)
-    remaining = await repricing.count_eligible(factory)
+    remaining = await repricing.count_eligible(factory, stale_before=due_before)
     return RepricingRunResult(
         repriced=repriced, considered=considered, remaining=remaining
     )

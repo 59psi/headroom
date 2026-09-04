@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +25,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+#: Strong references to in-flight harvests. asyncio keeps only a weak
+#: reference to a running task, so without this the collector can take a
+#: harvest mid-flight — and a harvest that vanishes never reaches the `finally`
+#: that releases the claim, which is the permanent lockout `create_task` was
+#: chosen to avoid in the first place.
+_running_harvests: set[asyncio.Task] = set()
+
 
 @router.get("/colorways/status", response_model=CatalogStatus)
 async def colorway_catalog_status(db: AsyncSession = Depends(get_db)):
@@ -38,7 +46,7 @@ async def colorway_catalog_status(db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/colorways/refresh", status_code=202, response_model=CatalogRefreshStarted)
-async def refresh_colorway_catalog(background: BackgroundTasks):
+async def refresh_colorway_catalog():
     """Harvest melinrecap listing titles into the colorway catalog.
 
     Runs in the background and returns immediately. The harvest is up to 9
@@ -47,8 +55,29 @@ async def refresh_colorway_catalog(background: BackgroundTasks):
     reverse proxy in front of this to time out first, on the one endpoint whose
     progress you cannot see. Every other long job in this app is already
     queued; this was the exception.
+
+    **Refuses a second harvest while one is in flight.** This had neither claim
+    nor lock while `/repricing/run-all`, which is structurally the same
+    endpoint, had both plus a long comment explaining why — and the asymmetry
+    was acknowledged nowhere. Two concurrent harvests interleave inserts of the
+    same listing title and one dies on a UNIQUE violation, which escapes the
+    per-category isolation the harvest exists to provide. The card re-enables
+    the moment the 202 lands, so pressing twice is ordinary behavior.
+
+    `create_task`, not `BackgroundTasks`, for the reason `run_repricing_all`
+    documents: background tasks do not run if the response fails to send, and a
+    claim whose release never runs disables the endpoint for the life of the
+    process.
     """
-    background.add_task(_harvest_in_background)
+    if not catalog_service.claim_harvest():
+        return CatalogRefreshStarted(
+            started=False,
+            already_running=True,
+            detail="A catalog refresh is already running — watch its progress.",
+        )
+    task = asyncio.create_task(_harvest_in_background())
+    _running_harvests.add(task)
+    task.add_done_callback(_running_harvests.discard)
     return CatalogRefreshStarted()
 
 
@@ -64,6 +93,11 @@ async def _harvest_in_background() -> None:
         logger.warning("Colorway catalog refresh failed: %s", exc)
     except Exception:
         logger.exception("Colorway catalog refresh crashed")
+    finally:
+        # `finally`, not the happy path: CancelledError is a BaseException, and
+        # a harvest cancelled at shutdown that kept the slot would refuse every
+        # press after the next start.
+        catalog_service.release_harvest()
 
 
 @router.post("/purchases/import")

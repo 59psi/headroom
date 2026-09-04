@@ -311,6 +311,11 @@ class CatalogRefreshStarted(BaseModel):
     """
 
     started: bool = True
+    #: A harvest was already queued or running, so this press started nothing.
+    #: Separate from `started` because "not started" has two meanings and the
+    #: card has to tell them apart — the same pair `RepricingSweepStarted`
+    #: carries, on the endpoint this one was modelled on but did not copy.
+    already_running: bool = False
     detail: str = "Catalog refresh running in the background — check back shortly."
 
 

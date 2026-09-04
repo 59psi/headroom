@@ -45,6 +45,50 @@ logger = logging.getLogger(__name__)
 #: page a working harvest and a dead button looked identical.
 progress = sweep_progress.SweepProgress()
 
+#: Whether a harvest is queued or running. Same mechanism, and the same
+#: reasoning, as `repricing._full_sweep_claimed` — which this endpoint went
+#: without for three releases while its structurally identical sibling had it.
+#:
+#: The harvest commits per page and upserts on `title`, so two concurrent runs
+#: interleave inserts of the same listing: one of them loses the race between
+#: its own SELECT and its INSERT and dies on
+#: `UNIQUE constraint failed: colorway_catalog.title`. That exception escapes
+#: the per-category isolation the harvest is built around — the whole point of
+#: which is that one bad category cannot abandon the rest — and because both
+#: runs share `progress`, the bar then reads 100% with a SQL error behind it.
+#:
+#: Reachable by ordinary use, not just by an API client: the card re-enables
+#: as soon as the 202 lands, so a second press a second later is a normal
+#: thing for a person to do when nothing appears to have happened.
+_harvest_claimed = False
+
+
+def claim_harvest() -> bool:
+    """Reserve the harvest slot. False when one is already queued or running.
+
+    Check-and-set with no await between the two, so a second request cannot
+    land in the middle. The claim is taken in the REQUEST, not in the task:
+    a background task has not started when the response is sent, so a guard
+    reading `progress.running` has a window where a harvest is queued and
+    invisible — the bug this endpoint's sibling documents at length.
+    """
+    global _harvest_claimed
+    if _harvest_claimed:
+        return False
+    _harvest_claimed = True
+    return True
+
+
+def release_harvest() -> None:
+    """Free the slot. Must run in a `finally`, or one crashed harvest refuses
+    every later press for the life of the process."""
+    global _harvest_claimed
+    _harvest_claimed = False
+
+
+def harvest_in_flight() -> bool:
+    return _harvest_claimed
+
 _PER_PAGE = 100
 _MAX_PAGES_PER_CATEGORY = 50  # safety backstop; ~5000 listings/category
 
@@ -815,36 +859,6 @@ def _match_score(purchase: Purchase, hat: Hat) -> int | None:
     return score
 
 
-def _by_scarcity(purchases: Sequence[Purchase], available: Sequence[Hat]) -> list[Purchase]:
-    """Purchases with the fewest possible hats first.
-
-    Assignment is greedy — each purchase takes the best hat still free — so the
-    ORDER decides what a later purchase has left. In file order, a line with
-    fifty candidates can take the one hat that the next line's only candidate
-    was; that line then matches nothing, though a different order satisfies
-    both. On this collection 196 of 216 hat units had at least one candidate
-    while only 143 matched, and the shortfall was almost entirely hats claimed
-    out from under a purchase with no alternative.
-
-    Serving the scarcest first is the standard heuristic for that. It costs one
-    extra scoring pass, changes nothing about what COUNTS as a match, and stays
-    deterministic because Python's sort is stable, so equal counts keep their
-    original order.
-
-    Shared by the importer and `preview_import` for the same reason `_line_fields`
-    is: a preview that ordered differently from the import would under-report
-    the matches the import then makes, and be wrong in the one direction nobody
-    checks. Keyed on `id(p)` rather than `p.id` — the preview scores TRANSIENT
-    Purchase rows whose primary key is still None, so `p.id` would collide them
-    all onto a single bucket.
-    """
-    counts = {
-        id(p): sum(1 for h in available if _match_score(p, h) is not None)
-        for p in purchases
-    }
-    return sorted(purchases, key=lambda p: counts[id(p)])
-
-
 class Assignment(NamedTuple):
     """One purchase's chosen hat, and how confident that choice is."""
 
@@ -854,6 +868,78 @@ class Assignment(NamedTuple):
     #: apart, so the tie is reported rather than silently broken.
     ambiguous: bool
     tied_hat_ids: list[int]
+
+
+def _improve_by_swapping(
+    candidates: dict[int, list[tuple[int, Hat]]],
+    holder: dict[int, tuple[Purchase, Hat]],
+) -> None:
+    """Raise the total score of an assignment without changing its size.
+
+    Ordering the purchases by evidence fixes who reaches a contended hat
+    first, which handles the common shape. It does not make the result
+    max-WEIGHT: Kuhn's optimizes cardinality, and among the many assignments
+    of that same maximum size nothing was choosing the better-evidenced one.
+
+    This closes the rest with the two moves that cannot lose a link:
+
+    * **Swap** two matched pairs, `(p1,h1) + (p2,h2)` → `(p1,h2) + (p2,h1)`,
+      when both new pairs are candidates and the total goes up. Two links
+      before, two after.
+    * **Relocate** a matched purchase onto a hat nobody holds, when that
+      scores higher. One link before, one after.
+
+    Both preserve cardinality exactly, so the maximum-matching guarantee that
+    `test_matching_achieves_the_maximum_possible` proves is untouched — this
+    can only improve the tiebreak. Run to fixpoint; each pass strictly
+    increases an integer total that is bounded above, so it terminates.
+
+    **This is not a proof of global weight-optimality**, and saying so matters
+    given what this module has already been wrong about. A true max-weight
+    maximum matching needs min-cost max-flow; 2-swaps reach a local optimum
+    that is exact for the realistic contention shape (several receipt lines of
+    one model competing for the same few hats) and can in principle miss an
+    improvement that requires rotating three or more pairs at once.
+    """
+    score_of: dict[tuple[int, int], int] = {}
+    for pid, scored in candidates.items():
+        for sc, hat in scored:
+            score_of[(pid, id(hat))] = sc
+
+    def paired_score(purchase: Purchase, hat: Hat) -> int | None:
+        return score_of.get((id(purchase), id(hat)))
+
+    improved = True
+    while improved:
+        improved = False
+        held = list(holder.items())
+
+        # Relocate onto an unheld hat that scores better.
+        for hid, (purchase, hat) in held:
+            if holder.get(hid) != (purchase, hat):
+                continue  # already moved in this pass
+            current = paired_score(purchase, hat) or 0
+            for sc, other in candidates[id(purchase)]:
+                if sc <= current or id(other) in holder:
+                    continue
+                del holder[hid]
+                holder[id(other)] = (purchase, other)
+                improved = True
+                break
+
+        # Swap two held pairs when the pair of new edges scores higher.
+        held = list(holder.items())
+        for i, (h1, (p1, hat1)) in enumerate(held):
+            for h2, (p2, hat2) in held[i + 1:]:
+                if holder.get(h1) != (p1, hat1) or holder.get(h2) != (p2, hat2):
+                    continue
+                now = (paired_score(p1, hat1) or 0) + (paired_score(p2, hat2) or 0)
+                a, b = paired_score(p1, hat2), paired_score(p2, hat1)
+                if a is None or b is None or a + b <= now:
+                    continue
+                holder[h2] = (p1, hat2)
+                holder[h1] = (p2, hat1)
+                improved = True
 
 
 def assign_purchases(
@@ -866,9 +952,16 @@ def assign_purchases(
     Greedy — take each purchase's best free hat, scarcest purchase first — is
     only a heuristic, and it was measured leaving 3 real matches unclaimed on a
     294-line history the moment the scoring changed. The property it seemed to
-    have was luck, and `_by_scarcity` was the trick that bought it: order the
-    purchases so the constrained ones go first and hope nothing downstream
-    starves. Hope is the wrong mechanism for "did this hat get its price".
+    have was luck, and a scarcity ordering was the trick that bought it: put
+    the constrained purchases first and hope nothing downstream starves. Hope
+    is the wrong mechanism for "did this hat get its price".
+
+    (That helper, `_by_scarcity`, outlived its caller by several releases. It
+    had no call site at all, while this docstring, `CLAUDE.md` and a test
+    docstring all described it as the thing carrying the result — the test
+    going as far as to claim a sabotage check against a function that never
+    ran. Deleted. The lesson is narrow and worth keeping: when an algorithm is
+    replaced, the prose explaining the old one is the part that survives.)
     Augmenting paths simply do not have the failure — a later purchase can
     displace an earlier one and send it to another hat it also fits.
     Deterministic, and O(V·E), which at a few hundred rows is nothing.
@@ -897,8 +990,8 @@ def assign_purchases(
         tied[id(purchase)] = [h.id for sc, h in scored if sc == top and h.id is not None]
         ambiguous[id(purchase)] = len(tied[id(purchase)]) > 1
 
-    # Keyed on `id(hat)`, NOT `hat.id` — the same trap `_by_scarcity`
-    # documents for purchases. A transient row's primary key is still None, so
+    # Keyed on `id(hat)`, NOT `hat.id`. A transient row's primary key is still
+    # None — `preview_import` scores unsaved Purchase and Hat objects — so
     # `hat.id` collapses every unsaved hat onto one bucket and the matching
     # silently returns one result for the whole shelf.
     holder: dict[int, tuple[Purchase, Hat]] = {}
@@ -914,11 +1007,27 @@ def assign_purchases(
                 return True
         return False
 
-    # Fewest candidates first. This no longer decides correctness — the result
-    # is maximum either way — but it keeps the search shallow and the output
-    # stable against reordering of the input.
-    for purchase in sorted(purchases, key=lambda p: len(candidates[id(p)])):
+    # BEST-EVIDENCED FIRST, then fewest candidates. Kuhn's guarantees maximum
+    # CARDINALITY whatever order it runs in, so this ordering is free — and it
+    # is not cosmetic. Among the many assignments of that same maximum size,
+    # the one produced depends entirely on who claims a contended hat first,
+    # and until now that was decided by candidate count and then by the order
+    # the rows came out of the database. A receipt matching a hat on colorway,
+    # size AND price to the cent lost the hat to a line that merely shared a
+    # model name and happened to be listed earlier — writing that line's cost
+    # basis onto the hat. Measured: a $999 purchase price stored where $79 was
+    # provable. The scores existed the whole time and nothing consulted them
+    # at this level.
+    for purchase in sorted(
+        purchases,
+        key=lambda p: (
+            -(candidates[id(p)][0][0] if candidates[id(p)] else 0),
+            len(candidates[id(p)]),
+        ),
+    ):
         augment(purchase, set())
+
+    _improve_by_swapping(candidates, holder)
 
     out: dict[int, Assignment] = {}
     for purchase, hat in holder.values():
@@ -1178,7 +1287,16 @@ async def is_real_product(db: AsyncSession, model_name: str | None, colorway: st
       which names no product. It survived review because the fixture colorway
       was `Deep Dive`: at two tokens, containment happens to fail. **Single-word
       colorways are the common case** — Camo, Black, Navy, Bone — and every one
-      of them accepted anything containing it, including `Camo Camo`.
+      of them accepted anything containing it.
+
+      (An earlier draft of this paragraph cited `Camo Camo` as an example of
+      what the fix rejects. Executed against the real function it still
+      returns True, because the comparison is on token SETS and a repeated
+      word collapses — harmless, since it names the same product, but it was a
+      claim about behavior that the behavior did not support, inside the
+      docstring of a function whose two previous versions were also confidently
+      wrong. Removed rather than reworded: the honest example is a colorway
+      carrying a word the catalog does not have at all.)
 
       That is not a cosmetic false positive. `_apply_analyzed_colorway` WRITES
       whatever survives, and a stored colorway is a VETO in `_match_score` — so

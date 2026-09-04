@@ -1,6 +1,6 @@
 [project]
 name = "headroom"
-version = "2.75.3"
+version = "2.76.0"
 description = "Headroom — AI-powered hat collection tracker"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -20,6 +20,20 @@ dependencies = [
     # it (which anthropic 1.0 does) the lock drops it and three services fail
     # at import, with nothing in this file to explain why.
     "httpx",
+    # The same argument as `httpx` above, applied to the four cases it was
+    # written for and then not applied to. Each is imported BY NAME in
+    # `src/headroom` and reaches the environment only as somebody else's
+    # transitive, so a single upstream release that drops it breaks this app at
+    # import with nothing in this file to explain why.
+    #
+    # `cryptography` is the sharpest: it arrives via `webauthn`, and the code
+    # that needs it is `tls_health` / `ca_vault` parsing X.509 — which has
+    # nothing to do with WebAuthn, so there is no reason for that dependency to
+    # keep carrying it.
+    "cryptography",
+    "starlette",        # middleware + Response types, via fastapi
+    "numpy",            # color_extraction's LAB math, via rembg
+    "pydantic",         # schemas, via fastapi/pydantic-settings
     "rembg[cpu]>=2.0.78",
     "onnxruntime",
     "argon2-cffi>=25.1.0",
@@ -106,7 +120,12 @@ ignore = [
     "B008",     # FastAPI's `Depends()` in a default IS the framework's idiom
     "PLC0415",  # import-outside-top-level: a deliberate pattern here, used to
                 # break import cycles and keep heavy modules (sqlite3, rembg,
-                # retail_pricing) off the boot path. 33 sites, all intentional.
+                # retail_pricing) off the boot path. All intentional. (A count
+                # lived here and was exactly right the day it was written; at
+                # this release cadence it was 18% stale within a week. This
+                # project has learned that lesson for test counts — the same
+                # rule applies to every self-referential number in a file that
+                # is not regenerated.)
     "E402",     # same reason in reverse — `tests/conftest.py` MUST pop the API
                 # keys out of os.environ before any app module is imported, or
                 # config.py reads them at import time and the suite starts

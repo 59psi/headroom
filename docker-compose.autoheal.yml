@@ -1,0 +1,47 @@
+# Give the healthcheck a consumer.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.autoheal.yml up -d
+#
+# WHY THIS EXISTS. `docker-compose.yml` defines a healthcheck that polls
+# `/health/ready`, which fails on low disk and on a dead background worker —
+# the two failures most likely to happen unattended. Nothing consumed it.
+# Docker restart policies (`restart: unless-stopped`) fire when a container
+# EXITS; they never fire on `unhealthy`. So a container sitting up with a dead
+# import worker, or a volume with 200 MB free, stayed "running" indefinitely
+# and the only place the answer appeared was a `docker ps` nobody was typing.
+#
+# WHY IT IS AN OVERLAY AND NOT THE BASE FILE. Autoheal works by talking to the
+# Docker API, which means mounting `/var/run/docker.sock`. **That is
+# root-equivalent access to the host** — a process that can drive the Docker
+# socket can start a privileged container and own the machine. Putting that in
+# the default deployment to recover a hobby app's background worker is a bad
+# trade made silently. It is opt-in, and it is mounted READ-ONLY, which is
+# enough for the restart call and blocks nothing autoheal needs.
+#
+# THE OTHER OPTION, WITH NO PRIVILEGE AT ALL, is a host-side timer that polls
+# the endpoint over HTTP and restarts the unit. `scripts/headroom-watchdog.sh`
+# plus the systemd units in docs/OPERATIONS.md §7 do exactly that and need no
+# socket. Prefer it if you already run systemd on the host, which the Pi does.
+
+services:
+  autoheal:
+    image: willfarrell/autoheal:1.2.0
+    restart: unless-stopped
+    environment:
+      # Only containers explicitly labelled below — never "every unhealthy
+      # container on the host", which is autoheal's default and would let this
+      # file reach outside the deployment it ships with.
+      AUTOHEAL_CONTAINER_LABEL: headroom.autoheal
+      # The healthcheck already retries 3x at 30s before reporting unhealthy,
+      # so by the time autoheal sees it the condition has persisted ~90s.
+      # Waiting further just extends the outage.
+      AUTOHEAL_START_PERIOD: "0"
+      AUTOHEAL_INTERVAL: "30"
+    volumes:
+      # Read-only: sufficient to list containers and POST a restart.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  headroom:
+    labels:
+      # Autoheal restarts containers carrying this label and only those.
+      headroom.autoheal: "true"

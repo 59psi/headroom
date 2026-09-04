@@ -326,3 +326,33 @@ async def test_an_explicit_construction_still_beats_the_legacy_flags(client):
     })
 
     assert resp.json()["construction"] == "Waxed Canvas"
+
+
+@pytest.mark.anyio
+async def test_the_list_reports_a_total_so_a_cap_is_visible(client, db_session):
+    """A ceiling reached silently is a wrong number, not a short page.
+
+    The whole-collection views (Hats grid, Valuation totals, Home carousel) all
+    filter client-side, so a truncated response does not look truncated — it
+    looks like hats vanished and like the collection is worth less than it is.
+    `X-Total-Count` is a header rather than an envelope because the body is a
+    bare list several callers consume directly.
+
+    The count shares `_hat_list_filters` with the page, so the two cannot
+    describe different sets — a second copy of those clauses is how a total
+    starts disagreeing with the rows beneath it.
+    """
+    for _ in range(5):
+        await client.post(
+            "/api/hats", json={"condition": "new", "size": "classic", "style": "a_game"}
+        )
+
+    resp = await client.get("/api/hats", params={"limit": 2})
+    assert len(resp.json()) == 2, "the page is capped"
+    assert resp.headers["X-Total-Count"] == "5", "the total is not"
+
+    # And it respects the same filters the page does.
+    filtered = await client.get(
+        "/api/hats", params={"limit": 50, "style": "trenches"}
+    )
+    assert filtered.headers["X-Total-Count"] == "0"
