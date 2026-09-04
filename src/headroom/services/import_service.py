@@ -15,7 +15,7 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.config import env_flag
@@ -328,13 +328,36 @@ async def _bump_job_counter(job_id: int, item_status: str) -> None:
             job.finished_at = datetime.now(timezone.utc)
         await db.commit()
         if job.status == "done":
-            # Clean up the per-job staging directory
-            jdir = staging_dir() / f"job-{job.id}"
-            if jdir.exists():
-                try:
-                    shutil.rmtree(jdir)
-                except OSError:
-                    pass
+            # Confirm nothing is still READING from the directory before
+            # deleting it, by asking the items rather than trusting the
+            # counters. The counters are a summary maintained by this function
+            # and recomputed wholesale by `_recover_on_boot`; the sum reaching
+            # `total` is therefore evidence about the summary, not about
+            # whether a file is currently open. A recount that lands on `done`
+            # while an item is queued or mid-read deletes the source photos out
+            # from under it, and the failure is silent — the item errors with a
+            # missing file, which is indistinguishable from a bad upload.
+            still_live = (
+                await db.execute(
+                    select(func.count(ImportJobItem.id)).where(
+                        ImportJobItem.job_id == job.id,
+                        ImportJobItem.status.in_(("queued", "processing")),
+                    )
+                )
+            ).scalar_one()
+            if still_live:
+                logger.warning(
+                    "Import job %s reached 'done' with %d item(s) still live — "
+                    "leaving the staging directory in place",
+                    job.id, still_live,
+                )
+            else:
+                jdir = staging_dir() / f"job-{job.id}"
+                if jdir.exists():
+                    try:
+                        shutil.rmtree(jdir)
+                    except OSError:
+                        pass
 
 
 async def _worker_loop() -> None:

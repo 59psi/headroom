@@ -92,10 +92,33 @@ logger = logging.getLogger(__name__)
 _MDNS_GROUP = "224.0.0.251"
 _MDNS_PORT = 5353
 
-#: The record types our advertisement actually holds at the hostname. Anything
-#: else gets a negative answer. A/AAAA are excluded because zeroconf answers
-#: them itself; ANY is excluded because it is never a negative answer.
-_HELD_TYPES = (1, 28)
+def _held_types() -> tuple[int, ...]:
+    """The record types this advertisement actually holds at the hostname.
+
+    Everything else gets a negative answer. A/AAAA are excluded from the *query*
+    filter because zeroconf answers them itself; ANY is excluded because it is
+    never a negative answer.
+
+    This was the fixed tuple `(1, 28)` — a statement to every client on the
+    network that this host publishes an AAAA record. On an IPv4-only host,
+    where `_lan_ipv6()` returns None and no AAAA is ever registered, that is a
+    signed claim that a record exists when it does not. An NSEC is a NEGATIVE
+    answer whose whole job is "stop waiting, this is all there is", so naming a
+    type we cannot serve tells a v6-preferring client to keep waiting for an
+    address that never arrives — reinstating the multi-second stall this
+    responder was written to remove. `tests/test_mdns_nsec.py` stated exactly
+    that rule in a docstring, one line above the assertion pinning the claim.
+
+    DERIVED from `_ipv6` rather than stored. A second global holding the same
+    fact is a second thing that can be wrong: it has to be set when mDNS starts
+    and cleared when it stops, and a stale copy is the mis-statement this
+    exists to prevent — written that way first, it leaked across tests within
+    the hour. `_ipv6` is assigned beside the registration itself, so reading it
+    here cannot drift from what is on the wire.
+    """
+    return (1, 28) if _ipv6 else (1,)
+
+
 _TYPE_NSEC = 47
 _QTYPE_ANY = 255
 
@@ -149,7 +172,7 @@ def _type_bitmap(types: tuple[int, ...]) -> bytes:
 def nsec_payload(hostname: str) -> bytes:
     """A response whose single answer is "this name has only A and AAAA"."""
     owner = _encode_name(hostname)
-    rdata = owner + _type_bitmap(_HELD_TYPES)
+    rdata = owner + _type_bitmap(_held_types())
     header = struct.pack(">HHHHHH", 0, 0x8400, 0, 1, 0, 0)  # QR + AA, 1 answer
     rr = owner + struct.pack(
         ">HHIH", _TYPE_NSEC, _CLASS_FLUSH_IN, _NSEC_TTL, len(rdata)
@@ -180,7 +203,7 @@ def nsec_reply_for(query: bytes, hostname: str) -> tuple[bytes, bool] | None:
         off += 4
         if name.lower() != target:
             continue  # not our name — never answer for someone else's
-        if qtype in _HELD_TYPES or qtype == _QTYPE_ANY:
+        if qtype in _held_types() or qtype == _QTYPE_ANY:
             continue  # zeroconf has a real answer; ours would be a duplicate
         matched = True
         # QU bit: the querier asked for a unicast reply.

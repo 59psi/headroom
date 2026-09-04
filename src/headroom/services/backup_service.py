@@ -517,8 +517,27 @@ def _write_upload_state_sync(h: BackupHealth) -> None:
         # Write-then-rename: a torn file here would read as "never uploaded",
         # which is the exact false negative this whole record exists to remove.
         tmp = path.with_name(path.name + ".tmp")
-        tmp.write_text(json.dumps(payload))
+        # fsync the FILE, then the DIRECTORY, then rename. Write-then-rename is
+        # atomic with respect to a crash of this process, but not with respect
+        # to a power cut: without the syncs the rename can reach the disk while
+        # the bytes it points at have not, leaving a zero-length file that reads
+        # as "never uploaded" — the exact false negative this record exists to
+        # remove, produced by the mechanism chosen to prevent it.
+        #
+        # This is the same argument `HEADROOM_SQLITE_SYNCHRONOUS=FULL` makes,
+        # and it was made here after an unclean shutdown on this deployment's SD
+        # card destroyed Caddy's private key. One fsync at most once a day is
+        # not a cost worth reasoning about.
+        with open(tmp, "w") as fh:
+            fh.write(json.dumps(payload))
+            fh.flush()
+            os.fsync(fh.fileno())
         tmp.replace(path)
+        dir_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
     except OSError as exc:
         logger.warning("Could not record backup upload state: %s", exc)
 

@@ -1287,7 +1287,16 @@ async def is_real_product(db: AsyncSession, model_name: str | None, colorway: st
       which names no product. It survived review because the fixture colorway
       was `Deep Dive`: at two tokens, containment happens to fail. **Single-word
       colorways are the common case** — Camo, Black, Navy, Bone — and every one
-      of them accepted anything containing it, including `Camo Camo`.
+      of them accepted anything containing it.
+
+      (An earlier draft of this paragraph cited `Camo Camo` as an example of
+      what the fix rejects. Executed against the real function it still
+      returns True, because the comparison is on token SETS and a repeated
+      word collapses — harmless, since it names the same product, but it was a
+      claim about behavior that the behavior did not support, inside the
+      docstring of a function whose two previous versions were also confidently
+      wrong. Removed rather than reworded: the honest example is a colorway
+      carrying a word the catalog does not have at all.)
 
       That is not a cosmetic false positive. `_apply_analyzed_colorway` WRITES
       whatever survives, and a stored colorway is a VETO in `_match_score` — so

@@ -41,6 +41,20 @@ HOST = "headroom.local"
 TYPE_A, TYPE_AAAA, TYPE_NSEC, TYPE_SRV, TYPE_HTTPS, TYPE_ANY = 1, 28, 47, 33, 65, 255
 
 
+@pytest.fixture(autouse=True)
+def _dual_stack_host(monkeypatch):
+    """Most tests here describe a host with both address families.
+
+    Stated rather than inherited from a module default. The NSEC bitmap is
+    derived from `_ipv6`, so which host a test is describing decides what the
+    correct bytes are — leaving that implicit is how a test ends up asserting
+    the shape of whatever the module happened to be holding.
+    """
+    from headroom.services import mdns_service
+
+    monkeypatch.setattr(mdns_service, "_ipv6", "2600:1::1")
+
+
 def query(name: str, qtype: int, *, unicast: bool = False) -> bytes:
     qclass = 0x8001 if unicast else 0x0001
     header = struct.pack(">HHHHHH", 0, 0, 1, 0, 0, 0)
@@ -82,16 +96,73 @@ async def test_the_answer_is_an_nsec_owned_by_our_hostname():
     assert rdata[len(owner):] == _type_bitmap((TYPE_A, TYPE_AAAA))
 
 
-async def test_the_bitmap_says_exactly_A_and_AAAA_exist():
-    """A bitmap claiming a type we cannot serve would be worse than silence."""
-    bitmap = _type_bitmap((TYPE_A, TYPE_AAAA))
-    assert bitmap == bytes([0, 4, 0x40, 0x00, 0x00, 0x08])
-
-    present = {
+def _types_in(bitmap: bytes) -> set[int]:
+    return {
         t for t in range(8 * bitmap[1])
         if bitmap[2 + t // 8] & (0x80 >> (t % 8))
     }
-    assert present == {TYPE_A, TYPE_AAAA}
+
+
+async def test_the_bitmap_says_exactly_A_and_AAAA_exist_on_a_dual_stack_host():
+    """A bitmap claiming a type we cannot serve would be worse than silence."""
+    bitmap = _type_bitmap((TYPE_A, TYPE_AAAA))
+    assert bitmap == bytes([0, 4, 0x40, 0x00, 0x00, 0x08])
+    assert _types_in(bitmap) == {TYPE_A, TYPE_AAAA}
+
+
+async def test_an_ipv4_only_host_does_not_claim_an_AAAA_it_has_not_got(monkeypatch):
+    """The sentence above, applied to the case that violated it.
+
+    The bitmap was the fixed tuple `(1, 28)`, so on a host with no global IPv6
+    — where `_lan_ipv6()` returns None and no AAAA is ever registered — every
+    NSEC this app sent asserted to the whole network that an AAAA record exists
+    at this name.
+
+    Patches `_ipv6`, the value assigned beside the registration itself, because
+    that is now the only place the answer comes from.
+
+    An NSEC is a NEGATIVE answer whose entire job is "stop waiting, this is all
+    there is". Naming a type we cannot serve inverts that: a v6-preferring
+    client is told the record exists, so it keeps waiting for an address that
+    never arrives — reinstating the multi-second stall the responder was
+    written to remove, for exactly the clients it was written for.
+
+    The docstring on the sibling test stated the rule and the assertion beneath
+    it pinned the violation.
+    """
+    from headroom.services import mdns_service
+
+    monkeypatch.setattr(mdns_service, "_ipv6", None)  # v4-only host
+
+    payload = mdns_service.nsec_payload(HOST)
+    owner = mdns_service._encode_name(HOST)
+    rr = payload[12:]
+    rdlen = struct.unpack(">H", rr[len(owner) + 8:len(owner) + 10])[0]
+    rdata = rr[len(owner) + 10:len(owner) + 10 + rdlen]
+    bitmap = rdata[len(owner):]
+
+    assert _types_in(bitmap) == {TYPE_A}, "must not claim an AAAA that is not there"
+
+
+async def test_an_ipv4_only_host_negates_AAAA_instead_of_ignoring_it(monkeypatch):
+    """The other half: with no AAAA registered, zeroconf answers nothing.
+
+    So an AAAA question is precisely the one that must be negated. The query
+    filter skipped A and AAAA unconditionally — correct on a dual-stack host,
+    where zeroconf owns both, and wrong on a v4-only one, where it leaves the
+    silence that costs the client its full resolver timeout.
+    """
+    from headroom.services import mdns_service
+
+    monkeypatch.setattr(mdns_service, "_ipv6", None)  # v4-only host
+
+    reply = mdns_service.nsec_reply_for(query(HOST, TYPE_AAAA), HOST)
+    assert reply is not None, "an unanswerable AAAA query must get an NSEC"
+
+    # A is still zeroconf's to answer — ours would duplicate a real record.
+    assert mdns_service.nsec_reply_for(
+        query(HOST, TYPE_A), HOST
+    ) is None
 
 
 @pytest.mark.parametrize("qtype", [TYPE_A, TYPE_AAAA, TYPE_ANY])

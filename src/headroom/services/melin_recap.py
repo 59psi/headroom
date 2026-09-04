@@ -28,6 +28,7 @@ from typing import NamedTuple
 import httpx
 
 from headroom.config import settings
+from headroom.schemas.hat import KNOWN_CONSTRUCTIONS
 
 logger = logging.getLogger(__name__)
 
@@ -313,7 +314,6 @@ def _rival_construction(product: str, construction: str | None) -> bool:
     """
     if not construction:
         return False
-    from headroom.schemas.hat import KNOWN_CONSTRUCTIONS  # noqa: PLC0415 — cycle
 
     # `<Model> - <Colorway>`; without a separator the whole string is the model.
     model_half = product.split(" - ", 1)[0]

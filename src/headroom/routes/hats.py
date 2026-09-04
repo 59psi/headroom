@@ -3,7 +3,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -63,9 +63,27 @@ async def list_hats(
     # like the collection is worth less than it is. 1000 is well past a personal
     # collection while still bounding the response.
     limit: int = Query(50, ge=1, le=1000),
+    response: Response = None,  # type: ignore[assignment]
     db: AsyncSession = Depends(get_db),
 ):
     hats = await hat_service.list_hats(db, case_id, style, condition, status, offset, limit)
+    # A cap that is reached silently is a wrong number, not a short page. The
+    # whole-collection views filter client-side, so a truncated response does
+    # not look truncated — it looks like hats vanished and like the collection
+    # is worth less than it is. `X-Total-Count` is a header rather than an
+    # envelope because the body is a bare list that several callers consume
+    # directly; reshaping it to add a total would be a breaking change to
+    # solve a reporting problem.
+    if response is not None:
+        response.headers["X-Total-Count"] = str(
+            await hat_service.count_hats(db, case_id, style, condition, status)
+        )
+    if len(hats) == limit:
+        logger.warning(
+            "GET /api/hats hit its limit of %d (offset=%d) — the response is "
+            "truncated and any client total computed from it is wrong",
+            limit, offset,
+        )
     return [_hat_to_read(h) for h in hats]
 
 

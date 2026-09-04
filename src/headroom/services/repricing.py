@@ -230,13 +230,21 @@ async def _eligible_hats(db, limit: int | None = None) -> list[Hat]:
     return list((await db.execute(stmt)).scalars().all())
 
 
-async def count_eligible(session_factory=None) -> int:
+async def count_eligible(session_factory=None, *, stale_before=None) -> int:
     """How many hats are still awaiting a sweep.
 
     Lets a bounded manual run say "50 done, 184 to go" instead of leaving the
     reader to guess whether the button finished the job. A COUNT, never
     `len()` of a capped list — that mistake has been made three times in this
     codebase already (colorway catalog, analysis pending_count, guest search).
+
+    `stale_before` is what makes the number mean "still to do". Without it this
+    counted every eligible hat in the collection, so the figure was identical
+    before and after a run and `remaining` never decreased — pressing the
+    button fifty times reported the same 234 outstanding, which reads as a
+    button that does nothing. The sweep stamps `resale_checked_at` on EVERY
+    attempt (including the ones it cannot price), so "checked before this run
+    started, or never" is exactly the set a further press would visit.
     """
     from sqlalchemy import func  # noqa: PLC0415 — local, only this path needs it
 
@@ -255,6 +263,14 @@ async def count_eligible(session_factory=None) -> int:
                         Hat.disposed_at.is_(None),
                         (Hat.resale_price_scope.is_(None))
                         | (Hat.resale_price_scope != "manual"),
+                        *(
+                            (
+                                (Hat.resale_checked_at.is_(None))
+                                | (Hat.resale_checked_at < stale_before),
+                            )
+                            if stale_before is not None
+                            else ()
+                        ),
                     )
                 )
             ).scalar_one()

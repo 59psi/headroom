@@ -195,6 +195,30 @@ async def create_hat(db: AsyncSession, data: HatCreate) -> Hat:
     return await _reload_hat(db, hat.id)
 
 
+def _hat_list_filters(
+    case_id: int | None, style: str | None, condition: str | None, status: str
+) -> tuple:
+    """The WHERE clauses `list_hats` and `count_hats` must share.
+
+    Two copies would let `X-Total-Count` describe a different set from the page
+    it is counting — which is worse than no count, because the disagreement is
+    invisible until someone adds a filter to one and not the other.
+    `status == "all"` deliberately adds nothing.
+    """
+    clauses = []
+    if case_id is not None:
+        clauses.append(Hat.case_id == case_id)
+    if style:
+        clauses.append(Hat.style == style)
+    if condition:
+        clauses.append(Hat.condition == condition)
+    if status == "active":
+        clauses.append(Hat.disposed_at.is_(None))
+    elif status == "disposed":
+        clauses.append(Hat.disposed_at.is_not(None))
+    return tuple(clauses)
+
+
 async def list_hats(
     db: AsyncSession,
     case_id: int | None = None,
@@ -207,18 +231,8 @@ async def list_hats(
     query = (
         select(Hat)
         .options(*_hat_loads())
+        .where(*_hat_list_filters(case_id, style, condition, status))
     )
-    if case_id is not None:
-        query = query.where(Hat.case_id == case_id)
-    if style:
-        query = query.where(Hat.style == style)
-    if condition:
-        query = query.where(Hat.condition == condition)
-    if status == "active":
-        query = query.where(Hat.disposed_at.is_(None))
-    elif status == "disposed":
-        query = query.where(Hat.disposed_at.is_not(None))
-    # status == "all" → no filter
     query = query.order_by(Hat.id).offset(offset).limit(limit)
     result = await db.execute(query)
     return list(result.scalars().all())
@@ -570,6 +584,27 @@ async def backfill_export_images(db: AsyncSession, limit: int = 5000) -> int:
         if await make_export_image_async(source, cache) is not None:
             made += 1
     return made
+
+
+async def count_hats(
+    db: AsyncSession,
+    case_id: int | None = None,
+    style: str | None = None,
+    condition: str | None = None,
+    status: str = "active",
+) -> int:
+    """How many hats a `list_hats` call would match if it were not capped.
+
+    A SQL COUNT over the same filters, so `X-Total-Count` cannot disagree with
+    the page beneath it. Exists because the list route's 1000-row ceiling is
+    reached silently: the whole-collection views filter client-side, so a
+    truncated response looks like missing hats and a smaller collection rather
+    than like a short page.
+    """
+    query = select(func.count(Hat.id)).where(
+        *_hat_list_filters(case_id, style, condition, status)
+    )
+    return int((await db.execute(query)).scalar() or 0)
 
 
 async def list_by_analysis_status(

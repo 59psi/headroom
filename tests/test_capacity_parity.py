@@ -66,11 +66,29 @@ async def test_the_placeholder_is_built_and_not_typed():
     assert "${DEFAULT_BEANIE_CAPACITY}" in placeholder.group(1)
 
 
-async def test_no_page_hardcodes_a_capacity_placeholder():
-    """Both case forms had their own copy. Neither may grow one back."""
-    pages = (_ROOT / "frontend/src/pages").glob("*.tsx")
+async def test_no_component_hardcodes_a_capacity_placeholder():
+    """Both case forms had their own copy. Nothing may grow one back.
+
+    Scans the whole of `frontend/src`, not just `pages/`. Scoping it to one
+    directory made the guard depend on where a component happens to live: a
+    case form moved into `components/` — `NewCaseModal.tsx` already lives
+    there — would leave this passing while the thing it guards went
+    unwatched. A rename of `pages/` would have disabled it entirely, silently,
+    since a glob that matches nothing yields no offenders and reads as success.
+
+    The file count is asserted for the same reason: an empty scan is
+    indistinguishable from a clean one, and this file exists because a
+    hand-typed capacity string is invisible until someone reads the form.
+    """
+    sources = sorted((_ROOT / "frontend/src").rglob("*.tsx"))
+    assert len(sources) > 20, (
+        "scanned almost nothing — a glob that matches no files passes this "
+        "test without checking anything"
+    )
+
     offenders = [
-        p.name for p in pages
+        p.relative_to(_ROOT).as_posix()
+        for p in sources
         if re.search(r'placeholder="Default: \d+ regular', p.read_text())
     ]
 

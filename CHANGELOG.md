@@ -6,6 +6,140 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.76.0] — 2026-09-04
+
+Everything the ten-agent archaeology pass found, fixed. Four must-fix items,
+nine should-fix, the security findings, and every documented claim the pass
+proved false. Two review recommendations were tested and **rejected** — noted
+below, because a report is not a mandate.
+
+The recurring shape across all of it: **this app builds excellent measurements
+and connects them to nothing.**
+
+### Fixed — unattended-failure blindness
+
+- **The nav error badge read 0 during a total analysis outage.** It and the
+  Settings error list keyed on `analysis_status == "error"` while
+  `hat_service.failed_analysis_filters()` sat in the same tree with a docstring
+  explaining why that predicate does not work. When Claude is unreachable the
+  pipeline degrades to `fallback`, not `error` — so in the one situation where
+  every hat has failed, the badge was silent and the failures card listed the
+  whole collection. Both now key on the failure text.
+- **Nothing consumed the container healthcheck.** Docker restart policies fire
+  on container *exit*, never on `unhealthy`, so the disk-space floor and
+  worker-liveness gate — built specifically to catch unattended failure —
+  terminated in a `docker ps` string. `health.py` and `OPERATIONS.md` both
+  asserted otherwise. Two consumers now ship: `scripts/headroom-watchdog.sh`
+  with systemd units (no privileges), and an opt-in
+  `docker-compose.autoheal.yml`. Autoheal is **not** in the base compose
+  because it needs `/var/run/docker.sock`, which is root-equivalent on the
+  host — a trade not worth making silently.
+- **The TLS and CA checks had no caller that was not a request handler**, so
+  the 37-day-expired-certificate class of failure was visible only to someone
+  already looking at the page. Worse, `ca_vault.check_root` seeds the expected
+  fingerprint on *first sighting* — so a root regenerated before anyone opened
+  that card was recorded as correct and the alarm was permanently disarmed. A
+  daily lifespan probe now runs both and seeds at boot.
+- **A broken off-site destination sat behind a green card.** `resolve_upload_argv`
+  returned `None` both for "nothing configured" and "configured but no longer
+  valid", so the hook returned silently and `BackupHealth` kept showing the last
+  success. The second case now raises `UploadConfigError` and is recorded; the
+  first stays silent, because declining the feature is not a fault.
+
+### Fixed — matching and pricing
+
+- **Purchase assignment maximized link COUNT, not evidence.** Among the many
+  assignments of that same maximum size, which purchase got which hat was
+  decided by candidate count and then row order — so a receipt agreeing with a
+  hat on colorway, size *and* price to the cent could lose it to a line sharing
+  only a model name and listed earlier, writing the loser's cost basis onto the
+  hat. Measured: **$999 stored where $79 was provable.** Purchases are now
+  visited in descending top-score order and `_improve_by_swapping` runs 2-swaps
+  and relocations to fixpoint. Both moves preserve cardinality exactly, so the
+  maximum-matching guarantee is untouched. Not claimed to be globally
+  weight-optimal — that needs min-cost max-flow.
+- **`_by_scarcity` is deleted.** It had no call site, while its own docstring,
+  `CLAUDE.md` and a test docstring all described it as load-bearing — the test
+  claiming a *sabotage check against a function that never ran*. Kuhn's
+  cardinality is order-independent, which is exactly why nothing failed when it
+  rotted.
+- **`_product_comp` let a colorway token be satisfied by the model half.** A hat
+  whose model is `Trenches Hydro` and colorway is `Icon` matched
+  `Trenches Icon Hydro - Camo`, pricing it as a Camo product. The halves of
+  `<Model> - <Colorway>` are now checked separately — which is the entire reason
+  that naming convention is usable here.
+- **The colorway harvest took neither claim nor lock** while `/repricing/run-all`
+  — structurally the same endpoint — had both. Two harvests interleave inserts
+  of the same title and one dies on a UNIQUE violation, escaping the
+  per-category isolation the harvest exists to provide.
+- **Re-pricing's `remaining` never decreased**, so the card could never say
+  "done". It counted every eligible hat rather than those actually due.
+
+### Fixed — security
+
+- **`/openapi.json`, `/docs` and `/redoc` answered 200 anonymously** — 101 paths
+  and every schema — because the auth gate is a prefix tuple and these begin
+  with none of its prefixes. Directly against the posture of `/health/ready`
+  next door, which redacts filesystem paths from the same caller.
+- **Nothing pinned the open set.** Authorization for ~85 data-bearing endpoints
+  rested on one `startswith`. A test now enumerates `app.openapi()["paths"]`,
+  probes every operation anonymously, and fails unless each either 401s or
+  appears on an explicit allowlist.
+- **Share-link tokens were written to the access log in clear** on every public
+  request — the documented `?key=` incident one layer down, missed by
+  `error_handler`'s "log the path, never the full URL" mitigation because the
+  secret is not in the query. Redacted by a logging filter; existing links keep
+  working.
+- **`_MAX_TRACKED_KEYS` named a bound the code did not enforce** — the only
+  eviction was an age sweep, so a burst removed nothing. Measured: 10,000 keys
+  survived a "bound" of 4,096.
+- The off-site backup warning now appears **where the destination is typed**,
+  not only inside the archive it warns about, with `rclone crypt` setup in
+  OPERATIONS §4. `safeNext` normalizes backslashes; `hex_value` is validated at
+  the export sink; `FORWARDED_ALLOW_IPS` is a pinned CIDR instead of `*`.
+
+### Fixed — claims that were false
+
+- `CLAUDE.md` asserted a lazy-load hazard that does not exist (`Hat.case` is
+  `lazy="selectin"`), and its admin roster omitted two live routers.
+- A `# noqa — cycle` annotation in `melin_recap` marked a cycle that is not
+  there; `schemas/hat` imports nothing from `headroom`.
+- The NSEC bitmap claimed an AAAA record on IPv4-only hosts — a *negative*
+  answer naming a type we cannot serve, which tells a client to keep waiting.
+  `tests/test_mdns_nsec.py` stated that rule in a docstring one line above the
+  assertion pinning the violation.
+- `FALLBACK_RETENTION` was module-private on both sides and therefore outside
+  the parity check; mutation testing showed swinging it 125% left the suite
+  green.
+- `test_capacity_parity`'s placeholder guard was scoped to `pages/` only, so it
+  silently stopped covering anything that moved out.
+- A count in `pyproject.toml` was exactly right when written and 18% stale a
+  week later. Removed rather than corrected.
+
+### Rejected after testing
+
+- Dropping the whole-name disjunct in the title ladder. Once a prefix equals the
+  hat's *full* model name the comparison really is "listings of this model" —
+  the category holding nothing else is a fact about the market, not a mislabel.
+  Four tests pinned it and were right.
+- A second module global for the NSEC held-types. Written that way first, it
+  leaked across tests within the hour; derived from `_ipv6` instead.
+
+### Added
+
+- `docker-compose.autoheal.yml` and `scripts/headroom-watchdog.sh`.
+- `X-Total-Count` on `GET /api/hats`, plus a warning when the cap is reached —
+  a ceiling hit silently is a wrong number, not a short page.
+- `cryptography`, `starlette`, `numpy` and `pydantic` declared, which is the
+  argument `pyproject.toml` already made for `httpx` and did not apply.
+
+### Internal
+
+- The import worker confirms no item is still live before deleting a job's
+  staging directory, rather than trusting a counter a boot recount rewrites.
+- `record_upload` fsyncs the file and its directory before rename.
+- Backend 962 → **971**; frontend 240 → **243**.
+
 ## [2.75.3] — 2026-08-30
 
 A second, adversarial two-axis review of the same range (2.72.0 → 2.75.2), with
