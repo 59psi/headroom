@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import re
 import shutil
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -34,12 +35,59 @@ FRONTEND_DIST = (PROJECT_ROOT / "frontend" / "dist").resolve()
 SEED_BRANDING = PROJECT_ROOT / "seed" / "branding"
 
 
+#: Any share-link token appearing in a logged URL path.
+#:
+#: A share token is a 256-bit bearer credential and it is a PATH parameter
+#: (`/api/public/share/{token}`), so uvicorn's access log writes it in clear at
+#: INFO on every public request — into the same rotated json-file the operator
+#: greps, and into anything shipping those logs onward. This is the same class
+#: as the documented `?key=` incident that moved the Google Vision key out of a
+#: query string, one layer down: `error_handler` already logs `path` and never
+#: the full URL "because query strings carry search terms and tokens", and that
+#: mitigation misses its own case because the secret is not in the query.
+#:
+#: Redacting is the fix that does not break every link already handed out.
+_SHARE_TOKEN_IN_PATH = re.compile(r"(/(?:api/public/)?share/)[A-Za-z0-9_\-]{16,}")
+
+
+class _RedactShareTokens(logging.Filter):
+    """Replace share tokens in any log record with a marker.
+
+    Applied to the access logger rather than the message site, because the
+    record is created inside uvicorn where this app has no call site to change.
+    Mutates `record.args` when the path arrives as an argument (uvicorn's
+    access log uses %-style args) and `record.msg` when it is already
+    interpolated, so it catches both shapes.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple):
+            record.args = tuple(
+                _SHARE_TOKEN_IN_PATH.sub(r"\1<redacted>", a) if isinstance(a, str) else a
+                for a in record.args
+            )
+        if isinstance(record.msg, str):
+            record.msg = _SHARE_TOKEN_IN_PATH.sub(r"\1<redacted>", record.msg)
+        return True
+
+
 def _configure_logging() -> None:
     """Apply a sane default logger config so warnings actually reach stdout.
 
     Only runs if the root logger has no handlers — uvicorn / pytest may have
     already configured logging, in which case we defer to them.
     """
+    # These two run whether or not we own the root handler: both are about
+    # other libraries' loggers, and deferring to uvicorn's config does not mean
+    # inheriting its verbosity or its habit of logging our credentials.
+    #
+    # httpx logs the full request URL at INFO for every outbound call — the
+    # marketplace, eBay, Google, Anthropic — which is noise that buries the
+    # app's own lines and is the mechanism by which a secret in a URL becomes a
+    # secret in a log file.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("uvicorn.access").addFilter(_RedactShareTokens())
+
     if logging.getLogger().handlers:
         return
     level = os.environ.get("HEADROOM_LOG_LEVEL", "INFO").upper()

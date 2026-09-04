@@ -29,6 +29,12 @@ describe('safeNext', () => {
     '//evil.example/phish',
     'javascript:alert(1)',
     'evil.example',
+    // Backslash variants. A browser treats `\` as `/` in the authority
+    // position, so these are protocol-relative to a browser while sailing
+    // past a `startsWith('//')` check written against literal characters.
+    '/\\evil.example',
+    '\\\\evil.example',
+    '/\\/evil.example',
   ])('refuses to send you off-site: %s', bad => {
     expect(safeNext(bad)).toBe('/');
   });

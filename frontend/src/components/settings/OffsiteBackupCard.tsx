@@ -70,6 +70,24 @@ export function OffsiteBackupCard() {
           corrupted database, but not a dead card.
         </p>
 
+        {/* Stated HERE, not only in the tarball's README. The README is inside
+            the archive, so it is read after the decision it is warning about
+            has already been made and repeated nightly. This is the screen
+            where someone types a cloud destination. */}
+        <div className="alert alert-warning py-2 px-3 mb-3">
+          <div className="small">
+            <strong>What you are sending.</strong> The archive is the whole
+            database, which holds your <strong>API keys in plaintext</strong>,
+            your live API token, live session ids, share-link tokens and your
+            password hash &mdash; plus Caddy&rsquo;s <strong>CA private key</strong>{' '}
+            if you run the LAN-HTTPS overlay. Headroom does not encrypt it.
+            Whoever can read your cloud account can read all of that.{' '}
+            <strong>Use an encrypting remote</strong> &mdash; with rclone that is
+            a <code>crypt</code> remote and no code change; see OPERATIONS §4.
+            Keep the passphrase somewhere that is not this backup.
+          </div>
+        </div>
+
         {s && (
           <div className="mb-3">
             {!s.configured ? (

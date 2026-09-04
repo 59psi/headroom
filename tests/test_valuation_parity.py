@@ -67,6 +67,20 @@ async def test_retail_retention_table_matches():
     assert valuation.RETAIL_RETENTION == _ts_table("RETAIL_RETENTION")
 
 
+async def test_the_fallback_retention_matches():
+    """The constant that decides a value when the condition is unrecognized.
+
+    It was module-private on BOTH sides — `_FALLBACK_RETENTION` in Python,
+    `const FALLBACK_RETENTION` in TypeScript — which put it outside every check
+    in this file. Mutation testing showed exactly what that costs: swinging it
+    by 125% left all 956 backend tests green. A number that decides money, is
+    duplicated across two languages, and that nothing can observe is precisely
+    the shape this parity file exists to catch, and it sat two lines below a
+    table that was being compared.
+    """
+    assert valuation.FALLBACK_RETENTION == _ts_number("FALLBACK_RETENTION")
+
+
 async def test_basis_labels_match():
     """The report prints these strings, so a rename must reach both sides."""
     labels = dict(

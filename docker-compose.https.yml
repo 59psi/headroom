@@ -15,14 +15,22 @@ services:
       HEADROOM_RP_ID: "${HEADROOM_DOMAIN:?set HEADROOM_DOMAIN}"
       HEADROOM_ORIGIN: "https://${HEADROOM_DOMAIN}"
       HEADROOM_CORS_ORIGINS: '["https://${HEADROOM_DOMAIN}"]'
-      # Trust X-Forwarded-* from any peer — safe ONLY because :8000 is not
-      # published in this topology (Caddy is the sole reachable client).
-      # SECURITY: do NOT add a `ports:` mapping that republishes :8000 to the
-      # host/LAN under this overlay — a client hitting :8000 directly could
-      # then spoof X-Forwarded-For (defeating the login rate limiter) and
-      # X-Forwarded-Proto (defeating the Secure cookie flag). If you must
-      # expose :8000, set FORWARDED_ALLOW_IPS to Caddy's specific IP/CIDR. (S8)
-      FORWARDED_ALLOW_IPS: "*"
+      # Trust X-Forwarded-* only from inside this compose network, whose
+      # subnet is pinned below. This was `"*"`, justified by :8000 not being
+      # published — true, but it made the guarantee depend on a `ports:` line
+      # NOT being added, which is a comment enforcing a rule rather than a
+      # rule. It also stacked badly with how uvicorn reads the header: with
+      # `"*"` every hop is trusted, so it takes the LEFTMOST X-Forwarded-For
+      # entry, which is entirely client-supplied. Caddy strips incoming
+      # X-Forwarded-* by default so nothing was exploitable — but adding
+      # `trusted_proxies` to Caddy (required to sit behind a CDN) would turn
+      # that into an unlimited password brute force against the login rate
+      # limiter plus a falsified audit trail, and nothing here would say so.
+      #
+      # A CIDR re-enables uvicorn's right-to-left scan for the first untrusted
+      # address, which is the behavior that makes the header meaningful.
+      # SECURITY: still do not republish :8000 to the host/LAN here.
+      FORWARDED_ALLOW_IPS: "172.31.71.0/24"
 
   # Keep this block in sync with the caddy service in docker-compose.https-lan.yml.
   caddy:
@@ -44,3 +52,12 @@ services:
 volumes:
   caddy-data:
   caddy-config:
+
+# Pinned so `FORWARDED_ALLOW_IPS` above names a real range. Compose otherwise
+# allocates a subnet from Docker's pool at random, which would make the CIDR a
+# guess that silently stops matching.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.31.71.0/24

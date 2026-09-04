@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import re
 import zipfile
 from datetime import datetime, timezone
 from html import escape
@@ -41,6 +42,29 @@ from headroom.models.hat import Hat
 from headroom.utils.photo import export_derivative_path, make_export_image
 
 logger = logging.getLogger(__name__)
+
+#: A CSS colour literal, and nothing else.
+_HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def _safe_hex(value: str | None) -> str:
+    """`value` if it is a plain 6-digit hex colour, otherwise "".
+
+    `hex_value` is written by Claude against a tool schema that already
+    specifies this exact shape, and it reached a `style="background:…"`
+    attribute through `escape()` — which quotes HTML but knows nothing about
+    CSS. So a value that broke its own schema (`red;background-image:url(...)`)
+    would land inside a style attribute as CSS rather than as text.
+
+    Not exploitable as shipped: the export's own CSP allows `img-src 'self'`,
+    so the fetch that syntax buys is blocked, and it needs the analyzer to
+    violate a schema it has never violated. But the export is a zip a person
+    opens on some other machine, where this app's CSP does not apply, and
+    "the model is well behaved" is not an access control. Validating at the
+    sink also covers rows already in the database, which clamping on write
+    would not.
+    """
+    return value if value and _HEX.match(value) else ""
 
 
 def _image_name(hat: Hat) -> str | None:
@@ -124,9 +148,9 @@ def _hat_card(hat: Hat, image_name: str | None, include_values: bool) -> str:
     subtitle = " · ".join(bits)
 
     swatches = "".join(
-        f'<i style="background:{escape(c.hex_value)}" title="{escape(c.general_color or c.color_name)}"></i>'
+        f'<i style="background:{_safe_hex(c.hex_value)}" title="{escape(c.general_color or c.color_name)}"></i>'
         for c in sorted(hat.colors or [], key=lambda c: c.dominance_rank)
-        if c.hex_value
+        if _safe_hex(c.hex_value)
     )
 
     img = (

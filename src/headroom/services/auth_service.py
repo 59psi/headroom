@@ -117,12 +117,27 @@ def should_log_block(client_ip: str, username: str) -> bool:
     if last is not None and now - last < _LOCKOUT_SECONDS:
         return False
     _blocked_logged[key] = now
-    # Bounded the same way `_failures` is, and by the same sweep.
     if len(_blocked_logged) > _MAX_TRACKED_KEYS:
+        # Age-based sweep first: expired entries are the ones nobody wants.
         for stale in [
             k for k, t in _blocked_logged.items() if now - t >= _LOCKOUT_SECONDS
         ]:
             _blocked_logged.pop(stale, None)
+        # Then a HARD cap, which is what makes the name true. The sweep above
+        # was the whole mechanism, and it only removes entries old enough to
+        # have expired — so a burst that fills this faster than `_LOCKOUT_SECONDS`
+        # elapses removes nothing at all and the dict grows without limit.
+        # Measured before this line existed: 10,000 keys survived a "bound" of
+        # 4,096. It is fed by an unauthenticated endpoint, so the eviction has
+        # to be unconditional, not best-effort.
+        #
+        # Oldest-first, so what is dropped is the least recently blocked — the
+        # entries whose absence costs at most one extra audit line.
+        if len(_blocked_logged) > _MAX_TRACKED_KEYS:
+            for stale, _t in sorted(_blocked_logged.items(), key=lambda kv: kv[1])[
+                : len(_blocked_logged) - _MAX_TRACKED_KEYS
+            ]:
+                _blocked_logged.pop(stale, None)
     return True
 
 

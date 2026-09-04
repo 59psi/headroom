@@ -97,7 +97,7 @@ fleet-default, the UI is the per-install override.
 | `HEADROOM_MAX_BODY_BYTES` | `2097152` | Non-multipart request bodies over this are refused with 413 |
 | `HEADROOM_DISK_MIN_FREE_MB` | `500` | `/health/ready` fails below this, so the container reports `unhealthy`. **Acting on that requires a watchdog — see §3** |
 | `HEADROOM_DISK_WARN_PCT` | `15` | Warn in the log below this share of the volume |
-| `HEADROOM_BACKUP_UPLOAD_CMD` | _(unset)_ | Command run after each scheduled backup to ship it off-box; `{path}`/`{dir}`/`{name}` substituted (argv, no shell). Best-effort — see §4 |
+| `HEADROOM_BACKUP_UPLOAD_CMD` | _(unset)_ | Command run after each scheduled backup to ship it off-box; `{path}`/`{dir}`/`{name}` substituted (argv, no shell). Best-effort — see §4. **Read the encryption note in §4 before pointing this at cloud storage** |
 | `HEADROOM_BACKUP_UPLOAD_TIMEOUT` | `600` | Seconds before the upload command is killed |
 | `HEADROOM_BACKUP_RSYNC_PASSWORD` | _(unset)_ | Password for the **Synology / rsync-daemon** provider (`user@host::module/path`). Mapped to rsync's own `RSYNC_PASSWORD` at upload time; read from the host, never stored by Headroom and never returned by the API. **Daemon mode only** — rsync ignores it over SSH, which is why the SSH provider takes no secret rather than one that looks set and does nothing. `docker-compose.yml` forwards it into the container explicitly; Compose's `.env` alone would only feed interpolation |
 | `HEADROOM_IMPORT_WORKER_ENABLED` | `true` | Bulk-import background worker |
@@ -361,6 +361,39 @@ refuse the connection. Caddy names every root
 thing that distinguishes the one your devices trust from a replacement.
 
 ### Off-site / remote backups
+
+> **⚠️ The archive is a credential bundle, and off-site copies are not
+> encrypted by Headroom.**
+>
+> A backup tarball contains the whole database, and that database holds your
+> **Anthropic and Google API keys in plaintext**, your **live API bearer
+> token**, **live session ids**, **share-link tokens** and your password hash —
+> plus, on the LAN-HTTPS overlay, **Caddy's CA private key** (see *The
+> certificate authority is in the backup too*, above). The download endpoint
+> writes an audit row on every manual download precisely because this is the
+> highest-value single artifact in the deployment.
+>
+> The scheduled uploader ships that same artifact, as-is, to wherever you point
+> it. Compromise of that Box/S3/Dropbox account — or of the rclone token sitting
+> on the Pi — is therefore full application compromise, and a CA that can sign
+> for **any** hostname every device in your house trusts.
+>
+> **Encrypt it.** With rclone this is configuration only, no code:
+>
+> ```bash
+> rclone config create hr-crypt crypt \
+>   remote=box:Headroom-Backups \
+>   password="$(rclone obscure 'a long passphrase you store elsewhere')"
+> ```
+>
+> then use `hr-crypt:` as the destination instead of `box:Headroom-Backups`.
+> Keep the passphrase somewhere that is **not** this backup — a passphrase
+> stored only inside the thing it encrypts protects nothing.
+>
+> If you would rather not ship the CA at all, set
+> `HEADROOM_BACKUP_INCLUDE_CA=false`. You keep the database and photos and lose
+> only the ability to restore the certificate authority without re-trusting each
+> device by hand.
 
 Local backups still share one disk (the SD card) with the database. Two ways to
 push each backup off the box:

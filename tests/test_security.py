@@ -6,6 +6,7 @@ test maps to a specific finding from the v0.2.0 archaeology pass.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -240,3 +241,170 @@ async def test_the_share_target_requires_auth_but_the_share_page_does_not(anon_c
     # route, never a 401, or sharing a link would demand a login.
     page = await anon_client.get("/share/some-token")
     assert page.status_code != 401, "the public share page must stay open"
+
+
+# ---- The open set is a policy, so pin it -------------------------------- #
+
+
+#: Every route path an anonymous caller is ALLOWED to reach. Anything the app
+#: serves that is not matched here must answer 401.
+#:
+#: This list is the point of the test below. Authorization for ~85 data-bearing
+#: endpoints rests on one `startswith` tuple in `auth.py`, and nothing asserted
+#: what that tuple lets through — so a route added under a new top-level path,
+#: or a prefix edited by one character, published collection data silently. It
+#: had already happened: `/openapi.json`, `/docs` and `/redoc` begin with none
+#: of the protected prefixes and served the entire route surface, every schema
+#: and every field name to anonymous callers on an internet-facing deployment.
+_ANONYMOUS_OK = (
+    "/health",              # liveness + readiness, for the container check
+    "/api/auth/",           # login, setup, status — the way in
+    "/api/public/",         # branding logo, guest view, share links, CA cert
+)
+
+#: The SPA catch-all, which MUST answer anonymously or the login page cannot
+#: render. It serves the shell and static assets only — every data call the
+#: app then makes goes through `/api/`, which is gated. Listed separately from
+#: the prefixes above because it is a whole-path match, not a prefix, and
+#: because it is the one entry here that is load-bearing for being open.
+_ANONYMOUS_OK_EXACT = ("/{full_path}",)
+
+
+def _is_allowed_anonymous(path: str) -> bool:
+    return path in _ANONYMOUS_OK_EXACT or any(
+        path.startswith(p) for p in _ANONYMOUS_OK
+    )
+
+
+async def test_every_api_path_is_gated_unless_it_is_on_the_allowlist(anon_client, app):
+    """Enumerate the app's OWN route table and probe each path anonymously.
+
+    Deliberately driven from `app.openapi()` rather than a hand-written list:
+    a hand-written list cannot notice a route that was added, which is the only
+    failure mode that matters here. A new endpoint under a new prefix either
+    lands on the allowlist above — a decision someone has to write down — or
+    this test fails.
+
+    Path parameters are filled with a value that cannot exist. A 404 is a pass:
+    it means the gate let the request through to a handler that then found
+    nothing, which is correct for an allowlisted path, and for a gated one the
+    401 fires before the handler ever runs.
+    """
+    paths = app.openapi()["paths"]
+    assert len(paths) > 50, "sanity: the route table should be substantial"
+
+    unguarded: list[str] = []
+    for raw_path, operations in paths.items():
+        if _is_allowed_anonymous(raw_path):
+            continue
+        # `{hat_id}` → an id that will not resolve; `{token}` → junk.
+        probe = re.sub(r"\{[^}]+\}", "999999999", raw_path)
+        for method in operations:
+            if method.lower() not in ("get", "post", "put", "delete", "patch"):
+                continue
+            resp = await anon_client.request(method.upper(), probe)
+            if resp.status_code != 401:
+                unguarded.append(f"{method.upper()} {raw_path} -> {resp.status_code}")
+
+    assert not unguarded, (
+        "these are reachable without authentication and are not on the "
+        "allowlist in this file:\n  " + "\n  ".join(unguarded)
+    )
+
+
+async def test_the_schema_itself_is_not_public(anon_client):
+    """`/openapi.json` is a map of the attack surface, and it was anonymous.
+
+    101 paths, every schema, every field name, 130 KB, to anyone who could
+    reach the port — while `/health/ready` next door redacts filesystem paths
+    and key sources from the same caller. The gate is a prefix tuple and these
+    three routes begin with none of the prefixes in it.
+    """
+    for path in ("/openapi.json", "/docs", "/redoc"):
+        assert (await anon_client.get(path)).status_code == 401, path
+
+
+async def test_the_login_surface_stays_reachable(anon_client):
+    """The other half: gating must not lock out the way in.
+
+    A tighter gate that also blocked `/api/auth/status` would make the login
+    page unable to render, which is the failure this pairs against.
+    """
+    assert (await anon_client.get("/api/auth/status")).status_code == 200
+    assert (await anon_client.get("/health")).status_code == 200
+
+
+async def test_the_blocked_key_tracker_is_actually_bounded():
+    """`_MAX_TRACKED_KEYS` named a bound the code did not enforce.
+
+    The only eviction was an age sweep — it removes entries older than
+    `_LOCKOUT_SECONDS` and nothing else — so a burst that fills the dict faster
+    than that window elapses removed nothing and it grew without limit.
+    Measured before the hard cap existed: 10,000 keys survived a "bound" of
+    4,096. It is fed by an unauthenticated endpoint, which is what makes the
+    difference between a soft and a hard cap matter.
+    """
+    import time
+
+    from headroom.services import auth_service
+
+    auth_service._blocked_logged.clear()
+    now = time.time()
+    for i in range(10_000):
+        auth_service._blocked_logged[f"key-{i}"] = now  # all FRESH, none expired
+
+    auth_service.should_log_block("1.2.3.4", "someone")
+
+    assert len(auth_service._blocked_logged) <= auth_service._MAX_TRACKED_KEYS, (
+        "an age-only sweep is not a bound when nothing has aged"
+    )
+    auth_service._blocked_logged.clear()
+
+
+async def test_share_tokens_are_redacted_from_the_access_log():
+    """A share token is a 256-bit bearer credential in a URL PATH.
+
+    So uvicorn's access log writes it in clear at INFO on every public request,
+    into the same rotated file an operator greps and anything that ships those
+    logs onward. It is the documented `?key=` incident one layer down — and
+    `error_handler`'s "log the path, never the full URL, because query strings
+    carry tokens" mitigation misses it precisely because this secret is not in
+    the query.
+
+    Redaction rather than a URL redesign: every link already handed out keeps
+    working, which a scheme change would not.
+    """
+    import logging
+
+    from headroom.app import _RedactShareTokens
+
+    filt = _RedactShareTokens()
+    token = "Ab3d-Ef7h_Ij1k2Lm3n4Op5q"
+
+    # uvicorn's access log passes the request line as a %-style arg.
+    rec = logging.LogRecord(
+        "uvicorn.access", logging.INFO, __file__, 1,
+        '%s - "%s %s HTTP/1.1" %d',
+        ("1.2.3.4", "GET", f"/api/public/share/{token}/photo/7", 200),
+        None,
+    )
+    filt.filter(rec)
+    assert token not in str(rec.args), "the token survived in the log args"
+    assert "<redacted>" in str(rec.args)
+
+    # And when the message has already been interpolated.
+    rec2 = logging.LogRecord(
+        "uvicorn.access", logging.INFO, __file__, 1,
+        f'GET /share/{token} 200', None, None,
+    )
+    filt.filter(rec2)
+    assert token not in rec2.msg
+    assert "<redacted>" in rec2.msg
+
+    # A path with no token is left exactly as it was — a redactor that
+    # rewrites ordinary paths makes the log harder to read for no gain.
+    rec3 = logging.LogRecord(
+        "uvicorn.access", logging.INFO, __file__, 1, "GET /api/hats 200", None, None,
+    )
+    filt.filter(rec3)
+    assert rec3.msg == "GET /api/hats 200"

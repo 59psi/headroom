@@ -357,6 +357,7 @@ cryptography==50.0.1 \
     --hash=sha256:fd3718b960d0b5dd213cdf03f3bcb7000e69dda0de8b956061947ff6bcff5558 \
     --hash=sha256:ff838d62ec1bfce4f9ba7fa16f4a7b554cd8d0c299e6be37502161a660c84eef
     # via
+    #   headroom
     #   pyopenssl
     #   webauthn
 distro==1.9.0 \
@@ -685,6 +686,7 @@ numpy==2.5.2 \
     --hash=sha256:f06571a052127dc1b4e8b83029b4d1b20daa2b64a31cdd181fc6bc774e9000eb \
     --hash=sha256:fd0d703772bba096843785bd38371e31bb4a0c1151497ad5739d182114a73f7f
     # via
+    #   headroom
     #   imageio
     #   numba
     #   onnxruntime
@@ -869,6 +871,7 @@ pydantic==2.13.4 \
     # via
     #   anthropic
     #   fastapi
+    #   headroom
     #   pydantic-settings
 pydantic-core==2.46.4 \
     --hash=sha256:00c603d540afdd6b80eb39f078f33ebd46211f02f33e34a32d9f053bba711de0 \
@@ -1233,7 +1236,9 @@ sqlalchemy==2.0.52 \
 starlette==1.6.0 \
     --hash=sha256:a86dd39d14bb45f85a3d18525215a9ef0cfd1f192ac793220e72598c90335f0c \
     --hash=sha256:d4e3ac5e546444960c710297a3c9fc3f7ebae1b7e963f3d36173b49da535be9b
-    # via fastapi
+    # via
+    #   fastapi
+    #   headroom
 tifffile==2026.8.16 \
     --hash=sha256:523a18b8183253e1e594162eed45f157c959d8cff6decde3f2d58f20a5a45389 \
     --hash=sha256:a1263c59be7cba87af3c071542b66ae54ccbcb2768bc15b0ab67680641c7f685
