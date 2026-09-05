@@ -531,3 +531,64 @@ async def test_an_expired_certificate_does_not_fail_readiness(client, front_door
 
     assert resp.status_code == 200
     assert resp.json()["ok"] is True
+
+
+async def test_http3_is_not_advertised():
+    """Caddy must not offer a protocol that does not complete here.
+
+    Caddy enables HTTP/3 by default and stamps every response with
+    `alt-svc: h3=":443"; ma=2592000`. Safari takes that literally and opens
+    each fresh connection by attempting QUIC over UDP 443, remembering the
+    advertisement for thirty days.
+
+    Measured against the live deployment: **every request in Caddy's log
+    negotiated h2, none ever negotiated h3** — from iOS Safari, with Caddy
+    listening on UDP 443 and no firewall. So the advertisement bought nothing
+    and cost a failed QUIC attempt before the TCP fallback on every fresh
+    connection. That is the "slow on first load after idle, instant
+    afterwards, iPhone only" report, and it survived a long time because it is
+    invisible to `curl` and Firefox (neither attempts h3) and to `:8000`
+    (which sends no Alt-Svc) — the two tools used to check it.
+
+    Pinned here because the failure is SILENT and asymmetric: deleting this
+    directive breaks nothing a test would notice, breaks nothing on a laptop,
+    and makes the phone slow again.
+    """
+    text = CADDYFILE.read_text()
+
+    match = re.search(r"servers\s*\{[^}]*protocols\s+([^\n}]+)", text)
+    assert match, (
+        "no `servers { protocols ... }` block in the Caddyfile — Caddy then "
+        "advertises HTTP/3, which never completes on this deployment"
+    )
+    protocols = match.group(1).split()
+    assert "h3" not in protocols, (
+        f"protocols are {protocols!r}; advertising h3 makes Safari pay a failed "
+        "QUIC attempt on every fresh connection"
+    )
+    assert "h1" in protocols and "h2" in protocols, (
+        f"protocols are {protocols!r}; h1 and h2 are both needed"
+    )
+
+
+async def test_the_upstream_is_the_v4_loopback_not_localhost():
+    """`localhost` resolves to `::1` first; uvicorn binds IPv4 only.
+
+    The Dockerfile binds uvicorn to `0.0.0.0`, so nothing is listening on the
+    v6 loopback. With `reverse_proxy localhost:8000` Caddy dialled `[::1]:8000`
+    on this dual-stack host, got `connection refused`, and returned **502**
+    instead of retrying the v4 address — observed on the live deployment
+    against `/api/admin/recent-errors/count`.
+
+    It also matters for `FORWARDED_ALLOW_IPS`, which trusts a specific
+    loopback address: `::1` and `127.0.0.1` are not the same peer.
+    """
+    text = CADDYFILE.read_text()
+
+    assert re.search(r"^\treverse_proxy 127\.0\.0\.1:8000$", text, re.MULTILINE), (
+        "the reverse_proxy upstream must be 127.0.0.1:8000 — `localhost` "
+        "resolves to ::1 first and uvicorn does not listen there"
+    )
+    assert "reverse_proxy localhost:" not in text, (
+        "`reverse_proxy localhost:` is the 502 this test exists to prevent"
+    )

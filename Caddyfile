@@ -23,6 +23,36 @@
 # Changing `intermediate_lifetime` regenerates the intermediate but NOT the
 # root, so devices that already trust this CA keep trusting it — no reinstall.
 {
+	# HTTP/3 is DISABLED, and that is a fix rather than a preference.
+	#
+	# Caddy enables it by default and answers every response with
+	# `alt-svc: h3=":443"; ma=2592000` — "QUIC is available here, remember that
+	# for thirty days". Safari believes it and opens every fresh connection by
+	# trying QUIC over UDP 443 first.
+	#
+	# On this deployment that attempt never completed. Measured against the live
+	# box: **every request in Caddy's log negotiated h2, none ever negotiated
+	# h3** — including from iOS 18.7 Safari, with Caddy listening on UDP 443 and
+	# no firewall in the way. So the advertisement was an invitation to a
+	# protocol that then failed, and the client paid the QUIC timeout before
+	# falling back to TCP on every fresh connection.
+	#
+	# That is precisely the reported symptom — `https://headroom.local` slow on
+	# the first load after idle, instant thereafter, iPhone only — and it is why
+	# it looked like an mDNS problem for so long. It is invisible to `curl` and
+	# Firefox, which do not attempt h3, and invisible on `:8000`, which sends no
+	# Alt-Svc; both were used to "verify" name resolution was at fault. It was
+	# not: `dns-sd` shows A answered in milliseconds and SRV/HTTPS both correctly
+	# answered "No Such Record" from the NSEC responder.
+	#
+	# Not advertising beats advertising-and-failing. Re-enable by deleting this
+	# block if QUIC is ever made to work here — but verify with a client that
+	# actually attempts it, and read the negotiated `proto` out of Caddy's log
+	# rather than assuming.
+	servers {
+		protocols h1 h2
+	}
+
 	pki {
 		ca local {
 			# Caddy requires the issued lifetime to be under
@@ -72,5 +102,16 @@
 	# lets the app mark session cookies `secure` behind this proxy. The app
 	# trusts those headers from loopback only (FORWARDED_ALLOW_IPS), so a LAN
 	# client hitting :8000 directly still cannot spoof its address.
-	reverse_proxy localhost:8000
+	#
+	# `127.0.0.1`, NOT `localhost`. On a dual-stack host `localhost` resolves to
+	# `::1` first, and uvicorn binds `0.0.0.0` — IPv4 only, per the Dockerfile.
+	# Caddy dialled the v6 loopback, got `connection refused`, and returned
+	# **502** rather than retrying the v4 address. Observed on the live
+	# deployment against `/api/admin/recent-errors/count`, so the nav badge was
+	# intermittently failing outright.
+	#
+	# It also quietly widened the sentence above: `::1` and `127.0.0.1` are not
+	# the same peer to `FORWARDED_ALLOW_IPS`, so "trusts loopback only" was
+	# describing an address this line was not actually using.
+	reverse_proxy 127.0.0.1:8000
 }
