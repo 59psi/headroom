@@ -53,10 +53,15 @@ with the right symptom.
 - **The rclone destination comment credited the regex with a guard it does not
   have** (S-12). `[A-Za-z0-9_-]` contains `-`, so `-vv:path` and `--config:/x`
   both match the pattern; what actually blocks them is the explicit
-  `startswith("-")` check in `validate_destination`. The hole was never open —
-  but every existing test used an input the regex rejects anyway, so the whole
-  suite passed with that check deleted, and the comment pointed at the wrong
-  guard while making the real one look redundant.
+  `startswith("-")` check in `validate_destination`. The hole was never open,
+  and the comment pointed at the wrong guard while making the real one look
+  redundant. **Correction to this entry as first published**: it claimed the
+  suite passed with that check deleted. It does not — `test_a_leading_dash_is_
+  called_out_as_a_flag` fails, but incidentally, because it asserts on the error
+  *message* and the regex rejects its input with a different one. The real gap
+  is narrower and still worth closing: every flag case in the file used input
+  the regex rejects anyway (`--config=/etc/x` fails on the `=`), so nothing
+  verified that an input the regex ACCEPTS — `-vv:path` — is refused at all.
 - **Client-IP behavior on the plain bridge compose is documented** (S-08). It
   may be the Docker gateway, which collapses per-IP login rate limiting into
   one shared bucket and makes the IP on `auth.login_failed` rows meaningless.
