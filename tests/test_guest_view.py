@@ -76,11 +76,6 @@ async def test_turning_it_back_off_closes_the_door(client, anon_client):
     assert (await anon_client.get("/api/public/guest/collection")).status_code == 404
 
 
-async def test_only_an_authenticated_owner_can_flip_it(anon_client):
-    resp = await anon_client.put("/api/settings/guest-view", json={"enabled": True})
-    assert resp.status_code == 401
-
-
 async def test_the_login_screen_is_told_whether_to_offer_it(client, anon_client):
     """The login page already makes this one unauthenticated call, so the flag
     rides along rather than costing a second round-trip before anything

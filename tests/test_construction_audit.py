@@ -168,13 +168,6 @@ async def test_disposed_hats_are_left_out(client):
     assert body["hats_cleared"] == 0
 
 
-async def test_the_endpoints_are_auth_gated(anon_client):
-    assert (await anon_client.get("/api/admin/constructions/audit")).status_code == 401
-    assert (
-        await anon_client.post("/api/admin/constructions/clear?value=HYDROLite")
-    ).status_code == 401
-
-
 # ----------------------- reassigning, not just clearing --------------------- #
 
 

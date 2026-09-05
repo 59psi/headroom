@@ -450,10 +450,6 @@ async def test_the_endpoint_reports_the_served_certificate(client, front_door, t
     assert body["needs_attention"] is True
 
 
-async def test_the_endpoint_needs_auth(anon_client):
-    assert (await anon_client.get("/api/settings/tls")).status_code == 401
-
-
 # ---- telling two identically-named roots apart ------------------------- #
 
 

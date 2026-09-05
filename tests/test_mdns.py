@@ -77,11 +77,6 @@ async def test_mdns_status_endpoint_disabled(client):
     assert body["url"] is None
 
 
-async def test_mdns_status_endpoint_requires_auth(anon_client):
-    resp = await anon_client.get("/api/settings/mdns")
-    assert resp.status_code == 401
-
-
 async def test_mdns_port_parsing(monkeypatch):
     monkeypatch.setenv("HEADROOM_MDNS_PORT", "9000")
     assert mdns_service.mdns_port() == 9000

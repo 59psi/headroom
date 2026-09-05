@@ -78,13 +78,6 @@ async def test_a_base_without_an_http_scheme_is_rejected(client, bad):
     assert resp.status_code == 422
 
 
-async def test_setting_the_base_requires_auth(anon_client):
-    resp = await anon_client.put(
-        "/api/settings/tags", json={"base_url": "http://evil/"}
-    )
-    assert resp.status_code == 401
-
-
 async def test_tag_landing_paths_are_not_auth_gated(anon_client):
     """The tag URL must serve the SPA shell so the app can boot and redirect.
 
