@@ -6,6 +6,44 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.76.1] — 2026-09-04
+
+Two Caddyfile fixes found by measuring the live deployment. Both are one-line
+config changes and neither needs an image rebuild — the Caddyfile is
+bind-mounted, so `docker compose restart caddy` applies them.
+
+### Fixed
+- **`https://headroom.local` was slow on the first load after idle, on iPhone
+  only — and it was never mDNS.** Caddy advertises HTTP/3 by default
+  (`alt-svc: h3=":443"; ma=2592000`), so Safari opens every fresh connection by
+  attempting QUIC over UDP 443 and remembers that advertisement for thirty
+  days. Measured against the live box: **every request in Caddy's log
+  negotiated h2 and none ever negotiated h3**, including from iOS 18.7 Safari,
+  with Caddy listening on UDP 443 and no firewall. The advertisement bought
+  nothing and cost a failed QUIC attempt before the TCP fallback every time.
+  `servers { protocols h1 h2 }` stops offering it.
+
+  It hid for a long time because it is invisible to the tools used to check it:
+  `curl` and Firefox do not attempt h3, and `:8000` sends no `Alt-Svc` — which
+  is exactly why "switch to the IP and it's instant" looked like a name
+  resolution problem. It is not. `dns-sd` shows `A` answered in milliseconds
+  and `SRV`/`HTTPS` both correctly answered "No Such Record" by the NSEC
+  responder, which is working.
+
+- **Intermittent 502s from the reverse proxy.** `reverse_proxy localhost:8000`
+  resolves to `::1` first on a dual-stack host, and uvicorn binds `0.0.0.0` —
+  IPv4 only. Caddy dialled the v6 loopback, got `connection refused`, and
+  returned 502 instead of retrying v4; observed six times in the live log
+  against `/api/admin/recent-errors/count`, so the nav badge was failing
+  outright. Now `127.0.0.1:8000`. This also affected the Caddyfile's own claim
+  that the app "trusts those headers from loopback only" — `::1` and
+  `127.0.0.1` are not the same peer to `FORWARDED_ALLOW_IPS`.
+
+### Internal
+- Two tests pin both directives (`tests/test_tls_health.py`), because deleting
+  either breaks nothing a laptop would notice and makes the phone slow again.
+  Both sabotage-checked. Backend 971 → **973**.
+
 ## [2.76.0] — 2026-09-04
 
 Everything the ten-agent archaeology pass found, fixed. Four must-fix items,
