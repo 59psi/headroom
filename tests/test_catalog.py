@@ -1296,10 +1296,6 @@ async def test_reading_the_backlog_writes_nothing_even_in_one_session(client, db
     )
 
 
-async def test_the_backlog_requires_auth(anon_client):
-    assert (await anon_client.get("/api/admin/purchases/unclaimed")).status_code == 401
-
-
 # --------- validating an analyzer-read colorway against reality ---------- #
 
 

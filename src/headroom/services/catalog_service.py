@@ -1079,16 +1079,23 @@ def assign_purchases(
         return False
 
     # BEST-EVIDENCED FIRST, then fewest candidates. Kuhn's guarantees maximum
-    # CARDINALITY whatever order it runs in, so this ordering is free — and it
-    # is not cosmetic. Among the many assignments of that same maximum size,
-    # the one produced depends entirely on who claims a contended hat first,
-    # and until now that was decided by candidate count and then by the order
-    # the rows came out of the database. A receipt matching a hat on colorway,
-    # size AND price to the cent lost the hat to a line that merely shared a
-    # model name and happened to be listed earlier — writing that line's cost
-    # basis onto the hat. Measured: a $999 purchase price stored where $79 was
-    # provable. The scores existed the whole time and nothing consulted them
-    # at this level.
+    # CARDINALITY whatever order it runs in, so this ordering is free.
+    #
+    # It is no longer what carries the result, and this comment used to say it
+    # was. When it was added, which assignment of maximum size came out
+    # depended entirely on who claimed a contended hat first — decided until
+    # then by candidate count and then database row order, so a receipt
+    # matching on colorway, size AND price to the cent lost a hat to a line
+    # that merely shared a model name and was listed earlier. Measured: a $999
+    # cost basis stored where $79 was provable. Ordering by top score fixed
+    # the common shape of that. `_improve_by_swapping` below now fixes it
+    # structurally, order be damned: mutation-tested, REVERSING this order
+    # leaves every outcome test green, while deleting the local-search call
+    # does not (`tests/test_matcher_evidence.py`). So this is a fast path that
+    # hands the local search a good starting point, and a tiebreak for the
+    # exact-tie case it cannot improve — kept for both, load-bearing for
+    # neither. Written down so the next reader does not "prove" it necessary
+    # from this comment the way `_by_scarcity` once was.
     for purchase in sorted(
         purchases,
         key=lambda p: (

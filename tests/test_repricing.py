@@ -234,11 +234,6 @@ async def test_status_reports_the_last_sweep(client, db_session, monkeypatch):
     assert after["consecutive_failures"] == 0
 
 
-async def test_repricing_status_requires_auth(anon_client):
-    assert (await anon_client.get("/api/admin/repricing")).status_code == 401
-    assert (await anon_client.post("/api/admin/repricing/run")).status_code == 401
-
-
 async def test_the_scheduler_does_not_start_when_disabled(monkeypatch):
     monkeypatch.setenv("HEADROOM_REPRICING_ENABLED", "false")
     assert await repricing.start_repricing() is None
@@ -651,5 +646,3 @@ async def test_a_manual_full_sweep_does_not_clear_a_standing_failure(
     assert status["consecutive_failures"] == 1
 
 
-async def test_the_full_sweep_requires_auth(anon_client):
-    assert (await anon_client.post("/api/admin/repricing/run-all")).status_code == 401

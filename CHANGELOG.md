@@ -6,6 +6,58 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.77.1] — 2026-09-05
+
+The test suite, measured by what it constrains rather than what it executes.
+No user-visible behavior changes; one source comment corrected.
+
+### Fixed
+- **The purchase matcher's scoring was covered and unconstrained.** Line and
+  branch coverage of `catalog_service.py` read 93%, and each of these left
+  every one of 988 tests green: zeroing BOTH bonus tiers (`STATED_FIELD`,
+  `COLOR_WORD`), deleting the `_improve_by_swapping` call site, disabling the
+  exact-price tiebreak (`PRICE_EXACT`), collapsing `MODEL_EXACT_STRIPPED` into
+  `MODEL_CONTAINED`, and dropping `colorway` from the preview's `matched_on`.
+  The local-search one is the sharpest: 2.77.0 shipped tests for that function
+  that drive it directly, so removing its only caller was invisible — function
+  tested, wiring untested. `tests/test_matcher_evidence.py` pins each as an
+  OUTCOME (which receipt links to the hat, which price lands on it), never a
+  score; every test was confirmed to fail under the mutation it names, and to
+  fail on the test named for that tier. The fixture throughout is the review's
+  own finding: two receipts share a model, one is $79 and one is $999, and only
+  the tier under test separates them.
+- **The `assign_purchases` ordering comment described a mechanism that no
+  longer carries the result.** Reversing the purchase iteration order leaves
+  every outcome test green because `_improve_by_swapping` recovers from any
+  starting order the tests can construct; the comment still called the order
+  "not cosmetic" and the thing deciding who wins a contended hat. That is the
+  `_by_scarcity` pattern — prose outliving the mechanism — and it is now
+  written down as a fast path and tiebreak, load-bearing for neither.
+- A test docstring in `test_backup_upload_config.py` still carried the
+  overstated S-12 claim that 2.77.0's changelog correction retracted. Fixed at
+  the source.
+
+### Removed
+- **Fifteen per-endpoint "requires auth" tests across twelve files.** Each
+  asserted one `/api/...` path answers 401 anonymously — and
+  `test_security.py::test_every_api_path_is_gated_unless_it_is_on_the_allowlist`
+  already enumerates `app.openapi()` and probes every operation, so each was a
+  strict subset of a check that runs anyway. None of the fifteen would have
+  caught the `/openapi.json` leak, because nobody had written one for that
+  path; the enumeration would have. The two that stay (`/uploads/`, and
+  `/openapi.json`/`/docs`/`/redoc`) cover a mount and the spec itself, which
+  the enumeration cannot reach. 988 → 980 tests, strictly more constrained.
+
+### Measured and left alone
+- Valuation and pricing were probed the same way and hold: reordering
+  `category` above `retail`, ignoring the retention multiplier, and disabling
+  the product-first comp each fail — by outcome tests, not only parity checks.
+  Swapping the `manual` and `comp` branches survives and correctly so: a hat
+  has one `resale_price_scope`, so the two are mutually exclusive and the
+  mutant is equivalent. Recorded in CLAUDE.md so the next probe does not
+  rediscover it.
+
+
 ## [2.77.0] — 2026-09-04
 
 The `/code-review xhigh` backlog, in full. The previous release said "fixed

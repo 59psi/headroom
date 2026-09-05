@@ -97,13 +97,6 @@ async def test_a_hand_entered_price_is_spared_without_skipping_the_hat(client):
     assert read["estimated_new_price_source"] == "Manual"
 
 
-async def test_queue_endpoints_require_auth(anon_client):
-    assert (await anon_client.get("/api/admin/analysis/queue")).status_code in (401, 403)
-    assert (
-        await anon_client.post("/api/admin/analysis/reanalyze-all")
-    ).status_code in (401, 403)
-
-
 async def test_stage_is_hidden_once_analysis_finishes(client):
     """A stage on a terminal status would be a confident label for work that
     stopped — worse than no label. `HatRead` derives it away rather than
@@ -556,11 +549,6 @@ async def test_retrying_twice_finds_nothing_left_to_do(client, db_session):
     assert (await client.post("/api/admin/analysis/retry-failed")).json()["queued"] == 0
 
 
-async def test_retry_failed_requires_auth(anon_client):
-    resp = await anon_client.post("/api/admin/analysis/retry-failed")
-    assert resp.status_code == 401
-
-
 # --------------------------------------------------------------------------- #
 # One run's log
 #
@@ -618,5 +606,3 @@ async def test_run_detail_404s_for_a_run_that_does_not_exist(client):
     assert resp.status_code == 404
 
 
-async def test_run_detail_requires_auth(anon_client):
-    assert (await anon_client.get("/api/admin/analysis/jobs/1")).status_code == 401

@@ -68,10 +68,16 @@ async def test_the_dash_check_is_load_bearing_where_the_regex_is_not(bad):
 
     `[A-Za-z0-9_-]` contains `-`, so the remote-name half of the pattern
     happily accepts a flag: `-vv:path` is a well-formed "remote:path" as far as
-    the regex is concerned. Every other flag case in this file is rejected by
-    the regex as well (`--config=/etc/x` fails on the `=`), so the whole suite
-    passed with `validate_destination`'s `startswith("-")` guard removed — it
-    looked redundant and was the only thing working.
+    the regex is concerned. Every other flag case in this file uses input the
+    regex rejects anyway (`--config=/etc/x` fails on the `=`), so before this
+    test nothing verified that an input the regex ACCEPTS is refused at all.
+
+    Precisely that, and not more: an earlier version of this docstring claimed
+    the whole suite passed with `validate_destination`'s `startswith("-")`
+    guard deleted. It does not — `test_a_leading_dash_is_called_out_as_a_flag`
+    fails, but incidentally, on its error-MESSAGE assertion, because the regex
+    rejects `--config=/etc/x` with different wording. A test that fails for a
+    reason other than the one it names is not coverage of that reason.
 
     The comment beside the pattern used to credit the regex with excluding a
     leading dash. Getting that backwards is how a real guard gets tidied away.
@@ -463,14 +469,6 @@ async def test_configuring_it_is_audited(client):
     rows = (await client.get("/api/admin/activity-log?limit=20")).json()
 
     assert any(r["kind"] == "backup.upload_configured" for r in rows)
-
-
-async def test_the_upload_endpoints_need_auth(anon_client):
-    assert (await anon_client.get("/api/admin/backups/upload")).status_code == 401
-    assert (await anon_client.put(
-        "/api/admin/backups/upload",
-        json={"provider": "rclone", "destination": "box:x"},
-    )).status_code == 401
 
 
 # ---- test-now --------------------------------------------------------- #

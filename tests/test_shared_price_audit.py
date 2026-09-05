@@ -170,7 +170,7 @@ async def test_hats_missing_a_colorway_come_first(client, db_session):
     assert [h["has_colorway"] for h in group["hats"]] == [False, False, False, True, True]
 
 
-async def test_a_hat_with_no_case_keeps_its_neighbours_labels_straight(client, db_session):
+async def test_a_hat_with_no_case_keeps_its_neighbors_labels_straight(client, db_session):
     """A hat carries its OWN label, so ids and labels cannot fall out of step.
 
     They did: the group appended every id but only the display_ids that were
@@ -227,5 +227,3 @@ async def test_groups_come_back_biggest_first(client, db_session):
     assert [g["hat_count"] for g in groups] == [9, 4]
 
 
-async def test_the_report_requires_auth(anon_client):
-    assert (await anon_client.get("/api/admin/prices/shared")).status_code == 401

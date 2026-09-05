@@ -313,5 +313,3 @@ async def test_the_config_endpoint_leaks_no_secrets(client):
         assert forbidden not in text
 
 
-async def test_the_config_endpoint_needs_auth(anon_client):
-    assert (await anon_client.get("/api/admin/config")).status_code == 401
