@@ -36,6 +36,21 @@ from headroom.database import async_session
 from headroom.models.hat import Hat
 from headroom.services.hat_analysis_pipeline import finalize_hat_photo
 
+#: The session factory this worker opens sessions with. Set by
+#: `start_worker(session_factory=)` — the lifespan passes `app.state`'s — and
+#: read through `_sessions()` at CALL time, so the fallback is whatever
+#: `async_session` names in this module when the call happens. That last part
+#: is deliberate: the existing tests redirect this module's `async_session` by
+#: monkeypatch, and a factory captured at import would have silently ignored
+#: them. `stop_worker()` resets it so one test's factory cannot leak into the
+#: next boot.
+_session_factory = None
+
+
+def _sessions():
+    return (_session_factory or async_session)()
+
+
 logger = logging.getLogger(__name__)
 
 # The status a hat wears between "photo saved" and "worker got to it". Any other
@@ -77,7 +92,7 @@ def enqueue(hat_id: int) -> bool:
 
 async def _process_hat(hat_id: int) -> None:
     """Run the full pipeline for one hat in its own session."""
-    async with async_session() as db:
+    async with _sessions() as db:
         hat = (await db.execute(select(Hat).where(Hat.id == hat_id))).scalar_one_or_none()
         if hat is None:
             return  # deleted between upload and analysis
@@ -126,7 +141,7 @@ async def _photo_replaced_since(hat_id: int, photo_path: str | None) -> bool:
     Also true when the hat was deleted mid-run, which wants the same handling:
     throw the result away.
     """
-    async with async_session() as check:
+    async with _sessions() as check:
         current = (
             await check.execute(select(Hat.photo_path).where(Hat.id == hat_id))
         ).scalar_one_or_none()
@@ -154,7 +169,7 @@ async def mark_failed(hat_id: int, exc: Exception) -> None:
     the queue was meant to remove.
     """
     try:
-        async with async_session() as db:
+        async with _sessions() as db:
             hat = (await db.execute(select(Hat).where(Hat.id == hat_id))).scalar_one_or_none()
             if hat is not None and hat.analysis_status == PENDING:
                 stamp_failure(hat, exc)
@@ -186,7 +201,7 @@ async def _worker_loop() -> None:
 async def _recover_on_boot() -> None:
     """Re-queue hats left 'pending' by a crash or restart."""
     assert _queue is not None
-    async with async_session() as db:
+    async with _sessions() as db:
         stranded = (await db.execute(
             select(Hat.id).where(Hat.analysis_status == PENDING)
         )).scalars().all()
@@ -196,8 +211,10 @@ async def _recover_on_boot() -> None:
         logger.info("Re-queued %d hat(s) stranded mid-analysis.", len(stranded))
 
 
-async def start_worker() -> None:
+async def start_worker(session_factory=None) -> None:
     """Wire up the queue + worker. Called from app.lifespan."""
+    global _session_factory
+    _session_factory = session_factory
     global _queue, _worker_task
     _queue = asyncio.Queue()
     _worker_task = asyncio.create_task(_worker_loop())
@@ -205,6 +222,8 @@ async def start_worker() -> None:
 
 
 async def stop_worker() -> None:
+    global _session_factory
+    _session_factory = None
     global _queue, _worker_task
     if _worker_task is not None:
         _worker_task.cancel()

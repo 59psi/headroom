@@ -628,6 +628,22 @@ async def newest_backup_at() -> datetime | None:
         return None
 
 
+#: The session factory the scheduler's upload hook resolves its argv with. Set
+#: by `scheduled_backup_loop(session_factory=)` — the lifespan passes
+#: `app.state`'s — and resolved at call time so a module-level default is only
+#: ever read when nothing was injected. Imported lazily: `database` imports
+#: nothing from here, but the reverse edge was a cycle once and the local
+#: import is what the previous code did.
+_session_factory = None
+
+
+def _sessions():
+    if _session_factory is not None:
+        return _session_factory()
+    from headroom.database import async_session  # noqa: PLC0415 — cycle
+    return async_session()
+
+
 async def _run_upload_hook(path: Path, argv: list[str] | None = None) -> None:
     """Best-effort off-box copy of a freshly written backup.
 
@@ -645,10 +661,8 @@ async def _run_upload_hook(path: Path, argv: list[str] | None = None) -> None:
     # test endpoint does, and resolving twice would read the setting twice and
     # leave the two reads free to disagree.
     if argv is None:
-        from headroom.database import async_session  # noqa: PLC0415 — cycle
-
         try:
-            async with async_session() as db:
+            async with _sessions() as db:
                 argv = await resolve_upload_argv(db, path)
         except Exception as exc:  # noqa: BLE001 — never break the backup
             # RECORDED, not just logged. Nobody is reading the container log at
@@ -734,7 +748,11 @@ async def write_scheduled_backup(keep: int, fingerprint: str | None = None) -> P
     return target
 
 
-async def scheduled_backup_loop(interval_hours: float, keep: int) -> None:
+async def scheduled_backup_loop(
+    interval_hours: float, keep: int, session_factory=None,
+) -> None:
+    global _session_factory
+    _session_factory = session_factory
     """Long-running task: writes a backup every `interval_hours`, if anything changed.
 
     Every failure mode short of cancellation is survivable. This used to run the

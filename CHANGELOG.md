@@ -6,6 +6,40 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.77.3] — 2026-09-05
+
+The other three workers, booted for real. 2.77.2 proved the lifespan's gates
+in the OFF direction for all four workers and in the ON direction for one.
+
+### Fixed
+- **Three workers could not be booted under test at all.** `import_service`,
+  `analysis_queue` and `backup_service`'s upload hook each reached for the
+  module-level `async_session` directly (fifteen sites), so their own suites
+  redirect that name by monkeypatch and the lifespan — which now refuses the
+  module engine under test — could start none of them. Each takes
+  `session_factory=` now, resolved at call time so the existing monkeypatches
+  keep working, and the lifespan passes `app.state`'s. Three new boot tests
+  turn each on and assert the outcome against the app's database: a
+  crash-stranded import item is healed by the boot sweep; a `pending` hat is
+  re-queued and processed; the backup scheduler writes its first archive and
+  the upload hook resolves its argv through the right database (with the seam
+  dropped, the hook's own `except` records a failed upload — the assertion
+  cannot pass by accident). Each forward was removed in turn; each time the
+  test named for it was the one that failed.
+- **The lifespan tests were racing on a shared connection.** The suite's
+  in-memory engine is a `StaticPool` — one connection for every session. A
+  request test holds one session; a boot holds five. One session's `close()`
+  issues `ROLLBACK` on the shared connection and discards another's
+  uncommitted `UPDATE` before its `COMMIT`. Measured: the analysis worker
+  processed a re-queued hat, committed, and the hat stayed `pending` with no
+  error anywhere, because the prune loop closed its session in between — and
+  the import-worker test was passing on timing. The lifespan module now runs
+  on a file-backed SQLite with the production connect hook attached (WAL,
+  busy_timeout, synchronous=FULL), one connection per session as on the box.
+  It also made a real assertion possible that a recorder could not: after a
+  clean shutdown, the file's `-wal` sidecar is zero bytes.
+
+
 ## [2.77.2] — 2026-09-05
 
 Two things the suite could not see, made visible: the lifespan, and the SDK
