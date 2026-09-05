@@ -6,6 +6,114 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.77.0] — 2026-09-04
+
+The `/code-review xhigh` backlog, in full. The previous release said "fixed
+everything the archaeology pass found" and left ten items untouched; this is
+those, plus the review findings that surfaced while checking that claim. Every
+fix here is sabotage-checked — the bug reinstated, the test confirmed to fail
+with the right symptom.
+
+### Security
+- **`GET /api/auth/me` no longer returns the API token** (S-07). It is a
+  long-lived bearer credential that survives logout, password change and
+  `destroy_other_sessions`, so a session alone yielding it let a stolen session
+  upgrade into access that no revocation this app has can reach — and the
+  Account card fetches `/me` on every Settings load, so it was on the wire far
+  more often than the one moment somebody wanted to read it. Reading it is now
+  `POST /api/auth/token/reveal` with the current password. **Rotation is gated
+  too**, which is not belt-and-braces: rotate RETURNS the new token, so gating
+  reveal alone leaves the identical escalation behind a different verb.
+- **Share links expire in 30 days unless you choose otherwise** (S-06). A link
+  is unscoped and whole-collection — every hat, with photos, and the room and
+  case each one lives in — so a forwarded one is a lasting, room-by-room,
+  photographed inventory of somebody's valuables. "Never" was both the default
+  and invisible: the card offered no expiry control and showed none on existing
+  links. It now offers 7/30/90/365/Never and states each link's expiry.
+  `expires_days: null` still means never. The frontend used to send an explicit
+  `null` unconditionally, so a server-side default alone would have changed
+  nothing.
+- **Share tokens are redacted from the `error.unhandled` activity row and the
+  log line beside it**, not only from uvicorn's access log. A share token is a
+  PATH parameter, which defeats `error_handler`'s stated mitigation ("store
+  `path`, never the full URL, because query strings carry tokens") precisely.
+  The row is the serious half: the database is what the scheduled backup
+  uploads off the box, so an unredacted row puts a live token on a NAS or cloud
+  remote for as long as that archive is retained. `utils/redaction.py` now owns
+  the rule and all three sinks use it — the first version of this fix covered
+  one of the three, in a change whose entire subject was the leak.
+- **`HEADROOM_SETUP_TOKEN` closes the first-run land-grab window** (S-05).
+  Until the owner claims it, `/api/auth/setup` hands full control to whoever
+  posts first, and `/api/auth/status` advertises `needs_setup: true`. Nearly
+  theoretical on a LAN; on the Let's Encrypt overlay the hostname is in a
+  public certificate-transparency log within seconds. Opt-in — a required token
+  would put a mandatory step between `docker compose up` and a working LAN app
+  to defend against somebody already on the LAN. A wrong token answers with the
+  same "Setup already completed" as a claimed box.
+- **The rclone destination comment credited the regex with a guard it does not
+  have** (S-12). `[A-Za-z0-9_-]` contains `-`, so `-vv:path` and `--config:/x`
+  both match the pattern; what actually blocks them is the explicit
+  `startswith("-")` check in `validate_destination`. The hole was never open —
+  but every existing test used an input the regex rejects anyway, so the whole
+  suite passed with that check deleted, and the comment pointed at the wrong
+  guard while making the real one look redundant.
+- **Client-IP behavior on the plain bridge compose is documented** (S-08). It
+  may be the Docker gateway, which collapses per-IP login rate limiting into
+  one shared bucket and makes the IP on `auth.login_failed` rows meaningless.
+  All three LAN overlays use host networking and are unaffected.
+
+### Fixed
+- **Purchase matching gave a contended hat to the wrong receipt, and the local
+  search called it a fixpoint.** `_improve_by_swapping` had two moves — relocate
+  onto a free hat, and swap two matched pairs — and neither can move the
+  PURCHASE end of a pair. That is exactly the shape Kuhn's augmenting step
+  creates, since displacing an incumbent is how it finds a longer path.
+  Reproduced: three purchases, two hats, a maximum matching worth 1500, and this
+  returned 910. A third move (**substitute** a held hat's purchase for an
+  unheld purchase that scores higher on it) closes it; cardinality is untouched,
+  so the maximum-matching guarantee still holds. The docstring claimed the two
+  moves were "exact for the realistic contention shape"; a three-purchase
+  example defeated them, and the real limit — a 3-cycle rotation is still missed
+  — is now pinned by a test rather than asserted in prose.
+- **Whole-collection views silently dropped everything past 1000 hats.**
+  `GET /api/hats` caps `limit` at 1000 and the Hats grid, Valuation, Stats and
+  the Home carousel all ask for the lot, so a larger collection came back
+  truncated — which does not look truncated, it looks like hats vanished and the
+  collection is worth less. The server already published the real size in
+  `X-Total-Count` and logged a warning; **nothing read either**, so the guard
+  reported into a container log. `listAllHats` now pages.
+- **The retention prune had no health record** — the only background task with
+  none, and the only thing bounding `activity_log` and `auth_sessions`. A
+  persistent failure was one WARNING per day while an SD card filled. Now at
+  `GET /api/admin/activity-log/retention` and on the Recent Activity card.
+- **Per-category isolation in the colorway harvest only caught
+  `MelinRecapError`.** The stated property is "one bad category cannot abandon
+  the rest", so anything else — a racing `IntegrityError`, a disk error
+  mid-commit, a decode failure on a title — escaped and killed the whole run.
+  The narrow `except` read as the careful choice and was the reason one bad
+  category could still cost eight good ones.
+- **The colorway card re-enabled its button during the window a harvest is
+  claimed but not yet running.** `harvest_in_flight()` existed for exactly this
+  and had no caller; the card guessed with a 30-second wall-clock timer, which
+  was also purely local — a harvest started on a phone left the laptop's button
+  live and the next press was refused with nothing on screen saying why.
+- **A comment described the upload-state write as "fsync the FILE, then the
+  DIRECTORY, then rename".** The code does file-fsync → rename → dir-fsync,
+  which is correct and is the whole mechanism; syncing the directory before the
+  rename syncs a directory that does not contain it yet. Anyone "correcting" the
+  code to match the comment would have removed the durability guarantee while
+  the comment went on claiming it.
+- **The staging directory could be deleted while an import item was still
+  reading from it.** The `still_live` guard against that had zero coverage; it
+  now has both halves (survives when live, cleaned up when not).
+- `CLAUDE.md`'s auth bullet no longer omits `/openapi.json`, `/docs` and
+  `/redoc` from the protected prefixes; three files cited `OPERATIONS §7` for
+  systemd units that live in §3; `HEADROOM_BACKUP_INCLUDE_CA` was documented in
+  prose but missing from both env tables. British spellings: `colour` ×2
+  (written in the same session that fixed thirteen others), `modelled`,
+  `labelled` ×3, `dialled`.
+
+
 ## [2.76.1] — 2026-09-04
 
 Two Caddyfile fixes found by measuring the live deployment. Both are one-line

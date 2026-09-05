@@ -156,13 +156,25 @@ async def test_wear_idempotent_same_day(client):
 
 
 async def test_password_change_rotates_api_token(client):
-    before = (await client.get("/api/auth/me")).json()["api_token"]
+    """Reads the token through the password-gated route, not `/me`.
+
+    `/me` no longer carries it (S-07): a session alone must not yield a
+    credential that outlives every form of session revocation this app has.
+    """
+    reveal = "/api/auth/token/reveal"
+    before = (await client.post(
+        reveal, json={"current_password": "test-password-123"}
+    )).json()["api_token"]
+
     resp = await client.post(
         "/api/auth/password",
         json={"current_password": "test-password-123", "new_password": "new-password-456"},
     )
     assert resp.status_code == 204, resp.text
-    after = (await client.get("/api/auth/me")).json()["api_token"]
+
+    after = (await client.post(
+        reveal, json={"current_password": "new-password-456"}
+    )).json()["api_token"]
     assert after != before
 
 

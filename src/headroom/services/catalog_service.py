@@ -87,7 +87,17 @@ def release_harvest() -> None:
 
 
 def harvest_in_flight() -> bool:
-    return _harvest_claimed
+    """Claimed OR running — which is not the same as `progress.running`.
+
+    The claim is taken in the request and `progress.begin()` runs inside the
+    background task, so between the 202 landing and the task being scheduled
+    there is a window where a harvest is reserved and `progress.running` is
+    still false. The card polls status, sees an idle sweep, re-enables the
+    button, and the next press is refused by a guard nothing had told it
+    about — the same invisible-queued-work problem the claim itself exists to
+    solve, moved one layer out to the thing displaying it.
+    """
+    return _harvest_claimed or progress.running
 
 _PER_PAGE = 100
 _MAX_PAGES_PER_CATEGORY = 50  # safety backstop; ~5000 listings/category
@@ -207,9 +217,23 @@ async def _harvest(db, now) -> dict:
         progress.advance(category)
         try:
             seen, new = await _sweep_category(db, category, now)
-        except MelinRecapError as exc:
+        except Exception as exc:  # noqa: BLE001 — see below; NOT BaseException
             # Keep going. The next category is independent, and a partial
             # harvest that KNOWS it is partial beats one that doesn't.
+            #
+            # `Exception`, not `MelinRecapError`. Narrowing it to the API error
+            # made the isolation cover only the failure that was in mind when
+            # it was written, while the stated property is broader — one bad
+            # category cannot abandon the rest — and anything else escaped and
+            # killed the whole run: an `IntegrityError` from a racing harvest
+            # (now prevented by the claim, but that is a second guard, not this
+            # one), a disk error mid-commit, a decode failure on a title. The
+            # narrow clause looked careful and was the reason a single bad
+            # category could still lose eight good ones.
+            #
+            # `Exception` deliberately excludes `CancelledError`, which is a
+            # `BaseException`: a shutdown must stop the sweep, not be absorbed
+            # into `failed` and reported as one flaky category.
             logger.warning("Colorway harvest: category %s failed: %s", category, exc)
             failed.append(category)
             await db.rollback()
@@ -255,6 +279,7 @@ async def catalog_stats(db: AsyncSession) -> dict:
     last_seen = (await db.execute(select(func.max(ColorwayEntry.last_seen)))).scalar_one()
     return {
         "progress": progress.snapshot(),
+        "in_flight": harvest_in_flight(),
         "entries": entries,
         "models": models,
         "colorways": colorways,
@@ -871,6 +896,7 @@ class Assignment(NamedTuple):
 
 
 def _improve_by_swapping(
+    purchases: Sequence[Purchase],
     candidates: dict[int, list[tuple[int, Hat]]],
     holder: dict[int, tuple[Purchase, Hat]],
 ) -> None:
@@ -881,25 +907,45 @@ def _improve_by_swapping(
     max-WEIGHT: Kuhn's optimizes cardinality, and among the many assignments
     of that same maximum size nothing was choosing the better-evidenced one.
 
-    This closes the rest with the two moves that cannot lose a link:
+    This closes most of the rest with the three moves that cannot lose a link.
+    Each swaps one endpoint of the assignment for another, so between them
+    they cover both sides and the pair:
 
+    * **Relocate** a matched purchase onto a hat nobody holds, when that
+      scores higher. Moves the HAT end. One link before, one after.
+    * **Substitute** a held hat's purchase for an unheld purchase that scores
+      higher on it. Moves the PURCHASE end — one purchase leaves the matching
+      as another joins, so the size is unchanged.
     * **Swap** two matched pairs, `(p1,h1) + (p2,h2)` → `(p1,h2) + (p2,h1)`,
       when both new pairs are candidates and the total goes up. Two links
       before, two after.
-    * **Relocate** a matched purchase onto a hat nobody holds, when that
-      scores higher. One link before, one after.
 
-    Both preserve cardinality exactly, so the maximum-matching guarantee that
-    `test_matching_achieves_the_maximum_possible` proves is untouched — this
-    can only improve the tiebreak. Run to fixpoint; each pass strictly
-    increases an integer total that is bounded above, so it terminates.
+    **Substitute is not redundant with the other two, and leaving it out was a
+    real defect** rather than a missing nicety. Relocate needs a free hat and
+    swap needs both purchases to be candidates for both hats, so neither can
+    touch the shape where a purchase that fits exactly ONE hat has displaced a
+    better-scoring rival off it — which is the shape Kuhn's augmenting step
+    actively creates, since displacing an incumbent is how it finds a longer
+    path. Reproduced before the fix and pinned by
+    `test_a_hat_goes_to_the_better_purchase_when_the_holder_cannot_move`:
+    three purchases, two hats, a maximum matching worth 1500, and this
+    function was returning 910 and calling it a fixpoint.
 
-    **This is not a proof of global weight-optimality**, and saying so matters
-    given what this module has already been wrong about. A true max-weight
-    maximum matching needs min-cost max-flow; 2-swaps reach a local optimum
-    that is exact for the realistic contention shape (several receipt lines of
-    one model competing for the same few hats) and can in principle miss an
-    improvement that requires rotating three or more pairs at once.
+    All three preserve cardinality exactly, so the maximum-matching guarantee
+    that `test_matching_achieves_the_maximum_possible` proves is untouched —
+    this can only improve the tiebreak. Run to fixpoint; every accepted move
+    strictly increases an integer total that is bounded above, so it
+    terminates.
+
+    **This is still not a proof of global weight-optimality**, and stating the
+    limit precisely matters given that the previous version of this docstring
+    claimed the two moves were "exact for the realistic contention shape" when
+    a three-purchase example defeated them. A true max-weight maximum matching
+    needs min-cost max-flow. What these three moves reach is a local optimum
+    under single-endpoint changes and 2-swaps; an improvement that requires
+    rotating three or more pairs at once is still missed, and
+    `test_a_three_way_rotation_is_the_documented_blind_spot` builds one so
+    that limit is a checked claim rather than a hedge.
     """
     score_of: dict[tuple[int, int], int] = {}
     for pid, scored in candidates.items():
@@ -926,6 +972,31 @@ def _improve_by_swapping(
                 holder[id(other)] = (purchase, other)
                 improved = True
                 break
+
+        # Substitute: hand a held hat to an unheld purchase that fits it
+        # better. `held_purchases` is maintained as we go rather than
+        # recomputed, so a purchase displaced earlier in this pass is
+        # immediately eligible to take a hat elsewhere.
+        held_purchases = {id(p) for p, _ in holder.values()}
+        for hid, (purchase, hat) in list(holder.items()):
+            if holder.get(hid) != (purchase, hat):
+                continue
+            best: tuple[int, Purchase] | None = None
+            current = paired_score(purchase, hat) or 0
+            for other in purchases:
+                if id(other) in held_purchases:
+                    continue
+                sc = paired_score(other, hat)
+                if sc is None or sc <= current:
+                    continue
+                if best is None or sc > best[0]:
+                    best = (sc, other)
+            if best is None:
+                continue
+            holder[hid] = (best[1], hat)
+            held_purchases.discard(id(purchase))
+            held_purchases.add(id(best[1]))
+            improved = True
 
         # Swap two held pairs when the pair of new edges scores higher.
         held = list(holder.items())
@@ -1027,7 +1098,7 @@ def assign_purchases(
     ):
         augment(purchase, set())
 
-    _improve_by_swapping(candidates, holder)
+    _improve_by_swapping(purchases, candidates, holder)
 
     out: dict[int, Assignment] = {}
     for purchase, hat in holder.values():

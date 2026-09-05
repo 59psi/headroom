@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from headroom.services.catalog_service import parse_listing_title
@@ -592,6 +594,68 @@ async def test_one_failing_category_does_not_abandon_the_rest(db_session, monkey
     # Every OTHER category still swept — the ones after the failure especially.
     assert "odysea" in calls and "coast" in calls
     assert result["distinct_models"] >= 8, result
+
+
+async def test_isolation_covers_any_failure_not_just_the_marketplace_one(
+    db_session, monkeypatch,
+):
+    """The stated property is "one bad category cannot abandon the rest".
+
+    The clause implementing it caught only `MelinRecapError`, so it covered the
+    failure that was in mind when it was written and nothing else — a racing
+    harvest's `IntegrityError`, a disk error mid-commit, a decode failure on a
+    title all escaped and killed the whole run. The narrow `except` read as the
+    careful choice and was the reason one bad category could still cost eight
+    good ones.
+
+    Uses a plain `ValueError`, deliberately: the point is that the type does
+    not matter, so naming a realistic one would test the same narrowness again
+    one step further out.
+    """
+    from headroom.services import catalog_service
+
+    calls: list[str] = []
+
+    async def flaky(params):
+        cat = params["pub_category"]
+        calls.append(cat)
+        if cat == "coronado":
+            raise ValueError("nothing to do with the marketplace")
+        return [{"attributes": {"title": f"{cat} Hydro - Color"}}]
+
+    monkeypatch.setattr("headroom.services.catalog_service.query_listings", flaky)
+
+    result = await catalog_service.harvest_catalog(db_session)
+
+    assert result["failed_categories"] == ["coronado"]
+    assert "odysea" in calls and "coast" in calls
+    assert result["distinct_models"] >= 8, result
+
+
+async def test_a_cancelled_harvest_stops_rather_than_becoming_a_failed_category(
+    db_session, monkeypatch,
+):
+    """`Exception`, not `BaseException` — the difference is a shutdown.
+
+    Widening the per-category clause must not swallow `CancelledError`. If it
+    did, cancelling at shutdown would be absorbed into `failed_categories`, the
+    sweep would carry on to the next category, and a stopping container would
+    report itself as one flaky category rather than stopping.
+    """
+    from headroom.services import catalog_service
+
+    calls: list[str] = []
+
+    async def cancelled(params):
+        calls.append(params["pub_category"])
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr("headroom.services.catalog_service.query_listings", cancelled)
+
+    with pytest.raises(asyncio.CancelledError):
+        await catalog_service.harvest_catalog(db_session)
+
+    assert len(calls) == 1, "the sweep kept going after being cancelled"
 
 
 async def test_a_transient_page_failure_is_retried(db_session, monkeypatch):
@@ -1373,3 +1437,151 @@ async def test_a_vaguer_colorway_than_the_product_is_refused(client, db_session)
     assert await is_real_product(db_session, "Trenches Hydro", "Rain Camo"), (
         "a hat named for the family still matches the fuller catalog name"
     )
+
+
+# --------------------------------------------------------------------------
+# _improve_by_swapping: the local search that decides WHICH maximum matching
+# --------------------------------------------------------------------------
+#
+# These drive the function directly rather than through `match_purchases_to_hats`.
+# Kuhn's guarantees the SIZE of the matching and these moves cannot change it,
+# so what is under test is purely the tiebreak — and the tiebreak is what
+# writes a cost basis onto a hat. Building the graph by hand is the only way to
+# state the adversarial shape exactly; expressed as receipts and hats it would
+# be a page of fixture whose scores are an implementation detail of
+# `_match_score`, and a change there would silently stop testing this.
+
+
+class _Node:
+    """Stand-in for a Purchase or Hat. The function keys on `id()` only."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return self.name
+
+
+def _total(candidates, holder) -> int:
+    return sum(
+        next(sc for sc, h in candidates[id(p)] if h is hat)
+        for p, hat in holder.values()
+    )
+
+
+async def test_a_hat_goes_to_the_better_purchase_when_the_holder_cannot_move():
+    """The shape neither relocate nor swap can reach — and Kuhn's creates it.
+
+    P1 fits hat1 well and hat2 badly. P2 fits ONLY hat1. P3 fits ONLY hat2.
+    Kuhn's takes P1 -> hat1, then P2 displaces it onto hat2 to lengthen the
+    path, and P3 is left out. Two links, worth 910.
+
+    The same two links are worth 1500 as P1 -> hat1 and P3 -> hat2. Getting
+    there needs the PURCHASE end of a pair to change: relocate needs a free
+    hat and there is none, and swap needs both purchases to be candidates for
+    both hats, which P2 is not. Before `substitute` existed this returned 910
+    and reported it as a fixpoint.
+    """
+    from headroom.services.catalog_service import _improve_by_swapping
+
+    p1, p2, p3 = _Node("P1"), _Node("P2"), _Node("P3")
+    h1, h2 = _Node("hat1"), _Node("hat2")
+    candidates = {
+        id(p1): [(1000, h1), (10, h2)],
+        id(p2): [(900, h1)],
+        id(p3): [(500, h2)],
+    }
+    holder = {id(h2): (p1, h2), id(h1): (p2, h1)}
+    assert _total(candidates, holder) == 910
+
+    _improve_by_swapping([p1, p2, p3], candidates, holder)
+
+    assert len(holder) == 2, "a tiebreak move must never cost a link"
+    assert _total(candidates, holder) == 1500, (
+        "the better-evidenced pair of the same size was reachable and missed"
+    )
+    assert holder[id(h1)][0] is p1 and holder[id(h2)][0] is p3
+
+
+async def test_a_three_way_rotation_is_the_documented_blind_spot():
+    """Pins the limit the docstring claims, so it stays a checked claim.
+
+    Three pairs that improve only when all three rotate at once. No single
+    endpoint change and no 2-swap gets any part of the way, so this function
+    is at a local optimum worth 30 while 300 exists at the same size. That is
+    a real limitation of local search and needs min-cost max-flow to close;
+    what it must not be is an unstated one, which is how the previous
+    docstring came to call two moves "exact".
+
+    If someone adds a rotation move, this test failing is the correct
+    outcome — update it to assert 300.
+    """
+    from headroom.services.catalog_service import _improve_by_swapping
+
+    p1, p2, p3 = _Node("P1"), _Node("P2"), _Node("P3")
+    h1, h2, h3 = _Node("hat1"), _Node("hat2"), _Node("hat3")
+    candidates = {
+        id(p1): [(100, h2), (10, h1)],
+        id(p2): [(100, h3), (10, h2)],
+        id(p3): [(100, h1), (10, h3)],
+    }
+    holder = {id(h1): (p1, h1), id(h2): (p2, h2), id(h3): (p3, h3)}
+
+    _improve_by_swapping([p1, p2, p3], candidates, holder)
+
+    assert len(holder) == 3
+    assert _total(candidates, holder) == 30, (
+        "a 3-cycle rotation is still missed — if this now finds 300, the "
+        "docstring's stated limit is out of date"
+    )
+
+
+async def test_local_search_never_costs_a_link_or_a_point():
+    """Randomized: the two invariants the maximum-matching proof depends on.
+
+    `test_matching_achieves_the_maximum_possible` proves cardinality for the
+    matching Kuhn's returns. This function runs AFTER it and can only be
+    trusted if it never reduces either the size or the score — the whole
+    argument for local search here is that both moves are safe. Random graphs
+    hit shapes hand-written fixtures do not.
+    """
+    import random
+
+    from headroom.services.catalog_service import _improve_by_swapping
+
+    rng = random.Random(20260904)
+    for trial in range(400):
+        purchases = [_Node(f"p{i}") for i in range(rng.randint(2, 6))]
+        hats = [_Node(f"h{i}") for i in range(rng.randint(2, 6))]
+        candidates = {}
+        for p in purchases:
+            picked = rng.sample(hats, rng.randint(1, len(hats)))
+            scored = sorted(
+                ((rng.randint(1, 500), h) for h in picked),
+                key=lambda pair: -pair[0],
+            )
+            candidates[id(p)] = scored
+
+        # Any valid matching; the invariants must hold from any start, not
+        # only from the one Kuhn's happens to produce.
+        holder = {}
+        used = set()
+        for p in purchases:
+            for _sc, h in candidates[id(p)]:
+                if id(h) not in holder and id(p) not in used:
+                    holder[id(h)] = (p, h)
+                    used.add(id(p))
+                    break
+
+        before_size, before_score = len(holder), _total(candidates, holder)
+        _improve_by_swapping(purchases, candidates, holder)
+
+        assert len(holder) == before_size, f"trial {trial}: lost a link"
+        assert _total(candidates, holder) >= before_score, (
+            f"trial {trial}: local search made the assignment worse"
+        )
+        # Every hat is held by exactly one purchase, and no purchase twice.
+        holders = [id(p) for p, _ in holder.values()]
+        assert len(holders) == len(set(holders)), (
+            f"trial {trial}: a purchase ended up holding two hats"
+        )

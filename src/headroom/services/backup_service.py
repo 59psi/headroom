@@ -517,12 +517,20 @@ def _write_upload_state_sync(h: BackupHealth) -> None:
         # Write-then-rename: a torn file here would read as "never uploaded",
         # which is the exact false negative this whole record exists to remove.
         tmp = path.with_name(path.name + ".tmp")
-        # fsync the FILE, then the DIRECTORY, then rename. Write-then-rename is
-        # atomic with respect to a crash of this process, but not with respect
-        # to a power cut: without the syncs the rename can reach the disk while
-        # the bytes it points at have not, leaving a zero-length file that reads
-        # as "never uploaded" — the exact false negative this record exists to
-        # remove, produced by the mechanism chosen to prevent it.
+        # fsync the FILE, then rename, then fsync the DIRECTORY — in that
+        # order, which is what the code below does and is not what this comment
+        # used to say ("file, then directory, then rename"). The order is the
+        # whole mechanism, so describing it backwards is worse than not
+        # describing it: syncing the directory before the rename syncs a
+        # directory that does not yet contain the rename, and anyone
+        # "correcting" the code to match would have silently removed the
+        # durability guarantee while the comment went on claiming it.
+        #
+        # Write-then-rename is atomic against a crash of this process but not
+        # against a power cut: without the syncs the rename can reach the disk
+        # while the bytes it points at have not, leaving a zero-length file that
+        # reads as "never uploaded" — the exact false negative this record
+        # exists to remove, produced by the mechanism chosen to prevent it.
         #
         # This is the same argument `HEADROOM_SQLITE_SYNCHRONOUS=FULL` makes,
         # and it was made here after an unclean shutdown on this deployment's SD
@@ -923,10 +931,17 @@ UPLOAD_PROVIDERS: dict[str, UploadProvider] = {
         name="rclone",
         label="Cloud storage (rclone)",
         argv=("rclone", "copy", "{path}", "{dest}"),
-        # `-` is excluded from the FIRST character on purpose: `--config=/x` is
-        # a perfectly good "destination" that turns a copy into an
-        # arbitrary-config rclone run — flag injection wearing an argument's
-        # clothes.
+        # This does NOT exclude a leading `-`, and the comment here used to say
+        # it did. `[A-Za-z0-9_-]` contains `-`, so `-vv:path` and `--config:/x`
+        # both match — a "destination" that turns a copy into an
+        # arbitrary-config rclone run, flag injection wearing an argument's
+        # clothes. What actually stops it is the explicit `startswith("-")`
+        # check in `validate_destination`, which every write path goes through.
+        # So the hole was never open; the comment was, by naming the wrong
+        # guard. That matters more than it sounds: it is the sentence that
+        # tells the next person the regex may not be loosened, and it pointed
+        # at a property the regex does not have — leaving the real check
+        # looking redundant and deletable.
         destination_re=re.compile(r"^[A-Za-z0-9_-]+:[A-Za-z0-9_./ -]*$"),
         destination_hint="remote:path",
         example="box:Headroom-Backups",

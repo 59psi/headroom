@@ -43,12 +43,12 @@ from headroom.utils.photo import export_derivative_path, make_export_image
 
 logger = logging.getLogger(__name__)
 
-#: A CSS colour literal, and nothing else.
+#: A CSS color literal, and nothing else.
 _HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
 def _safe_hex(value: str | None) -> str:
-    """`value` if it is a plain 6-digit hex colour, otherwise "".
+    """`value` if it is a plain 6-digit hex color, otherwise "".
 
     `hex_value` is written by Claude against a tool schema that already
     specifies this exact shape, and it reached a `style="background:…"`

@@ -520,7 +520,7 @@ async def fetch_resale_stats(
             narrowed = len(rows) < len(everything)
             # The whole-name disjunct is deliberate and was re-examined in
             # 2.76: a review proposed dropping it so a comparison that narrowed
-            # nothing could never be labelled a model comp. That is right for a
+            # nothing could never be labeled a model comp. That is right for a
             # SHORTENED prefix, which is what the paragraph above is about, and
             # wrong for the full name. If the hat's complete model name selects
             # every listing in the category, the comparison really is "listings

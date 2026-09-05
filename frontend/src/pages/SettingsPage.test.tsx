@@ -56,12 +56,19 @@ vi.mock('../api/settings', () => ({
   })),
   setBackupUpload: vi.fn(), clearBackupUpload: vi.fn(), testBackupUpload: vi.fn(),
   getActivityLog: vi.fn(async () => []),
+  getRetentionStatus: vi.fn(async () => ({
+    retention_days: 90,
+    health: {
+      name: 'retention prune', last_attempt_at: null, last_success_at: null,
+      last_error: null, consecutive_failures: 0, last_result: 0,
+    },
+  })),
   getEbayCreds: vi.fn(async () => ({ configured: false, marketplace: 'EBAY_US' })),
   setEbayCreds: vi.fn(), deleteEbayCreds: vi.fn(), testEbayCreds: vi.fn(),
   inventoryReportUrl: vi.fn(() => '/api/admin/inventory-report'),
   collectionExportUrl: vi.fn(() => '/api/admin/collection-export'),
   getColorwayStatus: vi.fn(async () => ({
-    entries: 988, models: 146, colorways: 402, last_harvest: null,
+    entries: 988, models: 146, colorways: 402, last_harvest: null, in_flight: false,
   })),
   // Mock the real payload shape: pydantic serializes every field, defaults
   // included, so a partial literal is a fiction the component never receives.
@@ -94,10 +101,14 @@ vi.mock('../api/settings', () => ({
 }));
 
 vi.mock('../api/auth', () => ({
-  getMe: vi.fn(async () => ({ username: 'owner', api_token: 'hr_secret' })),
+  // The real payload: `/me` no longer carries `api_token`. Reading it is a
+  // separate, password-gated request (S-07), so a mock that still returned the
+  // token would be describing an endpoint that has stopped serving it.
+  getMe: vi.fn(async () => ({ username: 'owner', token_set: true })),
   listPasskeys: vi.fn(async () => []),
   listShareLinks: vi.fn(async () => []),
-  changePassword: vi.fn(), rotateApiToken: vi.fn(), deletePasskey: vi.fn(),
+  changePassword: vi.fn(), rotateApiToken: vi.fn(), revealApiToken: vi.fn(),
+  deletePasskey: vi.fn(),
   passkeyRegisterOptions: vi.fn(), passkeyRegisterVerify: vi.fn(), logout: vi.fn(),
   createShareLink: vi.fn(), revokeShareLink: vi.fn(),
 }));
@@ -111,6 +122,9 @@ vi.mock('../api/client', () => ({
     if (path.includes('ca-certificate')) throw new Error('404');
     return [];
   }),
+  // Both exports, or a card reaching `api/hats` (which imports this one to
+  // read `X-Total-Count`) gets `undefined` and fails on call rather than here.
+  apiFetchWithHeaders: vi.fn(async () => ({ data: [], headers: new Headers() })),
 }));
 vi.mock('../lib/webauthn', () => ({
   createPasskey: vi.fn(), passkeysSupported: vi.fn(() => false),

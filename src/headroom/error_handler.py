@@ -24,6 +24,8 @@ import uuid
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
+from headroom.utils.redaction import redact_share_tokens
+
 logger = logging.getLogger(__name__)
 
 
@@ -59,6 +61,16 @@ async def log_unhandled(request: Request, exc: Exception) -> JSONResponse:
     """
     ref = uuid.uuid4().hex[:8]
 
+    # Storing `path` instead of the full URL was chosen because "query strings
+    # carry search terms and tokens". That reasoning is sound and it misses
+    # this handler's own worst case: a share token is a PATH parameter, so for
+    # `/api/public/share/{token}` the path IS the credential. Both sinks below
+    # are durable — the activity row is in the database, which is what the
+    # scheduled backup uploads off the box to a NAS or a cloud remote, so an
+    # unredacted row puts a live bearer token in a third party's storage and
+    # keeps it there for as long as that archive is retained.
+    path = redact_share_tokens(request.url.path)
+
     # Its own session. The request's is very likely mid-rollback — it is often
     # the reason we are here — and a handler that raises while handling an
     # exception replaces a useful traceback with a useless one.
@@ -78,14 +90,11 @@ async def log_unhandled(request: Request, exc: Exception) -> JSONResponse:
                 kind="error.unhandled",
                 entity_type="system",
                 entity_id=None,
-                summary=f"{type(exc).__name__} on {request.method} {request.url.path} [{ref}]",
+                summary=f"{type(exc).__name__} on {request.method} {path} [{ref}]",
                 details={
                     "ref": ref,
                     "method": request.method,
-                    # `path`, never the full URL: query strings carry search
-                    # terms and tokens, and this row is readable by anyone who
-                    # can reach the activity screen.
-                    "path": request.url.path,
+                    "path": path,
                     "error": f"{type(exc).__name__}: {exc}"[:1000],
                 },
             )
@@ -95,7 +104,7 @@ async def log_unhandled(request: Request, exc: Exception) -> JSONResponse:
 
     logger.error(
         "Unhandled error [%s] on %s %s: %s",
-        ref, request.method, request.url.path, exc,
+        ref, request.method, path, exc,
     )
     return JSONResponse(
         {"detail": "Internal server error", "ref": ref}, status_code=500

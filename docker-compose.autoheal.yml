@@ -20,7 +20,7 @@
 #
 # THE OTHER OPTION, WITH NO PRIVILEGE AT ALL, is a host-side timer that polls
 # the endpoint over HTTP and restarts the unit. `scripts/headroom-watchdog.sh`
-# plus the systemd units in docs/OPERATIONS.md §7 do exactly that and need no
+# plus the systemd units in docs/OPERATIONS.md §3 do exactly that and need no
 # socket. Prefer it if you already run systemd on the host, which the Pi does.
 
 services:

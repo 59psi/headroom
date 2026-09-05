@@ -84,7 +84,7 @@ async def test_the_badge_sees_a_failure_that_is_not_status_error(client, db_sess
         analysis_status="skipped", analysis_error="No API key configured.",
     ))
     # Succeeded: no failure text, so it must NOT be counted however it is
-    # labelled — the text is what gets cleared on success.
+    # labeled — the text is what gets cleared on success.
     db_session.add(Hat(
         condition="new", size="classic", style="a_game",
         analysis_status="ok", analysis_error=None,

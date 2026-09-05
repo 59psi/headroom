@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import os
-import re
 import shutil
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -17,6 +16,7 @@ from headroom.config import env_flag, settings
 from headroom.database import async_session, checkpoint_wal, init_db
 from headroom.routes import api_router
 from headroom.utils.paths import safe_join
+from headroom.utils.redaction import redact_share_tokens
 from headroom.services import (
     activity_service,
     analysis_queue,
@@ -35,21 +35,6 @@ FRONTEND_DIST = (PROJECT_ROOT / "frontend" / "dist").resolve()
 SEED_BRANDING = PROJECT_ROOT / "seed" / "branding"
 
 
-#: Any share-link token appearing in a logged URL path.
-#:
-#: A share token is a 256-bit bearer credential and it is a PATH parameter
-#: (`/api/public/share/{token}`), so uvicorn's access log writes it in clear at
-#: INFO on every public request — into the same rotated json-file the operator
-#: greps, and into anything shipping those logs onward. This is the same class
-#: as the documented `?key=` incident that moved the Google Vision key out of a
-#: query string, one layer down: `error_handler` already logs `path` and never
-#: the full URL "because query strings carry search terms and tokens", and that
-#: mitigation misses its own case because the secret is not in the query.
-#:
-#: Redacting is the fix that does not break every link already handed out.
-_SHARE_TOKEN_IN_PATH = re.compile(r"(/(?:api/public/)?share/)[A-Za-z0-9_\-]{16,}")
-
-
 class _RedactShareTokens(logging.Filter):
     """Replace share tokens in any log record with a marker.
 
@@ -58,16 +43,20 @@ class _RedactShareTokens(logging.Filter):
     Mutates `record.args` when the path arrives as an argument (uvicorn's
     access log uses %-style args) and `record.msg` when it is already
     interpolated, so it catches both shapes.
+
+    The access log is one of three sinks; `error_handler` owns the other two
+    and calls `redact_share_tokens` directly. The rule itself lives in
+    `utils.redaction` so the two cannot drift apart.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
         if isinstance(record.args, tuple):
             record.args = tuple(
-                _SHARE_TOKEN_IN_PATH.sub(r"\1<redacted>", a) if isinstance(a, str) else a
+                redact_share_tokens(a) if isinstance(a, str) else a
                 for a in record.args
             )
         if isinstance(record.msg, str):
-            record.msg = _SHARE_TOKEN_IN_PATH.sub(r"\1<redacted>", record.msg)
+            record.msg = redact_share_tokens(record.msg)
         return True
 
 
@@ -297,15 +286,25 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         following a `docker compose up -d --build` habit — never reached the
         prune at all, so both tables grew without bound while a task sat there
         looking like it was handling it.
+
+        Records its outcome, which it did not until now — it was the only
+        background task with no health record of any kind. It is also the only
+        thing bounding those two tables, and it runs once per 24h, so a
+        persistent failure was one WARNING per day into a container log while
+        an SD card filled. Same operational class as a failed backup, two
+        levels quieter, and nothing in the API could answer whether retention
+        was still running.
         """
         while True:
             try:
                 async with async_session() as db:
-                    await activity_service.prune_activity(db)
-                    await auth_service.prune_expired_sessions(db)
+                    removed = await activity_service.prune_activity(db)
+                    removed += await auth_service.prune_expired_sessions(db)
+                activity_service.retention_health.record_success(removed)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001
+                activity_service.retention_health.record_failure(exc)
                 logger.warning("retention prune loop error: %s", exc)
             try:
                 await asyncio.sleep(24 * 3600)

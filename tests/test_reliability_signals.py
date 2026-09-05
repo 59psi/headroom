@@ -241,6 +241,42 @@ async def test_the_error_row_records_the_path_but_not_the_query(client, monkeypa
     assert "/api/hats" in (row["details"] or "")
 
 
+async def test_the_error_row_redacts_a_share_token_from_the_path(client, monkeypatch):
+    """The path-not-query rule above defeats itself on exactly one route.
+
+    A share token is a 256-bit bearer credential and it is a PATH parameter,
+    so for `/api/public/share/{token}` the thing being recorded "because it is
+    safer than the query string" IS the credential. Both sinks are durable and
+    one of them is the database, which the scheduled backup uploads off the
+    box — so an unredacted row hands a live token to whatever NAS or cloud
+    remote holds the archive, for as long as it is retained.
+
+    The route must stay legible: which endpoint 500'd is the most useful field
+    on an error row, so this redacts the token and keeps the path.
+    """
+    from headroom.routes import share_links as share_links_route
+
+    token = "Ab3d-Ef7h_Ij1k2Lm3n4Op5q"
+
+    async def _boom(*a, **kw):
+        raise RuntimeError("resolve blew up")
+
+    monkeypatch.setattr(share_links_route.share_link_service, "resolve_token", _boom)
+
+    with pytest.raises(RuntimeError):
+        await client.get(f"/api/public/share/{token}")
+
+    rows = (await client.get("/api/admin/activity-log?limit=50")).json()
+    row = next(r for r in rows if r["kind"] == "error.unhandled")
+
+    assert token not in (row["details"] or ""), "a live share token reached the database"
+    assert token not in (row["summary"] or ""), "a live share token reached the summary"
+    assert "<redacted>" in (row["details"] or "")
+    assert "/api/public/share/" in (row["details"] or ""), (
+        "the route was thrown away along with the token"
+    )
+
+
 # ---- effective configuration ------------------------------------------ #
 
 

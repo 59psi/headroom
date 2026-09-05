@@ -1,9 +1,18 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { getActivityLog } from '../../api/settings';
+import { getActivityLog, getRetentionStatus } from '../../api/settings';
 
 export function ActivityLogCard() {
   const qc = useQueryClient();
   const activity = useQuery({ queryKey: ['admin', 'activity'], queryFn: () => getActivityLog(50) });
+  // The daily prune is the only thing bounding this table and `auth_sessions`,
+  // and it had no health record of any kind — a persistent failure was one
+  // WARNING per day into a container log while an SD card filled. The row
+  // count above cannot stand in for it: a table nobody is writing to and a
+  // prune that died three weeks ago look identical from a count.
+  const retention = useQuery({
+    queryKey: ['admin', 'retention'], queryFn: getRetentionStatus,
+  });
+  const health = retention.data?.health;
 
   return (
     <div className="card mb-3">
@@ -17,6 +26,28 @@ export function ActivityLogCard() {
             disabled={activity.isFetching}
           >{activity.isFetching ? '…' : 'Refresh'}</button>
         </div>
+        {health && (
+          <p className="text-secondary small mb-2">
+            {health.consecutive_failures > 0 ? (
+              <span style={{ color: 'var(--neon-red)' }}>
+                Retention prune failing ({health.consecutive_failures} in a row)
+                {health.last_error ? `: ${health.last_error}` : ''}. Both this log
+                and expired sessions are growing unbounded.
+              </span>
+            ) : health.last_success_at ? (
+              <>
+                Pruned {health.last_result} row{health.last_result === 1 ? '' : 's'}
+                {' '}older than {retention.data?.retention_days} days,{' '}
+                {new Date(health.last_success_at).toLocaleString()}.
+              </>
+            ) : (
+              // Process-local, so this is the honest reading after a restart:
+              // the loop prunes first and sleeps after, but until it has, the
+              // record has nothing to report and must not imply it does.
+              <>Retention has not run yet since the last restart.</>
+            )}
+          </p>
+        )}
         {(activity.data?.length ?? 0) === 0 ? (
           <p className="text-secondary small mb-0">No activity logged yet.</p>
         ) : (

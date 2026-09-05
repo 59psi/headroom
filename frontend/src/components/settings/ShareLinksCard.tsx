@@ -2,14 +2,37 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { createShareLink, listShareLinks, revokeShareLink } from '../../api/auth';
 
+/** `''` is the sentinel for "never" — a `<select>` value must be a string. */
+const EXPIRY_CHOICES: ReadonlyArray<{ value: string; label: string }> = [
+  { value: '7', label: '7 days' },
+  { value: '30', label: '30 days' },
+  { value: '90', label: '90 days' },
+  { value: '365', label: '1 year' },
+  { value: '', label: 'Never' },
+];
+
+function expiryNote(expiresAt: string | null | undefined): string {
+  // A link with no expiry used to be the only kind this card could make, and
+  // it rendered identically to one that expires — so "never" was both the
+  // default and invisible. Saying it outright is most of the fix.
+  if (!expiresAt) return 'never expires';
+  const days = Math.ceil((new Date(expiresAt).getTime() - Date.now()) / 86_400_000);
+  if (days <= 0) return 'expired';
+  return `expires in ${days} day${days === 1 ? '' : 's'}`;
+}
+
 export function ShareLinksCard() {
   const qc = useQueryClient();
   const links = useQuery({ queryKey: ['share-links'], queryFn: listShareLinks });
   const [label, setLabel] = useState('');
+  const [expiry, setExpiry] = useState('30');
   const [copied, setCopied] = useState<number | null>(null);
 
   const createMut = useMutation({
-    mutationFn: () => createShareLink(label.trim() || 'Shared collection'),
+    mutationFn: () => createShareLink(
+      label.trim() || 'Shared collection',
+      expiry === '' ? null : Number(expiry),
+    ),
     onSuccess: () => { setLabel(''); qc.invalidateQueries({ queryKey: ['share-links'] }); },
   });
 
@@ -27,6 +50,7 @@ export function ShareLinksCard() {
         {active.map(l => (
           <div key={l.id} className="d-flex align-items-center gap-2 small mb-2 flex-wrap">
             <span className="fw-semibold">{l.label}</span>
+            <span className="text-secondary">{expiryNote(l.expires_at)}</span>
             <button
               type="button"
               className="btn btn-outline-secondary btn-sm"
@@ -51,13 +75,28 @@ export function ShareLinksCard() {
         ))}
         {active.length === 0 && <p className="text-muted small">No active share links.</p>}
 
-        <div className="d-flex gap-2 mt-2">
+        <div className="d-flex gap-2 mt-2 flex-wrap align-items-center">
           <input className="form-control" style={{ maxWidth: 260 }} placeholder="Label (e.g. For the group chat)"
+            aria-label="Share link label"
             value={label} onChange={e => setLabel(e.target.value)} />
+          <select
+            className="form-select" style={{ maxWidth: 150 }}
+            aria-label="Link expires after"
+            value={expiry} onChange={e => setExpiry(e.target.value)}
+          >
+            {EXPIRY_CHOICES.map(c => (
+              <option key={c.label} value={c.value}>{c.label}</option>
+            ))}
+          </select>
           <button type="button" className="btn btn-primary" onClick={() => createMut.mutate()} disabled={createMut.isPending}>
             Create link
           </button>
         </div>
+        <p className="text-secondary small mt-2 mb-0">
+          A link shows the whole collection, including which room and case each
+          hat is in. Anyone it is forwarded to has the same access, so prefer an
+          expiry over "Never".
+        </p>
       </div>
     </div>
   );

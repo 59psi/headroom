@@ -342,6 +342,25 @@ export interface AnalysisQueueStatus {
 }
 
 /** Whether the scheduled-backup task is actually working. */
+/** Is the daily retention prune still running?
+ *
+ *  The activity-log row COUNT cannot answer this — a table nobody is writing
+ *  to and a prune that died three weeks ago look identical from a count. This
+ *  is the only thing bounding `activity_log` and `auth_sessions`, so a silent
+ *  death ends in a full disk. */
+export interface RetentionStatus {
+  retention_days: number;
+  health: {
+    name: string;
+    last_attempt_at: string | null;
+    last_success_at: string | null;
+    last_error: string | null;
+    consecutive_failures: number;
+    /** Rows removed by the last successful sweep, both tables combined. */
+    last_result: number;
+  };
+}
+
 export interface BackupHealth {
   enabled: boolean;
   running: boolean;
@@ -670,6 +689,10 @@ export interface CatalogStatus {
   colorways: number;
   last_harvest: string | null;
   progress: SweepProgress;
+  /** Claimed OR running. Not the same as `progress.running`: the slot is taken
+   *  synchronously in the request while `begin()` happens inside the task, so
+   *  `running` is briefly false on a harvest that is definitely queued. */
+  in_flight: boolean;
 }
 
 /** Periodic re-pricing: is the sweep alive, and what did it last manage?

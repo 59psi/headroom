@@ -84,6 +84,7 @@ fleet-default, the UI is the per-install override.
 | `HEADROOM_GOOGLE_VISION_API_KEY` | _(unset)_ | Fallback brand (logo) detection. DB value wins |
 | `HEADROOM_MELIN_CLIENT_ID` | _(baked in)_ | Public Sharetribe client id for live Melin resale stats; override only if Treet rotates it |
 | `HEADROOM_EBAY_APP_ID` / `HEADROOM_EBAY_CERT_ID` | _(unset)_ | eBay Browse API comps. Must be a **Production** keyset (sandbox keys 401) |
+| `HEADROOM_SETUP_TOKEN` | _(unset)_ | When set, first-run setup also requires this token (an extra field appears on the setup form). Closes the window where whoever reaches the host first can claim the owner account — worth setting on an internet-facing deployment, unnecessary on a LAN. See §6 |
 | `HEADROOM_RP_ID` | `localhost` | Passkey (WebAuthn) relying-party id — must equal the serving domain. Set automatically by the HTTPS overlay |
 | `HEADROOM_ORIGIN` | `http://localhost:8000` | Full origin for passkey verification. Set automatically by the HTTPS overlay |
 | `HEADROOM_HTTP_TIMEOUT` | `30.0` | Outbound HTTP (Claude, Google, eBay, Melin) |
@@ -97,6 +98,7 @@ fleet-default, the UI is the per-install override.
 | `HEADROOM_MAX_BODY_BYTES` | `2097152` | Non-multipart request bodies over this are refused with 413 |
 | `HEADROOM_DISK_MIN_FREE_MB` | `500` | `/health/ready` fails below this, so the container reports `unhealthy`. **Acting on that requires a watchdog — see §3** |
 | `HEADROOM_DISK_WARN_PCT` | `15` | Warn in the log below this share of the volume |
+| `HEADROOM_BACKUP_INCLUDE_CA` | `true` | Fold Caddy's local CA — **including its private keys** — into each backup, under `data/caddy-pki/`. On by default because the root is installed by hand on every device and nothing can vouch for a replacement, so losing it means visiting them all. Set `false` if you would rather not have a key that can sign for *any* host sitting in an archive you upload off-box. See §4 |
 | `HEADROOM_BACKUP_UPLOAD_CMD` | _(unset)_ | Command run after each scheduled backup to ship it off-box; `{path}`/`{dir}`/`{name}` substituted (argv, no shell). Best-effort — see §4. **Read the encryption note in §4 before pointing this at cloud storage** |
 | `HEADROOM_BACKUP_UPLOAD_TIMEOUT` | `600` | Seconds before the upload command is killed |
 | `HEADROOM_BACKUP_RSYNC_PASSWORD` | _(unset)_ | Password for the **Synology / rsync-daemon** provider (`user@host::module/path`). Mapped to rsync's own `RSYNC_PASSWORD` at upload time; read from the host, never stored by Headroom and never returned by the API. **Daemon mode only** — rsync ignores it over SSH, which is why the SSH provider takes no secret rather than one that looks set and does nothing. `docker-compose.yml` forwards it into the container explicitly; Compose's `.env` alone would only feed interpolation |
@@ -618,10 +620,35 @@ shell + hashed JS/CSS assets + PWA manifest/icons (no data in them),
   HTTPS overlay sets both from `HEADROOM_DOMAIN`.
 - **API token**: each user has a static bearer token (Settings → Account,
   rotatable) for cookie-less clients — the iOS Shortcut import needs it in
-  an `Authorization: Bearer …` header.
+  an `Authorization: Bearer …` header. **Reading or rotating it requires
+  your password**, not just a signed-in session: the token survives logout,
+  password change and session revocation, so a stolen session must not be
+  able to trade itself up for a credential none of those can reach.
 - **Share links**: 256-bit random tokens granting read-only access to the
-  collection view and token-gated photo streaming; revocable, optional
-  expiry. Revoking is immediate.
+  collection view and token-gated photo streaming; revocable, immediately.
+  **They expire in 30 days by default** — a link is unscoped and
+  whole-collection, including the room and case each hat is in, so a
+  forwarded one is a lasting room-by-room inventory of valuables. Pick
+  *Never* in Settings → Sharing if you actually want that; links created
+  before this default was added never expire, and the card now says so
+  per link.
+- **First-run setup** is claimable by whoever reaches the host first, and
+  `GET /api/auth/status` advertises that the box is unclaimed. On a LAN
+  that is nearly theoretical. Facing the internet it is not — a
+  Let's Encrypt hostname is in a public certificate-transparency log within
+  seconds — so set **`HEADROOM_SETUP_TOKEN`** there and enter it in the
+  extra field on the setup form. Unset (the default), nothing changes.
+- **Client IP on the plain bridge compose may be the Docker gateway.**
+  If it is, per-IP login rate limiting collapses into one shared bucket
+  (a stranger's failed logins can lock you out) and the IP recorded on
+  `auth.login_failed` rows is not the caller's. It depends on the host's
+  `userland-proxy` setting — on, and the source is rewritten; off, and
+  iptables DNAT preserves it. **All three LAN overlays use host networking
+  and are unaffected**, as is the Let's Encrypt overlay, where Caddy sets
+  `X-Forwarded-For` and uvicorn honors it from loopback only. The header is
+  deliberately not trusted from arbitrary peers: on a direct request it is
+  attacker-supplied, so honoring it would let a caller choose its own
+  rate-limit bucket, which is worse than sharing one.
 - Raw API keys (Anthropic/Google/eBay) are **never returned** by the API —
   status endpoints reply with a masked prefix/suffix only.
 - `HEADROOM_ADMIN_TOKEN` is retired and ignored.

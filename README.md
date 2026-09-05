@@ -552,6 +552,7 @@ link-only if the API is unreachable.
 | `HEADROOM_GOOGLE_VISION_API_KEY` | _(unset)_ | Fallback brand (logo) detection. DB value wins |
 | `HEADROOM_MELIN_CLIENT_ID` | _(baked in)_ | Public Sharetribe client id for live Melin resale stats |
 | `HEADROOM_EBAY_APP_ID` / `HEADROOM_EBAY_CERT_ID` | _(unset)_ | eBay Browse API comps (Production keyset) |
+| `HEADROOM_SETUP_TOKEN` | _(unset)_ | When set, first-run setup also requires this token (an extra field appears on the setup form). Closes the window where whoever reaches the host first can claim the owner account — worth setting on an internet-facing deployment, unnecessary on a LAN. See §6 |
 | `HEADROOM_RP_ID` | `localhost` | Passkey relying-party id — must equal the serving domain (HTTPS overlay sets it) |
 | `HEADROOM_ORIGIN` | `http://localhost:8000` | Full origin for passkey verification (HTTPS overlay sets it) |
 | `HEADROOM_REMBG_MODEL` | `isnet-general-use` | rembg model (~179MB; keeps hat bills. `u2netp` is 4.7MB and far faster but trims thin brims) |
@@ -559,6 +560,7 @@ link-only if the API is unreachable.
 | `HEADROOM_LOG_LEVEL` | `INFO` | Log level when running uvicorn directly |
 | `HEADROOM_BACKUP_ENABLED` | `true` | Scheduled backups on/off |
 | `HEADROOM_BACKUP_INTERVAL_HOURS` | `24` | Scheduled backup cadence |
+| `HEADROOM_BACKUP_INCLUDE_CA` | `true` | Fold Caddy's local CA — **including its private keys** — into each backup, under `data/caddy-pki/`. On by default because the root is installed by hand on every device and nothing can vouch for a replacement, so losing it means visiting them all. Set `false` if you would rather not have a key that can sign for *any* host sitting in an archive you upload off-box. See §4 |
 | `HEADROOM_BACKUP_UPLOAD_CMD` | _(unset)_ | Raw off-site upload command. Overrides the Settings UI — host access only, on purpose |
 | `HEADROOM_BACKUP_KEEP` | `5` | How many rolling local backups to keep (a **count**, not days) |
 | `HEADROOM_MAX_BODY_BYTES` | `2097152` | Cap on non-multipart request bodies (uploads have their own, larger caps) |

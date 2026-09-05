@@ -86,7 +86,7 @@ async def ready(request: Request, db: AsyncSession = Depends(get_db)):
     # a healthcheck goes `unhealthy`, so for as long as the process stays up
     # with a dead worker inside it, nothing in the base compose responds. The
     # signal was real and had no consumer — see `docker-compose.autoheal.yml`
-    # and docs/OPERATIONS.md §7 for the two ways to give it one.
+    # and docs/OPERATIONS.md §3 for the two ways to give it one.
     workers_ok = not (
         (import_service.worker_expected() and not import_service.worker_alive())
         or (analysis_queue.worker_expected() and not analysis_queue.worker_alive())

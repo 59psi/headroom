@@ -13,9 +13,30 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 
 
+#: Days a share link lasts when the caller does not say.
+#:
+#: The default was "never", which made the easiest thing to create the most
+#: dangerous thing to create. A share link is unscoped and whole-collection:
+#: every hat, with photos, and the room and case each one lives in. Forwarded
+#: once, that is a permanent, room-by-room, photographed inventory of valuables
+#: belonging to an address — and nothing expires it, so it stays live for as
+#: long as the install does.
+#:
+#: 30 days rather than something shorter because the realistic use is showing
+#: somebody the collection over a few weeks, and a link that dies mid-
+#: conversation trains people to create permanent ones. `expires_days: null` is
+#: still accepted and still means never; the change is only which one you get
+#: by not deciding.
+DEFAULT_SHARE_EXPIRY_DAYS = 30
+
+
 class ShareLinkCreate(BaseModel):
     label: str = Field("Shared collection", max_length=80)
-    expires_days: int | None = Field(None, ge=1, le=365)
+    #: Omitted → `DEFAULT_SHARE_EXPIRY_DAYS`. An explicit `null` → never
+    #: expires, which is why this cannot simply default to the constant: those
+    #: two have to stay distinguishable, and a plain default would collapse
+    #: them.
+    expires_days: int | None = Field(DEFAULT_SHARE_EXPIRY_DAYS, ge=1, le=365)
 
 
 class ShareLinkRead(BaseModel):

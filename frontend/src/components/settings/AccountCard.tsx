@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   changePassword, deletePasskey, getMe, listPasskeys, logout,
-  passkeyRegisterOptions, passkeyRegisterVerify, rotateApiToken,
+  passkeyRegisterOptions, passkeyRegisterVerify, revealApiToken, rotateApiToken,
 } from '../../api/auth';
 import { createPasskey, passkeysSupported } from '../../lib/webauthn';
 
@@ -10,15 +10,32 @@ export function AccountCard() {
   const qc = useQueryClient();
   const me = useQuery({ queryKey: ['auth', 'me'], queryFn: getMe });
   const passkeys = useQuery({ queryKey: ['auth', 'passkeys'], queryFn: listPasskeys });
-  const [showToken, setShowToken] = useState(false);
+  // The token is no longer part of the profile: `/me` ran on every Settings
+  // load, and the value it carried survives logout and session revocation, so
+  // a stolen session used to upgrade itself into a permanent credential. It
+  // now arrives only from an explicit, password-confirmed request and lives in
+  // component state — never in the query cache, which persists across the page
+  // and would put it back on every render this change exists to prevent.
+  const [token, setToken] = useState<string | null>(null);
+  const [tokenPw, setTokenPw] = useState('');
+  const [tokenPrompt, setTokenPrompt] = useState<null | 'reveal' | 'rotate'>(null);
+  const [tokenError, setTokenError] = useState<string | null>(null);
   const [curPw, setCurPw] = useState('');
   const [newPw, setNewPw] = useState('');
   const [pwMsg, setPwMsg] = useState<string | null>(null);
   const [pkError, setPkError] = useState<string | null>(null);
 
-  const rotateMut = useMutation({
-    mutationFn: rotateApiToken,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['auth', 'me'] }),
+  const tokenMut = useMutation({
+    mutationFn: ({ mode, password }: { mode: 'reveal' | 'rotate'; password: string }) =>
+      mode === 'rotate' ? rotateApiToken(password) : revealApiToken(password),
+    onSuccess: (res) => {
+      setToken(res.api_token);
+      setTokenPrompt(null);
+      setTokenPw('');
+      setTokenError(null);
+      qc.invalidateQueries({ queryKey: ['auth', 'me'] });
+    },
+    onError: (e) => setTokenError(String(e instanceof Error ? e.message : e)),
   });
 
   const pwMut = useMutation({
@@ -57,19 +74,67 @@ export function AccountCard() {
           <div className="hr-metric-label mb-1">API token (for the iOS Shortcut — sent as a Bearer header)</div>
           <div className="d-flex gap-2 flex-wrap align-items-center">
             <code className="small" style={{ wordBreak: 'break-all' }}>
-              {showToken ? me.data?.api_token : '••••••••••••••••'}
+              {token ?? '••••••••••••••••'}
             </code>
-            <button type="button" className="btn btn-outline-secondary btn-sm" onClick={() => setShowToken(!showToken)}>
-              {showToken ? 'Hide' : 'Show'}
-            </button>
+            {token ? (
+              <button type="button" className="btn btn-outline-secondary btn-sm" onClick={() => setToken(null)}>
+                Hide
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="btn btn-outline-secondary btn-sm"
+                onClick={() => { setTokenPrompt('reveal'); setTokenError(null); }}
+              >
+                Show
+              </button>
+            )}
             <button
               type="button"
               className="btn btn-outline-danger btn-sm"
-              onClick={() => { if (confirm('Rotate token? The old one stops working immediately.')) rotateMut.mutate(); }}
+              onClick={() => { setTokenPrompt('rotate'); setTokenError(null); }}
             >
               Rotate
             </button>
           </div>
+          {tokenPrompt && (
+            <form
+              className="d-flex gap-2 flex-wrap align-items-center mt-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                tokenMut.mutate({ mode: tokenPrompt, password: tokenPw });
+              }}
+            >
+              <input
+                type="password"
+                className="form-control form-control-sm"
+                style={{ maxWidth: '16rem' }}
+                aria-label={tokenPrompt === 'rotate'
+                  ? 'Current password to rotate the API token'
+                  : 'Current password to reveal the API token'}
+                placeholder="Current password"
+                autoComplete="current-password"
+                value={tokenPw}
+                onChange={(e) => setTokenPw(e.target.value)}
+              />
+              <button type="submit" className="btn btn-primary btn-sm" disabled={!tokenPw || tokenMut.isPending}>
+                {tokenPrompt === 'rotate' ? 'Rotate token' : 'Reveal token'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-outline-secondary btn-sm"
+                onClick={() => { setTokenPrompt(null); setTokenPw(''); setTokenError(null); }}
+              >
+                Cancel
+              </button>
+              <span className="text-secondary small">
+                {tokenPrompt === 'rotate'
+                  ? 'The old token stops working immediately.'
+                  : 'This token survives logout, so reading it needs your password.'}
+              </span>
+            </form>
+          )}
+          {tokenError && <div className="alert alert-danger small mt-2 mb-0">{tokenError}</div>}
         </div>
 
         <div className="mb-3">

@@ -5,7 +5,7 @@ import type {
   TlsStatus, FrozenPriceRow, PriceReleaseResult, AnalysisFailureGroup,
   RecentError, TagBaseStatus, ConstructionAuditRow, ConstructionClearResult, RepricingStatus,
   ReanalyzeResult, AnalysisJobDetail, CatalogStatus, SharedPriceGroup,
-  UnclaimedFromPurchases, RepricingSweepStarted,
+  UnclaimedFromPurchases, RepricingSweepStarted, RetentionStatus,
 } from '../types';
 
 // Re-exported so existing imports from this module keep working; the
@@ -137,6 +137,10 @@ export function getActivityLog(limit = 100, kind?: string) {
   const p = new URLSearchParams({ limit: String(limit) });
   if (kind) p.set('kind', kind);
   return apiFetch<ActivityRow[]>(`/api/admin/activity-log?${p}`);
+}
+
+export function getRetentionStatus() {
+  return apiFetch<RetentionStatus>('/api/admin/activity-log/retention');
 }
 
 export function getEbayCreds() {

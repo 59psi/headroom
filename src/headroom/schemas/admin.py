@@ -298,6 +298,11 @@ class CatalogStatus(BaseModel):
     #: The harvest returns 202 and runs in the background, so without this the
     #: card cannot tell a running sweep from a button that did nothing.
     progress: SweepProgressRead = SweepProgressRead()
+    #: Claimed OR running. `progress.running` alone is not enough: the slot is
+    #: claimed in the request and `begin()` is called inside the task, so a
+    #: card watching only progress re-enables the button during the gap and
+    #: the next press is refused for reasons it never showed.
+    in_flight: bool = False
 
 
 class CatalogRefreshStarted(BaseModel):
@@ -314,7 +319,7 @@ class CatalogRefreshStarted(BaseModel):
     #: A harvest was already queued or running, so this press started nothing.
     #: Separate from `started` because "not started" has two meanings and the
     #: card has to tell them apart — the same pair `RepricingSweepStarted`
-    #: carries, on the endpoint this one was modelled on but did not copy.
+    #: carries, on the endpoint this one was modeled on but did not copy.
     already_running: bool = False
     detail: str = "Catalog refresh running in the background — check back shortly."
 
