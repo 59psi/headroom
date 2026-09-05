@@ -221,6 +221,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             backup_service.scheduled_backup_loop(
                 interval_hours=backup_service.backup_interval_hours(),
                 keep=backup_service.backup_keep(),
+                session_factory=factory,
             )
         )
     # Published so the admin API can report whether the scheduler is still
@@ -238,13 +239,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Bulk-import worker — single async task, drains the import queue.
     if env_flag("HEADROOM_IMPORT_WORKER_ENABLED"):
-        await import_service.start_worker()
+        await import_service.start_worker(factory)
 
     # Photo-analysis worker — drains queued single-hat uploads so the upload
     # request returns immediately. Off means the upload route runs the pipeline
     # inline (the pre-queue behavior), never silently skips it.
     if env_flag("HEADROOM_ANALYSIS_WORKER_ENABLED"):
-        await analysis_queue.start_worker()
+        await analysis_queue.start_worker(factory)
 
     # Gallery thumbnails for hats that predate them. Off the boot path for the
     # same reason mDNS is: it is image work over every existing photo, which on

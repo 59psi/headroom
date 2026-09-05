@@ -28,6 +28,21 @@ from headroom.services.activity_service import log_activity
 from headroom.services.hat_analysis_pipeline import finalize_hat_photo
 from headroom.utils.photo import process_image_async
 
+#: The session factory this worker opens sessions with. Set by
+#: `start_worker(session_factory=)` — the lifespan passes `app.state`'s — and
+#: read through `_sessions()` at CALL time, so the fallback is whatever
+#: `async_session` names in this module when the call happens. That last part
+#: is deliberate: the existing tests redirect this module's `async_session` by
+#: monkeypatch, and a factory captured at import would have silently ignored
+#: them. `stop_worker()` resets it so one test's factory cannot leak into the
+#: next boot.
+_session_factory = None
+
+
+def _sessions():
+    return (_session_factory or async_session)()
+
+
 logger = logging.getLogger(__name__)
 
 MAX_FILES_PER_JOB = 100
@@ -195,7 +210,7 @@ async def cancel_job(db: AsyncSession, job_id: int) -> ImportJob | None:
 async def _process_item(item_id: int) -> None:
     # Claim the item in its own short transaction, capturing job_id up front
     # so the error handler always has it even if a later load returns None.
-    async with async_session() as db:
+    async with _sessions() as db:
         result = await db.execute(
             select(ImportJobItem).where(ImportJobItem.id == item_id)
         )
@@ -213,7 +228,7 @@ async def _process_item(item_id: int) -> None:
     # loop. The loop has its own catch-all too (belt and suspenders).
     try:
         # Mark running
-        async with async_session() as db:
+        async with _sessions() as db:
             item = (await db.execute(
                 select(ImportJobItem).where(ImportJobItem.id == item_id)
             )).scalar_one()
@@ -225,7 +240,7 @@ async def _process_item(item_id: int) -> None:
 
         # The heavy work needs its own session lifecycle so the upload
         # pipeline's commit/expire semantics work cleanly.
-        async with async_session() as db:
+        async with _sessions() as db:
             item = (await db.execute(
                 select(ImportJobItem).where(ImportJobItem.id == item_id)
             )).scalar_one()
@@ -286,7 +301,7 @@ async def _process_item(item_id: int) -> None:
     except Exception as exc:  # noqa: BLE001 — never crash the worker
         logger.warning("Import item %s failed: %s", item_id, exc)
         try:
-            async with async_session() as db:
+            async with _sessions() as db:
                 item = (await db.execute(
                     select(ImportJobItem).where(ImportJobItem.id == item_id)
                 )).scalar_one_or_none()
@@ -310,7 +325,7 @@ async def _bump_job_counter(job_id: int, item_status: str) -> None:
     counter = _JOB_COUNTER.get(item_status)
     if not job_id or counter is None:
         return
-    async with async_session() as db:
+    async with _sessions() as db:
         result = await db.execute(
             select(ImportJob).where(ImportJob.id == job_id)
         )
@@ -406,7 +421,7 @@ async def _recover_on_boot() -> None:
     'processing' would otherwise never retry, and a job whose items are all
     terminal (e.g. every file oversize) would poll 'queued' forever in the SPA.
     """
-    async with async_session() as db:
+    async with _sessions() as db:
         # 1. Items stuck 'processing' when the process died.
         stuck = (await db.execute(
             select(ImportJobItem).where(ImportJobItem.status == "processing")
@@ -436,15 +451,17 @@ async def _recover_on_boot() -> None:
             await db.commit()
 
 
-async def start_worker() -> None:
+async def start_worker(session_factory=None) -> None:
     """Wire up the queue + worker. Called from app.lifespan."""
+    global _session_factory
+    _session_factory = session_factory
     global _queue, _worker_task
     _queue = asyncio.Queue()
     _worker_task = asyncio.create_task(_worker_loop())
     # Heal crash-stranded state, then enqueue everything left 'queued'
     # (including items just reset from 'processing' by the boot sweep).
     await _recover_on_boot()
-    async with async_session() as db:
+    async with _sessions() as db:
         result = await db.execute(
             select(ImportJobItem).where(ImportJobItem.status == "queued")
         )
@@ -453,6 +470,8 @@ async def start_worker() -> None:
 
 
 async def stop_worker() -> None:
+    global _session_factory
+    _session_factory = None
     # Clears `_queue` as well as the task, matching `analysis_queue.stop_worker`.
     # Leaving a queue object behind after the worker is gone is what let
     # `create_job` believe work had been accepted: the put succeeds, nothing

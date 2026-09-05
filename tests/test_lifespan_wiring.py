@@ -1,4 +1,4 @@
-"""The lifespan, booted for real, against the test database.
+"""The lifespan, booted for real, against a database with production semantics.
 
 Until 2.77.2 no test ran it. `conftest` said so in a comment ("it doesn't run
 under ASGITransport") and one test read the lifespan's SOURCE TEXT with
@@ -16,28 +16,47 @@ the working directory. Booting it would have created a real file. It now takes
 gate and `error_handler` already used, and the conftest points the module
 engine at an unopenable path so a regression raises rather than writing files.
 
-Each test here boots through `app.router.lifespan_context` and asserts an
-outcome: a record that was written, a task that exists or does not, a file
-that appeared, a call that happened in an order. The retention prune is the
-sharpest case — its health record shipped in 2.77.0 with the loop, the route
-and the card, and none of the three had a test that reached them.
+**These tests use a file-backed SQLite, not the suite's in-memory one.** The
+in-memory engine is a `StaticPool`: one connection shared by every session.
+That is fine for a request test, which holds one session at a time, and wrong
+for a boot, which has the prune loop, two backfills and a worker all open at
+once — one session's `close()` issues `ROLLBACK` on the shared connection and
+discards another's uncommitted `UPDATE` before its `COMMIT`. Measured: a
+re-queued hat that the worker processed and committed stayed `pending`, with
+no error anywhere, because the prune loop closed its session in between. A
+file gives each session its own connection, which is what production has, and
+the connect hook from `database.py` is attached so WAL / busy_timeout /
+synchronous=FULL are the real ones too.
+
+Each test boots through `app.router.lifespan_context` and asserts an outcome:
+a record that was written, a task that exists or does not, a file that
+appeared, a call that happened in an order.
 """
 
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-from sqlalchemy import select
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy import event, select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from headroom import database
 from headroom.config import settings
 from headroom.models.app_setting import AppSetting
-from headroom.services import activity_service, analysis_queue, import_service, repricing
+from headroom.models.room import Room
+from headroom.models.user import AuthSession, User
+from headroom.services import (
+    activity_service,
+    analysis_queue,
+    auth_service,
+    import_service,
+    repricing,
+)
 from headroom.services.task_health import TaskHealth
-
-from tests.conftest import test_engine as engine_under_test
-from tests.conftest import test_session_factory as session_factory
 
 pytestmark = pytest.mark.anyio
 
@@ -51,6 +70,75 @@ ONE_TIME_FLAGS = (
     "color_names_normalized_v1",
 )
 
+_SESSION_ID = "boot-test-session"
+
+
+# --------------------------------------------------------------------------
+# fixtures: a file-backed database and an app wired to it
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def boot_db(tmp_path):
+    """A real SQLite file with the production connect hook, tables created.
+
+    Tables are created here rather than left to `init_db` because several
+    tests seed crash-stranded state BEFORE boot; `init_db` then runs against
+    an already-populated schema, which is also what an upgrade looks like.
+    """
+    url = f"sqlite+aiosqlite:///{tmp_path / 'boot.db'}"
+    engine = create_async_engine(url, echo=False)
+    event.listen(engine.sync_engine, "connect", database._sqlite_pragmas)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(database.Base.metadata.create_all)
+    async with factory() as db:
+        db.add(Room(id=1, name="Default Room", is_default=True))
+        await db.commit()
+    yield engine, factory
+    await engine.dispose()
+
+
+@pytest.fixture
+def app(boot_db):
+    """Overrides the conftest `app` for this module: same shape, file database."""
+    from headroom.app import create_app
+
+    engine, factory = boot_db
+    app = create_app()
+
+    async def override_get_db():
+        async with factory() as session:
+            yield session
+
+    app.dependency_overrides[database.get_db] = override_get_db
+    app.state.session_factory = factory
+    app.state.engine = engine
+    return app
+
+
+@pytest.fixture
+async def client(app, boot_db):
+    """Authenticated client against the file database."""
+    _, factory = boot_db
+    async with factory() as db:
+        user = User(
+            username="bootowner",
+            password_hash=auth_service.hash_password("boot-test-password"),
+            api_token="hr_boot-test-token",
+        )
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+        db.add(AuthSession(
+            id=_SESSION_ID, user_id=user.id,
+            expires_at=datetime.now(timezone.utc) + timedelta(days=1),
+        ))
+        await db.commit()
+    c = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+    c.cookies.set("headroom_session", _SESSION_ID)
+    return c
+
 
 @pytest.fixture(autouse=True)
 def _fresh_process_state():
@@ -60,13 +148,18 @@ def _fresh_process_state():
     booted once and left `last_success_at` set would make the next boot's
     assertion pass without the loop having run.
     """
-    activity_service.retention_health = TaskHealth(name="retention prune")
-    repricing._health = repricing.RepricingHealth()
-    repricing.release_full_sweep()
+    from headroom.services import backup_service
+
+    def reset():
+        activity_service.retention_health = TaskHealth(name="retention prune")
+        repricing._health = repricing.RepricingHealth()
+        repricing.release_full_sweep()
+        backup_service._health = backup_service.BackupHealth()
+        backup_service._upload_state_loaded = False
+
+    reset()
     yield
-    activity_service.retention_health = TaskHealth(name="retention prune")
-    repricing._health = repricing.RepricingHealth()
-    repricing.release_full_sweep()
+    reset()
 
 
 async def _boot(app):
@@ -79,25 +172,6 @@ async def _flags(db):
         select(AppSetting).where(AppSetting.key.in_(ONE_TIME_FLAGS))
     )).scalars().all()
     return {r.key: r.value for r in rows}
-
-
-async def _settled(app):
-    """Wait for boot-time database work to finish before shutting down.
-
-    Cancelling a task mid-aiosqlite-call invalidates its connection, and the
-    suite's in-memory `StaticPool` has exactly one — so a boot that is shut
-    down while the first prune is still running loses every table. That is an
-    artifact of the test database (a file reconnects), but a test that exits
-    at once is also not a realistic shutdown: on the real box the first prune
-    pass is part of boot. The one-shot tasks are awaited by handle; the prune
-    is awaited through the record it writes, which is the only thing its
-    infinite loop exposes.
-    """
-    await asyncio.gather(*app.state.boot_tasks)
-    await _wait_for(
-        lambda: activity_service.retention_health.last_attempt_at is not None,
-        what="the boot-time retention prune",
-    )
 
 
 async def _wait_for(predicate, *, timeout=5.0, what="condition"):
@@ -113,18 +187,34 @@ async def _wait_for(predicate, *, timeout=5.0, what="condition"):
         await asyncio.sleep(0.02)
 
 
+async def _settled(app):
+    """Wait for the boot-time work before shutting down.
+
+    On the real box the first prune pass and the backfills ARE part of boot; a
+    test that exits the instant the context opens is testing a shutdown that
+    never happens. The one-shot tasks are awaited by handle; the prune through
+    the record it writes, which is the only thing its infinite loop exposes.
+    """
+    await asyncio.gather(*app.state.boot_tasks)
+    await _wait_for(
+        lambda: activity_service.retention_health.last_attempt_at is not None,
+        what="the boot-time retention prune",
+    )
+
+
 # --------------------------------------------------------------------------
 # boot and shutdown
 # --------------------------------------------------------------------------
 
 
-async def test_the_lifespan_boots_against_the_test_database_and_leaves_no_task_behind(app):
+async def test_the_lifespan_boots_and_leaves_no_task_behind(app, boot_db):
     """Enter, exit, and account for every task.
 
     A loop that survives shutdown keeps a session factory alive and, on the
     real box, keeps writing after `compose down` has decided it is safe to
     stop — the WAL-checkpoint ordering below exists for exactly that window.
     """
+    _, factory = boot_db
     before = set(asyncio.all_tasks())
 
     async with await _boot(app):
@@ -136,8 +226,8 @@ async def test_the_lifespan_boots_against_the_test_database_and_leaves_no_task_b
     for task in started:
         assert task.done(), f"background task survived shutdown: {task.get_name()}"
 
-    # And the database it booted against is the test one: `init_db` ran here.
-    async with session_factory() as db:
+    # And `init_db` plus the backfills ran against THIS database.
+    async with factory() as db:
         assert set(await _flags(db)) == set(ONE_TIME_FLAGS)
 
 
@@ -161,7 +251,7 @@ async def test_boot_seeds_the_default_branding_into_the_upload_dir(app):
 # --------------------------------------------------------------------------
 
 
-async def test_boot_stamps_every_one_time_backfill_and_does_not_repeat_them(app, monkeypatch):
+async def test_boot_stamps_every_one_time_backfill_and_does_not_repeat_them(app, boot_db, monkeypatch):
     """Four repairs, each guarded by a flag, each run exactly once.
 
     The second half is the one that matters on the real box: a repair that
@@ -171,6 +261,7 @@ async def test_boot_stamps_every_one_time_backfill_and_does_not_repeat_them(app,
     """
     from headroom.services import hat_service
 
+    _, factory = boot_db
     calls = []
     real = hat_service.normalize_existing_colors
 
@@ -182,7 +273,7 @@ async def test_boot_stamps_every_one_time_backfill_and_does_not_repeat_them(app,
 
     async with await _boot(app):
         await _settled(app)
-    async with session_factory() as db:
+    async with factory() as db:
         assert await _flags(db) == {flag: "done" for flag in ONE_TIME_FLAGS}
     assert calls == [1], "the first boot must run the repair exactly once"
 
@@ -217,6 +308,7 @@ async def test_boot_runs_the_retention_prune_and_the_endpoint_reports_it(app, cl
         assert body["retention_days"] == activity_service.retention_days()
         assert body["health"]["last_success_at"] == health.last_success_at.isoformat()
         assert body["health"]["consecutive_failures"] == 0
+        await _settled(app)
 
 
 async def test_a_failing_prune_is_recorded_not_swallowed(app, monkeypatch):
@@ -238,6 +330,7 @@ async def test_a_failing_prune_is_recorded_not_swallowed(app, monkeypatch):
         assert health.consecutive_failures == 1
         assert health.last_success_at is None
         assert "retention exploded" in (health.last_error or "")
+        await asyncio.gather(*app.state.boot_tasks)
 
 
 # --------------------------------------------------------------------------
@@ -267,10 +360,10 @@ async def test_the_repricing_scheduler_runs_its_first_sweep_against_the_app_data
     This is the discriminating test for the seam. `reprice_once` took a
     session factory for exactly this reason, and the scheduler's own loop
     never passed one; it swept the module-level database. With the factory
-    forwarded, the first sweep finds the test database's zero hats and records
-    a success. Without it, the module engine points at an unopenable path
-    under test and the sweep records a failure instead — so the assertion
-    below cannot pass by accident.
+    forwarded, the first sweep finds this database's zero hats and records a
+    success. Without it, the module engine points at an unopenable path under
+    test and the sweep records a failure instead — so the assertion below
+    cannot pass by accident.
     """
     monkeypatch.setenv("HEADROOM_REPRICING_ENABLED", "true")
 
@@ -285,7 +378,138 @@ async def test_the_repricing_scheduler_runs_its_first_sweep_against_the_app_data
             f"the scheduled sweep did not use the app's session factory: {health.last_error}"
         )
         assert health.last_success_at is not None
-        assert health.last_considered == 0, "the test database holds no hats"
+        assert health.last_considered == 0, "this database holds no hats"
+        await _settled(app)
+
+    assert task.done(), "the scheduler outlived shutdown"
+
+
+async def test_the_import_worker_boots_and_heals_a_crash_stranded_item(app, boot_db, monkeypatch):
+    """`HEADROOM_IMPORT_WORKER_ENABLED=true` → worker alive, boot sweep ran, here.
+
+    An item left `processing` by a crash is the case `_recover_on_boot` exists
+    for. Seeded BEFORE boot; if the worker were opening the module-level
+    session instead of the app's it would not find this row — and under the
+    conftest guard it would not open at all.
+    """
+    import json
+
+    from headroom.models.import_job import ImportJob, ImportJobItem
+
+    _, factory = boot_db
+    monkeypatch.setenv("HEADROOM_IMPORT_WORKER_ENABLED", "true")
+    async with factory() as db:
+        job = ImportJob(total=1, status="running", defaults_json=json.dumps({}))
+        db.add(job)
+        await db.commit()
+        db.add(ImportJobItem(job_id=job.id, filename="stranded.jpg", status="processing", bytes=1))
+        await db.commit()
+        job_id = job.id
+
+    async with await _boot(app):
+        assert import_service.worker_alive(), "the import worker was not started"
+
+        async def statuses():
+            async with factory() as db:
+                return (await db.execute(
+                    select(ImportJobItem.status).where(ImportJobItem.job_id == job_id)
+                )).scalars().all()
+
+        # The sweep resets it to `queued` and the loop then consumes it — with no
+        # staged file it errors, which is the worker's own tests' business. What
+        # this asserts is that boot LOOKED at the app's rows and acted on them.
+        deadline = asyncio.get_running_loop().time() + 5
+        while "processing" in await statuses():
+            assert asyncio.get_running_loop().time() < deadline, "item still stranded in 'processing'"
+            await asyncio.sleep(0.02)
+        await _settled(app)
+
+    assert not import_service.worker_alive(), "shutdown left the import worker running"
+
+
+async def test_the_analysis_worker_boots_and_requeues_a_pending_hat(app, boot_db, client, monkeypatch):
+    """`HEADROOM_ANALYSIS_WORKER_ENABLED=true` → worker alive, pending hat picked up.
+
+    A hat left `pending` by a crash is re-queued by `_recover_on_boot`. It has
+    no photo, so the worker marks it failed — that path is tested elsewhere;
+    here the point is that it left `pending` at all, which it can only do if
+    the worker found it in THIS database and its commit was not rolled back by
+    a neighboring session (the StaticPool failure that moved this module onto
+    a file).
+    """
+    from headroom.models.hat import Hat
+
+    _, factory = boot_db
+    monkeypatch.setenv("HEADROOM_ANALYSIS_WORKER_ENABLED", "true")
+    hat_id = (await client.post(
+        "/api/hats", json={"condition": "new", "size": "classic", "style": "a_game"}
+    )).json()["id"]
+    async with factory() as db:
+        hat = await db.get(Hat, hat_id)
+        hat.analysis_status = "pending"
+        await db.commit()
+
+    async with await _boot(app):
+        assert analysis_queue.worker_alive(), "the analysis worker was not started"
+
+        async def status():
+            async with factory() as db:
+                return (await db.execute(
+                    select(Hat.analysis_status).where(Hat.id == hat_id)
+                )).scalar_one()
+
+        deadline = asyncio.get_running_loop().time() + 5
+        while await status() == "pending":
+            assert asyncio.get_running_loop().time() < deadline, "hat still 'pending' after boot"
+            await asyncio.sleep(0.02)
+        assert await status() == "error"
+        await _settled(app)
+
+    assert not analysis_queue.worker_alive(), "shutdown left the analysis worker running"
+
+
+async def test_the_backup_scheduler_boots_writes_a_backup_and_resolves_its_upload_here(
+    app, monkeypatch, tmp_path,
+):
+    """`HEADROOM_BACKUP_ENABLED=true` → task alive, first cycle written, hook ran.
+
+    The discriminating half is the upload hook. It resolves its argv from the
+    database on every cycle, and used to do so through a local import of the
+    module-level `async_session`. With no upload configured that resolves to
+    None and records nothing — `last_upload_ok is None`. With the seam
+    dropped, the module engine is unopenable under test, the hook's own
+    `except` records a FAILED upload, and this assertion cannot pass.
+    """
+    from headroom.services import backup_service
+
+    monkeypatch.setenv("HEADROOM_BACKUP_ENABLED", "true")
+    db_file = tmp_path / "snapshot-source.db"
+    db_file.write_bytes(b"sqlite stand-in")
+    monkeypatch.setattr(backup_service, "_db_path", lambda: db_file)
+
+    def _copy_snapshot(db, dest_dir):
+        out = dest_dir / db.name
+        out.write_bytes(db.read_bytes())
+        return out
+
+    monkeypatch.setattr(backup_service, "_snapshot_db_sync", _copy_snapshot)
+
+    async with await _boot(app):
+        task = app.state.backup_task
+        assert isinstance(task, asyncio.Task) and not task.done(), "the scheduler was not started"
+
+        health = backup_service._health
+        await _wait_for(lambda: health.last_attempt_at is not None, what="the first backup cycle")
+
+        assert health.last_error is None, health.last_error
+        assert health.last_success_at is not None, health.last_skip_reason
+        assert list(backup_service._backup_dir().glob("headroom-backup-*.tar.gz")), (
+            "the first cycle recorded success and wrote nothing"
+        )
+        assert health.last_upload_ok is None, (
+            f"the upload hook did not resolve through the app's database: {health.last_upload_error}"
+        )
+        await _settled(app)
 
     assert task.done(), "the scheduler outlived shutdown"
 
@@ -295,7 +519,7 @@ async def test_the_repricing_scheduler_runs_its_first_sweep_against_the_app_data
 # --------------------------------------------------------------------------
 
 
-async def test_shutdown_stops_workers_then_checkpoints_the_wal_last(app, monkeypatch):
+async def test_shutdown_stops_workers_then_checkpoints_the_wal_last(app, boot_db, monkeypatch):
     """Replaces a test that parsed this tuple out of the lifespan's source.
 
     The order is load-bearing: the import and analysis workers still commit
@@ -308,6 +532,7 @@ async def test_shutdown_stops_workers_then_checkpoints_the_wal_last(app, monkeyp
     from headroom import app as app_module
     from headroom.services import mdns_service
 
+    engine, _ = boot_db
     calls: list[tuple[str, object]] = []
 
     def recorder(name):
@@ -324,7 +549,26 @@ async def test_shutdown_stops_workers_then_checkpoints_the_wal_last(app, monkeyp
         await _settled(app)
 
     assert [name for name, _ in calls] == ["import", "analysis", "mdns", "checkpoint"], calls
-    assert calls[-1][1] is engine_under_test, "the checkpoint ran on the wrong engine"
+    assert calls[-1][1] is engine, "the checkpoint ran on the wrong engine"
+
+
+async def test_the_real_checkpoint_truncates_this_databases_wal(app, boot_db):
+    """Not a recorder this time: the actual `checkpoint_wal`, on the file.
+
+    WAL mode is real here (the production connect hook is attached), so after
+    a boot that wrote flags and a prune, the `-wal` sidecar has content — and
+    a clean shutdown must fold it back into the main file. A truncated WAL
+    means the next boot has nothing to replay, which is one fewer moving part
+    in exactly the situation that started all of this.
+    """
+    engine, _ = boot_db
+    wal = Path(engine.url.database + "-wal")
+
+    async with await _boot(app):
+        await _settled(app)
+        assert wal.exists(), "WAL mode is not in effect; the connect hook did not attach"
+
+    assert wal.stat().st_size == 0, f"the WAL still holds {wal.stat().st_size} bytes after shutdown"
 
 
 async def test_a_failing_shutdown_step_does_not_skip_the_ones_after_it(app, monkeypatch, caplog):
