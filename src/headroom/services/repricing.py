@@ -363,7 +363,7 @@ async def _sweep(db, hats: list, delay: float) -> tuple[int, int]:
     return repriced, len(hats)
 
 
-async def _loop() -> None:
+async def _loop(session_factory=None) -> None:
     interval = repricing_interval_hours() * 3600.0
     logger.info(
         "Re-pricing scheduler started: every %.1f hours, %.1fs between hats",
@@ -387,7 +387,7 @@ async def _loop() -> None:
             logger.info("Re-pricing sweep skipped: a full sweep is already running")
         else:
             try:
-                repriced, considered = await reprice_once()
+                repriced, considered = await reprice_once(session_factory)
                 _health.record_success(repriced, considered, scheduled=True)
                 logger.info(
                     "Re-pricing sweep done: %s of %s hats changed price", repriced, considered
@@ -405,9 +405,9 @@ async def _loop() -> None:
         await asyncio.sleep(interval)
 
 
-async def start_repricing() -> asyncio.Task | None:
+async def start_repricing(session_factory=None) -> asyncio.Task | None:
     """Start the sweep loop. Returns the task so the lifespan can cancel it."""
     if not repricing_enabled():
         logger.info("Re-pricing scheduler disabled (HEADROOM_REPRICING_ENABLED)")
         return None
-    return asyncio.create_task(_loop())
+    return asyncio.create_task(_loop(session_factory))

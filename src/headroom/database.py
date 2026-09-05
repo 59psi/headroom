@@ -41,8 +41,14 @@ def sqlite_synchronous() -> str:
     return DEFAULT_SYNCHRONOUS
 
 
-async def checkpoint_wal() -> None:
+async def checkpoint_wal(bind=None) -> None:
     """Fold the WAL back into the main database file.
+
+    `bind` is the engine to checkpoint, defaulting to this module's. The
+    lifespan passes `app.state.engine`, which is the same seam the auth gate
+    and `error_handler` already use for sessions — so a test that boots the
+    real lifespan checkpoints the test database rather than a `headroom.db`
+    it silently created in the working directory.
 
     Called on graceful shutdown. `synchronous=FULL` already makes each commit
     durable, so this is not about losing transactions — it is about what a
@@ -52,10 +58,11 @@ async def checkpoint_wal() -> None:
 
     Best-effort: a failure here must not turn a clean shutdown into a crash.
     """
-    if engine.dialect.name != "sqlite":
+    bind = bind if bind is not None else engine
+    if bind.dialect.name != "sqlite":
         return
     try:
-        async with engine.begin() as conn:
+        async with bind.begin() as conn:
             await conn.exec_driver_sql("PRAGMA wal_checkpoint(TRUNCATE)")
         logger.info("WAL checkpointed on shutdown")
     except Exception as exc:  # noqa: BLE001 — never break shutdown
@@ -306,7 +313,7 @@ def _backfill_construction(conn) -> None:
     )
 
 
-async def ensure_default_room() -> None:
+async def ensure_default_room(session_factory=None) -> None:
     """Guarantee exactly one room carries `is_default`. Raw SQL to avoid
     cascading relationship loads.
 
@@ -319,7 +326,7 @@ async def ensure_default_room() -> None:
     new cases, so "exactly one" is a real invariant, not a nicety — zero flagged
     rooms would break case creation, and two would make the target ambiguous.
     """
-    async with async_session() as db:
+    async with (session_factory or async_session)() as db:
         if not (await db.execute(text("SELECT COUNT(*) FROM rooms"))).scalar():
             await db.execute(
                 text("INSERT INTO rooms (name, is_default) VALUES ('Default Room', 1)")
@@ -339,7 +346,7 @@ async def ensure_default_room() -> None:
         await db.commit()
 
 
-async def reattach_orphaned_cases() -> None:
+async def reattach_orphaned_cases(session_factory=None) -> None:
     """Move cases whose room no longer exists onto the default room.
 
     Companion to `ensure_default_room` — same idea, one level down: that one
@@ -362,7 +369,7 @@ async def reattach_orphaned_cases() -> None:
     Raw SQL, matching `ensure_default_room`, to avoid cascading relationship
     loads on the boot path.
     """
-    async with async_session() as db:
+    async with (session_factory or async_session)() as db:
         orphans = (
             await db.execute(
                 text(
@@ -374,9 +381,11 @@ async def reattach_orphaned_cases() -> None:
         if not orphans:
             return
     # Only now that there is work to do, and outside the session above so the
-    # repair runs in its own. Guarantees the subquery below resolves.
-    await ensure_default_room()
-    async with async_session() as db:
+    # repair runs in its own. Guarantees the subquery below resolves. The
+    # factory is forwarded: a seam that is taken at the door and dropped one
+    # call in is the exact shape the test guard exists to catch, and did.
+    await ensure_default_room(session_factory)
+    async with (session_factory or async_session)() as db:
         await db.execute(
             text(
                 "UPDATE cases SET room_id = (SELECT id FROM rooms WHERE is_default = 1)"
@@ -390,19 +399,29 @@ async def reattach_orphaned_cases() -> None:
         )
 
 
-async def init_db() -> None:
+async def init_db(bind=None, session_factory=None) -> None:
+    """Migrate, create, and repair invariants — on the given engine.
+
+    Both parameters default to this module's globals, so production is
+    unchanged. They exist so the lifespan can be booted against the test
+    database: until it could, the lifespan was the one part of the app no test
+    ever ran, and the wiring it does — which loops start, which backfills run,
+    what the health records are seeded with — was unverified while every
+    function it calls had its own tests. Function tested, wiring untested.
+    """
     from headroom.models import __all_models__  # noqa: F811
 
     _ = __all_models__  # ensure models are registered
+    bind = bind if bind is not None else engine
 
-    async with engine.begin() as conn:
+    async with bind.begin() as conn:
         await conn.run_sync(_run_migrations)
 
-    async with engine.begin() as conn:
+    async with bind.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    await ensure_default_room()
-    await reattach_orphaned_cases()
+    await ensure_default_room(session_factory)
+    await reattach_orphaned_cases(session_factory)
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

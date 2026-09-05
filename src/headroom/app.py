@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from headroom.config import env_flag, settings
-from headroom.database import async_session, checkpoint_wal, init_db
+from headroom.database import async_session, checkpoint_wal, engine, init_db
 from headroom.routes import api_router
 from headroom.utils.paths import safe_join
 from headroom.utils.redaction import redact_share_tokens
@@ -145,13 +145,24 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     branding_dir = settings.upload_dir / "branding"
     branding_dir.mkdir(exist_ok=True)
     _seed_branding(branding_dir)
-    await init_db()
+
+    # THE seam. Every session this function or the loops it starts open comes
+    # from `app.state`, never from the module-level `async_session` — which is
+    # the mistake `error_handler` and `reprice_once` both document: it works in
+    # production and silently talks to the wrong database in every test. Until
+    # this, the lifespan reached for the module global in five places and no
+    # test could boot it, so the app's entire wiring — which loops start, which
+    # backfills run, what seeds the health records — was the one thing the
+    # suite never executed. `create_app` seeds both defaults; tests override.
+    factory = app.state.session_factory
+    bind = app.state.engine
+    await init_db(bind=bind, session_factory=factory)
 
     # One-time data fix: normalize general_color onto the curated palette so
     # color filter chips behave consistently (guarded by a settings flag).
     from headroom.services import auth_service, hat_service, settings_service
 
-    async with async_session() as db:
+    async with factory() as db:
         # One-time: collapse case/whitespace variants of the free-text
         # vocabulary fields ("Neon"/"NEON"/"neon" -> one collection).
         # Canonicalization only covers writes, so values that predate it, or
@@ -223,7 +234,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # no Claude call. Coupling them is what left every appraisal frozen at the
     # date of the last bulk re-analysis, and made an expired Anthropic balance
     # stop prices as well as identification.
-    app.state.repricing_task = await repricing.start_repricing()
+    app.state.repricing_task = await repricing.start_repricing(factory)
 
     # Bulk-import worker — single async task, drains the import queue.
     if env_flag("HEADROOM_IMPORT_WORKER_ENABLED"):
@@ -241,7 +252,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # restart mid-run resumes rather than repeating.
     async def _backfill_thumbs():
         try:
-            async with async_session() as db:
+            async with factory() as db:
                 made = await hat_service.backfill_thumbnails(db)
             if made:
                 logger.info("Generated %d missing gallery thumbnail(s)", made)
@@ -262,7 +273,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         """
         try:
             await thumbs_task
-            async with async_session() as db:
+            async with factory() as db:
                 made = await hat_service.backfill_export_images(db)
             if made:
                 logger.info("Generated %d missing export image(s)", made)
@@ -297,7 +308,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         """
         while True:
             try:
-                async with async_session() as db:
+                async with factory() as db:
                     removed = await activity_service.prune_activity(db)
                     removed += await auth_service.prune_expired_sessions(db)
                 activity_service.retention_health.record_success(removed)
@@ -364,7 +375,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                             "name — a browser rejects it exactly as hard as an "
                             "expired one", status.host,
                         )
-                    async with async_session() as db:
+                    async with factory() as db:
                         changed, expected = await ca_vault.check_root(
                             db, status.ca_sha256
                         )
@@ -383,6 +394,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 raise
 
     tls_task = asyncio.create_task(_tls_watch_loop())
+
+    # The one-shot boot work, published so a test that boots the real lifespan
+    # can await it before shutting down. Not cosmetic: cancelling a task in the
+    # middle of an aiosqlite call invalidates its connection, and on the test
+    # suite's in-memory `StaticPool` that single connection IS the database —
+    # a boot-then-exit test that did not wait saw every table vanish at exit.
+    # The loops (prune, TLS) are deliberately not here; their first pass is
+    # observable through the health records they write.
+    app.state.boot_tasks = (thumbs_task, exports_task, mdns_task)
 
     try:
         yield
@@ -414,8 +434,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             # LAST, deliberately: the workers above still commit as they wind
             # down, so checkpointing before them would leave exactly the writes
             # made during shutdown sitting in the WAL — the ones a power cut
-            # immediately after a `compose down` would find.
-            checkpoint_wal,
+            # immediately after a `compose down` would find. On the app's
+            # engine — the same seam `init_db` took at boot — so a test that
+            # booted against one database does not checkpoint another. The
+            # order is pinned by a test that boots the real lifespan and
+            # records the calls, not by one that parses this tuple's source.
+            lambda: checkpoint_wal(bind),
         ):
             try:
                 await stop()
@@ -445,6 +469,7 @@ def create_app() -> FastAPI:
     # The auth gate resolves users through this factory; tests swap it for
     # their own in-memory database.
     app.state.session_factory = async_session
+    app.state.engine = engine
 
     # ORDER IS LOAD-BEARING. `add_middleware` PREPENDS, so the last one added
     # is the outermost and the first to see a response on the way out.

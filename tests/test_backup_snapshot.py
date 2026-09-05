@@ -132,6 +132,15 @@ async def test_a_degraded_backup_says_so_inside_the_archive(client, monkeypatch,
 
     from headroom.services import backup_service
 
+    # Its own database file. This test used to find one at `_db_path()`
+    # anyway — the empty `./headroom.db` that a bare `checkpoint_wal()` in
+    # `test_durability` created in the working directory on every run. It
+    # passed because another test polluted the checkout, and it would have
+    # failed the moment that test was fixed or run in a different order.
+    db = tmp_path / "headroom.db"
+    db.write_bytes(b"not really sqlite, and that is fine: the copy is what fails")
+    monkeypatch.setattr(backup_service, "_db_path", lambda: db)
+
     def _fail(db, dest_dir):
         raise RuntimeError("VACUUM INTO unavailable")
 

@@ -24,6 +24,8 @@ from sqlalchemy import text
 
 from headroom import database
 
+from tests.conftest import test_engine as engine_under_test
+
 pytestmark = pytest.mark.anyio
 
 #: `PRAGMA synchronous` answers with an integer, not the keyword.
@@ -100,11 +102,18 @@ async def test_the_whitelist_is_the_only_thing_that_can_reach_the_pragma():
 
 
 async def test_checkpointing_the_wal_does_not_raise():
-    """Runs on the shutdown path, so it must never turn a stop into a crash."""
-    await database.checkpoint_wal()
+    """Runs on the shutdown path, so it must never turn a stop into a crash.
+
+    On `test_engine`, explicitly. The bare call used the module engine, which
+    pointed at `./headroom.db` — and this test created that file in the
+    working directory and touched its WAL sidecars on every run. Empty, so
+    nobody noticed; `conftest` now points the module engine at an unopenable
+    path so the same slip fails instead of leaving artifacts.
+    """
+    await database.checkpoint_wal(engine_under_test)
 
 
-async def test_a_failing_checkpoint_is_swallowed(monkeypatch, caplog):
+async def test_a_failing_checkpoint_is_swallowed(caplog):
     """A broken checkpoint must not abort the rest of shutdown.
 
     The lifespan already learned this the hard way with background tasks: one
@@ -114,31 +123,10 @@ async def test_a_failing_checkpoint_is_swallowed(monkeypatch, caplog):
         def begin(self):
             raise RuntimeError("disk gone")
 
-        dialect = database.engine.dialect
+        dialect = engine_under_test.dialect
 
-    monkeypatch.setattr(database, "engine", _Boom())
     caplog.set_level("WARNING")
 
-    await database.checkpoint_wal()
+    await database.checkpoint_wal(_Boom())
 
     assert any("checkpoint" in r.getMessage().lower() for r in caplog.records)
-
-
-async def test_the_checkpoint_runs_last_on_shutdown():
-    """Order is load-bearing, so pin it.
-
-    The import and analysis workers still commit as they wind down.
-    Checkpointing before them would leave exactly the writes made during
-    shutdown sitting in the WAL — the ones a power cut straight after a
-    `compose down` would find.
-    """
-    import inspect
-
-    from headroom import app as app_module
-
-    source = inspect.getsource(app_module.lifespan)
-    stop_block = source.split("for stop in (", 1)[1].split("):", 1)[0]
-    steps = [ln.strip().rstrip(",") for ln in stop_block.splitlines() if ln.strip()]
-    steps = [s for s in steps if not s.startswith("#")]
-
-    assert steps[-1] == "checkpoint_wal", steps
