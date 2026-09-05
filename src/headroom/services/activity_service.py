@@ -16,12 +16,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.config import env_int
 from headroom.models.activity_log import ActivityLog
+from headroom.services.task_health import TaskHealth
 
 logger = logging.getLogger(__name__)
 
 
-def _retention_days() -> int:
+def retention_days() -> int:
+    """The retention window, live from the environment.
+
+    Public because the admin endpoint reports it beside the health record: "0
+    rows removed" reads as either "nothing was old enough" or "nothing ran",
+    and the window is what tells them apart.
+    """
     return max(1, env_int("HEADROOM_ACTIVITY_LOG_RETENTION_DAYS", 90))
+
+
+#: Kept as the module-private name the rest of this file already uses.
+_retention_days = retention_days
 
 
 async def log_activity(
@@ -91,6 +102,16 @@ async def list_activity(
 async def count_activity(db: AsyncSession) -> int:
     result = await db.execute(select(func.count(ActivityLog.id)))
     return int(result.scalar() or 0)
+
+
+#: Outcome of the last retention sweep — see `task_health.TaskHealth`.
+#:
+#: Here rather than in `app.py`, which owns the loop: a module-level record in
+#: the app factory is not importable by a route without dragging the whole
+#: application in, and retention is this module's concept. The loop prunes
+#: sessions too, so the count is both tables combined — the question an
+#: operator has is "is retention still running", not which table it touched.
+retention_health = TaskHealth(name="retention prune")
 
 
 async def prune_activity(db: AsyncSession) -> int:

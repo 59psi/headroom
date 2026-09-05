@@ -18,6 +18,7 @@ function status(over: Partial<CatalogStatus> = {}): CatalogStatus {
   return {
     entries: 550, models: 188, colorways: 188, last_harvest: null,
     progress: sweepProgressFixture(),
+    in_flight: false,
     ...over,
   };
 }
@@ -30,6 +31,10 @@ describe('ColorwayCatalogCard — live harvest progress', () => {
     // only trace was a log line — from this page a working harvest and a dead
     // button looked exactly alike, and the card just said "reload in a minute".
     mocked.getColorwayStatus.mockResolvedValue(status({
+      // `in_flight` is `claimed || running` server-side, so a running harvest
+      // always reports both. A fixture with one and not the other describes a
+      // state the API cannot return.
+      in_flight: true,
       progress: sweepProgressFixture({
         running: true, done: 4, total: 9, pct: 44, label: 'odysea',
         started_at: new Date().toISOString(),
@@ -96,5 +101,24 @@ describe('ColorwayCatalogCard — live harvest progress', () => {
 
     renderWithProviders(<ColorwayCatalogCard />);
     expect(await screen.findByText(/Melin Recap query 429/)).toBeInTheDocument();
+  });
+
+  it('refuses a second press during the gap before the sweep starts running', async () => {
+    // The window this exists for: the slot is claimed synchronously in the
+    // request, `progress.begin()` runs inside the background task, so there is
+    // a moment where a harvest is definitely queued and `running` is still
+    // false. The card used to bridge it with a 30-second wall-clock timer,
+    // which was both a guess and purely local — a harvest started on a phone
+    // left this button enabled, and the next press was refused with nothing on
+    // screen having said why.
+    mocked.getColorwayStatus.mockResolvedValue(status({
+      in_flight: true,
+      progress: sweepProgressFixture({ running: false }),
+    }));
+
+    renderWithProviders(<ColorwayCatalogCard />);
+
+    const button = await screen.findByRole('button', { name: /harvesting/i });
+    expect(button).toBeDisabled();
   });
 });

@@ -105,7 +105,7 @@
 	#
 	# `127.0.0.1`, NOT `localhost`. On a dual-stack host `localhost` resolves to
 	# `::1` first, and uvicorn binds `0.0.0.0` — IPv4 only, per the Dockerfile.
-	# Caddy dialled the v6 loopback, got `connection refused`, and returned
+	# Caddy dialed the v6 loopback, got `connection refused`, and returned
 	# **502** rather than retrying the v4 address. Observed on the live
 	# deployment against `/api/admin/recent-errors/count`, so the nav badge was
 	# intermittently failing outright.

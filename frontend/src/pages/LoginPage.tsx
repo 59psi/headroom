@@ -38,6 +38,7 @@ export function LoginPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
+  const [setupToken, setSetupToken] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -64,7 +65,7 @@ export function LoginPage() {
     }
     setBusy(true);
     try {
-      if (needsSetup) await setupOwner(username.trim(), password);
+      if (needsSetup) await setupOwner(username.trim(), password, setupToken.trim());
       else await login(username.trim(), password);
       window.location.assign('/');
     } catch (err) {
@@ -140,6 +141,29 @@ export function LoginPage() {
                   onChange={e => setConfirm(e.target.value)}
                   autoComplete="new-password"
                 />
+              </div>
+            )}
+            {needsSetup && (
+              <div className="mb-3">
+                <label className="form-label" htmlFor="setup-token">
+                  Setup token <span className="text-secondary">(only if configured)</span>
+                </label>
+                <input
+                  id="setup-token"
+                  type="password"
+                  className="form-control"
+                  aria-label="Setup token"
+                  value={setupToken}
+                  onChange={e => setSetupToken(e.target.value)}
+                  autoComplete="off"
+                />
+                {/* Always shown rather than gated on a flag from the server:
+                    publishing "this box wants a setup token" tells an attacker
+                    watching for unclaimed installs exactly which ones are worth
+                    a try, and the field is harmless to leave blank. */}
+                <div className="form-text small">
+                  Leave blank unless this deployment sets HEADROOM_SETUP_TOKEN.
+                </div>
               </div>
             )}
 

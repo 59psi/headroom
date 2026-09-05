@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+from pathlib import Path
 
 import pytest
 from PIL import Image
@@ -222,6 +223,57 @@ async def test_an_unknown_status_bumps_nothing():
 
     job = await _read_job(job_id)
     assert (job.done, job.errors, job.skipped) == (0, 0, 0)
+
+
+async def test_the_staging_directory_survives_a_job_that_still_has_live_items(monkeypatch, tmp_path):
+    """Counters reaching `total` is evidence about the SUMMARY, not about files.
+
+    `_bump_job_counter` maintains those counters and `_recover_on_boot`
+    recomputes them wholesale, so a recount can land on "done" while an item is
+    still queued or mid-read. Deleting the staging directory then pulls the
+    source photos out from under it, and the failure is silent: the item errors
+    with a missing file, which looks exactly like a bad upload.
+
+    Untested until now, which is the uncomfortable part — the guard reads as
+    defensive paranoia and is the only thing standing between a recount and
+    lost photos.
+    """
+    monkeypatch.setattr(import_service, "staging_dir", lambda: tmp_path)
+    job_id = await _job(total=2, done=1)
+    await _item(job_id, status="queued")
+    jdir = tmp_path / f"job-{job_id}"
+    jdir.mkdir(parents=True)
+    (jdir / "still-needed.jpg").write_bytes(b"x")
+
+    await import_service._bump_job_counter(job_id, "done")
+
+    assert (await _read_job(job_id)).status == "done", "fixture must reach the branch"
+    assert jdir.exists(), (
+        "staging deleted while an item was still queued — that item's photo is gone"
+    )
+
+
+async def test_the_staging_directory_is_cleaned_up_once_nothing_is_reading():
+    """The other half: the guard must not leak a directory per import forever."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        original = import_service.staging_dir
+        import_service.staging_dir = lambda: root
+        try:
+            job_id = await _job(total=1)
+            await _item(job_id, status="done")
+            jdir = root / f"job-{job_id}"
+            jdir.mkdir(parents=True)
+            (jdir / "consumed.jpg").write_bytes(b"x")
+
+            await import_service._bump_job_counter(job_id, "done")
+
+            assert (await _read_job(job_id)).status == "done"
+            assert not jdir.exists(), "nothing was reading; the directory should be gone"
+        finally:
+            import_service.staging_dir = original
 
 
 # ---- _recover_on_boot ------------------------------------------------- #

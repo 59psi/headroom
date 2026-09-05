@@ -8,6 +8,8 @@ unhashed; the API token is only readable by an authenticated session.
 from __future__ import annotations
 
 import logging
+import os
+import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import select
@@ -26,6 +28,7 @@ from headroom.schemas.auth import (
     PasskeyLoginVerify,
     PasskeyRegisterVerify,
     PasswordChange,
+    PasswordConfirm,
 )
 
 logger = logging.getLogger(__name__)
@@ -72,7 +75,29 @@ async def first_run_setup(
     data: Credentials, request: Request, response: Response,
     db: AsyncSession = Depends(get_db),
 ):
-    """Create the owner account. Only available while no users exist."""
+    """Create the owner account. Only available while no users exist.
+
+    `HEADROOM_SETUP_TOKEN` closes the land-grab window when it is set. Until
+    the owner completes setup this endpoint hands full control to whoever posts
+    to it first, and `GET /api/auth/status` publishes `needs_setup: true`, so
+    the window is not merely open — it is advertised. On a LAN that is nearly
+    theoretical; on the Let's Encrypt overlay the hostname is in a public
+    certificate-transparency log within seconds of issuance, so "whoever
+    reaches it first" includes anyone watching CT.
+
+    Opt-in rather than always-on, and that is the deliberate choice: a required
+    token would put a mandatory step between a fresh `docker compose up` and a
+    working app for the LAN install that is the primary deployment, to defend
+    against an attacker who is already on the LAN. Set it for an
+    internet-facing deployment; leave it unset and behavior is unchanged.
+    """
+    expected = os.environ.get("HEADROOM_SETUP_TOKEN", "").strip()
+    if expected and not secrets.compare_digest(data.setup_token or "", expected):
+        # Deliberately indistinguishable from "setup already completed": an
+        # attacker learning that the token is merely WRONG has learned the box
+        # is unclaimed and worth coming back to.
+        logger.warning("Rejected /api/auth/setup: HEADROOM_SETUP_TOKEN mismatch")
+        raise HTTPException(status_code=403, detail="Setup already completed")
     if await auth_service.user_count(db) > 0:
         # `from None`, not `from exc`: an auth response must not carry the
         # database error that produced it, and here the IntegrityError is
@@ -163,14 +188,63 @@ async def logout(request: Request, response: Response, db: AsyncSession = Depend
 
 @router.get("/me")
 async def me(user: User = Depends(require_user)):
-    """Profile + the bearer token for cookie-less clients (iOS Shortcut)."""
-    return {"username": user.username, "api_token": user.api_token}
+    """Profile. Deliberately NOT the bearer token.
+
+    It used to return `api_token` on every call, which made a stolen session
+    upgrade itself into a credential that outlives it: sessions can be revoked
+    (logout, password change, `destroy_other_sessions`) and the token cannot be
+    reached by any of them — the holder simply keeps full API access. The card
+    that displays it fetches this on every Settings load, so the secret was on
+    the wire far more often than the one moment somebody wanted to read it.
+
+    `token_set` rather than the value: the card needs to know the field exists
+    to render its controls, and that is not secret.
+    """
+    return {"username": user.username, "token_set": bool(user.api_token)}
+
+
+@router.post("/token/reveal")
+async def reveal_api_token(
+    data: PasswordConfirm,
+    user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Show the existing token, on proof of the password.
+
+    A POST because it is not cacheable and must not land in a URL, history
+    entry or referrer — the same reason the Google Vision key stopped being a
+    query parameter.
+    """
+    if not await auth_service.verify_password_async(
+        user.password_hash, data.current_password
+    ):
+        raise HTTPException(status_code=403, detail="Current password is incorrect")
+    await log_activity(
+        db, kind="auth.token_revealed", entity_type="user", entity_id=user.id,
+        summary=f"API token revealed for '{user.username}'",
+    )
+    await db.commit()
+    return {"api_token": user.api_token}
 
 
 @router.post("/token/rotate")
 async def rotate_api_token(
-    user: User = Depends(require_user), db: AsyncSession = Depends(get_db)
+    data: PasswordConfirm,
+    user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
 ):
+    """Mint a new token, on proof of the password.
+
+    Gated for the same reason as reveal, and it is not enough to gate reveal
+    alone: rotation RETURNS the new token, so an attacker holding only a
+    session could mint themselves a fresh long-lived credential and read it
+    back. Closing one door and leaving the other one open would have been
+    security theater — the escalation path is identical.
+    """
+    if not await auth_service.verify_password_async(
+        user.password_hash, data.current_password
+    ):
+        raise HTTPException(status_code=403, detail="Current password is incorrect")
     user.api_token = auth_service.new_api_token()
     db.add(user)
     await log_activity(

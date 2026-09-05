@@ -1,4 +1,4 @@
-import { apiFetch } from './client';
+import { apiFetch, apiFetchWithHeaders } from './client';
 import type {
   StyleOption, ColorTag, HatRead, MetaOption } from '../types';
 
@@ -12,14 +12,53 @@ import type {
  */
 export const FULL_COLLECTION_LIMIT = 1000;
 
+/** Backstop against a bad `X-Total-Count` turning this into an infinite loop. */
+const MAX_PAGES = 50;
+
 export function listHats(params?: Record<string, string>) {
   const qs = params ? '?' + new URLSearchParams(params).toString() : '';
   return apiFetch<HatRead[]>(`/api/hats${qs}`);
 }
 
+/**
+ * Every matching hat, following `X-Total-Count` past the server's page cap.
+ *
+ * The cap is real — `limit` is `le=1000` — so a collection past it came back
+ * truncated and the pages that total, filter and shuffle client-side reported
+ * a smaller collection worth less money, with nothing on screen saying the
+ * list was partial. The server already publishes the true size and logs a
+ * warning about exactly this; the header simply had no reader, so the guard
+ * detected the problem into a container log nobody was tailing.
+ *
+ * Paging rather than surfacing a "showing 1000 of N" banner: these callers ask
+ * for the whole collection, and a function that promises that should either
+ * deliver it or fail — pushing a partial answer to four call sites is how the
+ * totals came to be quietly wrong in the first place. The offset walk can in
+ * principle skip a row if a hat is inserted mid-burst; that is a far smaller
+ * error than dropping everything past the cap, and this is a single-writer app.
+ */
+async function listEveryHat(params: Record<string, string>): Promise<HatRead[]> {
+  const out: HatRead[] = [];
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const qs = new URLSearchParams({
+      ...params,
+      limit: String(FULL_COLLECTION_LIMIT),
+      offset: String(page * FULL_COLLECTION_LIMIT),
+    });
+    const { data, headers } = await apiFetchWithHeaders<HatRead[]>(`/api/hats?${qs}`);
+    out.push(...data);
+    // No header, an empty page, or a short page: nothing more to ask for.
+    // Trusting a missing header keeps this working against an older server
+    // rather than looping until the backstop.
+    const total = Number(headers.get('X-Total-Count'));
+    if (!Number.isFinite(total) || data.length === 0 || out.length >= total) break;
+  }
+  return out;
+}
+
 /** Every active hat, for the views that need the whole collection at once. */
 export function listAllHats() {
-  return listHats({ limit: String(FULL_COLLECTION_LIMIT) });
+  return listEveryHat({});
 }
 
 /**
@@ -30,7 +69,7 @@ export function listAllHats() {
  * belong in realized proceeds and nowhere near what the collection is worth.
  */
 export function listDisposedHats() {
-  return listHats({ limit: String(FULL_COLLECTION_LIMIT), status: 'disposed' });
+  return listEveryHat({ status: 'disposed' });
 }
 
 export function getHat(id: number) {

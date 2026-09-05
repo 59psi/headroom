@@ -1,11 +1,9 @@
-import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getColorwayStatus, refreshColorwayCatalog } from '../../api/settings';
 import { SweepProgressBar } from '../common/SweepProgressBar';
 
 export function ColorwayCatalogCard() {
   const qc = useQueryClient();
-  const [startedAt, setStartedAt] = useState<number | null>(null);
   // The catalog's real size. This used to read `len(GET /api/meta/colorways)`,
   // which is the AUTOCOMPLETE feed and caps at its own default limit — so the
   // figure sat at 25 no matter how many models had actually been harvested,
@@ -13,16 +11,16 @@ export function ColorwayCatalogCard() {
   const status = useQuery({
     queryKey: ['admin', 'colorway-status'],
     queryFn: getColorwayStatus,
-    refetchInterval: (q) => {
-      if (q.state.data?.progress?.running) return 2000;
-      // Grace window. The endpoint answers 202 and the harvest starts as a
-      // BackgroundTask AFTER the response, so `running` is briefly false right
-      // after a start — without this the poll would give up before the sweep it
-      // just kicked off ever appeared, and the card would look dead again.
-      if (startedAt && Date.now() - startedAt < 30_000) return 2000;
-      return false;
-    },
+    // `in_flight`, not `progress.running`. The slot is claimed synchronously
+    // in the request and `begin()` runs inside the task, so `running` is still
+    // false for a moment after the 202 — this card used to bridge that with a
+    // 30-second wall-clock grace window, which is a client-side guess at
+    // server state that the server can simply report. The guess was also
+    // local: a harvest started from a phone left the laptop's card idle and
+    // its button enabled, so the next press was refused with no explanation.
+    refetchInterval: (q) => (q.state.data?.in_flight ? 2000 : false),
   });
+  const inFlight = status.data?.in_flight ?? false;
 
   const refreshMut = useMutation({
     // 202: the harvest is minutes of sequential external calls and now runs
@@ -31,10 +29,9 @@ export function ColorwayCatalogCard() {
     mutationFn: () => refreshColorwayCatalog(),
     onSuccess: res => {
       // `started` false means a harvest was already in flight and this press
-      // began nothing. Treating a refusal as a start would set the poll window
-      // and then show "Harvest finished" for somebody else's run.
+      // began nothing. Treating a refusal as a start would show "Harvest
+      // finished" for somebody else's run.
       if (res.already_running) return;
-      setStartedAt(Date.now());
       qc.invalidateQueries({ queryKey: ['meta', 'colorways'] });
       qc.invalidateQueries({ queryKey: ['admin', 'colorway-status'] });
     },
@@ -54,9 +51,13 @@ export function ColorwayCatalogCard() {
             type="button"
             className="btn btn-primary"
             onClick={() => refreshMut.mutate()}
-            disabled={refreshMut.isPending}
+            disabled={refreshMut.isPending || inFlight}
           >
-            {refreshMut.isPending ? 'Starting…' : 'Refresh from Melin Recap'}
+            {refreshMut.isPending
+              ? 'Starting…'
+              : inFlight
+                ? 'Harvesting…'
+                : 'Refresh from Melin Recap'}
           </button>
           {refreshMut.data?.already_running && (
             <span className="text-secondary small">

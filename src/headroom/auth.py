@@ -33,6 +33,23 @@ def client_ip(request: Request) -> str:
     One definition: the login rate limiter and the middleware's 401 log both
     key off it, and a limiter that buckets by a different string than the log
     reports is a debugging trap.
+
+    **On the plain bridge compose this may be the Docker gateway, not the
+    caller** — and if it is, every LAN client shares one rate-limit bucket, so
+    a stranger's failed logins can lock the owner out, and the IP on every
+    `auth.login_failed` row identifies nothing. Whether it happens depends on
+    the host's `userland-proxy` setting: with it on (the historical Linux
+    default) the source is rewritten to the gateway; with iptables DNAT it is
+    preserved. The app cannot tell which from inside the container.
+
+    Not read from `X-Forwarded-For` here, deliberately. That header is
+    attacker-controlled on any request that does not come through a proxy, and
+    trusting it would let a caller pick its own rate-limit bucket — strictly
+    worse than one shared bucket. uvicorn's `--forwarded-allow-ips` is the
+    right place: it applies the header only from peers the operator has named,
+    and the Dockerfile already restricts it to loopback for the Caddy overlays,
+    which is why all three LAN-HTTPS paths report the real client. Documented
+    in `docs/OPERATIONS.md §6`.
     """
     return request.client.host if request.client else "unknown"
 

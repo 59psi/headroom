@@ -20,6 +20,13 @@ _PASSWORD_MAX = 200
 class Credentials(BaseModel):
     username: str = Field(min_length=3, max_length=60)
     password: str = Field(min_length=_PASSWORD_MIN, max_length=_PASSWORD_MAX)
+    #: Only read by `/setup`, and only when `HEADROOM_SETUP_TOKEN` is set.
+    #:
+    #: On `Credentials` rather than a separate setup model because login and
+    #: setup take the same body and splitting them means two schemas that can
+    #: drift on the fields that actually matter. Ignored by `/login`, where an
+    #: attacker supplying it achieves nothing.
+    setup_token: str | None = None
 
 
 class AuthStatus(BaseModel):
@@ -59,6 +66,17 @@ class PasswordChange(BaseModel):
     # a password that predates the current rules.
     current_password: str
     new_password: str = Field(min_length=_PASSWORD_MIN, max_length=_PASSWORD_MAX)
+
+
+class PasswordConfirm(BaseModel):
+    """Re-authentication for an operation a session alone must not authorize.
+
+    Same reasoning as `PasswordChange.current_password` and the same absence of
+    a length floor: this is checked against the stored hash, never accepted as
+    a new secret.
+    """
+
+    current_password: str
 
 
 class PasskeyRegisterVerify(BaseModel):

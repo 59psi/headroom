@@ -8,7 +8,7 @@
 # WHY: the container healthcheck in docker-compose.yml fails on low disk and on
 # a dead background worker, and Docker's `restart: unless-stopped` does NOT act
 # on `unhealthy` — only on exit. Without a consumer the check is a string in
-# `docker ps`. See docs/OPERATIONS.md §7 for the systemd units that run this.
+# `docker ps`. See docs/OPERATIONS.md §3 for the systemd units that run this.
 #
 # Usage:  headroom-watchdog.sh [compose-dir]
 # Env:    HEADROOM_HEALTH_URL   (default http://localhost:8000/health/ready)

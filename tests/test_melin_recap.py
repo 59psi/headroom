@@ -795,7 +795,7 @@ async def test_a_product_naming_no_construction_contradicts_nothing(monkeypatch)
 
 async def test_the_source_names_only_the_products_that_set_the_number(monkeypatch):
     """`products` was computed BEFORE the condition/size narrowing, so a hat
-    priced by one listing was labelled with three — including a Thermal that
+    priced by one listing was labeled with three — including a Thermal that
     had no part in it."""
     from headroom.services.melin_recap import fetch_resale_stats
 

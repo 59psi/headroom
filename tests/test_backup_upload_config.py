@@ -62,6 +62,27 @@ async def test_a_leading_dash_is_called_out_as_a_flag():
         backup_service.validate_destination("--config=/etc/x")
 
 
+@pytest.mark.parametrize("bad", ["-vv:path", "--config:/etc/x", "-e:x"])
+async def test_the_dash_check_is_load_bearing_where_the_regex_is_not(bad):
+    """These MATCH the rclone pattern. Only the explicit dash check stops them.
+
+    `[A-Za-z0-9_-]` contains `-`, so the remote-name half of the pattern
+    happily accepts a flag: `-vv:path` is a well-formed "remote:path" as far as
+    the regex is concerned. Every other flag case in this file is rejected by
+    the regex as well (`--config=/etc/x` fails on the `=`), so the whole suite
+    passed with `validate_destination`'s `startswith("-")` guard removed — it
+    looked redundant and was the only thing working.
+
+    The comment beside the pattern used to credit the regex with excluding a
+    leading dash. Getting that backwards is how a real guard gets tidied away.
+    """
+    assert backup_service.UPLOAD_PROVIDERS["rclone"].destination_re.match(bad), (
+        "fixture no longer exercises the gap — pick an input the regex accepts"
+    )
+    with pytest.raises(ValueError, match="flag"):
+        backup_service.validate_destination(bad)
+
+
 # ---- rsync and the NAS ------------------------------------------------ #
 #
 # One colon is a path on a host reached over SSH; TWO colons make rsync open a
