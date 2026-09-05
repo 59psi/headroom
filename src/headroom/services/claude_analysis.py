@@ -15,8 +15,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from anthropic import APIError, AsyncAnthropic
-from anthropic._exceptions import AuthenticationError
+from anthropic import APIError, AsyncAnthropic, AuthenticationError
 
 from headroom.config import settings as config_settings
 
@@ -435,6 +434,22 @@ def _known_series_context(known_series: Sequence[str]) -> str:
     )
 
 
+def _anthropic_client(api_key: str, timeout: float, **kw) -> AsyncAnthropic:
+    """The one place an SDK client is built.
+
+    A seam, not an abstraction: `tests/test_claude_call_shape.py` swaps it for
+    a client wired to an in-memory transport so the REAL SDK serializes our
+    request and parses a canned response. Every other test stubs
+    `analyze_hat_image` one level up, which is right for them and means none
+    of them would notice the SDK changing under us — the 1.x upgrade landed
+    with the tests green for exactly that reason, and this is what checks it.
+    `AuthenticationError` is imported from the package root for the same
+    reason: the private `_exceptions` path happened to survive 1.0 and could
+    not have been relied on to.
+    """
+    return AsyncAnthropic(api_key=api_key, timeout=timeout, **kw)
+
+
 async def analyze_hat_image(
     image_path: Path,
     api_key: str,
@@ -459,7 +474,7 @@ async def analyze_hat_image(
 
     b64, media_type = _read_image_b64(image_path)
 
-    client = AsyncAnthropic(api_key=api_key, timeout=config_settings.http_timeout)
+    client = _anthropic_client(api_key, config_settings.http_timeout)
     model_id = model or config_settings.anthropic_model
 
     user_text = _owner_context(selected_style, selected_construction, known_series)
@@ -549,7 +564,7 @@ async def verify_api_key(api_key: str, model: str | None = None) -> tuple[bool, 
     """Cheap reachability check for a key + model combo. Returns (ok, message)."""
     if not api_key:
         return False, "No API key provided."
-    client = AsyncAnthropic(api_key=api_key, timeout=10.0)
+    client = _anthropic_client(api_key, 10.0)
     model_id = model or config_settings.anthropic_model
     try:
         await client.messages.create(

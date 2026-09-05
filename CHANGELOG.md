@@ -6,6 +6,94 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.77.2] — 2026-09-05
+
+Two things the suite could not see, made visible: the lifespan, and the SDK
+call behind the core feature. Plus the dependency queue, taken properly.
+
+### Fixed
+- **No test had ever run the lifespan.** `conftest` said so in a comment, and
+  the closest anything came was a test reading the lifespan's *source text*
+  with `inspect.getsource` to check the order of a tuple. So the one function
+  that wires the app together — which loops start, which one-time backfills
+  run, what seeds the health records, what shutdown cancels and in what order
+  — was the one function the suite never executed, while every function it
+  calls had tests. That includes 2.77.0's retention health record: the loop
+  wrote it, the route served it, the card rendered it, and coverage showed
+  `TaskHealth.record_success` and the route body **never executing**. The
+  cause was structural: the lifespan reached for the module-level
+  `async_session` in five places and `init_db()` on the module engine, both
+  bound to `settings.database_url` — under test, `./headroom.db` in the
+  checkout — so booting it would have written a real file. It now takes
+  `app.state.session_factory` and `app.state.engine`, the seam the auth gate
+  and `error_handler` already used, and `tests/test_lifespan_wiring.py` boots
+  it for real: the prune runs and records; the endpoint serves the record;
+  every backfill flag is stamped once and not re-run on a second boot;
+  branding seeds once and never overwrites the owner's logo; disabled workers
+  produce `None` not a dead task; the enabled repricing scheduler's first
+  sweep hits the **app's** database (with the seam broken it records
+  `unable to open database file` — the assertion cannot pass by accident);
+  shutdown stops workers then checkpoints the WAL **last, on the app's
+  engine**; a raising stop step does not skip the ones after it. Seven
+  sabotages, each caught by the test named for it.
+- **The suite was writing to a real database file on every run.** A bare
+  `checkpoint_wal()` in `test_durability.py` opened the module engine, which
+  created an empty `./headroom.db` in the working directory and touched its
+  WAL sidecars each run — empty, so harmless, and invisible for exactly that
+  reason. A second test passed only because that stray file existed for it to
+  find. `conftest` now points the module engine at an unopenable path, so the
+  same slip raises on the spot; the guard immediately found a third site in
+  production code (`reattach_orphaned_cases` took the factory and dropped it
+  one call in).
+- **The Claude Vision call is now exercised through the real SDK.** Every
+  analysis test stubs `analyze_hat_image`, correctly, and the cost was that
+  nothing checked the request this app sends or the response parsing it does.
+  `tests/test_claude_call_shape.py` drives the real `anthropic` client against
+  an `httpx2.MockTransport`: the cached `system` block, the forced
+  `tool_choice`, image-then-owner-facts order, the tool-use parse, and the
+  401/529 → `ClaudeAnalysisError` mapping. Written to make the SDK major bump
+  below safe, and it is what proves it was.
+- **The zeroconf NSEC story in `mdns_service` and CLAUDE.md was out of date.**
+  The owner-name defect it describes was fixed upstream in 0.150.4 (#1825),
+  and "the current release, so there is no upgrade" stopped being true a week
+  ago. Corrected — and verified against the installed 0.151.2 that upstream's
+  fix attaches an NSEC only to *address* answers, so a query for `HTTPS`/65 or
+  `SRV` at the hostname (the actual iPhone stall) is still silence and the
+  `_NsecProtocol` sidecar remains the only thing answering it.
+
+### Changed
+- **Dependencies, the whole lock, taken on this branch** rather than merging
+  Dependabot #149 — which failed CI, as CLAUDE.md predicts for any backend
+  bump: `requirements.txt` is derived from `uv.lock` and Dependabot moved one
+  without the other. `uv lock --upgrade` took everything within
+  `exclude-newer` and regenerated the export: `anthropic` 0.122.0 → **1.2.0**
+  (a major; the SDK surface we use — `AsyncAnthropic(timeout=)`,
+  `messages.create(system/tools/tool_choice/messages)`, `message.content`
+  tool-use blocks, `APIError`/`AuthenticationError` — checked empirically
+  against 1.2.0 and covered by the new call-shape tests; `AuthenticationError`
+  now imported from the package root instead of the private `_exceptions`
+  path), `zeroconf` 0.150.0 → 0.151.2 (see above), `argon2-cffi-bindings`
+  25.1.0 → 26.1.0 (exercised by the real hash the suite makes each run),
+  `pydantic` 2.13.5, `pydantic-core` 2.46.5, `ruff` 0.16.5, `scipy` 1.18.1,
+  `protobuf` 7.36.0, `websockets` 17.1, `click` 8.5.0, `platformdirs` 4.11.5,
+  `tifffile` 2026.8.23, `coverage` 7.16.0; `distro` dropped (an anthropic 0.x
+  transitive, imported by nothing here). Frontend: Dependabot #146 merged as
+  is — it is self-contained. #149 closed as superseded.
+
+### Added
+- `app.state.boot_tasks` — the lifespan's one-shot boot work (thumbnail and
+  export backfills, mDNS start), published so a test can await it before
+  shutting down. Not cosmetic: cancelling a task mid-aiosqlite-call
+  invalidates its connection, and on the test suite's in-memory `StaticPool`
+  that single connection *is* the database.
+- `claude_analysis._anthropic_client` — the one place an SDK client is built.
+- `init_db(bind=, session_factory=)`, `checkpoint_wal(bind=)`,
+  `ensure_default_room(session_factory=)`,
+  `reattach_orphaned_cases(session_factory=)`,
+  `repricing.start_repricing(session_factory=)` — all default to the module
+  globals, so production is unchanged.
+
+
 ## [2.77.1] — 2026-09-05
 
 The test suite, measured by what it constrains rather than what it executes.

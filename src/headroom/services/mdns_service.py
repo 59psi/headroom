@@ -21,26 +21,32 @@ timeout — 5s on macOS, far worse on iOS, where Safari fires many parallel
 requests and each one pays it. The site took over a minute to load and often
 never did, while the TLS handshake itself measured 46ms.
 
-The reason is a defect in python-zeroconf (0.150.0, the current release).
-A responder that owns a name but has no AAAA is supposed to answer an AAAA
+The reason was a defect in python-zeroconf, present through 0.150.3. A
+responder that owns a name but has no AAAA is supposed to answer an AAAA
 question with an **NSEC** record — a negative answer meaning "this name exists
 and has only these types" (RFC 6762 §6.1) — which is what lets a client stop
-waiting instantly. zeroconf builds that record with the wrong owner name:
-``ServiceInfo._dns_nsec()`` passes ``self._name``, the service instance
+waiting instantly. zeroconf built that record with the wrong owner name:
+``ServiceInfo._dns_nsec()`` passed ``self._name``, the service instance
 (``headroom._http._tcp.local.``), where it must pass ``self.server``, the host
-(``headroom.local.``). The assertion on the line above the call site —
-``"Service server must be set for NSEC record."`` — shows ``server`` was
-intended. An NSEC only asserts non-existence for the name it carries, so the
-client correctly ignores an answer about a different name and keeps waiting.
-Silence and a mis-named NSEC are indistinguishable to the querier.
+(``headroom.local.``). An NSEC only asserts non-existence for the name it
+carries, so the client correctly ignored an answer about a different name and
+kept waiting. Silence and a mis-named NSEC are indistinguishable to the querier.
 
-It cannot be fixed from outside: zeroconf ships compiled Cython, so the call
-is dispatched at C level and a ``ServiceInfo`` subclass overriding
-``_dns_nsec`` is simply never consulted (measured, not assumed). Registering
-both address types sidesteps it structurally — with nothing missing there is
-no NSEC to get wrong, and IPv6 clients get a real answer instead of a negative
-one. Hosts with no global IPv6 still hit the upstream bug; that is upstream's
-to fix and is reported there.
+**Upstream fixed the owner name in 0.150.4** (2026-08-28, "Correct nsec bitmap
+semantics", #1825) and this app now runs 0.151.x: ``_dns_address_nsec`` is
+owned by ``self.server`` and lists exactly the address families present.
+Two things did not change and are why the code below stays. Registering both
+address types is still the right advertisement — with nothing missing there is
+no negative answer to get wrong, and IPv6 clients get a real record. And the
+upstream NSEC is attached ONLY to address answers (``_add_address_answers`` in
+``_handlers/query_handler.py``, verified against the installed 0.151.2): a
+query for any OTHER type at our hostname — ``HTTPS``/65, which iOS Safari asks
+for before every connection, or ``SRV`` — is still met with silence, which is
+the stall that survived two "fixes" here. ``_NsecProtocol`` below answers
+those, and only those. On an IPv4-only host it also answers ``AAAA``, which
+upstream now does too; the duplicate is identical, harmless under mDNS's
+duplicate suppression, and kept because upstream has shipped this record
+wrong before and the cost of a second correct one is nothing.
 
 A host that advertises AAAA but serves only IPv4 (the no-sidecar path — the
 Dockerfile binds uvicorn to ``0.0.0.0``) is not a problem worth a reachability
