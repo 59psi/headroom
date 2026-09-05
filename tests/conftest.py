@@ -14,6 +14,24 @@ os.environ.setdefault("HEADROOM_MDNS_ENABLED", "false")
 # Sweeps the whole collection against the marketplace API — never in tests.
 os.environ.setdefault("HEADROOM_REPRICING_ENABLED", "false")
 
+# The MODULE-LEVEL engine must be unreachable from a test, so it points at a
+# path that cannot be opened. Assigned, not `setdefault`: a developer's shell
+# exporting a real URL must not turn the suite loose on a real database.
+#
+# Every test runs against `test_engine` below, and app code reaches the
+# database through seams — `get_db` (overridden), `app.state.session_factory`
+# / `app.state.engine` (set on the fixture), `reprice_once(session_factory=)`.
+# Anything that instead imports `database.engine` or `database.async_session`
+# works in production and quietly talks to a different database in every test.
+# That was not hypothetical: `settings.database_url` defaulted to
+# `./headroom.db`, and a bare `checkpoint_wal()` in one test created that file
+# in the working directory and touched its WAL sidecars on every run for weeks
+# — empty, so harmless, and invisible for exactly that reason. With this URL
+# the same mistake raises `unable to open database file` on the spot.
+os.environ["HEADROOM_DATABASE_URL"] = (
+    "sqlite+aiosqlite:////nonexistent/headroom-tests-must-not-reach-the-module-engine.db"
+)
+
 # Tests never call an external API — but the WORKER flags above only stop the
 # background paths, not the keys. `config.py` reads these at import and
 # `settings_service.get_*_key` falls back to the environment when the DB has
@@ -143,8 +161,14 @@ def app():
             yield session
 
     app.dependency_overrides[get_db] = override_get_db
-    # The auth gate middleware resolves sessions through this factory.
+    # The auth gate middleware, `error_handler` AND the lifespan all resolve
+    # sessions through this factory, and the lifespan runs `init_db` and the
+    # shutdown checkpoint on this engine. Both must point at the test database:
+    # before the lifespan took them from `app.state`, booting it under test
+    # would have created a `headroom.db` in the working directory — which is
+    # why no test ever booted it, and why the app's wiring went unverified.
     app.state.session_factory = test_session_factory
+    app.state.engine = test_engine
     return app
 
 

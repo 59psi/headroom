@@ -177,7 +177,7 @@ async def test_creating_a_case_in_a_missing_room_is_rejected(client):
 
 
 @pytest.mark.anyio
-async def test_boot_reattaches_cases_whose_room_vanished(client, monkeypatch):
+async def test_boot_reattaches_cases_whose_room_vanished(client):
     """Existing orphans are repaired on the next start, not left to be found.
 
     The frontend used to send a hardcoded `room_id: 1` regardless of the picker,
@@ -188,10 +188,6 @@ async def test_boot_reattaches_cases_whose_room_vanished(client, monkeypatch):
 
     import headroom.database as database
     from tests.conftest import test_session_factory
-
-    # The repair runs on the boot path and uses the app's session factory;
-    # point it at the test database.
-    monkeypatch.setattr(database, "async_session", test_session_factory)
 
     room = await client.post("/api/rooms", json={"name": "Doomed"})
     room_id = room.json()["id"]
@@ -206,7 +202,8 @@ async def test_boot_reattaches_cases_whose_room_vanished(client, monkeypatch):
     detail = await client.get(f"/api/cases/{display_id}")
     assert detail.json()["room_name"] == "Unknown", "precondition: the case is orphaned"
 
-    await database.reattach_orphaned_cases()
+    # Through the seam the lifespan uses, not by patching the module global.
+    await database.reattach_orphaned_cases(test_session_factory)
 
     repaired = await client.get(f"/api/cases/{display_id}")
     assert repaired.json()["room_name"] != "Unknown"
