@@ -41,7 +41,7 @@ dependencies = [
     "argon2-cffi>=25.1.0",
     "webauthn>=3.0.0",
     "qrcode>=8.2",
-    "zeroconf>=0.150.0",
+    "zeroconf>=0.151.3",
 ]
 
 [dependency-groups]
