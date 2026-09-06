@@ -62,7 +62,9 @@ async def guest_collection(
         hat_count=len(hats),
         hats=[
             share_link_service.to_shared_hat(
-                h, f"/api/public/guest/photo/{h.id}" if h.photo_path else None
+                h,
+                f"/api/public/guest/photo/{h.id}" if h.photo_path else None,
+                f"/api/public/guest/photo/{h.id}?variant=thumb" if h.thumb_path else None,
             )
             for h in hats
         ],
@@ -70,7 +72,7 @@ async def guest_collection(
 
 
 @router.get("/photo/{hat_id}", response_class=FileResponse)
-async def guest_photo(hat_id: int, db: AsyncSession = Depends(get_db)):
+async def guest_photo(hat_id: int, variant: str | None = None, db: AsyncSession = Depends(get_db)):
     await _require_enabled(db)
 
     # `shared_hat` re-checks `disposed_at` rather than trusting the caller —
@@ -82,7 +84,7 @@ async def guest_photo(hat_id: int, db: AsyncSession = Depends(get_db)):
     # `photo_path` is app-generated, but this is an unauthenticated route
     # reaching the filesystem, so it goes through the same containment check as
     # every other client-influenced path rather than a local copy of one.
-    photo = safe_file(settings.upload_dir, hat.photo_path)
+    photo = safe_file(settings.upload_dir, share_link_service.photo_variant(hat, variant))
     if photo is None:
         raise _not_found()
     return FileResponse(photo)
@@ -108,5 +110,7 @@ async def guest_hat(hat_id: int, db: AsyncSession = Depends(get_db)):
         raise _not_found()
 
     return share_link_service.to_shared_hat(
-        hat, f"/api/public/guest/photo/{hat.id}" if hat.photo_path else None
+        hat,
+        f"/api/public/guest/photo/{hat.id}" if hat.photo_path else None,
+        f"/api/public/guest/photo/{hat.id}?variant=thumb" if hat.thumb_path else None,
     )

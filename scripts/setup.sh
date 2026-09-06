@@ -104,8 +104,10 @@ ensure_uv() {
 # which now supersedes vite/@vitejs/plugin-react's `^20.19.0 || >=22.12.0`
 # (and the Node 20 line went end-of-life 2026-04-30). Checking only the major
 # would wave through 22.0, and checking vite's old 22.12 would wave through a
-# Node that `npm ci` then rejects on the engines check. Track the HIGHEST floor
-# any dependency declares.
+# Node the engines check then warns about. `npm ci` only ERRORS on an engines
+# mismatch when `engine-strict` is set — which `frontend/.npmrc` now sets, so
+# the floor is enforced in the Docker build and CI rather than only warned.
+# Track the HIGHEST floor any dependency declares.
 # ------------------------------------------------------------------ #
 # 0 = usable (>= 22.22), 1 = too old or absent. One `node -v`, no subshells.
 node_ok() {
@@ -223,9 +225,10 @@ ensure_docker() {
       run_remote_installer "https://get.docker.com" $SUDO sh
     fi
     command -v systemctl &>/dev/null && $SUDO systemctl enable --now docker || true
-    if [ -n "$SUDO" ] && ! id -nG "$USER" | tr ' ' '\n' | grep -qx docker; then
-      $SUDO usermod -aG docker "$USER"
-      warn "Added $USER to the docker group — log out/in (or run 'newgrp docker') before using docker without sudo."
+    _user="${USER:-$(id -un)}"
+    if [ -n "$SUDO" ] && ! id -nG "$_user" | tr ' ' '\n' | grep -qx docker; then
+      $SUDO usermod -aG docker "$_user"
+      warn "Added $_user to the docker group — log out/in (or run 'newgrp docker') before using docker without sudo."
     fi
   else
     warn "Unsupported OS '$OS' for automatic Docker install — see https://docs.docker.com/engine/install/"
@@ -255,7 +258,10 @@ log "Installing Python dependencies (uv fetches the .python-version Python if ne
 uv sync
 
 log "Installing frontend dependencies..."
-(cd frontend && npm install)
+# `npm ci`, not `npm install`: install can rewrite package-lock.json (the
+# Homebrew-npm case this script documents above), and the Dockerfile and CI
+# both build from that lockfile.
+(cd frontend && npm ci)
 
 log "Creating upload directories..."
 mkdir -p uploads/hats uploads/branding

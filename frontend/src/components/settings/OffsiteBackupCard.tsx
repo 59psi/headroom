@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   getBackupUpload, setBackupUpload, clearBackupUpload, testBackupUpload,
 } from '../../api/settings';
+import { ErrorNote } from '../common/ErrorNote';
 
 /**
  * The off-box copy of the backups.
@@ -58,7 +59,7 @@ export function OffsiteBackupCard() {
   // always describe the transport that is actually configured.
   const provider = picked ?? s?.provider ?? 'rclone';
   const chosen = providers.find(p => p.name === provider);
-  const pink = { color: 'var(--neon-pink, #ff4fa3)' };
+  const pink = { color: 'var(--neon-pink)' };
 
   return (
     <div className="card mb-3">
@@ -217,6 +218,7 @@ export function OffsiteBackupCard() {
             )}
 
             {error && <p className="small mb-2" style={pink}>{error}</p>}
+            <ErrorNote of={[status, turnOff]} className="mb-2" />
 
             <div className="d-flex gap-2 flex-wrap">
               <button
@@ -257,6 +259,7 @@ export function OffsiteBackupCard() {
                 {tested.detail}
               </p>
             )}
+            <ErrorNote of={test} what="Test did not run" className="mt-1" />
           </div>
         )}
       </div>

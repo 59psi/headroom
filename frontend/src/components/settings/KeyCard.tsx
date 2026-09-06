@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { ErrorNote } from '../common/ErrorNote';
 import type { ApiKeyStatus, ApiKeyTestResult } from '../../types';
 
 /**
@@ -120,12 +121,12 @@ export function KeyCard({ provider }: { provider: KeyProviderSpec }) {
                 {testResult.ok ? '✓ ' : '✗ '}{testResult.detail}
               </div>
             )}
-            {(testMut.error || deleteMut.error) && (
-              <div className="alert alert-danger mt-3 mb-0 small">{String(testMut.error ?? deleteMut.error)}</div>
-            )}
+            <ErrorNote of={[testMut, deleteMut]} className="mt-3" />
           </div>
-        ) : (
+        ) : status.isSuccess ? (
           <p className="text-muted small mb-3">{provider.noKeyText}</p>
+        ) : (
+          <ErrorNote of={status} what="Could not read this key's status" className="mb-3" />
         )}
 
         <label className="form-label" htmlFor={provider.inputId}>{configured ? 'Replace key' : 'New key'}</label>
@@ -149,9 +150,7 @@ export function KeyCard({ provider }: { provider: KeyProviderSpec }) {
             {saveMut.isPending ? 'Saving…' : 'Save'}
           </button>
         </div>
-        {saveMut.error && (
-          <div className="alert alert-danger mt-3 mb-0 small">{String(saveMut.error)}</div>
-        )}
+        <ErrorNote of={saveMut} className="mt-3" />
       </div>
     </div>
   );

@@ -31,8 +31,8 @@ function walk(dir: string, out: string[] = []): string[] {
 }
 
 /** Each `<input …>`, `<select …>`, `<textarea …>` opening tag with its attributes. */
-function controls(text: string): Array<{ tag: string; attrs: string; line: number }> {
-  const out: Array<{ tag: string; attrs: string; line: number }> = [];
+function controls(text: string): Array<{ tag: string; attrs: string; inner: string; line: number }> {
+  const out: Array<{ tag: string; attrs: string; inner: string; line: number }> = [];
   // Blank out comments (block, line and JSX) so a `<select>` mentioned in prose
   // is not read as a control — same length, so line numbers stay right.
   const code = text
@@ -42,7 +42,7 @@ function controls(text: string): Array<{ tag: string; attrs: string; line: numbe
   // `onChange={e => setX(e.target.value)}` contains `>` inside braces, and a
   // regex that stops at the first `>` truncates the attribute list — which is
   // how `aria-label` set AFTER such an attribute went unseen.
-  const open = /<(input|select|textarea)\b/g;
+  const open = /<(input|select|textarea|button)\b/g;
   for (const m of code.matchAll(open)) {
     let i = m.index! + m[0].length;
     let depth = 0;
@@ -54,7 +54,16 @@ function controls(text: string): Array<{ tag: string; attrs: string; line: numbe
       i++;
     }
     const line = text.slice(0, m.index).split('\n').length;
-    out.push({ tag: m[1], attrs: code.slice(m.index! + m[0].length, i), line });
+    const attrs = code.slice(m.index! + m[0].length, i);
+    // For a button, the text between the tags is its name — capture up to the
+    // matching close so an icon-only control (`×`, one glyph) can be told
+    // from a labelled one (`Save`).
+    let inner = '';
+    if (m[1] === 'button') {
+      const close = code.indexOf('</button>', i);
+      if (close !== -1) inner = code.slice(i + 1, close);
+    }
+    out.push({ tag: m[1], attrs, inner, line });
   }
   return out;
 }
@@ -73,6 +82,22 @@ describe('form controls', () => {
       const exprFors = new Set([...text.matchAll(/htmlFor=\{([A-Za-z_$][\w$.]*)\}/g)].map(m => m[1]));
       for (const c of controls(text)) {
         if (/type=["'](hidden|submit)["']/.test(c.attrs)) continue;
+        // A button whose visible text names it needs no aria-label; an
+        // icon-only one (`×`, a single glyph, or only an expression the
+        // scanner cannot read) does — that is where `Remove` went unnamed.
+        if (c.tag === 'button') {
+          const inner = c.inner ?? '';
+          // A dynamic label (`{copied ? '✓' : 'Copy'}`, `{s.label}`) or child
+          // elements the scanner can't read are presumed to name the button;
+          // only a button whose ENTIRE literal content is a single glyph
+          // (`×`, `✓`, `↶`) with no expression is icon-only and needs a label.
+          const literalOnly = !inner.includes('{') && !inner.includes('<');
+          const visible = inner.trim();
+          if (/aria-label(ledby)?=/.test(c.attrs) || !literalOnly || visible.length > 1) continue;
+          if (visible.length === 0) continue;  // empty-but-dynamic edge; not icon-only
+          unnamed.push(`${rel}:${c.line} <button>`);
+          continue;
+        }
         // A `hidden` file input is driven by a visible, labeled button.
         if (/\bhidden\b/.test(c.attrs) && /type=["']file["']/.test(c.attrs)) continue;
         if (/aria-label(ledby)?=/.test(c.attrs)) continue;

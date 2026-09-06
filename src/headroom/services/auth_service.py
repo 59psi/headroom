@@ -5,13 +5,14 @@ machinery). The cookie is httpOnly + SameSite=Lax; `secure` is set when the
 request arrived over HTTPS (uvicorn runs with --proxy-headers in Docker so
 Caddy's X-Forwarded-Proto is honored).
 
-Rate limiting is in-memory per (client-ip, username) — the app is a single
+Rate limiting is in-memory, per (client-ip, username) AND per client-ip — the app is a single
 process, so no shared store is needed.
 """
 
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import secrets
 import time
@@ -36,6 +37,17 @@ _hasher = PasswordHasher()
 _MAX_FAILURES = 5
 _LOCKOUT_SECONDS = 15 * 60
 _failures: dict[str, list[float]] = {}
+
+#: A second bucket, keyed on the ADDRESS alone. The pair bucket gives the
+#: owner five tries at their own name and is blind to credential stuffing,
+#: which rotates the name: measured over HTTP, 300 attempts at `nobody0…299`
+#: from one address ran at 412/s with zero 429s, each committing an
+#: `auth.login_failed` row (an fsync on the SD card, per anonymous request)
+#: and leaving a limiter key alive for fifteen minutes. Twenty across every
+#: username in a window is generous for a household behind one NAT address
+#: and bounds everything an anonymous client can make this endpoint do —
+#: rows, keys, argon2 work.
+_MAX_FAILURES_PER_IP = 20
 
 #: Sweep every key this often (in calls), not on every call — see `_prune`.
 _SWEEP_EVERY = 64
@@ -79,22 +91,38 @@ def _prune(key: str, now: float) -> list[float]:
     return kept
 
 
-def is_rate_limited(client_ip: str, username: str) -> bool:
-    key = f"{client_ip}:{username.lower()}"
-    return len(_prune(key, time.monotonic())) >= _MAX_FAILURES
+def _pair_key(client_ip: str, username: str) -> str:
+    return f"{client_ip}:{username.lower()}"
 
+
+def _ip_key(client_ip: str) -> str:
+    # Cannot collide with a pair key: those start with the address and a
+    # colon, this one starts with a literal prefix no address can be.
+    return f"ip:{client_ip}"
+
+
+def is_rate_limited(client_ip: str, username: str) -> bool:
+    now = time.monotonic()
+    if len(_prune(_pair_key(client_ip, username), now)) >= _MAX_FAILURES:
+        return True
+    return len(_prune(_ip_key(client_ip), now)) >= _MAX_FAILURES_PER_IP
 
 
 def record_failure(client_ip: str, username: str) -> None:
-    key = f"{client_ip}:{username.lower()}"
-    _prune(key, time.monotonic())
-    _failures.setdefault(key, []).append(time.monotonic())
+    now = time.monotonic()
+    for key in (_pair_key(client_ip, username), _ip_key(client_ip)):
+        _prune(key, now)
+        _failures.setdefault(key, []).append(now)
 
 
 def clear_failures(client_ip: str, username: str) -> None:
-    key = f"{client_ip}:{username.lower()}"
-    _failures.pop(key, None)
-    _blocked_logged.pop(key, None)
+    # A successful login clears BOTH buckets for that address: the owner who
+    # fumbled the password three times and then got it right is not an
+    # attacker, and leaving the address bucket charged would lock out the
+    # next fumble from the same phone.
+    _failures.pop(_pair_key(client_ip, username), None)
+    _failures.pop(_ip_key(client_ip), None)
+    _blocked_logged.pop(_ip_key(client_ip), None)
 
 
 def should_log_block(client_ip: str, username: str) -> bool:
@@ -111,7 +139,13 @@ def should_log_block(client_ip: str, username: str) -> bool:
     hammered" is answered by one row plus the log line every attempt still
     emits — while making the row count independent of the attempt count.
     """
-    key = f"{client_ip}:{username.lower()}"
+    # Keyed on the ADDRESS, not the pair. Keyed on the pair, an address
+    # tripping the per-address bucket while rotating usernames wrote one
+    # blocked row per NEW username — the row-per-request shape this function
+    # exists to prevent, reintroduced through the branch that prevents it.
+    # "This address is being hammered" is a fact about the address; the
+    # username is in the log line every attempt still emits.
+    key = _ip_key(client_ip)
     now = time.monotonic()
     last = _blocked_logged.get(key)
     if last is not None and now - last < _LOCKOUT_SECONDS:
@@ -173,6 +207,23 @@ async def verify_password_async(password_hash: str, password: str) -> bool:
 async def hash_password_async(password: str) -> str:
     async with _argon2_semaphore:
         return await asyncio.to_thread(hash_password, password)
+
+
+@functools.lru_cache(maxsize=1)
+def placeholder_password_hash() -> str:
+    """A real argon2 hash of something nobody will ever type.
+
+    The login handler verifies against THIS when the username does not exist,
+    so an unknown name costs the same argon2 work as the owner's name with a
+    wrong password. Short-circuiting on `user is None` answered in ~4 ms
+    against ~36 ms (hundreds of ms on a Pi): a timing oracle that read out
+    which username is the owner's — half the credential — on the first try
+    per name, and the limiter keys on (ip, username) so rotating names never
+    locks. The result of that verify is discarded; it exists to spend time.
+    Cached because hashing is the expensive step, and the hash need only be
+    well-formed with the same parameters as a stored one.
+    """
+    return hash_password(secrets.token_urlsafe(32))
 
 
 # ------------------------------- users -------------------------------- #

@@ -1,11 +1,14 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate, Link } from 'react-router';
 import { getCase, deleteCase } from '../api/cases';
+import { hatLabelsUrl } from '../api/settings';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { tileSrc } from '../lib/photo';
 import { CaseCollage } from '../components/cases/CaseCollage';
 import { invalidateHatViews } from '../lib/invalidate';
 import { TagUrlRow } from '../components/common/TagUrlRow';
+import { ErrorNote } from '../components/common/ErrorNote';
+import { isNotFound } from '../api/client';
 
 export function CaseDetailPage() {
   const { displayId } = useParams<{ displayId: string }>();
@@ -31,7 +34,16 @@ export function CaseDetailPage() {
 
 
   if (isLoading) return <LoadingSpinner />;
-  if (error || !data) return (
+  // Only a 404 is "not found". Every other failure — a locked database, a
+  // dead server — used to render the same "may have been deleted" copy,
+  // which told the reader the opposite of the truth.
+  if (error && !isNotFound(error)) return (
+    <div className="py-4">
+      <ErrorNote of={{ isError: true, error }} what="Could not load this case" />
+      <Link to="/cases" className="btn btn-outline-primary mt-3">← Back to Cases</Link>
+    </div>
+  );
+  if (!data) return (
     <div className="text-center py-5">
       <h5 className="mb-2">Case not found</h5>
       <p className="text-secondary small mb-3">This case may have been deleted or doesn't exist.</p>
@@ -142,7 +154,7 @@ export function CaseDetailPage() {
           </p>
           <TagUrlRow kind="c" ident={data.display_id} />
           <a
-            href={`/api/admin/hat-labels?case=${encodeURIComponent(data.display_id)}`}
+            href={hatLabelsUrl(data.display_id)}
             target="_blank"
             rel="noopener noreferrer"
             className="btn btn-outline-secondary btn-sm mt-2"
@@ -161,6 +173,7 @@ export function CaseDetailPage() {
       >
         Delete Case
       </button>
+      <ErrorNote of={removeMutation} what="Could not delete" />
     </>
   );
 }

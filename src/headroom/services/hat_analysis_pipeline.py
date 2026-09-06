@@ -31,6 +31,7 @@ from headroom.models.hat import Hat, ResaleScope
 from headroom.models.hat_color import HatColor
 from headroom.schemas.hat import KNOWN_CONSTRUCTIONS, strip_constructions
 from headroom.services import retail_pricing, settings_service
+from headroom.services import naming
 from headroom.services.background_removal import remove_background
 from headroom.services.claude_analysis import (
     ClaudeAnalysisError,
@@ -115,11 +116,20 @@ async def finalize_hat_photo(
     db: AsyncSession,
     hat: Hat,
     processed_jpeg_path: Path,
+    *,
+    cutout_only: bool = False,
 ) -> Hat:
     """Apply background removal + Claude analysis to a freshly-saved JPEG.
 
     The transparent PNG (if produced) replaces the JPEG as the canonical photo.
     Mutates `hat` in place. Caller is responsible for the final commit.
+
+    `cutout_only` stops after the cutout and its derivatives: the photo is
+    re-cut, the thumbnail and export image regenerated, and NOTHING the
+    analyzer wrote is touched. "Redo cutout" ran the whole pipeline until
+    2.79 — a Claude call per press, and the owner's own `model_name` and
+    `design_notes` overwritten by the analyzer's — while the docs said it
+    spent no call.
     """
     photo_dir = processed_jpeg_path.parent
 
@@ -182,6 +192,11 @@ async def finalize_hat_photo(
         canonical_path, export_derivative_path(settings.upload_dir, hat.photo_path)
     )
 
+    if cutout_only:
+        await _publish_stage(db, hat.id, None)
+        logger.info("hat=%s re-cut · rembg=%.2fs (analysis untouched)", hat.id, t_rembg)
+        return hat
+
     # Everything below interleaves DB reads (API key, model, eBay creds) with
     # slow network calls. With autoflush on, the FIRST of those reads flushes
     # the `photo_path` write above — which opens a SQLite write transaction, and
@@ -201,6 +216,14 @@ async def finalize_hat_photo(
             hat.analyzed_at = datetime.now(timezone.utc)
             await run_fallback_analysis(
                 db, hat, canonical_path, reason="No Anthropic API key configured"
+            )
+            # The timing line, on this path too. A 24 s rembg run (minutes on
+            # a Pi) used to leave no log line at all when no key was set —
+            # the per-hat stage timing CLAUDE.md promises held only when
+            # Claude ran.
+            logger.info(
+                "hat=%s analyzed · rembg=%.2fs claude=skipped (no key) status=%s",
+                hat.id, t_rembg, hat.analysis_status,
             )
             return hat
 
@@ -316,15 +339,26 @@ _CONDITION_WORDS: dict[str, str] = {
 }
 
 
-async def refresh_melin_resale(hat: Hat) -> None:
+#: What `refresh_melin_resale` did. A sweep needs to tell "the marketplace
+#: answered and had nothing" from "the marketplace could not be reached":
+#: the first is a fact about the hat, the second a fact about the network,
+#: and a nightly sweep in which EVERY lookup was the second used to record
+#: itself as a success — `last_error` null, "0 of 234 hats changed price".
+RESALE_PRICED = "priced"
+RESALE_SKIPPED = "skipped"
+RESALE_UNREACHABLE = "unreachable"
+
+
+async def refresh_melin_resale(hat: Hat) -> str:
     """Fill resale_price with a live Melin Recap median. Best-effort.
 
     Runs for Melin hats only; leaves the deep-link pointer fields alone and
     the price null when the marketplace API is unreachable (the pre-live
-    behavior).
+    behavior). Returns one of `RESALE_PRICED`, `RESALE_SKIPPED` (not a melin
+    hat, a manual price, or no listings) or `RESALE_UNREACHABLE`.
     """
     if not is_melin(hat.brand):
-        return
+        return RESALE_SKIPPED
     try:
         # Condition and size are the hat's own, so the median comes back from
         # listings of the same thing in the same shape rather than from the
@@ -338,14 +372,14 @@ async def refresh_melin_resale(hat: Hat) -> None:
         )
     except MelinRecapError as exc:
         logger.info("Melin Recap stats skipped for hat=%s: %s", hat.id, exc)
-        return
+        return RESALE_UNREACHABLE
     if not stats:
-        return
+        return RESALE_SKIPPED
     # A person's own number outranks a scraped median, and a re-analysis must
     # not quietly overwrite it -- reanalyze runs on a schedule and on demand,
     # so anything it clobbers is gone without a prompt.
     if hat.resale_price_scope == ResaleScope.MANUAL:
-        return
+        return RESALE_SKIPPED
     hat.resale_price = stats["median"]
     scope = ResaleScope.MODEL if stats["sample"] == "model" else ResaleScope.CATEGORY
     hat.resale_price_scope = scope
@@ -368,6 +402,7 @@ async def refresh_melin_resale(hat: Hat) -> None:
         f"{qualifiers + ' ' if qualifiers else ''}{what} listings"
     )
     hat.resale_checked_at = datetime.now(timezone.utc)
+    return RESALE_PRICED
 
 
 #: Reasons that genuinely mean "there is no key to call with". Anything else
@@ -654,14 +689,7 @@ def _split_model_and_colorway(model_name: str | None) -> tuple[str | None, str |
     """
     if not model_name:
         return model_name, None
-    for sep in (" — ", " – ", " - "):
-        if sep in model_name:
-            model, _, colorway = model_name.partition(sep)
-            return model.strip() or None, colorway.strip() or None
-    if "(" in model_name and model_name.rstrip().endswith(")"):
-        model, _, rest = model_name.partition("(")
-        return model.strip() or None, rest.rstrip().rstrip(")").strip() or None
-    return model_name, None
+    return naming.split_model_colorway(model_name)
 
 
 async def _canonicalize_analysis_text(db, hat: Hat) -> None:

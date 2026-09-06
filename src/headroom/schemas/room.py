@@ -2,16 +2,18 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
+from headroom.schemas.common import OptionalRoomName, RoomName
+
 from headroom.schemas.case import CaseRead
 from headroom.schemas.hat import HatRead
 
 
 class RoomCreate(BaseModel):
-    name: str
+    name: RoomName
 
 
 class RoomUpdate(BaseModel):
-    name: str | None = None
+    name: OptionalRoomName = None
 
 
 class RoomRead(BaseModel):

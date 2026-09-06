@@ -172,9 +172,16 @@ async def login(
             detail="Too many failed logins — try again in a few minutes.",
         )
     user = await auth_service.get_user_by_username(db, data.username)
-    if user is None or not await auth_service.verify_password_async(
-        user.password_hash, data.password
-    ):
+    # Verify on BOTH branches. `user is None or not await verify(...)` skipped
+    # argon2 for an unknown name and answered ~8× faster than a wrong password
+    # for the real one — a timing oracle for the owner's username. The
+    # placeholder hash is real argon2 with the same parameters, so the work is
+    # the same; its result is discarded because there is no user to log in.
+    password_ok = await auth_service.verify_password_async(
+        user.password_hash if user else auth_service.placeholder_password_hash(),
+        data.password,
+    )
+    if user is None or not password_ok:
         auth_service.record_failure(ip, data.username)
         logger.warning("Login failed: '%s' from %s", data.username, ip)
         await log_activity(

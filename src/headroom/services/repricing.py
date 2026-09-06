@@ -37,11 +37,12 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from headroom.config import env_flag, env_float, env_int
 from headroom.models.hat import Hat, ResaleScope
 from headroom.services import hat_analysis_pipeline
+from headroom.services.melin_recap import MelinRecapError
 from headroom.services import sweep_progress
 
 logger = logging.getLogger(__name__)
@@ -87,6 +88,10 @@ class RepricingHealth:
     consecutive_failures: int = 0
     last_repriced: int = 0
     last_considered: int = 0
+    #: Hats the last sweep could not consult the marketplace about. Non-zero
+    #: with a success is a partial outage; equal to `last_considered` is a
+    #: failed sweep (and recorded as one).
+    last_unreachable: int = 0
 
     def record_success(self, repriced: int, considered: int, *, scheduled: bool) -> None:
         """A sweep finished. `scheduled` decides whether it clears the alarm.
@@ -206,8 +211,23 @@ def status() -> dict:
         "consecutive_failures": _health.consecutive_failures,
         "last_repriced": _health.last_repriced,
         "last_considered": _health.last_considered,
+        "last_unreachable": _health.last_unreachable,
         "progress": progress.snapshot(),
     }
+
+
+def _eligibility_filters(stale_before: datetime | None) -> list:
+    """Which hats a sweep may touch — THE definition, read by the sweep and by
+    `count_eligible`. The count used to restate these three clauses by hand,
+    so `remaining` was computed from a second copy of the rule that decides
+    what a press will do."""
+    filters = [
+        Hat.disposed_at.is_(None),
+        (Hat.resale_price_scope.is_(None)) | (Hat.resale_price_scope != ResaleScope.MANUAL),
+    ]
+    if stale_before is not None:
+        filters.append(Hat.resale_checked_at.is_(None) | (Hat.resale_checked_at < stale_before))
+    return filters
 
 
 async def _eligible_hats(
@@ -224,16 +244,9 @@ async def _eligible_hats(
     """
     stmt = (
         select(Hat)
-        .where(
-            Hat.disposed_at.is_(None),
-            (Hat.resale_price_scope.is_(None)) | (Hat.resale_price_scope != ResaleScope.MANUAL),
-        )
+        .where(*_eligibility_filters(stale_before))
         .order_by(Hat.resale_checked_at.asc().nulls_first(), Hat.id)
     )
-    if stale_before is not None:
-        stmt = stmt.where(
-            Hat.resale_checked_at.is_(None) | (Hat.resale_checked_at < stale_before)
-        )
     cap = limit if limit is not None else repricing_batch_limit()
     if cap:
         stmt = stmt.limit(cap)
@@ -256,8 +269,6 @@ async def count_eligible(session_factory=None, *, stale_before=None) -> int:
     attempt (including the ones it cannot price), so "checked before this run
     started, or never" is exactly the set a further press would visit.
     """
-    from sqlalchemy import func  # noqa: PLC0415 — local, only this path needs it
-
     if session_factory is None:
         from headroom.database import async_session  # noqa: PLC0415 — import cycle
 
@@ -267,21 +278,7 @@ async def count_eligible(session_factory=None, *, stale_before=None) -> int:
         return int(
             (
                 await db.execute(
-                    select(func.count())
-                    .select_from(Hat)
-                    .where(
-                        Hat.disposed_at.is_(None),
-                        (Hat.resale_price_scope.is_(None))
-                        | (Hat.resale_price_scope != ResaleScope.MANUAL),
-                        *(
-                            (
-                                (Hat.resale_checked_at.is_(None))
-                                | (Hat.resale_checked_at < stale_before),
-                            )
-                            if stale_before is not None
-                            else ()
-                        ),
-                    )
+                    select(func.count()).select_from(Hat).where(*_eligibility_filters(stale_before))
                 )
             ).scalar_one()
         )
@@ -344,6 +341,7 @@ async def reprice_once(
 async def _sweep(db, hats: list, delay: float) -> tuple[int, int]:
     """The loop itself, split out so `reprice_once` owns only the bookkeeping."""
     repriced = 0
+    unreachable = 0
     for index, hat in enumerate(hats):
         before = hat.resale_price
         # Plain columns for the label. `display_id` would resolve fine —
@@ -358,12 +356,23 @@ async def _sweep(db, hats: list, delay: float) -> tuple[int, int]:
             # would have kept calling the real one. This was a function-local
             # import for that reason; the attribute lookup keeps the late
             # binding with the import where imports belong.
-            await hat_analysis_pipeline.refresh_melin_resale(hat)
+            outcome = await hat_analysis_pipeline.refresh_melin_resale(hat)
         except Exception as exc:  # noqa: BLE001 — one hat must not stop the sweep
             logger.info("Re-pricing skipped for hat=%s: %s", hat.id, exc)
+            outcome = hat_analysis_pipeline.RESALE_UNREACHABLE
         else:
             if hat.resale_price != before:
                 repriced += 1
+        if outcome == hat_analysis_pipeline.RESALE_UNREACHABLE:
+            # The marketplace was not consulted, so nothing was checked:
+            # no stamp. Stamping here pushed every hat a dead marketplace
+            # skipped to the BACK of the oldest-first queue, behind hats that
+            # had actually been priced.
+            unreachable += 1
+            progress.advance()
+            if delay and index + 1 < len(hats):
+                await asyncio.sleep(delay)
+            continue
         # Stamp the attempt WHETHER OR NOT it produced a price.
         #
         # `refresh_melin_resale` only sets `resale_checked_at` on the path
@@ -386,6 +395,15 @@ async def _sweep(db, hats: list, delay: float) -> tuple[int, int]:
         if delay and index + 1 < len(hats):
             await asyncio.sleep(delay)
 
+    _health.last_unreachable = unreachable
+    if hats and unreachable == len(hats):
+        # Every lookup failed: a dead marketplace, not a flat market. The
+        # two used to be indistinguishable — `record_success`, `last_error`
+        # null, "0 of 234 hats changed price" — so the sweep now fails the
+        # way its own bookkeeping expects a failure to look.
+        raise MelinRecapError(
+            f"the marketplace was unreachable for all {unreachable} hats swept"
+        )
     return repriced, len(hats)
 
 

@@ -10,7 +10,10 @@ their slot) that two implementations would drift.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
+
+from headroom.services.locks import loop_lock
 
 # Nominal capacity when a case carries no explicit `capacity` — what "full"
 # means. The physical article is a three-hat case; melin's own order lines
@@ -39,6 +42,22 @@ OVERFILL_ALLOWANCE = 1
 # number is the number, and quietly allowing a seventh would answer a question
 # that was already answered.
 BEANIE_OVERFILL_ALLOWANCE = 0
+
+#: Serializes every write that decides WHERE a hat goes: creating into a case,
+#: assigning, undisposing back into one, a style change that flips a hat's
+#: type, and allocating a case's sequence number. Each of those is
+#: read-occupancy-then-write with a commit at the end, and two of them
+#: interleaving at an `await` both see the same empty slot. Measured before
+#: this existed, on a file-backed database with each request on its own
+#: connection: 10 concurrent assigns into an empty 3-hat case landed five hats
+#: at positions [1, 1, 1, 1, 1] — five hats with one `display_id`, one label,
+#: one QR sticker. The partial unique index on `hats(case_id,
+#: position_in_case)` is the backstop that makes any gap loud.
+#:
+#: Held across the COMMIT, never released between the read and the write:
+#: the next writer's read only sees committed rows. See `services/locks`.
+def placement_lock() -> asyncio.Lock:
+    return loop_lock("placement")
 
 
 @dataclass(frozen=True)
@@ -71,9 +90,11 @@ def evaluate(
     but frees its slot, so counting it would show a case as fuller than the
     validator considers it.
 
-    `capacity is not None`, not truthiness: a per-case capacity of exactly 0
-    means "this case holds nothing", where `capacity or MAX_*` would silently
-    read it as unset.
+    `capacity is not None`, not truthiness. The schema refuses `capacity=0`
+    (`ge=1` — a case that holds nothing is not a case), so the value never
+    arrives from the API; the guard is here so a row that somehow carried 0
+    would read as "holds nothing" rather than `capacity or MAX_*` silently
+    reading it as unset.
     """
     stated = capacity is not None
     max_regular = capacity if stated else MAX_REGULAR

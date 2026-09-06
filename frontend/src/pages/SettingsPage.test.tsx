@@ -20,9 +20,8 @@ import type { ApiKeyStatus } from '../types';
 // crash in a test that never clicked. Filling from the real module's keys
 // makes adding a card two edits, not three.
 vi.mock('../api/settings', async (importOriginal) => {
-  const real = await importOriginal<typeof S>();
-  const everything = Object.fromEntries(Object.keys(real).map(k => [k, vi.fn()]));
-  return { ...everything, ...explicit() };
+  const { stubAll } = await import('../test/stubModule');
+  return { ...stubAll(await importOriginal<typeof S>()), ...explicit() };
 });
 
 function explicit() {
@@ -137,29 +136,37 @@ function explicit() {
   };
 }
 
-vi.mock('../api/auth', () => ({
-  // The real payload: `/me` no longer carries `api_token`. Reading it is a
-  // separate, password-gated request (S-07), so a mock that still returned the
-  // token would be describing an endpoint that has stopped serving it.
-  getMe: vi.fn(async () => ({ username: 'owner', token_set: true })),
-  listPasskeys: vi.fn(async () => []),
-  listShareLinks: vi.fn(async () => []),
-  changePassword: vi.fn(), rotateApiToken: vi.fn(), revealApiToken: vi.fn(),
-  deletePasskey: vi.fn(),
-  passkeyRegisterOptions: vi.fn(), passkeyRegisterVerify: vi.fn(), logout: vi.fn(),
-  createShareLink: vi.fn(), revokeShareLink: vi.fn(),
-}));
+vi.mock('../api/auth', async (importOriginal) => {
+  const { stubAll } = await import('../test/stubModule');
+  return {
+    ...stubAll(await importOriginal<object>()),
+    // The real payload: `/me` no longer carries `api_token`. Reading it is a
+    // separate, password-gated request (S-07), so a mock that still returned the
+    // token would be describing an endpoint that has stopped serving it.
+    getMe: vi.fn(async () => ({ username: 'owner', token_set: true })),
+    listPasskeys: vi.fn(async () => []),
+    listShareLinks: vi.fn(async () => []),
+    changePassword: vi.fn(), rotateApiToken: vi.fn(), revealApiToken: vi.fn(),
+    deletePasskey: vi.fn(),
+    passkeyRegisterOptions: vi.fn(), passkeyRegisterVerify: vi.fn(), logout: vi.fn(),
+    createShareLink: vi.fn(), revokeShareLink: vi.fn(),
+  };
+});
 
 // The CA-certificate probe must answer FALSE here: `TrustCertCard` renders only
 // when a local CA exists, which is the LAN-HTTPS overlay only. (The probe is
 // `caCertificateAvailable` in `api/settings`, mocked above; it is a plain
 // `fetch`, not `apiFetch`, because the endpoint serves a PEM file.)
-vi.mock('../api/client', () => ({
-  apiFetch: vi.fn(async () => []),
-  // Both exports, or a card reaching `api/hats` (which imports this one to
-  // read `X-Total-Count`) gets `undefined` and fails on call rather than here.
-  apiFetchWithHeaders: vi.fn(async () => ({ data: [], headers: new Headers() })),
-}));
+vi.mock('../api/client', async (importOriginal) => {
+  const { stubAll } = await import('../test/stubModule');
+  return {
+    ...stubAll(await importOriginal<object>()),
+    apiFetch: vi.fn(async () => []),
+    // Both exports, or a card reaching `api/hats` (which imports this one to
+    // read `X-Total-Count`) gets `undefined` and fails on call rather than here.
+    apiFetchWithHeaders: vi.fn(async () => ({ data: [], headers: new Headers() })),
+  };
+});
 vi.mock('../lib/webauthn', () => ({
   createPasskey: vi.fn(), passkeysSupported: vi.fn(() => false),
 }));

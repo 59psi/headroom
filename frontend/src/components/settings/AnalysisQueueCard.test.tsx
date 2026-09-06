@@ -6,13 +6,17 @@ import { AnalysisQueueCard } from './AnalysisQueueCard';
 import * as settingsApi from '../../api/settings';
 import type { AnalysisQueueStatus } from '../../api/settings';
 
-vi.mock('../../api/settings', () => ({
-  getAnalysisQueue: vi.fn(),
-  getAnalysisFailures: vi.fn(async () => []),
-  reanalyzeAll: vi.fn(),
-  retryFailedAnalysis: vi.fn(),
-  getAnalysisJob: vi.fn(),
-}));
+vi.mock('../../api/settings', async (importOriginal) => {
+  const { stubAll } = await import('../../test/stubModule');
+  return {
+    ...stubAll(await importOriginal<object>()),
+    getAnalysisQueue: vi.fn(),
+    getAnalysisFailures: vi.fn(async () => []),
+    reanalyzeAll: vi.fn(),
+    retryFailedAnalysis: vi.fn(),
+    getAnalysisJob: vi.fn(),
+  };
+});
 
 const IDLE: AnalysisQueueStatus = {
   worker_alive: true,

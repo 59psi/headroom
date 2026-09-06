@@ -16,11 +16,15 @@ import { TagLandingPage } from './TagLandingPage';
 import * as hatsApi from '../api/hats';
 import type { HatRead } from '../types';
 
-vi.mock('../api/hats', () => ({
-  getHat: vi.fn(),
-  logWear: vi.fn(async () => ({})),
-  undoLatestWear: vi.fn(async () => ({})),
-}));
+vi.mock('../api/hats', async (importOriginal) => {
+  const { stubAll } = await import('../test/stubModule');
+  return {
+    ...stubAll(await importOriginal<object>()),
+    getHat: vi.fn(),
+    logWear: vi.fn(async () => ({})),
+    undoLatestWear: vi.fn(async () => ({})),
+  };
+});
 
 const mocked = vi.mocked(hatsApi);
 

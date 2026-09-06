@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { portalToBody } from './ModalPortal';
+import { Modal } from './Modal';
+import { ErrorNote } from './ErrorNote';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { createCase } from '../../api/cases';
 import { listRooms } from '../../api/rooms';
@@ -40,43 +41,35 @@ export function NewCaseModal({ show, onClose, onCreated }: Props) {
 
   if (!show) return null;
 
-  return portalToBody(
-    <div className="modal" onClick={onClose}>
-      <div className="modal-dialog" onClick={e => e.stopPropagation()}>
-        <div className="modal-content">
-          <div className="modal-header">
-            <h5 className="modal-title">Create New Case</h5>
-            <button type="button" className="btn-close" onClick={onClose} aria-label="Close" />
-          </div>
-          <div className="modal-body">
-            <label className="form-label">Case Type</label>
-            <select aria-label="Case Type" className="form-select mb-3" value={caseType} onChange={e => setCaseType(e.target.value)}>
-              <option value="archive">Archive</option>
-              <option value="daily_wear">Daily Wear</option>
-            </select>
-            <label className="form-label">Room</label>
-            <select aria-label="Room" className="form-select" value={selectedRoom} onChange={e => setRoomId(Number(e.target.value))}>
-              {rooms.map(r => (
-                <option key={r.id} value={r.id}>{r.name}</option>
-              ))}
-            </select>
-            {mutation.error && (
-              <div className="alert alert-danger mt-3 mb-0">{String(mutation.error)}</div>
-            )}
-          </div>
-          <div className="modal-footer">
-            <button type="button" className="btn btn-outline-secondary" onClick={onClose}>Cancel</button>
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={() => mutation.mutate()}
-              disabled={mutation.isPending}
-            >
-              {mutation.isPending ? 'Creating…' : 'Create Case'}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
+  return (
+    <Modal title="Create New Case" onClose={onClose}
+      footer={(
+        <>
+          <button type="button" className="btn btn-outline-secondary" onClick={onClose}>Cancel</button>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => mutation.mutate()}
+            disabled={mutation.isPending}
+          >
+            {mutation.isPending ? 'Creating…' : 'Create Case'}
+          </button>
+        </>
+      )}
+    >
+
+      <label className="form-label">Case Type</label>
+      <select aria-label="Case Type" className="form-select mb-3" value={caseType} onChange={e => setCaseType(e.target.value)}>
+        <option value="archive">Archive</option>
+        <option value="daily_wear">Daily Wear</option>
+      </select>
+      <label className="form-label">Room</label>
+      <select aria-label="Room" className="form-select" value={selectedRoom} onChange={e => setRoomId(Number(e.target.value))}>
+        {rooms.map(r => (
+          <option key={r.id} value={r.id}>{r.name}</option>
+        ))}
+      </select>
+      <ErrorNote of={mutation} className="mt-3 mb-0" />
+    </Modal>
   );
 }

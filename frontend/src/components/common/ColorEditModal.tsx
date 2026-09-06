@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { portalToBody } from './ModalPortal';
+import { Modal } from './Modal';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { updateHatColors } from '../../api/hats';
 import type { ColorTag } from '../../types';
@@ -80,115 +80,109 @@ export function ColorEditModal({ hatId, colors, editingRank, onClose }: Props) {
     },
   });
 
-  return portalToBody(
-    <div className="modal" onClick={onClose}>
-      <div className="modal-dialog" style={{ maxWidth: 460 }} onClick={e => e.stopPropagation()}>
-        <div className="modal-content">
-          <div className="modal-header">
-            <h5 className="modal-title">{isEdit ? `Edit Color #${editingRank}` : 'Add Color'}</h5>
-            <button type="button" className="btn-close" onClick={onClose} aria-label="Close" />
-          </div>
-          <div className="modal-body">
-            {/* Big color preview that doubles as the picker — iOS Safari opens
-                the system color wheel; desktop opens its native picker. */}
-            <label
-              htmlFor="hr-color-input"
-              style={{
-                display: 'block', width: '100%', height: 96,
-                background: hex, borderRadius: 'var(--radius-sm)',
-                border: '2px solid var(--border-bright)',
-                boxShadow: `0 0 24px ${hex}80`,
-                cursor: 'pointer', marginBottom: '0.75rem',
-                position: 'relative',
-              }}
-              title="Tap to open the color wheel"
-            >
-              <span style={{
-                position: 'absolute', bottom: 8, right: 12,
-                fontFamily: 'var(--font-mono)', fontSize: '0.85rem',
-                color: '#000', mixBlendMode: 'difference', filter: 'invert(1)',
-                background: 'rgba(0,0,0,0.45)', padding: '2px 8px', borderRadius: 6,
-              }}>{hex.toUpperCase()}</span>
-            </label>
-            <input
-              id="hr-color-input"
-              type="color"
-              value={hex}
-              onChange={e => { setHex(e.target.value); setHexText(e.target.value); }}
-              style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
-            />
-
-            <label className="form-label">Hex</label>
-            <input
-              type="text"
-              className="form-control mb-3"
-              aria-label="Hex value"
-              value={hexText}
-              onChange={e => {
-                setHexText(e.target.value);
-                const v = e.target.value.trim();
-                if (/^#?[0-9a-fA-F]{6}$/.test(v)) {
-                  setHex(v.startsWith('#') ? v : `#${v}`);
-                }
-              }}
-              autoComplete="off"
-            />
-
-            <label className="form-label" htmlFor="color-specific-name">Specific name</label>
-            <input
-              id="color-specific-name"
-              type="text"
-              className="form-control mb-3"
-              placeholder="e.g. cobalt blue"
-              value={name}
-              onChange={e => setName(e.target.value)}
-            />
-
-            <label className="form-label" htmlFor="color-general-name">General color (for filters)</label>
-            <input
-              id="color-general-name"
-              type="text"
-              className="form-control mb-3"
-              placeholder="e.g. blue"
-              value={general}
-              onChange={e => setGeneral(e.target.value)}
-            />
-
-            <label className="form-label">Tier</label>
-            <select aria-label="Tier" className="form-select" value={tier} onChange={e => setTier(e.target.value)}>
-              {TIERS.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
-            </select>
-
-            {(saveMut.error || removeMut.error) && (
-              <div className="alert alert-danger mt-3 mb-0 small">
-                {String(saveMut.error || removeMut.error)}
-              </div>
-            )}
-          </div>
-          <div className="modal-footer">
-            {isEdit && (
-              <button
-                type="button"
-                className="btn btn-outline-danger me-2"
-                onClick={() => { if (confirm('Remove this color?')) removeMut.mutate(); }}
-                disabled={removeMut.isPending}
-                style={{ marginRight: 'auto' }}
-              >
-                Remove
-              </button>
-            )}
-            <button type="button" className="btn btn-outline-secondary" onClick={onClose}>Cancel</button>
+  return (
+    <Modal title={isEdit ? `Edit Color #${editingRank}` : 'Add Color'} onClose={onClose} maxWidth={460}
+      footer={(
+        <>
+          {isEdit && (
             <button
               type="button"
-              className="btn btn-primary"
-              onClick={() => saveMut.mutate()}
-              disabled={saveMut.isPending}
+              className="btn btn-outline-danger me-2"
+              onClick={() => { if (confirm('Remove this color?')) removeMut.mutate(); }}
+              disabled={removeMut.isPending}
+              style={{ marginRight: 'auto' }}
             >
-              {saveMut.isPending ? 'Saving…' : 'Save'}
+              Remove
             </button>
-          </div>
+          )}
+          <button type="button" className="btn btn-outline-secondary" onClick={onClose}>Cancel</button>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => saveMut.mutate()}
+            disabled={saveMut.isPending}
+          >
+            {saveMut.isPending ? 'Saving…' : 'Save'}
+          </button>
+        </>
+      )}
+    >
+
+      {/* Big color preview that doubles as the picker — iOS Safari opens
+          the system color wheel; desktop opens its native picker. */}
+      <label
+        htmlFor="hr-color-input"
+        style={{
+          display: 'block', width: '100%', height: 96,
+          background: hex, borderRadius: 'var(--radius-sm)',
+          border: '2px solid var(--border-bright)',
+          boxShadow: `0 0 24px ${hex}80`,
+          cursor: 'pointer', marginBottom: '0.75rem',
+          position: 'relative',
+        }}
+        title="Tap to open the color wheel"
+      >
+        <span style={{
+          position: 'absolute', bottom: 8, right: 12,
+          fontFamily: 'var(--font-mono)', fontSize: '0.85rem',
+          color: '#000', mixBlendMode: 'difference', filter: 'invert(1)',
+          background: 'rgba(0,0,0,0.45)', padding: '2px 8px', borderRadius: 6,
+        }}>{hex.toUpperCase()}</span>
+      </label>
+      <input
+        id="hr-color-input"
+        type="color"
+        value={hex}
+        onChange={e => { setHex(e.target.value); setHexText(e.target.value); }}
+        style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
+      />
+
+      <label className="form-label">Hex</label>
+      <input
+        type="text"
+        className="form-control mb-3"
+        aria-label="Hex value"
+        value={hexText}
+        onChange={e => {
+          setHexText(e.target.value);
+          const v = e.target.value.trim();
+          if (/^#?[0-9a-fA-F]{6}$/.test(v)) {
+            setHex(v.startsWith('#') ? v : `#${v}`);
+          }
+        }}
+        autoComplete="off"
+      />
+
+      <label className="form-label" htmlFor="color-specific-name">Specific name</label>
+      <input
+        id="color-specific-name"
+        type="text"
+        className="form-control mb-3"
+        placeholder="e.g. cobalt blue"
+        value={name}
+        onChange={e => setName(e.target.value)}
+      />
+
+      <label className="form-label" htmlFor="color-general-name">General color (for filters)</label>
+      <input
+        id="color-general-name"
+        type="text"
+        className="form-control mb-3"
+        placeholder="e.g. blue"
+        value={general}
+        onChange={e => setGeneral(e.target.value)}
+      />
+
+      <label className="form-label">Tier</label>
+      <select aria-label="Tier" className="form-select" value={tier} onChange={e => setTier(e.target.value)}>
+        {TIERS.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+      </select>
+
+      {(saveMut.error || removeMut.error) && (
+        <div className="alert alert-danger mt-3 mb-0 small">
+          {String(saveMut.error || removeMut.error)}
         </div>
-      </div>
-    </div>
+      )}
+    </Modal>
   );
 }

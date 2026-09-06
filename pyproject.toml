@@ -1,6 +1,8 @@
 [project]
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
 name = "headroom"
-version = "2.78.0"
+version = "2.79.0"
 description = "Headroom — AI-powered hat collection tracker"
 readme = "README.md"
 requires-python = ">=3.12"

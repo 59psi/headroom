@@ -113,5 +113,8 @@
 	# It also quietly widened the sentence above: `::1` and `127.0.0.1` are not
 	# the same peer to `FORWARDED_ALLOW_IPS`, so "trusts loopback only" was
 	# describing an address this line was not actually using.
+	# Compression for the bundle (550 KB → 150 KB) and every JSON list; the
+	# app compresses too when nothing in front of it does.
+	encode zstd gzip
 	reverse_proxy 127.0.0.1:8000
 }

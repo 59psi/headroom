@@ -175,7 +175,7 @@ names the code reads, so a new knob cannot silently join that list.
 
   | Option | Command | Trade-off |
   |---|---|---|
-  | **Host timer** (recommended) | systemd units below + `scripts/headroom-watchdog.sh` | No privileges. Polls over HTTP, restarts via the compose CLI as the deploying user. |
+  | **Host timer** (recommended) | systemd units below + `scripts/headroom-watchdog.sh` | No container holds the Docker socket. Polls over HTTP and restarts via the compose CLI as the deploying user, who is in the `docker` group (root-equivalent on the host — the same capability, just not lent to a third-party container). |
   | **Autoheal sidecar** | `docker compose -f docker-compose.yml -f docker-compose.autoheal.yml up -d` | One extra container, but needs `/var/run/docker.sock` (mounted read-only). **That socket is root-equivalent on the host** — a fair trade only if you already accept it. |
 
   Either way a restart fixes a *wedged process or dead worker*; it does not
@@ -222,10 +222,13 @@ names the code reads, so a new knob cannot silently join that list.
   nothing).
   </details>
 - **Logs**: `docker compose logs -f` (JSON-file driver, capped 10 MB × 5
-  files). Failed analyses are logged at WARNING; external-API degradations
-  (eBay, Melin, Google) at INFO — they are best-effort by design.
-- **In-app**: Settings → Analysis shows *Recent analysis errors* (hats whose
-  analysis failed, grouped by cause, with a per-group *Retry*) and Settings →
+  files). Failed analyses are logged at WARNING; a marketplace or eBay
+  degradation logs at WARNING/ERROR (best-effort by design — the sweep
+  records the outage and moves on), and the pipeline's own "skipped" lines
+  at INFO.
+- **In-app**: Settings → Analysis shows *Recent analysis errors* (a list of
+  the latest failures) and, on the *Analysis Queue* card, failures grouped by
+  cause with a per-group *Retry*; Settings →
   Upkeep the *Activity log* (append-only audit of every significant change,
   pruned daily per retention, with the pruner's own health beside it).
 - **Operator endpoints** (all under the auth gate; a bearer token works):
@@ -242,13 +245,14 @@ names the code reads, so a new knob cannot silently join that list.
 
 ## 3b. Build time on the Pi
 
-`docker compose up -d --build` rebuilds from source on the Pi. Five BuildKit
-cache mounts exist to keep that bearable, and each one targets a specific thing
-that was being re-fetched over your home connection for no reason:
+`docker compose up -d --build` rebuilds from source on the Pi. BuildKit cache
+mounts keep that bearable, each targeting something that was being re-fetched
+over your home connection for no reason:
 
 | Mount | Why it exists |
 |---|---|
 | `/root/.npm` | Cutting a release edits `frontend/package.json`, which busts the `npm ci` layer. Without the mount that re-downloaded the entire dependency tree on **every upgrade**. |
+| `/root/.cache/uv` | The Python dependency cache, mounted in both the dependency-install and `uv sync` layers, so a lock change re-resolves without re-downloading wheels. |
 | `/opt/model-cache` | The rembg weights are **~179 MB**. That layer busts on any dependency change, so it was re-downloading a byte-identical file. |
 | `/var/cache/apt`, `/var/lib/apt` | Same idea for the native libs. |
 
@@ -312,17 +316,25 @@ experimenting.
 
 ```bash
 docker compose down                       # same -f flags you deploy with
+# Remove any stale WAL sidecar FIRST: SQLite replays whatever -wal sits beside
+# a database on open, with no check that it belongs to it, so a leftover from
+# before the restore would fold post-backup writes into the "restored" file.
+docker run --rm -v headroom_headroom-data:/data alpine \
+  sh -c 'rm -f /data/headroom.db-wal /data/headroom.db-shm'
 docker run --rm -v headroom_headroom-data:/data -v "$PWD":/backup alpine \
   tar xzf /backup/headroom-backup-<timestamp>.tar.gz -C / \
   --exclude='data/caddy-pki'              # drop this exclude ONLY when restoring the CA too (§4 below)
 docker compose up -d
 ```
+A clean `docker compose down` truncates the WAL to nothing; an unclean stop
+(power cut, OOM kill, `docker kill`) does not, which is why this is explicit.
 
 (`headroom_headroom-data` is Compose's `<project>_<volume>` name — check
 `docker volume ls` if you deployed under another project name.)
 
 Bare metal: stop the server, then from the project root
-`tar xzf headroom-backup-<timestamp>.tar.gz --strip-components=1`
+`rm -f headroom.db-wal headroom.db-shm` (drop any stale WAL for the reason
+above) and `tar xzf headroom-backup-<timestamp>.tar.gz --strip-components=1`
 (restores `./headroom.db` + `./uploads/`), start again.
 
 Off-machine safety: periodically copy the newest file out of the backups

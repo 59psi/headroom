@@ -2,6 +2,7 @@ import { copyText } from '../../lib/clipboard';
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { createShareLink, listShareLinks, revokeShareLink } from '../../api/auth';
+import { ErrorNote } from '../common/ErrorNote';
 
 /** `''` is the sentinel for "never" — a `<select>` value must be a string. */
 const EXPIRY_CHOICES: ReadonlyArray<{ value: string; label: string }> = [
@@ -83,7 +84,12 @@ export function ShareLinksCard() {
             >revoke</button>
           </div>
         ))}
-        {active.length === 0 && <p className="text-muted small">No active share links.</p>}
+        {/* Only a SUCCESSFUL empty answer is "no links": a failed fetch used to
+            say the same thing while links were live. */}
+        {links.isSuccess && active.length === 0 && (
+          <p className="text-muted small">No active share links.</p>
+        )}
+        <ErrorNote of={links} what="Could not load share links" className="mb-2" />
 
         <div className="d-flex gap-2 mt-2 flex-wrap align-items-center">
           <input className="form-control" style={{ maxWidth: 260 }} placeholder="Label (e.g. For the group chat)"
@@ -102,11 +108,7 @@ export function ShareLinksCard() {
             Create link
           </button>
         </div>
-        {(createMut.error || revokeMut.error) && (
-          <div className="alert alert-danger mt-2 mb-0">
-            {String(createMut.error ?? revokeMut.error)}
-          </div>
-        )}
+        <ErrorNote of={[createMut, revokeMut]} />
         <p className="text-secondary small mt-2 mb-0">
           A link shows the whole collection, including which room and case each
           hat is in. Anyone it is forwarded to has the same access, so prefer an

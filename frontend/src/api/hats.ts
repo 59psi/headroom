@@ -14,11 +14,6 @@ export const FULL_COLLECTION_LIMIT = 1000;
 /** Backstop against a bad `X-Total-Count` turning this into an infinite loop. */
 const MAX_PAGES = 50;
 
-export function listHats(params?: Record<string, string>) {
-  const qs = params ? '?' + new URLSearchParams(params).toString() : '';
-  return apiFetch<HatRead[]>(`/api/hats${qs}`);
-}
-
 /**
  * Every matching hat, following `X-Total-Count` past the server's page cap.
  *

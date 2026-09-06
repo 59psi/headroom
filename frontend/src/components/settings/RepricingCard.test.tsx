@@ -7,11 +7,15 @@ import { RepricingCard } from './RepricingCard';
 import * as api from '../../api/settings';
 import type { RepricingStatus } from '../../types';
 
-vi.mock('../../api/settings', () => ({
-  getRepricing: vi.fn(),
-  runRepricing: vi.fn(),
-  runRepricingAll: vi.fn(),
-}));
+vi.mock('../../api/settings', async (importOriginal) => {
+  const { stubAll } = await import('../../test/stubModule');
+  return {
+    ...stubAll(await importOriginal<object>()),
+    getRepricing: vi.fn(),
+    runRepricing: vi.fn(),
+    runRepricingAll: vi.fn(),
+  };
+});
 
 const mocked = vi.mocked(api);
 

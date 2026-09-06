@@ -4,6 +4,7 @@ import { useParams, Link } from 'react-router';
 import { getHat, logWear, undoLatestWear } from '../api/hats';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { invalidateHatViews } from '../lib/invalidate';
+import { ErrorNote } from '../components/common/ErrorNote';
 
 /** The server records wears against the UTC date, so "today" must be UTC here
  *  too — a local-midnight comparison would show a hat as unworn for the last
@@ -99,11 +100,7 @@ export function TagLandingPage() {
         </button>
       )}
 
-      {wearMut.isError && (
-        <p className="hr-tag-note text-danger">
-          {(wearMut.error as Error).message}
-        </p>
-      )}
+      <ErrorNote of={[wearMut, undoMut]} className="hr-tag-note" />
 
       <p className="hr-tag-meta">
         Worn {data.wear_count ?? 0} time{(data.wear_count ?? 0) === 1 ? '' : 's'}

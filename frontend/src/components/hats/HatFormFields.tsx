@@ -4,6 +4,7 @@ import { getStyles, getSizes, getConditions, getConstructions, getCollections } 
 import { listCases } from '../../api/cases';
 import { getRoomOptions } from '../../api/rooms';
 import { PhotoCapture } from '../photos/PhotoCapture';
+import { ErrorNote } from '../common/ErrorNote';
 import { Combobox } from '../common/Combobox';
 import { CasePicker } from './CasePicker';
 
@@ -83,6 +84,10 @@ export function useHatFormOptions() {
     // the suggestion list, so a slow or failed fetch costs autocomplete, not
     // the ability to type a value.
     isLoading: styles.isLoading || sizes.isLoading || conditions.isLoading,
+    // The lists the selects need. A failed load left three empty dropdowns
+    // with no reason; the forms render this beneath the basics.
+    error: styles.error || sizes.error || conditions.error
+      || constructions.error || collections.error || cases.error || rooms.error,
   };
 }
 
@@ -147,6 +152,8 @@ export function HatBasicsCard({
     <div className="card mb-3">
       <div className="card-body">
         <div className="card-title">Details</div>
+        <ErrorNote of={{ isError: !!options.error, error: options.error }}
+          what="Some options could not be loaded" className="mb-2" />
 
         <div className="mb-3">
           <label className="form-label">Style</label>

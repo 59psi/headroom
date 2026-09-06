@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { ErrorNote } from '../common/ErrorNote';
 import { listBackups, backupDownloadUrl, getBackupHealth } from '../../api/settings';
 import type { BackupHealth } from '../../types';
 import { formatBytes, timeAgo } from '../../lib/format';
@@ -73,6 +74,7 @@ export function BackupsCard() {
         </p>
 
         {health.data && <SchedulerStatus h={health.data} />}
+        <ErrorNote of={[health, backups]} className="mb-3" />
 
         <div className="d-flex gap-2 mb-2 flex-wrap">
           <a href={backupDownloadUrl(true)} className="btn btn-primary" download>

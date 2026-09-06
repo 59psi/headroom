@@ -7,6 +7,7 @@ import {
 } from '../api/auth';
 import { getPasskeyAssertion, passkeysSupported } from '../lib/webauthn';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
+import { PUBLIC_LOGO_URL } from '../api/public';
 
 /**
  * Where to go after a successful login.
@@ -23,12 +24,27 @@ export function safeNext(raw: string | null): string {
   // Backslashes are normalized to forward slashes FIRST. Browsers treat `\` as
   // `/` in the authority position, so `/\evil.example` is protocol-relative to
   // a browser while passing a `startsWith('//')` check written against the
-  // literal characters. Not exploitable here — the only consumer is
-  // react-router's `navigate()`, which is same-origin by construction — but
-  // the guard should hold on its own terms rather than on its caller's.
+  // literal characters.
   const normalized = raw.replace(/\\/g, '/');
   if (!normalized.startsWith('/') || normalized.startsWith('//')) return '/';
-  return normalized;
+  // Character checks are not enough on their own: the WHATWG URL parser
+  // strips ASCII tab, LF and CR BEFORE it parses, so `/<TAB>/evil.example`
+  // passes both tests above and the browser reads it as `//evil.example` — a
+  // host. And this IS a real navigation: after login the page calls
+  // `window.location.assign(next)`, not react-router. So the last word goes
+  // to the parser the browser will use: resolve against our own origin and
+  // refuse anything that lands on another one. What comes back is rebuilt
+  // from the parsed parts, so the guard and the navigation cannot disagree
+  // about where the string leads.
+  let url: URL;
+  try {
+    url = new URL(normalized, window.location.origin);
+  } catch {
+    return '/';
+  }
+  if (url.origin !== window.location.origin) return '/';
+  const next = url.pathname + url.search + url.hash;
+  return next.startsWith('/') && !next.startsWith('//') ? next : '/';
 }
 
 export function LoginPage() {
@@ -102,7 +118,7 @@ export function LoginPage() {
           {/* Public branding logo (auth-gated everywhere else); hides itself
               if no logo is configured so the wordmark stands alone. */}
           <img
-            src="/api/public/branding/logo"
+            src={PUBLIC_LOGO_URL}
             alt=""
             style={{ maxHeight: 56, marginBottom: '0.75rem', display: 'block' }}
             onError={e => { e.currentTarget.style.display = 'none'; }}

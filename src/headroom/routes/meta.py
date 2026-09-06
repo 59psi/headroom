@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from headroom.database import get_db
 from headroom.models.hat import Hat
 from headroom.schemas.hat import (
+    STYLE_LABELS,
     KNOWN_CONSTRUCTIONS,
     HatCondition,
     HatSize,
@@ -16,26 +17,6 @@ from headroom.services.catalog_service import catalog_options
 from headroom.services.color_extraction import palette
 
 router = APIRouter(prefix="/api/meta", tags=["meta"])
-
-STYLE_LABELS: dict[str, str] = {
-    "a_game": "A-Game",
-    "odysea": "Odysea",
-    "trenches": "Trenches",
-    "coronado": "Coronado",
-    "eagle": "Eagle",
-    "compass": "Compass",
-    "legend": "Legend",
-    "caddy": "Caddy",
-    "coast": "Coast",
-    "shore": "The Shore",
-    "aviator": "Aviator",
-    "collab": "Collab",
-    "beanie": "Beanie (unspecified)",
-    "all_day": "All Day Beanie",
-    "journey": "Journey Beanie",
-    "destination": "Destination Beanie",
-}
-
 
 @router.get("/styles", response_model=list[StyleOption])
 async def list_styles():

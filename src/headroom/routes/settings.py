@@ -5,7 +5,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
-from PIL import Image, UnidentifiedImageError
+from PIL import Image
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.auth import require_admin
@@ -35,7 +35,12 @@ from headroom.services import (
     tag_service,
 )
 from headroom.services.claude_analysis import verify_api_key
-from headroom.utils.photo import validate_image_content_type
+from headroom.utils.photo import (
+    UNREADABLE_IMAGE_DETAIL,
+    UnreadableImage,
+    decoded_image,
+    validate_image_content_type,
+)
 from headroom.utils import branding
 from headroom.utils.upload import copy_upload_capped
 
@@ -60,7 +65,7 @@ async def get_logo():
 def _encode_logo_sync(tmp_path: Path, staging: Path) -> None:
     """Decode, resize and re-encode the upload as PNG — into `staging`, not
     into place. Sync; runs under `to_thread`."""
-    with Image.open(tmp_path) as img:
+    with decoded_image(tmp_path) as img:
         # Always written as PNG so transparency survives; only opaque modes
         # need the RGB conversion first.
         if img.mode not in ("RGBA", "P", "LA"):
@@ -99,10 +104,8 @@ async def upload_logo(photo: UploadFile):
             await asyncio.to_thread(copy_upload_capped, photo, fh, what="Logo")
         try:
             await asyncio.to_thread(_encode_logo_sync, tmp_path, staging)
-        except (UnidentifiedImageError, OSError) as exc:
-            raise HTTPException(
-                status_code=400, detail="That file is not an image Headroom can read."
-            ) from exc
+        except UnreadableImage as exc:
+            raise HTTPException(status_code=400, detail=UNREADABLE_IMAGE_DETAIL) from exc
         # Only now is there something to replace the old logo WITH.
         branding.remove_logo()
         out_path = branding_dir / f"{branding.LOGO_STEM}.png"

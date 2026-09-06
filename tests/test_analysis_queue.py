@@ -117,7 +117,7 @@ async def test_a_crashing_hat_is_marked_errored_and_the_worker_survives(
     calls = {"n": 0}
     real = analysis_queue.finalize_hat_photo
 
-    async def _boom_once(db, hat, path):
+    async def _boom_once(db, hat, path, **_kw):
         calls["n"] += 1
         if calls["n"] == 1:
             raise RuntimeError("rembg exploded")

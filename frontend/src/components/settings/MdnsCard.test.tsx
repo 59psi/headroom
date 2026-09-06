@@ -5,9 +5,13 @@ import { MdnsCard } from './MdnsCard';
 import * as api from '../../api/settings';
 import type { MdnsStatus } from '../../types';
 
-vi.mock('../../api/settings', () => ({
-  getMdnsStatus: vi.fn(),
-}));
+vi.mock('../../api/settings', async (importOriginal) => {
+  const { stubAll } = await import('../../test/stubModule');
+  return {
+    ...stubAll(await importOriginal<object>()),
+    getMdnsStatus: vi.fn(),
+  };
+});
 
 const mocked = vi.mocked(api);
 

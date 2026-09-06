@@ -14,13 +14,17 @@ import { renderWithProviders } from '../test/utils';
 import { LoginPage } from './LoginPage';
 import * as authApi from '../api/auth';
 
-vi.mock('../api/auth', () => ({
-  getAuthStatus: vi.fn(),
-  login: vi.fn(),
-  setupOwner: vi.fn(),
-  passkeyLoginOptions: vi.fn(),
-  passkeyLoginVerify: vi.fn(),
-}));
+vi.mock('../api/auth', async (importOriginal) => {
+  const { stubAll } = await import('../test/stubModule');
+  return {
+    ...stubAll(await importOriginal<object>()),
+    getAuthStatus: vi.fn(),
+    login: vi.fn(),
+    setupOwner: vi.fn(),
+    passkeyLoginOptions: vi.fn(),
+    passkeyLoginVerify: vi.fn(),
+  };
+});
 vi.mock('../lib/webauthn', () => ({
   getPasskeyAssertion: vi.fn(),
   passkeysSupported: vi.fn(() => false),

@@ -346,6 +346,60 @@ async def test_the_staging_directory_is_cleaned_up_once_nothing_is_reading():
 # ---- _recover_on_boot ------------------------------------------------- #
 
 
+async def test_a_crash_between_the_hat_row_and_its_photo_does_not_make_a_second_hat(
+    client, stub_claude, isolated_upload_dir, monkeypatch
+):
+    """The exception path deletes a photo-less hat; a SIGKILL has no exception
+    path. `create_hat` commits the row, then `finalize_hat_photo` runs rembg
+    for tens of seconds — the widest window in the app for a power cut on a
+    Pi. Measured before the fix: kill inside item 2 of 3, reboot, and the
+    boot sweep correctly re-queued and re-ran the item — into a NEW hat. Four
+    hats for three photos, one of them photo-less, listed and counted.
+
+    So the item records its hat BEFORE the slow work, and a re-run adopts
+    that hat instead of creating another. The kill is simulated with a
+    `BaseException` the worker's `except Exception` cannot catch, which
+    leaves exactly the state a dead process leaves: item `processing`, hat
+    committed, no photo.
+    """
+    from headroom.config import settings
+    from headroom.models.hat import Hat
+    from sqlalchemy import select
+
+    real_finalize = import_service.finalize_hat_photo
+
+    class PowerCut(BaseException):
+        pass
+
+    async def _power_cut(db, hat, path):
+        raise PowerCut()
+
+    monkeypatch.setattr(import_service, "finalize_hat_photo", _power_cut)
+    job_id = await _job()
+    staged = _jpeg(settings.upload_dir / ".import-staging" / "c.jpg")
+    item_id = await _item(job_id, staged_path=staged, filename="c.jpg")
+
+    with pytest.raises(PowerCut):
+        await import_service._process_item(item_id)
+
+    item = await _read_item(item_id)
+    assert item.status == "processing", "the state a dead process leaves"
+    assert item.hat_id is not None, "the hat is recorded before the slow work"
+
+    # "Reboot": the sweep re-queues the item, the worker runs it again.
+    monkeypatch.setattr(import_service, "finalize_hat_photo", real_finalize)
+    await import_service._recover_on_boot()
+    assert (await _read_item(item_id)).status == "queued"
+    await import_service._process_item(item_id)
+
+    async with session_factory() as db:
+        hats = (await db.execute(select(Hat))).scalars().all()
+    assert len(hats) == 1, [h.id for h in hats]
+    assert hats[0].photo_path, "the adopted hat got its photo this time"
+    item = await _read_item(item_id)
+    assert item.status == "done" and item.hat_id == hats[0].id
+
+
 async def test_items_stranded_in_processing_are_requeued():
     """A power cut on a Pi is a normal event, not an edge case.
 

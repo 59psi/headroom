@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import contextvars
 import logging
-import re
 import time
 from contextlib import asynccontextmanager
 from statistics import median
@@ -31,6 +30,7 @@ from typing import NamedTuple
 import httpx
 
 from headroom.config import settings
+from headroom.services import naming
 from headroom.schemas.hat import constructions_in
 
 logger = logging.getLogger(__name__)
@@ -208,21 +208,18 @@ PAGE_SIZE = 100
 #: category with room to spare; the largest (odysea) holds 436 listings.
 _MAX_PAGES = 6
 
-#: Anything that is not a letter or digit is a separator, never part of a token.
-_TOKEN_SPLIT = re.compile(r"[^a-z0-9]+")
-
-
 def model_tokens(name: str | None) -> list[str]:
-    """Lowercase word tokens, punctuation stripped.
+    """Lowercase word tokens, punctuation stripped — `naming.tokens`.
 
     Splitting on whitespace alone left punctuation glued to the tokens. A hat
     named ``Odysea Hydro "Have More Fun"`` then demanded the tokens ``"have``
     and ``fun"``, which appear in no listing title that has ever existed — so
     the model tier matched nothing and the hat fell through to a category
     median. Applied to BOTH sides, or the normalization is one-sided and the
-    comparison is still between different alphabets.
+    comparison is still between different alphabets. The catalog matcher
+    read names differently until 2.79; both now read them here.
     """
-    return [t for t in _TOKEN_SPLIT.split((name or "").lower()) if t]
+    return list(naming.tokens(name))
 
 
 async def query_all_listings(params: dict, max_pages: int = _MAX_PAGES) -> list[dict]:

@@ -143,7 +143,17 @@ async def shared_hat(db: AsyncSession, hat_id: int) -> Hat | None:
     return result.scalar_one_or_none()
 
 
-def to_shared_hat(hat: Hat, photo_url: str | None):
+def photo_variant(hat: Hat, variant: str | None) -> str:
+    """Which stored file a public photo request gets: the thumbnail when it
+    asks for one and the hat has one, the canonical cutout otherwise. One
+    definition for both public routes, so neither can drift back to serving
+    the full file to a grid."""
+    if variant == "thumb" and hat.thumb_path:
+        return hat.thumb_path
+    return hat.photo_path
+
+
+def to_shared_hat(hat: Hat, photo_url: str | None, thumb_url: str | None = None):
     """Project a Hat into the shape an outside viewer receives.
 
     The TYPE was shared between share links and the guest view from the start;
@@ -164,6 +174,7 @@ def to_shared_hat(hat: Hat, photo_url: str | None):
         model_name=hat.model_name,
         style=hat.style,
         photo_url=photo_url,
+        thumb_url=thumb_url,
         colors=[
             SharedColor(name=c.general_color or c.color_name, hex=c.hex_value)
             for c in (hat.colors or [])

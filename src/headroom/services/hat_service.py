@@ -1,12 +1,14 @@
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
+from headroom.config import settings as cfg
 from headroom.models.case import Case
+from headroom.models.catalog import Purchase
 from headroom.models.hat import Hat, ResaleScope
 from headroom.models.room import Room
 from headroom.schemas.hat import (
@@ -18,6 +20,12 @@ from headroom.schemas.hat import (
     is_beanie_style,
 )
 from headroom.services import capacity as capacity_rules
+from headroom.utils.photo import (
+    THUMBS_DIR,
+    export_derivative_path,
+    make_export_image_async,
+    make_thumbnail_async,
+)
 from headroom.services import retail_pricing
 from headroom.services import vocabulary
 from headroom.services.activity_service import log_and_commit
@@ -91,20 +99,6 @@ async def _validate_capacity(
     result = await db.execute(query)
     hats = list(result.scalars().all())
 
-    if hats:
-        existing_has_beanies = any(h.is_beanie for h in hats)
-        existing_has_regular = any(not h.is_beanie for h in hats)
-        if is_beanie and existing_has_regular:
-            raise HTTPException(
-                status_code=409,
-                detail="Case already contains regular hats — cannot mix types",
-            )
-        if not is_beanie and existing_has_beanies:
-            raise HTTPException(
-                status_code=409,
-                detail="Case already contains beanies — cannot mix types",
-            )
-
     beanie_count = sum(1 for h in hats if h.is_beanie)
     regular_count = len(hats) - beanie_count
 
@@ -120,19 +114,37 @@ async def _validate_capacity(
     # still accepts a fourth — it just becomes overfull — so reporting "max 3"
     # while accepting the save would be the picker and the server disagreeing
     # again, in the message rather than the behavior.
+    # Type exclusivity is decided by `evaluate` — the ONE rule the picker
+    # also renders — not re-derived here. This function used to carry its own
+    # copy of "a case holds beanies OR regular hats", ahead of the call, so
+    # the read model and the write path could have disagreed about the one
+    # thing a 409 on save exists to prevent. Only the WORDING is decided here.
     if is_beanie and not room.accepts_beanie:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Case has reached max beanie capacity ({room.limit_beanie})",
+        detail = (
+            "Case already contains regular hats — cannot mix types"
+            if regular_count
+            else f"Case has reached max beanie capacity ({room.limit_beanie})"
         )
+        raise HTTPException(status_code=409, detail=detail)
     if not is_beanie and not room.accepts_regular:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Case has reached max regular hat capacity ({room.limit_regular})",
+        detail = (
+            "Case already contains beanies — cannot mix types"
+            if beanie_count
+            else f"Case has reached max regular hat capacity ({room.limit_regular})"
         )
+        raise HTTPException(status_code=409, detail=detail)
 
 
 async def create_hat(db: AsyncSession, data: HatCreate) -> Hat:
+    # Under the placement lock even when no case is named: which branch runs
+    # is decided inside, and a hat created straight into a case is the
+    # concurrent-creates race (six accepted into a 3-hat case, five at one
+    # position) — see `capacity.placement_lock`.
+    async with capacity_rules.placement_lock():
+        return await _create_hat_locked(db, data)
+
+
+async def _create_hat_locked(db: AsyncSession, data: HatCreate) -> Hat:
     is_beanie = is_beanie_style(data.style)
     position = None
 
@@ -233,16 +245,30 @@ async def list_hats(
     return list(result.scalars().all())
 
 
-async def get_hat(db: AsyncSession, hat_id: int) -> Hat:
+async def get_hat_or_none(db: AsyncSession, hat_id: int) -> Hat | None:
+    """The hat with its relationships loaded, or None — for callers holding
+    an id that may no longer resolve (the import worker adopting a hat a
+    previous attempt created), where a 404 is the wrong shape of answer."""
     result = await db.execute(
         select(Hat)
         .options(*hat_loads())
         .where(Hat.id == hat_id)
     )
-    hat = result.scalar_one_or_none()
+    return result.scalar_one_or_none()
+
+
+async def get_hat(db: AsyncSession, hat_id: int) -> Hat:
+    hat = await get_hat_or_none(db, hat_id)
     if not hat:
         raise HTTPException(status_code=404, detail="Hat not found")
     return hat
+
+
+def _price_changed(stored: float | None, sent: float | None) -> bool:
+    """Is `sent` a different number from `stored`? Same value → not a change."""
+    if stored is None or sent is None:
+        return stored is not sent
+    return abs(stored - sent) > 0.005
 
 
 async def update_hat(db: AsyncSession, hat_id: int, data: HatUpdate) -> Hat:
@@ -259,7 +285,12 @@ async def update_hat(db: AsyncSession, hat_id: int, data: HatUpdate) -> Hat:
     if "style" in update_data:
         new_is_beanie = is_beanie_style(update_data["style"])
         if new_is_beanie != hat.is_beanie and hat.case_id is not None:
-            await _validate_capacity(db, hat.case_id, new_is_beanie, exclude_hat_id=hat.id)
+            # A type flip changes what the case holds; it competes with every
+            # other placement writer for the same occupancy count.
+            async with capacity_rules.placement_lock():
+                await _validate_capacity(db, hat.case_id, new_is_beanie, exclude_hat_id=hat.id)
+                hat.is_beanie = new_is_beanie
+                await db.commit()
         hat.is_beanie = new_is_beanie
 
     # `construction` owns `hydro`/`hydrolite`, so it goes through the model's
@@ -321,16 +352,29 @@ async def update_hat(db: AsyncSession, hat_id: int, data: HatUpdate) -> Hat:
     # one thing valuation must not discount or let a later analysis overwrite.
     # Recorded here rather than in the route because this is the only writer
     # every client path funnels through.
+    #
+    # A price EQUAL to the one already stored is not a new fact. The SPA's
+    # form used to send every price back on every save, which stamped a
+    # scraped median `manual` when a note was edited (the 2.57 bug); the SPA
+    # was fixed to send only what changed, and this is the server's half of
+    # the same rule, for every other client: restating the value the hat
+    # already holds leaves its provenance alone. A DIFFERENT value, or a
+    # value where there was none, is the person speaking.
+    #
     # An entered retail price came from a tag or an order confirmation, so it
     # outranks both the table and Claude — and must survive the next analysis.
     # Same rule, same reason, as `resale_price` below.
-    if "estimated_new_price" in update_data:
+    if "estimated_new_price" in update_data and _price_changed(
+        hat.estimated_new_price, update_data["estimated_new_price"]
+    ):
         hat.estimated_new_price_source = (
             retail_pricing.MANUAL_SOURCE
             if update_data["estimated_new_price"] is not None else None
         )
 
-    if "resale_price" in update_data:
+    if "resale_price" in update_data and _price_changed(
+        hat.resale_price, update_data["resale_price"]
+    ):
         hat.resale_price_scope = (
             ResaleScope.MANUAL if update_data["resale_price"] is not None else None
         )
@@ -359,6 +403,16 @@ async def update_hat(db: AsyncSession, hat_id: int, data: HatUpdate) -> Hat:
 
 async def delete_hat(db: AsyncSession, hat_id: int) -> None:
     hat = await get_hat(db, hat_id)
+    # Give the receipt back. `purchases.hat_id` has no database-enforced
+    # foreign key (no `PRAGMA foreign_keys`), so deleting a hat left its
+    # purchase pointing at a row that no longer existed: the purchases list
+    # still showed the link, `match?dry_run` found nothing to do and
+    # `unclaimed` reported nothing to fill — a real price, orphaned forever.
+    # Unlinked, the next matching run can hand it to the hat that replaces
+    # this one (a re-shot duplicate is the common reason for a delete).
+    await db.execute(
+        update(Purchase).where(Purchase.hat_id == hat_id).values(hat_id=None)
+    )
     await db.delete(hat)
     await db.commit()
     await log_and_commit(
@@ -383,6 +437,16 @@ async def assign_hat(
     `case_id` wins if both arrive — it is the more specific placement, and a
     caller sending both has not said which they meant.
     """
+    async with capacity_rules.placement_lock():
+        return await _assign_hat_locked(db, hat_id, case_id, room_id)
+
+
+async def _assign_hat_locked(
+    db: AsyncSession,
+    hat_id: int,
+    case_id: int | None,
+    room_id: int | None,
+) -> Hat:
     hat = await get_hat(db, hat_id)
 
     if case_id is not None:
@@ -445,17 +509,27 @@ async def dispose_hat(db: AsyncSession, hat_id: int, data: HatDispose) -> Hat:
 
 
 async def undispose_hat(db: AsyncSession, hat_id: int) -> Hat:
+    # Restoring into a case takes a slot; same lock as every other placement.
+    async with capacity_rules.placement_lock():
+        return await _undispose_hat_locked(db, hat_id)
+
+
+async def _undispose_hat_locked(db: AsyncSession, hat_id: int) -> Hat:
     hat = await get_hat(db, hat_id)
     if hat.disposed_at is None:
         return hat
     # If the original case is still around AND has space, the hat returns
-    # there. Otherwise it becomes unassigned.
+    # there. Otherwise it comes back loose in the case's room.
+    #
+    # The placement is decided BEFORE the disposal is cleared. Clearing first
+    # made the hat active at its OLD position for the duration of the next
+    # query — an autoflush emitted `UPDATE hats SET disposed_at = NULL` while
+    # another hat sat at that slot, which the unique index on active
+    # positions refuses. While still disposed the hat is invisible to
+    # `_validate_capacity` and `_get_next_position` (both filter on
+    # `disposed_at IS NULL`), so the decision below sees exactly the
+    # occupancy it should.
     target_case_id = hat.case_id
-    hat.disposed_at = None
-    hat.disposed_via = None
-    hat.disposed_price = None
-    hat.disposed_to = None
-    hat.disposed_notes = None
     if target_case_id is not None:
         try:
             # The case may have been deleted while this hat was disposed —
@@ -483,6 +557,11 @@ async def undispose_hat(db: AsyncSession, hat_id: int) -> Hat:
                 target_case = await db.get(Case, target_case_id)
                 room_id = target_case.room_id if target_case else None
             hat.detach_from_case(room_id)
+    hat.disposed_at = None
+    hat.disposed_via = None
+    hat.disposed_price = None
+    hat.disposed_to = None
+    hat.disposed_notes = None
     await db.commit()
     await log_and_commit(
         db, kind="hat.undisposed", entity_type="hat", entity_id=hat_id,
@@ -501,9 +580,6 @@ async def backfill_thumbnails(db: AsyncSession, limit: int = 5000) -> int:
     Idempotent — only touches hats with a photo and no usable thumbnail, so a
     restart mid-run picks up where it left off rather than redoing everything.
     """
-    from headroom.config import settings as cfg  # noqa: PLC0415
-    from headroom.utils.photo import THUMBS_DIR, make_thumbnail_async  # noqa: PLC0415
-
     hats = (
         (
             await db.execute(
@@ -550,12 +626,6 @@ async def backfill_export_images(db: AsyncSession, limit: int = 5000) -> int:
     writes files, so nothing here can block another writer on SQLite's single
     write lock while it grinds through hundreds of images.
     """
-    from headroom.config import settings as cfg  # noqa: PLC0415
-    from headroom.utils.photo import (  # noqa: PLC0415
-        export_derivative_path,
-        make_export_image_async,
-    )
-
     rows = (
         (
             await db.execute(

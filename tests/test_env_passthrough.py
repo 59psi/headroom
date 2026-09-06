@@ -34,20 +34,20 @@ NOT_FORWARDED: dict[str, str] = {
     "HEADROOM_DATABASE_URL": "set by the image's ENV to the /data volume; a passthrough would let .env point the DB outside it",
     "HEADROOM_UPLOAD_DIR": "same — the image's ENV owns the volume layout",
     "HEADROOM_REMBG_MODEL": "deliberately unpinned: an `environment:` value beats the image ENV and would override the model baked in by the REMBG_MODEL build arg (see the comment in docker-compose.yml)",
-    "HEADROOM_RP_ID": "computed by the HTTPS overlays from the hostname/domain; passkeys are per-origin",
-    "HEADROOM_ORIGIN": "computed by the HTTPS overlays from the hostname/domain",
-    "HEADROOM_MDNS_PORT": "set by each overlay to the port it actually serves (8000 / 80 / 443)",
-    "HEADROOM_MELIN_CLIENT_ID": "melinrecap's public anonymous client id; overriding it is a code-level decision, not an operator knob",
-    "HEADROOM_CORS_ORIGINS": "set explicitly in the base file",
-    "HEADROOM_BACKUP_RSYNC_PASSWORD": "forwarded, under its own comment block",
-    "HEADROOM_BACKUP_INCLUDE_CA": "forwarded, under its own comment block",
 }
+# `HEADROOM_BACKUP_RSYNC_PASSWORD` and `HEADROOM_BACKUP_INCLUDE_CA` used to be
+# listed here as "forwarded, under its own comment block". An EXCUSED name is
+# one the test stops checking: deleting both lines from the compose file left
+# this test green, which is the exact silence it exists to break. The YAML
+# parser sees every key under `environment:` wherever it sits; nothing that
+# is forwarded belongs in this dict.
 
 
 def _env_names_read_by_code() -> set[str]:
     names: set[str] = set()
     for path in (ROOT / "src" / "headroom").rglob("*.py"):
-        names.update(re.findall(r"\"(HEADROOM_[A-Z0-9_]+)\"", path.read_text()))
+        # Either quote style: a single-quoted read used to be invisible here.
+        names.update(re.findall(r"[\"'](HEADROOM_[A-Z0-9_]+)[\"']", path.read_text()))
     # pydantic-settings fields: prefix + upper-cased field name
     for field in config.Settings.model_fields:
         names.add(f"HEADROOM_{field.upper()}")

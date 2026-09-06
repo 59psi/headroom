@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
+import { isNotFound } from '../api/client';
+import { ErrorNote } from '../components/common/ErrorNote';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate } from 'react-router';
 import { getCase, updateCase } from '../api/cases';
@@ -65,6 +67,9 @@ export function EditCasePage() {
   }
 
   if (caseQuery.isLoading) return <LoadingSpinner />;
+  if (caseQuery.error && !isNotFound(caseQuery.error)) {
+    return <div className="py-4"><ErrorNote of={{ isError: true, error: caseQuery.error }} what="Could not load this case" /></div>;
+  }
   if (!caseQuery.data) return <div className="alert alert-danger">Case not found</div>;
 
   return (

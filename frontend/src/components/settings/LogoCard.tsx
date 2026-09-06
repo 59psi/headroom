@@ -1,6 +1,8 @@
 import { useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getLogo, uploadLogo, deleteLogo } from '../../api/settings';
+import { uploadUrl } from '../../lib/photo';
+import { ErrorNote } from '../common/ErrorNote';
 
 export function LogoCard() {
   const qc = useQueryClient();
@@ -54,7 +56,7 @@ export function LogoCard() {
               }}
             >
               <img
-                src={`/uploads/${logo.data.logo_path}`}
+                src={uploadUrl(logo.data.logo_path)}
                 alt="Current logo"
                 style={{ maxHeight: 96, objectFit: 'contain' }}
               />
@@ -96,9 +98,7 @@ export function LogoCard() {
           hidden
         />
 
-        {uploadMut.error && (
-          <div className="alert alert-danger mt-3">{String(uploadMut.error)}</div>
-        )}
+        <ErrorNote of={[logo, uploadMut, deleteLogoMut]} className="mt-3" />
       </div>
     </div>
   );

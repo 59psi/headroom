@@ -11,7 +11,13 @@ import { hatFixture } from '../../test/fixtures';
 import { HatNotesCard } from './HatNotesCard';
 import * as hatsApi from '../../api/hats';
 
-vi.mock('../../api/hats', () => ({ updateHat: vi.fn(async () => ({})) }));
+vi.mock('../../api/hats', async (importOriginal) => {
+  const { stubAll } = await import('../../test/stubModule');
+  return {
+    ...stubAll(await importOriginal<object>()),
+    updateHat: vi.fn(async () => ({}))
+  };
+});
 
 const hat = hatFixture;
 

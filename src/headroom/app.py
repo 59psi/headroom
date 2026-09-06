@@ -9,6 +9,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -470,6 +471,12 @@ def _safe_spa_path(full_path: str) -> Path | None:
     return safe_join(FRONTEND_DIST, full_path)
 
 
+#: First path segments the SPA fallback must never answer for. Everything the
+#: API and the operational probes own; the SPA's own routes never start with
+#: these.
+_NOT_SPA_PREFIXES = frozenset({"api", "health", "uploads", "openapi.json", "docs", "redoc"})
+
+
 def create_app() -> FastAPI:
 
     app = FastAPI(title="Headroom", lifespan=lifespan)
@@ -488,6 +495,13 @@ def create_app() -> FastAPI:
     # came back with exactly two headers, content-type and content-length. No
     # CSP, no nosniff, no X-Frame-Options, on precisely the responses an
     # unauthenticated caller is most likely to receive.
+    # Compression for the paths nothing else compresses. Behind Caddy the
+    # `encode` directive does this; on `http://<ip>:8000` (the zero-config
+    # remote path) and the base compose, the 550 KB bundle went over the wire
+    # uncompressed — 3.6× the bytes on the first-load path three releases
+    # chased. Inside the auth gate and the security headers, so a 401 is
+    # still a 401 and the headers land on the compressed response.
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
     app.add_middleware(AuthGateMiddleware)
     app.add_middleware(
         CORSMiddleware,
@@ -538,6 +552,13 @@ def create_app() -> FastAPI:
 
         @app.get("/{full_path:path}", response_class=FileResponse, include_in_schema=False)
         async def serve_spa(request: Request, full_path: str):
+            # A typo under the API or health prefixes is a 404, not the SPA
+            # shell. `GET /health/readyz` answered 200 `text/html` — so a
+            # watchdog pointed at a misspelled path polled a healthy-looking
+            # answer forever — and `GET /api/does-not-exist` returned the
+            # app's HTML to a JSON client.
+            if full_path.split("/", 1)[0] in _NOT_SPA_PREFIXES:
+                raise HTTPException(status_code=404, detail="Not found")
             # Confine the lookup to the frontend bundle — see _safe_spa_path docstring.
             safe = _safe_spa_path(full_path)
             if safe is not None and safe.is_file():

@@ -5,7 +5,13 @@ import { renderWithProviders } from '../../test/utils';
 import { PurchasesCard } from './PurchasesCard';
 import { apiFetch } from '../../api/client';
 
-vi.mock('../../api/client', () => ({ apiFetch: vi.fn() }));
+vi.mock('../../api/client', async (importOriginal) => {
+  const { stubAll } = await import('../../test/stubModule');
+  return {
+    ...stubAll(await importOriginal<object>()),
+    apiFetch: vi.fn()
+  };
+});
 
 const fetchMock = vi.mocked(apiFetch);
 

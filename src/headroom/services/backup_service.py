@@ -304,16 +304,59 @@ def _build_tarball_sync(target_path: Path, include_uploads: bool = True) -> None
     db = _db_path()
     uploads = settings.upload_dir
 
-    with open(target_path, "wb") as sink:
-        # gzip level 6 — same as the default; balances compression and CPU
-        # on a Pi. JPEGs barely compress regardless, the DB compresses well.
-        with tarfile.open(fileobj=sink, mode="w:gz", compresslevel=6) as tar:
-            with tempfile.TemporaryDirectory(prefix="headroom-snap-") as tmp:
-                if db is not None and db.exists():
-                    _add_db_to_tar(tar, db, Path(tmp))
-                if include_uploads and uploads.exists():
-                    tar.add(uploads, arcname="data/uploads")
-                _add_ca_to_tar(tar)
+    # Written under a `.partial` name and renamed into place only once the
+    # archive is complete and fsynced. It used to be written straight to its
+    # final name, so a `docker stop` four seconds into a 600 MB backup (the
+    # 10 s default grace period, then SIGKILL) left a 161 MB file that
+    # `gzip -t` rejected — and everything downstream trusted the name: it was
+    # listed as a backup, it was "the newest success" so the boot backup was
+    # skipped, and retention KEPT the torn file and deleted the real one.
+    # `_list_backups_sync` matches on the `.tar.gz` suffix, so a partial is
+    # invisible to every reader for free; `_sweep_partials_sync` removes the
+    # stragglers at boot.
+    partial = partial_path(target_path)
+    try:
+        with open(partial, "wb") as sink:
+            # gzip level 6 — same as the default; balances compression and
+            # CPU on a Pi. JPEGs barely compress regardless, the DB
+            # compresses well.
+            with tarfile.open(fileobj=sink, mode="w:gz", compresslevel=6) as tar:
+                with tempfile.TemporaryDirectory(prefix="headroom-snap-") as tmp:
+                    if db is not None and db.exists():
+                        _add_db_to_tar(tar, db, Path(tmp))
+                    if include_uploads and uploads.exists():
+                        tar.add(uploads, arcname="data/uploads")
+                    _add_ca_to_tar(tar)
+            sink.flush()
+            os.fsync(sink.fileno())
+        os.replace(partial, target_path)
+    except BaseException:
+        # Including cancellation: a half-written archive under ANY name is
+        # worse than none.
+        partial.unlink(missing_ok=True)
+        raise
+
+
+PARTIAL_SUFFIX = ".partial"
+
+
+def partial_path(target: Path) -> Path:
+    return target.with_name(target.name + PARTIAL_SUFFIX)
+
+
+def _sweep_partials_sync() -> int:
+    """Delete archives a previous process never finished. Returns the count."""
+    removed = 0
+    try:
+        for p in _backup_dir().iterdir():
+            if p.is_file() and p.name.endswith(PARTIAL_SUFFIX):
+                p.unlink(missing_ok=True)
+                removed += 1
+    except OSError as exc:
+        logger.warning("Could not sweep partial backups: %s", exc)
+    if removed:
+        logger.warning("Removed %d partial backup archive(s) left by an earlier process", removed)
+    return removed
 
 
 _STREAM_CHUNK = 1024 * 1024
@@ -584,9 +627,15 @@ def _ensure_upload_state_loaded(target: BackupHealth | None = None) -> None:
             health_record.last_upload_at = datetime.fromisoformat(raw_at)
         except (TypeError, ValueError):
             health_record.last_upload_at = None
-    health_record.last_upload_ok = data.get("ok")
-    health_record.last_upload_name = data.get("name")
-    health_record.last_upload_error = data.get("error")
+    # Typed on the way in: the marker is a file anyone can edit, and a
+    # `"yes"` where a bool belongs used to hydrate a `str` into a
+    # `bool | None` field the card then rendered as truthy.
+    ok = data.get("ok")
+    health_record.last_upload_ok = ok if isinstance(ok, bool) else None
+    name = data.get("name")
+    health_record.last_upload_name = name if isinstance(name, str) else None
+    error = data.get("error")
+    health_record.last_upload_error = error if isinstance(error, str) else None
     for attr, key in (("upload_successes", "successes"), ("upload_failures", "failures")):
         value = data.get(key)
         if isinstance(value, int) and value >= 0:
@@ -777,6 +826,10 @@ async def scheduled_backup_loop(
     )
     first_pass = True
     try:
+        # Archives a previous process died in the middle of. Under their
+        # `.partial` name nothing lists or trusts them; this just reclaims
+        # the space.
+        await asyncio.to_thread(_sweep_partials_sync)
         while True:
             try:
                 if first_pass:
@@ -898,7 +951,12 @@ def backup_keep() -> int:
     keep = env_int("HEADROOM_BACKUP_KEEP", 0)
     if keep > 0:
         return keep
-    return env_int("HEADROOM_BACKUP_RETENTION_DAYS", 5)
+    # The fallback needs the same floor: `_enforce_retention` treats a
+    # non-positive count as "prune nothing", so `HEADROOM_BACKUP_RETENTION_
+    # DAYS=0` (or `-5`) switched retention OFF where the primary knob's guard
+    # above would have fallen through to the default.
+    legacy = env_int("HEADROOM_BACKUP_RETENTION_DAYS", 5)
+    return legacy if legacy > 0 else 5
 
 
 #: `-a` preserves times and symlinks; owner and group are deliberately NOT

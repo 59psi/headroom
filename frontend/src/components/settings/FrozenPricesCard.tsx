@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { ErrorNote } from '../common/ErrorNote';
 import { auditFrozenPrices, releaseFrozenPrices } from '../../api/settings';
 import { invalidateHatViews } from '../../lib/invalidate';
 
@@ -18,10 +19,11 @@ import { invalidateHatViews } from '../../lib/invalidate';
  */
 export function FrozenPricesCard() {
   const qc = useQueryClient();
-  const { data, isLoading } = useQuery({
+  const audit = useQuery({
     queryKey: ['admin', 'frozen-prices'],
     queryFn: auditFrozenPrices,
   });
+  const { data, isLoading } = audit;
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [done, setDone] = useState<number | null>(null);
 
@@ -53,8 +55,9 @@ export function FrozenPricesCard() {
         <div className="card-title">Frozen prices</div>
 
         {isLoading && <p className="text-muted small mb-0">Checking…</p>}
+        <ErrorNote of={audit} what="Could not check" />
 
-        {!isLoading && rows.length === 0 && (
+        {audit.isSuccess && rows.length === 0 && (
           <p className="text-muted small mb-0">
             No hat is holding a price that analysis can't update. Nothing to do.
           </p>
@@ -111,9 +114,7 @@ export function FrozenPricesCard() {
               {done !== null && (
                 <span className="text-muted small">{done} released</span>
               )}
-              {release.isError && (
-                <span className="text-danger small">Couldn't release — try again</span>
-              )}
+              <ErrorNote of={release} what="Could not release" className="w-100" />
             </div>
             <p className="text-muted mb-0" style={{ fontSize: '0.72rem', marginTop: 8 }}>
               <strong>was market-priced</strong> means the hat has a melinrecap

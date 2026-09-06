@@ -7,10 +7,10 @@ denormalized quick answer; this table is the history behind it.
 
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, UniqueConstraint, func
+from sqlalchemy import Date, ForeignKey, Integer, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
-from headroom.database import Base
+from headroom.database import Base, UtcDateTime
 
 
 class WearLog(Base):
@@ -24,4 +24,4 @@ class WearLog(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     hat_id: Mapped[int] = mapped_column(Integer, ForeignKey("hats.id"), index=True)
     worn_at: Mapped[date] = mapped_column(Date)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, server_default=func.now())

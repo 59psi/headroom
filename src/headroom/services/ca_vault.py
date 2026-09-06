@@ -46,6 +46,7 @@ backups travel somewhere they would rather that key did not.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -97,13 +98,16 @@ the card dies.
 
 Restoring
 ---------
-Stop the stack, then copy the four files back into Caddy's volume and let it
-start:
+Stop the stack, extract this directory from the archive (it unpacks to
+data/caddy-pki/, beside this file), copy the four files back into Caddy's
+volume and let it start. Only root.* and intermediate.* are copied, so this
+README does not land in the PKI directory:
 
     docker compose down
-    docker run --rm -v headroom_caddy-data:/data -v "$PWD/caddy-pki":/restore \\
+    tar xzf headroom-backup-<timestamp>.tar.gz data/caddy-pki
+    docker run --rm -v headroom_caddy-data:/data -v "$PWD/data/caddy-pki":/restore \\
       alpine sh -c 'mkdir -p /data/caddy/pki/authorities/local &&
-                    cp /restore/* /data/caddy/pki/authorities/local/ &&
+                    cp /restore/root.* /restore/intermediate.* /data/caddy/pki/authorities/local/ &&
                     chown -R root:root /data/caddy/pki &&
                     chmod 0700 /data/caddy/pki/authorities/local'
     docker compose -f docker-compose.yml -f docker-compose.https-lan.yml up -d
@@ -147,18 +151,26 @@ def exported_files() -> list[Path]:
 
 
 def fingerprint_parts() -> list[str]:
-    """Size+mtime signature of the CA, for the backup change-detector.
+    """Content signature of the CA, for the backup change-detector.
 
     Without this a regenerated authority would not by itself trigger a new
     backup, so the archive holding the OLD root could age out of the retention
     window while the new one was never captured — losing both.
+
+    CONTENT, not size+mtime. The `caddy-ca-export` sidecar re-`install`s the
+    four files every 60 s — same bytes, new mtime — so on the LAN-HTTPS
+    overlay (the production one) every daily check saw a change and the
+    change-gate was defeated: a full tarball every cycle, every photo re-read,
+    five retention slots filled with restatements. Measured: five archives in
+    five minutes against one for a control container with no CA mounted.
+    These are a few kilobytes; hashing them costs nothing.
     """
     parts = []
     for name in PKI_FILES:
         path = PKI_DIR / name
         try:
-            st = path.stat()
-            parts.append(f"ca/{name}:{st.st_size}:{st.st_mtime_ns}")
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()[:16]
+            parts.append(f"ca/{name}:{digest}")
         except OSError:
             parts.append(f"ca/{name}:-")
     return parts

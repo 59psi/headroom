@@ -1,6 +1,30 @@
 const BASE = '';
 
 /**
+ * A failed response, with its status kept.
+ *
+ * `apiFetch` used to throw a bare `Error`, so a page could not tell a 404
+ * from a 500 — and five detail pages folded EVERY failure into "not found":
+ * a database lock, a dead server and a deleted hat all read "This hat may
+ * have been deleted". The message is still the readable sentence
+ * `errorMessage()` builds; the status rides beside it.
+ */
+export class ApiError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
+/** True only for a genuine 404 — the one failure that means "gone", not "broken". */
+export function isNotFound(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 404;
+}
+
+/**
  * `apiFetch`, plus the response headers.
  *
  * Exists because `GET /api/hats` reports the unpaginated size in
@@ -37,7 +61,7 @@ export async function apiFetchWithHeaders<T>(
   }
   if (!resp.ok) {
     const body = await resp.json().catch(() => ({ detail: resp.statusText }));
-    throw new Error(errorMessage(body.detail, resp.status));
+    throw new ApiError(errorMessage(body.detail, resp.status), resp.status);
   }
   if (resp.status === 204) return { data: undefined as T, headers: resp.headers };
   return { data: await resp.json(), headers: resp.headers };

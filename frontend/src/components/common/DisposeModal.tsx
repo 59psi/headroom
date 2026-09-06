@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { portalToBody } from './ModalPortal';
+import { Modal } from './Modal';
+import { ErrorNote } from './ErrorNote';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { disposeHat } from '../../api/hats';
 import { invalidateHatViews } from '../../lib/invalidate';
@@ -40,67 +41,59 @@ export function DisposeModal({ hatId, show, onClose }: Props) {
 
   if (!show) return null;
 
-  return portalToBody(
-    <div className="modal" onClick={onClose}>
-      <div className="modal-dialog" onClick={e => e.stopPropagation()}>
-        <div className="modal-content">
-          <div className="modal-header">
-            <h5 className="modal-title">Mark as Disposed</h5>
-            <button type="button" className="btn-close" onClick={onClose} aria-label="Close" />
-          </div>
-          <div className="modal-body">
-            <label className="form-label">Disposition Type</label>
-            <select aria-label="Disposition Type" className="form-select mb-3" value={via} onChange={e => setVia(e.target.value)}>
-              {VIAS.map(v => <option key={v.id} value={v.id}>{v.label}</option>)}
-            </select>
-            {(via === 'sold' || via === 'trade') && (
-              <>
-                <label className="form-label" htmlFor="dispose-price">Price ($)</label>
-                <input
-                  id="dispose-price"
-                  type="number"
-                  step="0.01"
-                  className="form-control mb-3"
-                  placeholder="45.00"
-                  value={price}
-                  onChange={e => setPrice(e.target.value)}
-                />
-              </>
-            )}
-            <label className="form-label" htmlFor="dispose-to">{via === 'sold' || via === 'trade' ? 'Buyer / Counterparty' : 'Recipient / Where'}</label>
-            <input
-              id="dispose-to"
-              type="text"
-              className="form-control mb-3"
-              placeholder="e.g. Eric F. or Mercari"
-              value={to}
-              onChange={e => setTo(e.target.value)}
-            />
-            <label className="form-label">Notes (optional)</label>
-            <textarea
-              aria-label="Notes (optional)"
-              className="form-control"
-              rows={3}
-              value={notes}
-              onChange={e => setNotes(e.target.value)}
-            />
-            {mut.error && (
-              <div className="alert alert-danger mt-3 mb-0 small">{String(mut.error)}</div>
-            )}
-          </div>
-          <div className="modal-footer">
-            <button type="button" className="btn btn-outline-secondary" onClick={onClose}>Cancel</button>
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={() => mut.mutate()}
-              disabled={mut.isPending}
-            >
-              {mut.isPending ? 'Saving…' : 'Mark Disposed'}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
+  return (
+    <Modal title="Mark as Disposed" onClose={onClose}
+      footer={(
+        <>
+          <button type="button" className="btn btn-outline-secondary" onClick={onClose}>Cancel</button>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => mut.mutate()}
+            disabled={mut.isPending}
+          >
+            {mut.isPending ? 'Saving…' : 'Mark Disposed'}
+          </button>
+        </>
+      )}
+    >
+
+      <label className="form-label">Disposition Type</label>
+      <select aria-label="Disposition Type" className="form-select mb-3" value={via} onChange={e => setVia(e.target.value)}>
+        {VIAS.map(v => <option key={v.id} value={v.id}>{v.label}</option>)}
+      </select>
+      {(via === 'sold' || via === 'trade') && (
+        <>
+          <label className="form-label" htmlFor="dispose-price">Price ($)</label>
+          <input
+            id="dispose-price"
+            type="number"
+            step="0.01"
+            className="form-control mb-3"
+            placeholder="45.00"
+            value={price}
+            onChange={e => setPrice(e.target.value)}
+          />
+        </>
+      )}
+      <label className="form-label" htmlFor="dispose-to">{via === 'sold' || via === 'trade' ? 'Buyer / Counterparty' : 'Recipient / Where'}</label>
+      <input
+        id="dispose-to"
+        type="text"
+        className="form-control mb-3"
+        placeholder="e.g. Eric F. or Mercari"
+        value={to}
+        onChange={e => setTo(e.target.value)}
+      />
+      <label className="form-label">Notes (optional)</label>
+      <textarea
+        aria-label="Notes (optional)"
+        className="form-control"
+        rows={3}
+        value={notes}
+        onChange={e => setNotes(e.target.value)}
+      />
+      <ErrorNote of={mut} className="mt-3 mb-0 small" />
+    </Modal>
   );
 }

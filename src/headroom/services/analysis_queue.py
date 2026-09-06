@@ -77,7 +77,7 @@ def worker_expected() -> bool:
     return env_flag("HEADROOM_ANALYSIS_WORKER_ENABLED")
 
 
-def enqueue(hat_id: int) -> bool:
+def enqueue(hat_id: int, *, cutout_only: bool = False) -> bool:
     """Queue a hat for analysis. False means nothing is draining the queue.
 
     A False return is the caller's cue to run the pipeline inline rather than
@@ -86,17 +86,17 @@ def enqueue(hat_id: int) -> bool:
     """
     if _queue is None or not worker_alive():
         return False
-    _queue.put_nowait(hat_id)
+    _queue.put_nowait((hat_id, cutout_only))
     return True
 
 
-async def _process_hat(hat_id: int) -> None:
+async def _process_hat(hat_id: int, cutout_only: bool = False) -> None:
     """Run the full pipeline for one hat in its own session."""
     async with _sessions() as db:
         hat = (await db.execute(select(Hat).where(Hat.id == hat_id))).scalar_one_or_none()
         if hat is None:
             return  # deleted between upload and analysis
-        if hat.analysis_status != PENDING:
+        if hat.analysis_status != PENDING and not cutout_only:
             return  # already handled, or re-queued twice by the boot sweep
         if not hat.photo_path:
             hat.analysis_status = "error"
@@ -114,7 +114,7 @@ async def _process_hat(hat_id: int) -> None:
             return
 
         photo_at_start = hat.photo_path
-        await finalize_hat_photo(db, hat, photo_path)
+        await finalize_hat_photo(db, hat, photo_path, cutout_only=cutout_only)
 
         # This session has been open for minutes. If the owner replaced the
         # photo meanwhile, the upload route has already stored the new path,
@@ -184,9 +184,9 @@ async def _worker_loop() -> None:
     logger.info("Analysis worker started.")
     try:
         while True:
-            hat_id = await _queue.get()
+            hat_id, cutout_only = await _queue.get()
             try:
-                await _process_hat(hat_id)
+                await _process_hat(hat_id, cutout_only)
             except Exception as exc:  # one bad hat must NOT kill
                 # the worker, or every later upload hangs on 'pending' forever.
                 logger.exception("Analysis worker: unhandled error on hat=%s: %s", hat_id, exc)
@@ -206,7 +206,9 @@ async def _recover_on_boot() -> None:
             select(Hat.id).where(Hat.analysis_status == PENDING)
         )).scalars().all()
     for hat_id in stranded:
-        _queue.put_nowait(hat_id)
+        # A hat stranded mid-recut by a crash gets the full run: the mode was
+        # in memory and is gone, and a re-analysis is the safe over-answer.
+        _queue.put_nowait((hat_id, False))
     if stranded:
         logger.info("Re-queued %d hat(s) stranded mid-analysis.", len(stranded))
 

@@ -636,6 +636,74 @@ async def test_one_failing_category_does_not_abandon_the_rest(db_session, monkey
     assert result["distinct_models"] >= 8, result
 
 
+async def test_a_one_size_beanie_is_headwear_not_an_accessory():
+    """melin beanies are one-size, and `normalize_size` correctly reads that
+    as "not a hat size" — which left every `Journey Beanie - Black` not yet
+    on the shelf flagged "look like accessories (travel cases, gift cards)"
+    in the preview. The shape in the title is the tell."""
+    from headroom.models.catalog import Purchase
+    from headroom.services import catalog_service
+
+    beanie = Purchase(item_title="Journey Beanie - Black", model_name="Journey Beanie", size=None)
+    assert catalog_service._looks_like_headwear(beanie, hats=[]) is True
+    case = Purchase(item_title="3 Hat Travel Case", model_name="3 Hat Travel Case", size=None)
+    assert catalog_service._looks_like_headwear(case, hats=[]) is False
+    card = Purchase(item_title="Gift Card", model_name="Gift Card", size=None)
+    assert catalog_service._looks_like_headwear(card, hats=[]) is False
+
+
+async def test_a_harvest_that_loses_every_category_says_so(client, db_session, monkeypatch):
+    """Executed in the review with the marketplace unreachable: 202, a
+    progress bar to 100%, `progress.error` null, and the card announcing
+    "Harvest finished — the counts above are current" over zero entries.
+    The failures were in a result dict the background task hands to nobody.
+    """
+    from headroom.services import catalog_service
+    from headroom.services.melin_recap import MelinRecapError
+
+    async def dead(params):
+        raise MelinRecapError("All connection attempts failed")
+
+    monkeypatch.setattr("headroom.services.catalog_service.query_listings", dead)
+
+    async def _no_sleep(_delay):
+        return None
+
+    monkeypatch.setattr("headroom.services.catalog_service.asyncio.sleep", _no_sleep)
+
+    result = await catalog_service.harvest_catalog(db_session)
+
+    assert len(result["failed_categories"]) == len(catalog_service.STYLE_TO_CATEGORY)
+    status = (await client.get("/api/admin/colorways/status")).json()
+    assert status["progress"]["running"] is False
+    assert status["progress"]["error"], "an all-failed harvest must not read as finished"
+    assert "every category failed" in status["progress"]["error"]
+    assert sorted(status["failed_categories"]) == sorted(catalog_service.STYLE_TO_CATEGORY.values())
+
+
+async def test_a_partial_harvest_names_the_categories_it_lost(client, db_session, monkeypatch):
+    from headroom.services import catalog_service
+    from headroom.services.melin_recap import MelinRecapError
+
+    async def flaky(params):
+        if params["pub_category"] == "coronado":
+            raise MelinRecapError("502")
+        return [{"attributes": {"title": f"{params['pub_category']} Hydro - Color"}}]
+
+    monkeypatch.setattr("headroom.services.catalog_service.query_listings", flaky)
+
+    async def _no_sleep(_delay):
+        return None
+
+    monkeypatch.setattr("headroom.services.catalog_service.asyncio.sleep", _no_sleep)
+
+    await catalog_service.harvest_catalog(db_session)
+
+    status = (await client.get("/api/admin/colorways/status")).json()
+    assert status["failed_categories"] == ["coronado"]
+    assert status["progress"]["error"] is None, "one lost category is a partial catalog, not a failure"
+
+
 async def test_isolation_covers_any_failure_not_just_the_marketplace_one(
     db_session, monkeypatch,
 ):

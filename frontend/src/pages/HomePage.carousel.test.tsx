@@ -19,10 +19,34 @@ import * as casesApi from '../api/cases';
 import * as roomsApi from '../api/rooms';
 import * as settingsApi from '../api/settings';
 
-vi.mock('../api/hats', () => ({ listAllHats: vi.fn() }));
-vi.mock('../api/cases', () => ({ listCases: vi.fn() }));
-vi.mock('../api/rooms', () => ({ listRooms: vi.fn() }));
-vi.mock('../api/settings', () => ({ getLogo: vi.fn() }));
+vi.mock('../api/hats', async (importOriginal) => {
+  const { stubAll } = await import('../test/stubModule');
+  return {
+    ...stubAll(await importOriginal<object>()),
+    listAllHats: vi.fn()
+  };
+});
+vi.mock('../api/cases', async (importOriginal) => {
+  const { stubAll } = await import('../test/stubModule');
+  return {
+    ...stubAll(await importOriginal<object>()),
+    listCases: vi.fn()
+  };
+});
+vi.mock('../api/rooms', async (importOriginal) => {
+  const { stubAll } = await import('../test/stubModule');
+  return {
+    ...stubAll(await importOriginal<object>()),
+    listRooms: vi.fn()
+  };
+});
+vi.mock('../api/settings', async (importOriginal) => {
+  const { stubAll } = await import('../test/stubModule');
+  return {
+    ...stubAll(await importOriginal<object>()),
+    getLogo: vi.fn()
+  };
+});
 
 const PHONE = 390;
 const DESKTOP = 1280;

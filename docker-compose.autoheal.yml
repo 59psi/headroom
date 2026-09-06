@@ -27,6 +27,15 @@ services:
   autoheal:
     image: willfarrell/autoheal:1.2.0
     restart: unless-stopped
+    # Bounded like the app is: an unbounded json-file log on a Pi's SD card
+    # and an unbounded sidecar were the two limits the app service carried
+    # and its neighbors did not.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 64m
     environment:
       # Only containers explicitly labeled below — never "every unhealthy
       # container on the host", which is autoheal's default and would let this

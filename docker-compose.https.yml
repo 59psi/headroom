@@ -39,13 +39,33 @@ services:
     image: caddy:2-alpine
     container_name: headroom-caddy
     restart: unless-stopped
+    # Bounded like the app is: an unbounded json-file log on a Pi's SD card
+    # and an unbounded sidecar were the two limits the app service carried
+    # and its neighbors did not.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 256m
     ports:
       - "80:80"
       - "443:443"
+      # UDP too. Caddy advertises HTTP/3 (`alt-svc: h3=":443"`) and served it
+      # on a UDP port nothing published, so every fresh Safari/Chrome
+      # connection paid a QUIC timeout before falling back to h2 — the same
+      # stall 2.76.1 diagnosed on the LAN and fixed only there. Published,
+      # h3 simply works.
+      - "443:443/udp"
     environment:
       HEADROOM_DOMAIN: "${HEADROOM_DOMAIN:?set HEADROOM_DOMAIN}"
-    command: caddy reverse-proxy --from "https://${HEADROOM_DOMAIN}" --to http://headroom:8000
+    # A Caddyfile rather than the `caddy reverse-proxy` CLI form, which
+    # cannot add headers or compression: this is the internet-facing overlay,
+    # and the app's own middleware documents that HSTS is Caddy's job here —
+    # a promise the CLI form could not keep. Let's Encrypt still sets the
+    # certificate lifetime; nothing in the file chooses one.
     volumes:
+      - ./Caddyfile.https:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
     depends_on:

@@ -102,6 +102,7 @@ async def public_collection(token: str, db: AsyncSession = Depends(get_db)):
             share_link_service.to_shared_hat(
                 h,
                 f"/api/public/share/{token}/photo/{h.id}" if h.photo_path else None,
+                f"/api/public/share/{token}/photo/{h.id}?variant=thumb" if h.thumb_path else None,
             )
             for h in hats
         ],
@@ -109,7 +110,9 @@ async def public_collection(token: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/api/public/share/{token}/photo/{hat_id}", response_class=FileResponse)
-async def public_photo(token: str, hat_id: int, db: AsyncSession = Depends(get_db)):
+async def public_photo(
+    token: str, hat_id: int, variant: str | None = None, db: AsyncSession = Depends(get_db)
+):
     try:
         await share_link_service.resolve_token(db, token)
     except ShareLinkInvalid:
@@ -124,7 +127,7 @@ async def public_photo(token: str, hat_id: int, db: AsyncSession = Depends(get_d
     # `photo_path` is app-generated, but it reaches the filesystem here on an
     # unauthenticated route, so it goes through the same containment check as
     # every other client-influenced path rather than a local copy of one.
-    photo = safe_file(settings.upload_dir, hat.photo_path)
+    photo = safe_file(settings.upload_dir, share_link_service.photo_variant(hat, variant))
     if photo is None:
         raise HTTPException(status_code=404, detail="Photo not found")
     return FileResponse(photo)

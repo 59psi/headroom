@@ -56,9 +56,20 @@ uploads/
 Headroom.zip
 analysis/
 
+# Rolling backups written by a bare-metal run land in ./backups — whole DB,
+# keys and tokens, one `git add -A` from a public repo.
+backups/
+
+# Private keys must never be committed.
+*.pem
+*.key
+
 # Agent skills (per-developer tooling)
 .agents/
 skills-lock.json
 
 # Local forensic-review bundle (code-archaeology output) — keep out of the repo
 /analysis/
+
+# Playwright MCP session logs (a review tool writes them into the cwd)
+.playwright-mcp/

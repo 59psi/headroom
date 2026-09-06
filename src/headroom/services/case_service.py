@@ -5,7 +5,7 @@ from sqlalchemy.orm import selectinload
 
 from headroom.models.case import Case
 from headroom.schemas.case import CaseCreate, CaseType, CaseUpdate
-from headroom.services import room_service
+from headroom.services import capacity as capacity_rules, room_service
 from headroom.services.activity_service import log_and_commit
 
 
@@ -34,6 +34,14 @@ async def get_next_sequence(db: AsyncSession, case_type: CaseType) -> int:
 
 
 async def create_case(db: AsyncSession, data: CaseCreate) -> Case:
+    # `get_next_sequence` is read-then-write like every placement decision:
+    # six concurrent creates used to be one case and five 500s on the unique
+    # `display_id`. Serialized under the shelf-wide lock instead.
+    async with capacity_rules.placement_lock():
+        return await _create_case_locked(db, data)
+
+
+async def _create_case_locked(db: AsyncSession, data: CaseCreate) -> Case:
     seq = await get_next_sequence(db, data.case_type)
     display_id = _make_display_id(data.case_type, seq)
     room_id = data.room_id

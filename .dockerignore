@@ -9,7 +9,18 @@ frontend/dist
 frontend/node_modules
 uploads
 *.db
+# WAL sidecars carry live data on a box that ran bare-metal before Docker.
+*.db-wal
+*.db-shm
 *.sqlite
+# Rolling backups: whole DB, API keys, session ids, the bearer token —
+# a credential bundle one `git add -A` (or one build context) from leaking.
+backups/
+# Private keys never belong in an image or a build context.
+*.pem
+*.key
+# The 3D-print bundle is a release asset, not build input.
+hardware
 .env
 .env.*
 .DS_Store

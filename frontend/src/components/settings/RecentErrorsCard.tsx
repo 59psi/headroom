@@ -1,6 +1,7 @@
 import { Link } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getRecentErrors, getApiKeyStatus } from '../../api/settings';
+import { ErrorNote } from '../common/ErrorNote';
 
 export function RecentErrorsCard() {
   const qc = useQueryClient();
@@ -28,6 +29,7 @@ export function RecentErrorsCard() {
             {errors.isFetching ? '…' : 'Refresh'}
           </button>
         </div>
+        <ErrorNote of={[errors, apiKey]} className="mb-2" />
         {errors.data && errors.data.length === 0 ? (
           <p className="text-secondary small mb-0">
             No analysis errors. {apiKey.data?.configured ? '✓' : 'Configure a key to start analyzing.'}

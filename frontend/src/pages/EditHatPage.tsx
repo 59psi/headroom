@@ -1,3 +1,5 @@
+import { isNotFound } from '../api/client';
+import { ErrorNote } from '../components/common/ErrorNote';
 import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate } from 'react-router';
@@ -215,6 +217,9 @@ export function EditHatPage() {
   }
 
   if (hat.isLoading || options.isLoading) return <LoadingSpinner />;
+  if (hat.error && !isNotFound(hat.error)) {
+    return <div className="py-4"><ErrorNote of={{ isError: true, error: hat.error }} what="Could not load this hat" /></div>;
+  }
   if (!hat.data) return <div className="alert alert-danger">Hat not found</div>;
 
   return (
@@ -354,6 +359,7 @@ export function EditHatPage() {
                   <button
                     type="button"
                     className="btn btn-outline-danger btn-sm"
+                    aria-label={`Remove color ${i + 1}`}
                     onClick={() => {
                       const updated = colors.filter((_, j) => j !== i)
                         .map((c, j) => ({ ...c, dominance_rank: j + 1 }));

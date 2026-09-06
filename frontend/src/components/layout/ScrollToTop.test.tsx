@@ -17,10 +17,14 @@ vi.mock('react-router', async (importOriginal) => ({
   useNavigationType: () => nav.type,
 }));
 
-vi.mock('../../api/settings', () => ({
-  getLogo: vi.fn(async () => ({ logo_path: null })),
-  getRecentErrorsCount: vi.fn(async () => ({ count: 0 })),
-}));
+vi.mock('../../api/settings', async (importOriginal) => {
+  const { stubAll } = await import('../../test/stubModule');
+  return {
+    ...stubAll(await importOriginal<object>()),
+    getLogo: vi.fn(async () => ({ logo_path: null })),
+    getRecentErrorsCount: vi.fn(async () => ({ count: 0 })),
+  };
+});
 
 describe('ScrollToTop', () => {
   let scrollTo: ReturnType<typeof vi.spyOn>;

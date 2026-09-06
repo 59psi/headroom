@@ -2,7 +2,9 @@ import logging
 import os
 from collections.abc import AsyncGenerator
 
-from sqlalchemy import event, inspect, text
+from datetime import timezone
+
+from sqlalchemy import DateTime, TypeDecorator, event, inspect, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -10,7 +12,15 @@ from headroom.config import settings
 
 logger = logging.getLogger(__name__)
 
-engine = create_async_engine(settings.database_url, echo=False)
+# `hide_parameters`: a SQLAlchemy error renders its statement AND the bound
+# values — `[parameters: ('Ab3d…',)]` — and that string reaches the traceback
+# uvicorn prints and the `error.unhandled` row `error_handler` writes. A share
+# token is a bound value in `WHERE share_links.token = ?`, so a database fault
+# while resolving one wrote the live credential into the container log and
+# into the row the backup uploads off the box. The handler formats statement
+# errors from their DBAPI cause for the same reason; this flag covers every
+# rendering the handler never sees.
+engine = create_async_engine(settings.database_url, echo=False, hide_parameters=True)
 async_session = async_sessionmaker(engine, expire_on_commit=False)
 
 
@@ -121,6 +131,46 @@ class Base(DeclarativeBase):
     pass
 
 
+class UtcDateTime(TypeDecorator):
+    """A timestamp that is UTC on the way in and UTC-AWARE on the way out.
+
+    SQLite stores no zone, so every `DateTime` column came back naive and
+    pydantic serialized it without an offset — `"2026-09-06T16:32:27"` — and
+    a browser reads an offset-less ISO string as LOCAL time. Measured in a
+    UTC−7 browser: a password change made at 16:32 UTC rendered "4:32 PM"
+    (seven hours in the future), a run started 7 h 41 min earlier read "40
+    min ago", and `timeAgo` clamps at zero so every run read "just now" for
+    its first seven hours. The three columns that already carried a zone
+    rendered correctly beside them — inconsistent rather than uniformly
+    wrong, which is the harder kind to notice.
+
+    Bound values are normalized to naive UTC (an aware value from another
+    zone is converted; a naive one is taken as UTC, which is what every
+    writer in this app produces). Loaded values get `tzinfo=UTC`, so they
+    serialize with an offset and compare with `datetime.now(timezone.utc)`
+    without the `replace(tzinfo=...)` guards two services carry.
+    `server_default=func.now()` is unaffected: SQLite's CURRENT_TIMESTAMP is
+    UTC.
+    """
+
+    impl = DateTime
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        if value.tzinfo is not None:
+            value = value.astimezone(timezone.utc).replace(tzinfo=None)
+        return value
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+
 # Static, fully-formed DDL — column names and types are hard-coded literals,
 # so no interpolation is needed and SQL injection is structurally impossible.
 # Same contract as `_HAT_COLUMN_DDL` below: fully-static DDL, one entry per
@@ -219,6 +269,49 @@ _STATUS_RENAME_DML: dict[str, str] = {
 }
 
 
+#: Static, like every DDL string here.
+_HAT_POSITION_INDEX_DDL = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_hats_case_position "
+    "ON hats(case_id, position_in_case) "
+    "WHERE case_id IS NOT NULL AND disposed_at IS NULL"
+)
+
+
+def _repair_duplicate_positions(conn) -> int:
+    """Renumber the active hats of any case where two share a position.
+
+    Before the placement lock, concurrent assigns could land several hats on
+    one slot. Those rows are real hats; only their positions are wrong. Each
+    affected case is renumbered 1..n in (position, id) order, so a hat that
+    already sat alone at a low slot keeps it and the duplicates fan out
+    upward. Returns the number of hats moved. Idempotent.
+    """
+    dupes = conn.execute(text(
+        "SELECT DISTINCT case_id FROM hats "
+        "WHERE case_id IS NOT NULL AND disposed_at IS NULL AND position_in_case IS NOT NULL "
+        "GROUP BY case_id, position_in_case HAVING COUNT(*) > 1"
+    )).scalars().all()
+    moved = 0
+    for case_id in dupes:
+        rows = conn.execute(text(
+            "SELECT id, position_in_case FROM hats "
+            "WHERE case_id = :case_id AND disposed_at IS NULL "
+            "ORDER BY position_in_case, id"
+        ), {"case_id": case_id}).all()
+        for new_position, (hat_id, old_position) in enumerate(rows, start=1):
+            if old_position != new_position:
+                conn.execute(
+                    text("UPDATE hats SET position_in_case = :p WHERE id = :id"),
+                    {"p": new_position, "id": hat_id},
+                )
+                moved += 1
+    if moved:
+        logger.warning(
+            "Renumbered %d hat(s) in %d case(s) that shared a position", moved, len(dupes)
+        )
+    return moved
+
+
 def _run_migrations(conn) -> None:
     """Add missing tables and columns to existing databases."""
     inspector = inspect(conn)
@@ -304,6 +397,12 @@ def _run_migrations(conn) -> None:
             if col_name not in existing_cols:
                 conn.execute(text(ddl))
         _backfill_construction(conn)
+        _repair_duplicate_positions(conn)
+        # The same index `models/hat.py` declares for fresh databases. It
+        # MUST follow the repair: a unique index cannot be built over the
+        # duplicates the pre-lock race left behind, and a boot that fails on
+        # an upgraded database is the worst outcome on offer.
+        conn.execute(text(_HAT_POSITION_INDEX_DDL))
 
     if "purchases" in existing_tables:
         existing_cols = {c["name"] for c in inspector.get_columns("purchases")}

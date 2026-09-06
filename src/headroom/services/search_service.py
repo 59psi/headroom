@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.models.case import Case
 from headroom.models.hat import Hat
+from headroom.schemas.hat import STYLE_LABELS
 from headroom.models.hat_color import HatColor
 from headroom.models.room import Room
 from headroom.services.hat_service import hat_loads
@@ -14,6 +15,17 @@ from headroom.services.color_extraction import (
     lab_distance,
     lab_of,
 )
+
+
+def _escape_like(term: str) -> str:
+    """Make a search term literal inside a LIKE pattern."""
+    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _styles_whose_label_matches(term: str) -> list[str]:
+    """Enum values whose human label contains `term` (case-insensitive)."""
+    needle = term.casefold()
+    return [value for value, label in STYLE_LABELS.items() if needle in label.casefold()]
 
 
 def _in_room(room_id: int):
@@ -117,26 +129,31 @@ async def search_hats(
     color_field = HatColor.color_name if exact_colors else HatColor.general_color
 
     for term in terms:
-        pattern = f"%{term}%"
+        # The term is data, not a pattern: `%` and `_` are LIKE wildcards, so
+        # `q=%` matched every hat and `q=a_game` matched `a-game` by accident.
+        pattern = f"%{_escape_like(term)}%"
         # Each term must match something
         # Fields an outside viewer can already SEE — the ones `SharedHat`
         # carries. Safe to match on, because a hit reveals nothing the results
         # don't already show.
         clauses = [
-            Hat.style.ilike(pattern),
-            Hat.brand.ilike(pattern),
-            Hat.model_name.ilike(pattern),
+            Hat.style.ilike(pattern, escape="\\"),
+            # The enum VALUE is `a_game`; the option and every list print
+            # `A-Game`, and a search for what is printed found nothing.
+            Hat.style.in_(_styles_whose_label_matches(term)),
+            Hat.brand.ilike(pattern, escape="\\"),
+            Hat.model_name.ilike(pattern, escape="\\"),
             # Major colors only unless asked otherwise — see
             # `MAJOR_COLOR_RANK`. A hat is not "pink" because its logo is.
             Hat.id.in_(
                 select(HatColor.hat_id).where(
-                    color_field.ilike(pattern), *_color_rank_clause(color_scope)
+                    color_field.ilike(pattern, escape="\\"), *_color_rank_clause(color_scope)
                 )
             ),
             # Same reasoning as `room_id` above: both ways of being in a room.
             or_(
-                Hat.case.has(Case.room.has(Room.name.ilike(pattern))),
-                Hat.direct_room.has(Room.name.ilike(pattern)),
+                Hat.case.has(Case.room.has(Room.name.ilike(pattern, escape="\\"))),
+                Hat.direct_room.has(Room.name.ilike(pattern, escape="\\")),
             ),
         ]
         if not public_fields_only:
@@ -147,14 +164,14 @@ async def search_hats(
             # construction — and for the hydro/hydrolite flags below, which
             # are derived from construction.
             clauses += [
-                Hat.condition.ilike(pattern),
-                Hat.size.ilike(pattern),
-                Hat.artist_series.ilike(pattern),
+                Hat.condition.ilike(pattern, escape="\\"),
+                Hat.size.ilike(pattern, escape="\\"),
+                Hat.artist_series.ilike(pattern, escape="\\"),
                 # Free-form since 2.11, so "canvas" finds a Waxed Canvas hat.
                 # The flag clauses below stay because they are not redundant
                 # with this: `hydro` must keep finding a hat recorded as
                 # "A-Game Hydro", and `hydrolite` must NOT drag in every HYDRO.
-                Hat.construction.ilike(pattern),
+                Hat.construction.ilike(pattern, escape="\\"),
             ]
             # HYDRO / HYDROLite also have boolean columns, derived from the
             # text above. They used to be values of `style`, and USAGE still

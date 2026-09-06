@@ -20,7 +20,6 @@ import logging
 from collections.abc import Sequence
 from typing import NamedTuple
 from datetime import datetime, timezone
-from functools import lru_cache
 
 from fastapi import HTTPException
 from sqlalchemy import func, select
@@ -29,8 +28,10 @@ from sqlalchemy.orm import selectinload
 
 from headroom.models.catalog import ColorwayEntry, Purchase
 from headroom.models.hat import Hat
-from headroom.schemas.hat import CONSTRUCTION_TOKENS
+from headroom.schemas.hat import BEANIE_STYLES, CONSTRUCTION_TOKENS
+from headroom.schemas.admin import PurchaseLine
 from headroom.services import sweep_progress, vocabulary
+from headroom.services import naming
 from headroom.services.activity_service import log_and_commit
 from headroom.services.melin_recap import (
     PAGE_SIZE,
@@ -115,14 +116,17 @@ _MAX_PAGES_PER_CATEGORY = 50  # safety backstop; ~5000 listings/category
 def parse_listing_title(title: str) -> tuple[str, str | None]:
     """"A-Game Hydro - Heather Grey" → ("A-Game Hydro", "Heather Grey").
 
-    Splits on the FIRST " - "; colorways legitimately contain slashes and
-    hyphens ("Heather Ocean / Heather Charcoal"). No separator → whole
-    string is the model, colorway unknown.
+    `naming.split_model_colorway` with the model half guaranteed a string:
+    colorways legitimately contain slashes and hyphens ("Heather Ocean /
+    Heather Charcoal"), so only a SPACED separator splits, and a title melin
+    wrote with an em dash now splits too (it used to land in the catalog as
+    a model called `Trenches Hydro — Camo`). A title that names no model
+    (`" - Black"`) is an empty model with no colorway, never a colorway
+    filed under `""`.
     """
-    model, sep, colorway = title.partition(" - ")
-    model, colorway = model.strip(), colorway.strip()
-    if not sep or not colorway:
-        return model, None
+    model, colorway = naming.split_model_colorway(title)
+    if model is None:
+        return "", None
     return model, colorway
 
 
@@ -211,12 +215,34 @@ async def harvest_catalog(db: AsyncSession) -> dict:
     # as running forever.
     error: str | None = None
     try:
-        return await _harvest(db, now)
+        result = await _harvest(db, now)
+        # What the card can see. A harvest in which EVERY category failed
+        # used to finish "successfully": 202, a progress bar to 100%, the
+        # log line saying `9 categor(y/ies) failed`, `progress.error` null,
+        # and the card announcing "Harvest finished — the counts above are
+        # current" over a catalog of zero entries. Failures were in the
+        # result dict, which the background task hands to nobody.
+        _last_failed_categories[:] = result["failed_categories"]
+        if result["failed_categories"] and len(result["failed_categories"]) == len(
+            STYLE_TO_CATEGORY
+        ):
+            error = (
+                f"every category failed ({len(result['failed_categories'])} of "
+                f"{len(STYLE_TO_CATEGORY)}) — the marketplace was unreachable; "
+                "the catalog was not updated"
+            )
+        return result
     except Exception as exc:
         error = str(exc)[:300]
         raise
     finally:
         progress.finish(error=error)
+
+
+#: Categories the LAST harvest could not read. Process-local like `progress`
+#: (a harvest is minutes inside this process and dies with it); published on
+#: `CatalogStatus` so a partial catalog says which parts are missing.
+_last_failed_categories: list[str] = []
 
 
 async def _harvest(db, now) -> dict:
@@ -265,7 +291,8 @@ async def _harvest(db, now) -> dict:
         "catalog_total": total,
         "distinct_models": models,
         "failed_categories": failed,
-        "finished_at": now.isoformat(),
+        # The END of the run, not `now`, which is when it began.
+        "finished_at": datetime.now(timezone.utc).isoformat(),
     }
     logger.info(
         "Colorway harvest: %d titles seen, %d new, %d total (%d models), %d categor(y/ies) failed",
@@ -294,6 +321,7 @@ async def catalog_stats(db: AsyncSession) -> dict:
     return {
         "progress": progress.snapshot(),
         "in_flight": harvest_in_flight(),
+        "failed_categories": list(_last_failed_categories),
         "entries": entries,
         "models": models,
         "colorways": colorways,
@@ -361,24 +389,33 @@ async def catalog_options(
 # --------------------------- purchases -------------------------------- #
 
 
-def _line_fields(item: dict) -> tuple[str, str | None, str | None, int]:
+def _as_lines(items: list[PurchaseLine | dict]) -> list[PurchaseLine]:
+    """Validate dicts into `PurchaseLine`s; pass lines through.
+
+    The route already receives `PurchaseLine`s from the request body; direct
+    callers (tests, scripts) still hand in dicts, and the schema is the ONE
+    place the caps and types live, so they are validated here rather than
+    trusted.
+    """
+    return [PurchaseLine.model_validate(i) if isinstance(i, dict) else i for i in items]
+
+
+def _line_fields(item: PurchaseLine) -> tuple[str, str | None, str | None, int]:
     """(title, model, colorway, quantity) for one incoming line."""
-    title = (item.get("item_title") or "").strip()
+    title = item.item_title.strip()
     model, colorway = parse_listing_title(title)
     # An explicit colorway beats one recovered from the title. Order lines
     # carry it separately ("Indigo Depth / Classic") and plenty of titles have
     # no " - " to split on at all -- "Odysea Hydro Indigo Depth" parses to a
     # model with no colorway, which then can't disambiguate anything.
-    colorway = (item.get("colorway") or colorway) or None
-    try:
-        quantity = max(int(item.get("quantity", 1) or 1), 1)
-    except (TypeError, ValueError):
-        quantity = 1
-    return title, model, colorway, quantity
+    colorway = (item.colorway or colorway) or None
+    # `quantity` is bounded by the schema (`MAX_UNITS_PER_LINE`); the clamp
+    # that used to live here read `1e9` as a real order.
+    return title, model, colorway, item.quantity
 
 
 async def _units_to_add(
-    db: AsyncSession, item: dict, title: str, quantity: int, staged: dict[tuple, int]
+    db: AsyncSession, item: PurchaseLine, title: str, quantity: int, staged: dict[tuple, int]
 ) -> tuple[int, float | None, str | None]:
     """How many rows this order line still needs. Returns (wanted, price, size).
 
@@ -392,9 +429,9 @@ async def _units_to_add(
     without carrying the batch's own decisions the second line's count would
     depend on whether a flush happened to have run.
     """
-    price = item.get("price")
-    size = normalize_size(item.get("size"))
-    key = (item.get("order_ref"), title, price, size)
+    price = item.price
+    size = normalize_size(item.size)
+    key = (item.order_ref, title, price, size)
     # `no_autoflush` because this SELECT and `staged` count the same rows.
     #
     # `import_purchases` adds a Purchase per unit as it walks the batch, and
@@ -410,7 +447,7 @@ async def _units_to_add(
         existing = int((await db.execute(
             select(func.count(Purchase.id)).where(
                 Purchase.item_title == title,
-                Purchase.order_ref == item.get("order_ref"),
+                Purchase.order_ref == item.order_ref,
                 Purchase.price == price,
                 Purchase.size.is_(None) if size is None else Purchase.size == size,
             )
@@ -420,7 +457,7 @@ async def _units_to_add(
     return wanted, price, size
 
 
-async def import_purchases(db: AsyncSession, items: list[dict]) -> dict:
+async def import_purchases(db: AsyncSession, items: list[PurchaseLine | dict]) -> dict:
     """Store purchase line items, one row per unit bought.
 
     A line reading "x 2" is two hats, and a hat is what a purchase gets
@@ -441,7 +478,7 @@ async def import_purchases(db: AsyncSession, items: list[dict]) -> dict:
     # happened to have run — which is how the preview and the import came to
     # disagree by a row on the same input.
     staged: dict[tuple, int] = {}
-    for item in items:
+    for item in _as_lines(items):
         title, model, colorway, quantity = _line_fields(item)
         if not title:
             skipped += 1
@@ -450,19 +487,14 @@ async def import_purchases(db: AsyncSession, items: list[dict]) -> dict:
         wanted, price, size = await _units_to_add(db, item, title, quantity, staged)
         skipped += quantity - wanted
 
-        order_date = None
-        if item.get("order_date"):
-            try:
-                order_date = datetime.fromisoformat(str(item["order_date"]))
-            except ValueError:
-                pass
-
         for _ in range(wanted):
             db.add(
                 Purchase(
-                    source=item.get("source", "email"),
-                    order_ref=item.get("order_ref"),
-                    order_date=order_date,
+                    source=item.source or "email",
+                    order_ref=item.order_ref,
+                    # Parsed by the schema; an unparseable date is a 422 that
+                    # names the line, where it used to be dropped to NULL.
+                    order_date=item.order_date,
                     item_title=title,
                     model_name=model,
                     colorway=colorway,
@@ -471,7 +503,7 @@ async def import_purchases(db: AsyncSession, items: list[dict]) -> dict:
                     # Always 1: the row IS one unit. The original line quantity
                     # is recoverable by counting rows in the order.
                     quantity=1,
-                    raw=item.get("raw"),
+                    raw=item.raw,
                 )
             )
             imported += 1
@@ -536,7 +568,7 @@ async def _matchable_hats(db: AsyncSession) -> list[Hat]:
     )
 
 
-async def preview_import(db: AsyncSession, items: list[dict]) -> dict:
+async def preview_import(db: AsyncSession, items: list[PurchaseLine | dict]) -> dict:
     """What `import_purchases` + matching WOULD do. Writes nothing.
 
     Deliberately does not go through `import_purchases` and roll back: this
@@ -571,7 +603,7 @@ async def preview_import(db: AsyncSession, items: list[dict]) -> dict:
     accessories = 0
     staged: dict[tuple, int] = {}   # mirrors `import_purchases`; see there
 
-    for item in items:
+    for item in _as_lines(items):
         title, model, colorway, quantity = _line_fields(item)
         if not title:
             unusable += 1
@@ -585,8 +617,8 @@ async def preview_import(db: AsyncSession, items: list[dict]) -> dict:
             # counted lines while the import counts units would under-report
             # exactly the multi-buys this is meant to surface.
             transient = Purchase(
-                source=item.get("source", "email"),
-                order_ref=item.get("order_ref"),
+                source=item.source or "email",
+                order_ref=item.order_ref,
                 item_title=title,
                 model_name=model,
                 colorway=colorway,
@@ -618,17 +650,7 @@ async def preview_import(db: AsyncSession, items: list[dict]) -> dict:
         if id(purchase) not in new_rows:
             backlog_matches += 1
         proposals.append({
-            "item_title": purchase.item_title,
-            "order_ref": purchase.order_ref,
-            "price": purchase.price,
-            "size": purchase.size,
-            "hat_id": hat.id,
-            "hat_display_id": hat.display_id,
-            "score": best_score,
-            "matched_on": _matched_on(purchase, hat),
-            "ambiguous": ambiguous,
-            "tied_hat_ids": tied_hat_ids if ambiguous else [],
-            "sets_price": purchase.price is not None and hat.purchase_price is None,
+            **_proposal(purchase, hat, best_score, ambiguous, tied_hat_ids),
             # Which half of the click this row is. A caller showing only the
             # file's own lines would reproduce the bug this split exists to fix.
             "already_on_record": id(purchase) not in new_rows,
@@ -656,6 +678,28 @@ async def preview_import(db: AsyncSession, items: list[dict]) -> dict:
     }
 
 
+def _proposal(
+    purchase: Purchase, hat: Hat, score: int, ambiguous: bool, tied_hat_ids: list[int]
+) -> dict:
+    """One proposed purchase→hat pairing, as both the preview and the matcher
+    report it. Two hand-built copies of this dict drifted (one carried `size`,
+    the other `sets_colorway`); a field either report needs is added here."""
+    return {
+        "item_title": purchase.item_title,
+        "order_ref": purchase.order_ref,
+        "price": purchase.price,
+        "size": purchase.size,
+        "hat_id": hat.id,
+        "hat_display_id": hat.display_id,
+        "score": score,
+        "matched_on": _matched_on(purchase, hat),
+        "ambiguous": ambiguous,
+        "tied_hat_ids": tied_hat_ids if ambiguous else [],
+        "sets_price": purchase.price is not None and hat.purchase_price is None,
+        "sets_colorway": bool(purchase.colorway) and not hat.colorway,
+    }
+
+
 def _looks_like_headwear(purchase: Purchase, hats: list[Hat]) -> bool:
     """Rough flag for lines that are not hats — travel cases, gift cards.
 
@@ -673,7 +717,21 @@ def _looks_like_headwear(purchase: Purchase, hats: list[Hat]) -> bool:
         return False
     # A model name already on the shelf is strong evidence it is headwear.
     known_models = {(h.model_name or "").lower() for h in hats if h.model_name}
-    return (purchase.model_name or "").lower() in known_models or bool(purchase.size)
+    if (purchase.model_name or "").lower() in known_models or bool(purchase.size):
+        return True
+    # melin beanies are one-size, which `normalize_size` correctly reads as
+    # "not a hat size" — and that left every `Journey Beanie - Black` not yet
+    # on the shelf flagged as an accessory. A beanie shape named in the title
+    # is a hat whatever its size says.
+    return any(shape in naming.token_set(title) for shape in _BEANIE_SHAPE_TOKENS)
+
+
+#: The beanie shapes as they appear in an order line — `Journey`, `Destination`,
+#: `All Day` — plus the word itself. `BEANIE_STYLES` holds the enum values
+#: (`all_day`); a title carries the words.
+_BEANIE_SHAPE_TOKENS: frozenset[str] = frozenset(
+    {"beanie"} | {tok for style in BEANIE_STYLES for tok in naming.tokens(style.replace("_", " "))}
+) - {"all", "day"}
 
 
 #: Exact model-name agreement.
@@ -714,23 +772,15 @@ PRICE_EXACT = 6
 _CONSTRUCTION_TOKENS: frozenset[str] = CONSTRUCTION_TOKENS
 
 
-@lru_cache(maxsize=4096)
 def _model_tokens(name: str | None) -> frozenset[str]:
-    """Model name as a bag of comparable words.
+    """Model name as a bag of comparable words — `naming.token_set`.
 
-    Hyphens split because "A-Game" and "a game" are the same product line, and
-    a bare "-" is dropped so "Trenches Thermal - Camo" tokenizes like
-    "Trenches Thermal Camo".
-
-    Cached because matching is quadratic — every purchase is scored against
-    every free hat, and `_match_score` tokenizes six strings per pair — over a
-    vocabulary of a few hundred distinct strings. (It used to say "twice, once
-    to rank scarcity, once to assign"; `_by_scarcity` is gone and each pair is
-    scored once.) Pure function of its argument, so the cache can only ever
-    return what it would have computed.
+    This used to be its own tokenizer, splitting on whitespace and hyphens
+    only, while `melin_recap.model_tokens` stripped punctuation: the same
+    quoted name was priceable and unmatchable. One reading now, cached there
+    (matching is quadratic and tokenizes several strings per pair).
     """
-    raw = (name or "").lower().replace("-", " ")
-    return frozenset(t for t in raw.split() if t)
+    return naming.token_set(name)
 
 
 def _color_words(hat: Hat) -> frozenset[str]:
@@ -1189,17 +1239,7 @@ async def match_purchases_to_hats(db: AsyncSession, *, dry_run: bool = False) ->
 
         proposals.append({
             "purchase_id": purchase.id,
-            "item_title": purchase.item_title,
-            "order_ref": purchase.order_ref,
-            "price": purchase.price,
-            "hat_id": hat.id,
-            "hat_display_id": hat.display_id,
-            "score": best_score,
-            "matched_on": _matched_on(purchase, hat),
-            "ambiguous": ambiguous,
-            "tied_hat_ids": tied_hat_ids if ambiguous else [],
-            "sets_price": purchase.price is not None and hat.purchase_price is None,
-            "sets_colorway": bool(purchase.colorway) and not hat.colorway,
+            **_proposal(purchase, hat, best_score, ambiguous, tied_hat_ids),
         })
 
         if dry_run:

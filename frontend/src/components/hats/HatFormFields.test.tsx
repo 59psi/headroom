@@ -8,38 +8,50 @@ import { useHatFormOptions, HatBasicsCard, NEW_CASE_VALUE, type HatBasics } from
 // Deliberately NOT 'Closet': that is the case fixture's room name, and the
 // room <select> would then make every `getByText('Closet')` ambiguous between
 // two legitimate controls rather than pinning the one under test.
-vi.mock('../../api/rooms', () => ({
-  getRoomOptions: vi.fn(async () => [{ value: '1', label: 'Loft' }]),
-}));
+vi.mock('../../api/rooms', async (importOriginal) => {
+  const { stubAll } = await import('../../test/stubModule');
+  return {
+    ...stubAll(await importOriginal<object>()),
+    getRoomOptions: vi.fn(async () => [{ value: '1', label: 'Loft' }]),
+  };
+});
 
-vi.mock('../../api/hats', () => ({
-  // `is_beanie` is served by the API, not derived from the value — it decides
-  // which cases the picker offers, and a second definition client-side would
-  // eventually disagree with the server. Mock the real payload shape.
-  getStyles: vi.fn(async () => [
-    { value: 'a_game', label: 'A-Game', is_beanie: false },
-    { value: 'beanie', label: 'Beanie (unspecified)', is_beanie: true },
-    { value: 'journey', label: 'Journey Beanie', is_beanie: true },
-  ]),
-  getSizes: vi.fn(async () => [{ value: 'classic', label: 'Classic' }]),
-  getConditions: vi.fn(async () => [{ value: 'new', label: 'New' }]),
-  getConstructions: vi.fn(async () => ['HYDRO', 'HYDROLite', 'Thermal']),
-  getCollections: vi.fn(async () => ['Piña', 'Skye Walker']),
-}));
+vi.mock('../../api/hats', async (importOriginal) => {
+  const { stubAll } = await import('../../test/stubModule');
+  return {
+    ...stubAll(await importOriginal<object>()),
+    // `is_beanie` is served by the API, not derived from the value — it decides
+    // which cases the picker offers, and a second definition client-side would
+    // eventually disagree with the server. Mock the real payload shape.
+    getStyles: vi.fn(async () => [
+      { value: 'a_game', label: 'A-Game', is_beanie: false },
+      { value: 'beanie', label: 'Beanie (unspecified)', is_beanie: true },
+      { value: 'journey', label: 'Journey Beanie', is_beanie: true },
+    ]),
+    getSizes: vi.fn(async () => [{ value: 'classic', label: 'Classic' }]),
+    getConditions: vi.fn(async () => [{ value: 'new', label: 'New' }]),
+    getConstructions: vi.fn(async () => ['HYDRO', 'HYDROLite', 'Thermal']),
+    getCollections: vi.fn(async () => ['Piña', 'Skye Walker']),
+  };
+});
 
-vi.mock('../../api/cases', () => ({
-  // The shared, TYPED fixture: this literal was captioned "Real payload shape"
-  // while missing five fields pydantic always serializes. The picker renders
-  // occupancy from `nominal_capacity`, not `used + free`, so a partial shape
-  // silently rendered "2" instead of "2/3" — and only a typed fixture makes
-  // tsc notice the next such omission.
-  listCases: vi.fn(async () => [
-    caseFixture({
-      id: 4, room_name: 'Closet', hat_count: 2, regular_count: 2,
-      accepts_beanie: false, free_regular: 1, free_beanie: 0,
-    }),
-  ]),
-}));
+vi.mock('../../api/cases', async (importOriginal) => {
+  const { stubAll } = await import('../../test/stubModule');
+  return {
+    ...stubAll(await importOriginal<object>()),
+    // The shared, TYPED fixture: this literal was captioned "Real payload shape"
+    // while missing five fields pydantic always serializes. The picker renders
+    // occupancy from `nominal_capacity`, not `used + free`, so a partial shape
+    // silently rendered "2" instead of "2/3" — and only a typed fixture makes
+    // tsc notice the next such omission.
+    listCases: vi.fn(async () => [
+      caseFixture({
+        id: 4, room_name: 'Closet', hat_count: 2, regular_count: 2,
+        accepts_beanie: false, free_regular: 1, free_beanie: 0,
+      }),
+    ]),
+  };
+});
 
 const BASICS: HatBasics = {
   roomId: '',

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getRepricing, runRepricing, runRepricingAll } from '../../api/settings';
+import { ErrorNote } from '../common/ErrorNote';
 import { invalidateHatViews } from '../../lib/invalidate';
 import { SweepProgressBar } from '../common/SweepProgressBar';
 
@@ -94,6 +95,7 @@ export function RepricingCard() {
     <div className="card mb-3">
       <div className="card-body">
         <div className="card-title">Re-pricing</div>
+        <ErrorNote of={[status, run, runAll]} className="mb-3" />
         <p className="text-secondary small mb-3">
           Refreshes resale values from the marketplace on a schedule. Independent of
           photo analysis — a median is looked up from details already on the hat, so

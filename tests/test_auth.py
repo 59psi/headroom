@@ -169,6 +169,102 @@ async def test_login_wrong_password_and_rate_limit(anon_client):
     auth_service._failures.clear()
 
 
+async def test_an_unknown_username_costs_the_same_argon2_work_as_a_wrong_password(
+    anon_client, monkeypatch
+):
+    """The login must not tell an attacker WHICH username is the owner's.
+
+    `user is None or not await verify_password_async(...)` short-circuits: a
+    name that does not exist skipped argon2 entirely and answered in ~4 ms
+    where the real name with a wrong password took ~36 ms (hundreds of ms on
+    a Pi). The limiter keys on (ip, username), so rotating candidate names
+    never locks, and the timing gap reads out half of the credential on the
+    first try per name. A timing assertion would flake; what is pinned is the
+    MECHANISM — argon2 runs against a placeholder hash when there is no user,
+    so both branches do the same work.
+    """
+    from headroom.services import auth_service
+
+    auth_service._failures.clear()
+    await _setup_owner(anon_client)
+    anon_client.cookies.clear()
+
+    calls: list[tuple[str, str]] = []
+    real_verify = auth_service.verify_password_async
+
+    async def spying_verify(password_hash: str, password: str) -> bool:
+        calls.append((password_hash, password))
+        return await real_verify(password_hash, password)
+
+    monkeypatch.setattr(auth_service, "verify_password_async", spying_verify)
+
+    resp = await anon_client.post(
+        "/api/auth/login", json={"username": "nobody-here", "password": "whatever"}
+    )
+    assert resp.status_code == 401
+    assert len(calls) == 1, "argon2 must run for an unknown username too"
+    placeholder_hash, _ = calls[0]
+    assert placeholder_hash.startswith("$argon2"), placeholder_hash
+    # The placeholder is a real hash of something nobody types, so the verify
+    # does the full work AND can never accidentally succeed.
+    assert await real_verify(placeholder_hash, "whatever") is False
+    auth_service._failures.clear()
+
+
+async def test_the_session_cookie_carries_the_flags_the_whole_csrf_defense_rests_on(anon_client):
+    """There is no CSRF token and no Origin check: `SameSite=Lax` IS the
+    defense, `HttpOnly` is what keeps a script injection from reading the
+    session, and `Secure` is what keeps it off plain HTTP once TLS is on.
+
+    A mutation inverting all three survived the full suite — a regression
+    dropping any of them would have shipped green. The attributes are read
+    off the raw `Set-Cookie` header, since the cookie jar keeps the value and
+    forgets the flags.
+    """
+    await _setup_owner(anon_client)
+    anon_client.cookies.clear()
+
+    resp = await anon_client.post("/api/auth/login", json=CREDS)
+    assert resp.status_code == 200
+    cookie = resp.headers["set-cookie"]
+    attrs = {part.strip().split("=", 1)[0].lower() for part in cookie.split(";")}
+
+    assert cookie.startswith("headroom_session=")
+    assert "httponly" in attrs
+    assert "samesite=lax" in cookie.lower()
+    assert "path=/" in cookie.lower()
+    assert "max-age=" in cookie.lower()
+    # The test transport is plain http, so `Secure` must be ABSENT here — set
+    # unconditionally it would drop the cookie on the http80 overlay and on
+    # `http://<ip>:8000`, the zero-config remote path.
+    assert "secure" not in attrs
+
+
+async def test_the_secure_flag_follows_the_scheme():
+    """`Secure` is decided by the request scheme, not hardcoded either way.
+
+    The ASGI test transport is plain http and does not honor
+    `X-Forwarded-Proto`, so the https branch is exercised on the cookie
+    setter directly with a synthetic scope of each scheme.
+    """
+    from fastapi import Response
+    from starlette.requests import Request
+
+    from headroom.routes.auth import _set_session_cookie
+
+    def cookie_for(scheme: str) -> str:
+        scope = {
+            "type": "http", "method": "POST", "path": "/api/auth/login", "scheme": scheme,
+            "headers": [], "query_string": b"", "server": ("h", 443 if scheme == "https" else 80),
+        }
+        response = Response()
+        _set_session_cookie(response, Request(scope), "sid")
+        return response.headers["set-cookie"].lower()
+
+    assert "secure" in cookie_for("https")
+    assert "secure" not in cookie_for("http")
+
+
 async def test_the_profile_does_not_carry_the_bearer_token(anon_client):
     """A session must not be enough to read a credential that outlives it.
 
@@ -386,6 +482,67 @@ async def test_change_password_revokes_other_sessions(anon_client, app):
     # A (the changer) survives; B is dead
     assert (await anon_client.get("/api/hats")).status_code == 200
     assert (await other.get("/api/hats")).status_code == 401
+
+
+async def test_rotating_usernames_from_one_address_is_still_locked_out(
+    anon_client, db_session
+):
+    """The limiter keyed on (ip, username) and nothing else.
+
+    Credential stuffing rotates the username, so no pair ever reached five
+    failures: measured over HTTP, 300 attempts at `nobody0…299` from one
+    address ran at 412/s with zero 429s, and each one committed an
+    `auth.login_failed` row — an fsync on the SD card, per anonymous request,
+    unbounded — plus a limiter key that lived fifteen minutes (200,000
+    rotated names in-process = 200,000 keys, still not limited). 2.77.0
+    applied exactly this reasoning to the BLOCKED row and left the FAILED row
+    with it. A second bucket keyed on the address alone closes it: the pair
+    bucket still gives the owner five tries at their own name, and the
+    address bucket bounds everything an anonymous client can make this
+    endpoint do.
+    """
+    from sqlalchemy import func, select
+
+    from headroom.models.activity_log import ActivityLog
+    from headroom.services import auth_service
+
+    async def failed_rows() -> int:
+        return (await db_session.execute(
+            select(func.count(ActivityLog.id)).where(ActivityLog.kind == "auth.login_failed")
+        )).scalar_one()
+
+    auth_service._failures.clear()
+    auth_service._blocked_logged.clear()
+    await _setup_owner(anon_client)
+    anon_client.cookies.clear()
+
+    codes = []
+    for i in range(auth_service._MAX_FAILURES_PER_IP + 10):
+        resp = await anon_client.post(
+            "/api/auth/login", json={"username": f"nobody{i}", "password": "x" * 8}
+        )
+        codes.append(resp.status_code)
+
+    assert codes.count(401) == auth_service._MAX_FAILURES_PER_IP, codes
+    assert codes[auth_service._MAX_FAILURES_PER_IP:] == [429] * 10, (
+        "the address bucket never engaged — rotating the username is free"
+    )
+    # Bounded: the failed rows stop where the 401s stop, and the block is
+    # audited once for the address rather than once per new username.
+    assert await failed_rows() == auth_service._MAX_FAILURES_PER_IP
+    blocked = (await db_session.execute(
+        select(func.count(ActivityLog.id)).where(ActivityLog.kind == "auth.login_blocked")
+    )).scalar_one()
+    assert blocked == 1
+    # And the RIGHT credentials from that address are locked too — that is
+    # what a lockout is; the owner waits out the window like anyone else.
+    assert (await anon_client.post("/api/auth/login", json=CREDS)).status_code == 429
+    # Keys are bounded with it: one per attempt that got through, plus the
+    # address bucket, not one per attempt made.
+    assert len(auth_service._failures) <= auth_service._MAX_FAILURES_PER_IP + 1
+
+    auth_service._failures.clear()
+    auth_service._blocked_logged.clear()
 
 
 async def test_a_blocked_login_is_audited_once_per_window_not_once_per_attempt(

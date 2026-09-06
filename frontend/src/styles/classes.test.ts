@@ -23,7 +23,7 @@ function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
     const full = join(dir, name);
     if (statSync(full).isDirectory()) walk(full, out);
-    else if (/\.tsx$/.test(name) && !/\.test\.tsx$/.test(name)) out.push(full);
+    else if (/\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name)) out.push(full);
   }
   return out;
 }
@@ -61,6 +61,22 @@ function usedClasses(): Map<string, string[]> {
       for (const lit of m[1].matchAll(/(?<![?])[?:]\s*'([^']+)'/g)) {
         for (const cls of lit[1].split(/\s+/)) if (cls && /^-?[_a-zA-Z][_a-zA-Z0-9-]*$/.test(cls)) (used.get(cls) ?? used.set(cls, []).get(cls)!).push(rel);
       }
+    }
+    // className={'a b' + expr} — the leading string literal in a concatenation
+    // (CasePicker/Combobox build option classes this way; the scanner missed
+    // them, so a typo'd class there was invisible).
+    for (const m of text.matchAll(/className=\{\s*'([^']+)'/g)) {
+      for (const cls of m[1].split(/\s+/)) if (cls) (used.get(cls) ?? used.set(cls, []).get(cls)!).push(rel);
+    }
+    // classList.add/toggle/remove('literal') and *_CLASS constants — the
+    // keyboard/picker body classes are string constants matched only by a CSS
+    // selector, so nothing checked they exist and a rename left the feature
+    // silently gone. Scanned in .ts too (this walk now includes it).
+    for (const m of text.matchAll(/classList\.(?:add|toggle|remove)\(\s*'([^']+)'/g)) {
+      for (const cls of m[1].split(/\s+/)) if (cls) (used.get(cls) ?? used.set(cls, []).get(cls)!).push(rel);
+    }
+    for (const m of text.matchAll(/_CLASS\s*=\s*'([^']+)'/g)) {
+      for (const cls of m[1].split(/\s+/)) if (cls) (used.get(cls) ?? used.set(cls, []).get(cls)!).push(rel);
     }
   }
   return used;

@@ -23,11 +23,39 @@ import uuid
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import StatementError
 
 from headroom.utils.redaction import redact_share_tokens
 from headroom.services.activity_service import log_activity
 
 logger = logging.getLogger(__name__)
+
+
+def describe_exception(exc: BaseException) -> str:
+    """The one line about `exc` that may be written down.
+
+    `str(exc)` was recorded verbatim, and for a SQLAlchemy error that string
+    renders the statement AND its bound parameters — `[parameters:
+    ('Ab3d…',)]`. `resolve_token` runs `WHERE share_links.token = ?`, so any
+    database fault while a share link was being resolved (a locked database,
+    a disk I/O error — the SD-card failures this app is built around) wrote
+    the live bearer token into the `error.unhandled` row, one field over from
+    the `path` the previous fix had scrubbed. The engine now also hides
+    parameters in its own rendering (`hide_parameters=True`), which covers the
+    traceback uvicorn prints; this covers the row and the log line whatever
+    engine produced the error.
+
+    For a statement error the diagnostic is the DBAPI cause ("disk I/O
+    error"), which is kept; the SQL and its values are what leak and are not.
+    Everything else still goes through the path redaction, since an exception
+    message can quote the URL that provoked it.
+    """
+    if isinstance(exc, StatementError):
+        cause = exc.orig if exc.orig is not None else exc
+        text = f"{type(exc).__name__}: {type(cause).__name__}: {cause}"
+    else:
+        text = f"{type(exc).__name__}: {exc}"
+    return redact_share_tokens(text)[:1000]
 
 
 async def validation_error(request: Request, exc: Exception) -> JSONResponse:
@@ -71,6 +99,7 @@ async def log_unhandled(request: Request, exc: Exception) -> JSONResponse:
     # unredacted row puts a live bearer token in a third party's storage and
     # keeps it there for as long as that archive is retained.
     path = redact_share_tokens(request.url.path)
+    error = describe_exception(exc)
 
     # Its own session. The request's is very likely mid-rollback — it is often
     # the reason we are here — and a handler that raises while handling an
@@ -98,7 +127,7 @@ async def log_unhandled(request: Request, exc: Exception) -> JSONResponse:
                     "ref": ref,
                     "method": request.method,
                     "path": path,
-                    "error": f"{type(exc).__name__}: {exc}"[:1000],
+                    "error": error,
                 },
             )
             await db.commit()
@@ -107,7 +136,7 @@ async def log_unhandled(request: Request, exc: Exception) -> JSONResponse:
 
     logger.error(
         "Unhandled error [%s] on %s %s: %s",
-        ref, request.method, path, exc,
+        ref, request.method, path, error,
     )
     return JSONResponse(
         {"detail": "Internal server error", "ref": ref}, status_code=500

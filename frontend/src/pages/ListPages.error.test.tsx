@@ -12,19 +12,31 @@ import { renderWithProviders } from '../test/utils';
 import { HatsPage } from './HatsPage';
 import { CasesPage } from './CasesPage';
 
-vi.mock('../api/hats', () => ({
-  listAllHats: vi.fn(async () => { throw new Error('500'); }),
-  getStyles: vi.fn(async () => []),
-  getSizes: vi.fn(async () => []),
-  getConditions: vi.fn(async () => []),
-  getConstructions: vi.fn(async () => []),
-}));
-vi.mock('../api/cases', () => ({
-  listCases: vi.fn(async () => { throw new Error('500'); }),
-}));
-vi.mock('../api/rooms', () => ({
-  getRoomOptions: vi.fn(async () => []),
-}));
+vi.mock('../api/hats', async (importOriginal) => {
+  const { stubAll } = await import('../test/stubModule');
+  return {
+    ...stubAll(await importOriginal<object>()),
+    listAllHats: vi.fn(async () => { throw new Error('500'); }),
+    getStyles: vi.fn(async () => []),
+    getSizes: vi.fn(async () => []),
+    getConditions: vi.fn(async () => []),
+    getConstructions: vi.fn(async () => []),
+  };
+});
+vi.mock('../api/cases', async (importOriginal) => {
+  const { stubAll } = await import('../test/stubModule');
+  return {
+    ...stubAll(await importOriginal<object>()),
+    listCases: vi.fn(async () => { throw new Error('500'); }),
+  };
+});
+vi.mock('../api/rooms', async (importOriginal) => {
+  const { stubAll } = await import('../test/stubModule');
+  return {
+    ...stubAll(await importOriginal<object>()),
+    getRoomOptions: vi.fn(async () => []),
+  };
+});
 
 describe('list pages on a failed fetch', () => {
   it('Hats shows an error, not "Add First Hat"', async () => {

@@ -55,7 +55,7 @@ function Tile({ hat }: { hat: SharedHat }) {
     <div className="card-body text-center">
       {hat.photo_url ? (
         <img
-          src={hat.photo_url}
+          src={hat.thumb_url ?? hat.photo_url}
           alt=""
           style={{ width: '100%', height: 120, objectFit: 'contain' }}
         />

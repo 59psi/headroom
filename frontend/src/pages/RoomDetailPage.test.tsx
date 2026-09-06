@@ -15,7 +15,13 @@ import { RoomDetailPage } from './RoomDetailPage';
 import * as roomsApi from '../api/rooms';
 import type { CaseRead, RoomDetail } from '../types';
 
-vi.mock('../api/rooms', () => ({ getRoom: vi.fn() }));
+vi.mock('../api/rooms', async (importOriginal) => {
+  const { stubAll } = await import('../test/stubModule');
+  return {
+    ...stubAll(await importOriginal<object>()),
+    getRoom: vi.fn()
+  };
+});
 
 const mocked = vi.mocked(roomsApi);
 

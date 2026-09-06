@@ -291,6 +291,61 @@ async def test_the_error_row_redacts_a_share_token_from_the_path(client, monkeyp
     )
 
 
+async def test_a_database_error_does_not_write_its_bound_parameters_into_the_row(
+    client, monkeypatch, caplog
+):
+    """The redaction above covered the PATH field and nothing else.
+
+    `details["error"]` stored `str(exc)` verbatim, and a SQLAlchemy error
+    renders its statement AND its bound parameters — `[parameters:
+    ('Ab3d…',)]` — so any database fault while resolving a share link (a
+    locked database, a disk I/O error, the SD-card failures this app is built
+    around) wrote the live token into the very row the previous fix had
+    scrubbed the path of. Same sink, one field over. The log line beside it
+    carried the same text.
+
+    The useful diagnostic is the DBAPI error ("disk I/O error"), which must
+    survive; the SQL and its values are what leak and must not.
+    """
+    from sqlalchemy.exc import OperationalError
+
+    from headroom.routes import share_links as share_links_route
+
+    token = "Ab3d-Ef7h_Ij1k2Lm3n4Op5q"
+
+    async def _db_fault(*a, **kw):
+        raise OperationalError(
+            "SELECT share_links.id FROM share_links WHERE share_links.token = ?",
+            (token,),
+            Exception("disk I/O error"),
+        )
+
+    monkeypatch.setattr(share_links_route.share_link_service, "resolve_token", _db_fault)
+
+    with caplog.at_level("ERROR"), pytest.raises(OperationalError):
+        await client.get(f"/api/public/share/{token}")
+
+    rows = (await client.get("/api/admin/activity-log?limit=50")).json()
+    row = next(r for r in rows if r["kind"] == "error.unhandled")
+
+    assert token not in (row["details"] or ""), "a bound parameter reached the database"
+    assert "disk I/O error" in (row["details"] or ""), "the DBAPI cause was thrown away"
+    assert token not in caplog.text, "a bound parameter reached the log"
+
+
+async def test_the_production_engine_hides_bound_parameters():
+    """Belt to the handler's braces: SQLAlchemy's own rendering of a failed
+    statement — in the traceback uvicorn prints, in its own logger — must not
+    carry values either. `hide_parameters=True` is a construction-time flag on
+    the engine and nothing else can reach it, so it is checked here on the
+    module-level engine (attribute only; the engine is never connected under
+    test, its URL is deliberately unopenable).
+    """
+    from headroom import database
+
+    assert database.engine.sync_engine.hide_parameters is True
+
+
 # ---- effective configuration ------------------------------------------ #
 
 

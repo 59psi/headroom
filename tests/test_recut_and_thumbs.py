@@ -144,7 +144,8 @@ async def test_recut_requires_an_original(client):
 
 
 async def test_recut_runs_the_pipeline_again_from_the_original(client, fake_cutout):
-    """A re-cut is the upload path replayed, not a special case."""
+    """A re-cut is the cutout half of the upload path replayed, from the
+    retained original."""
     body = await _hat_with_photo(client)
     hat_id = body["id"]
     original = body["original_path"]
@@ -155,6 +156,58 @@ async def test_recut_runs_the_pipeline_again_from_the_original(client, fake_cuto
     # otherwise a second re-cut would be impossible.
     assert (settings.upload_dir / original).exists()
     assert resp.json()["original_path"] == original
+
+
+async def test_recut_spends_no_claude_call_and_touches_nothing_the_owner_wrote(
+    client, fake_cutout, monkeypatch, db_session
+):
+    """Executed by the review: with a key stubbed in, one upload made one
+    analyzer call and one "Redo cutout" made a SECOND — and wrote the
+    analyzer's `model_name` over "My Own Name" and its `design_notes` over
+    the owner's. CLAUDE.md said the button spent no call. Now it spends
+    none: rembg runs, the thumbnail and export derivative are regenerated,
+    and the analysis record and every field are as they were.
+    """
+    from sqlalchemy import update as sa_update
+
+    from headroom.models.hat import Hat
+    from headroom.services import hat_analysis_pipeline, settings_service
+
+    # Upload first with no key (analysis `skipped`), THEN arm a key and an
+    # analyzer that counts — so the only call that could be counted is the
+    # re-cut's.
+    body = await _hat_with_photo(client)
+    hat_id = body["id"]
+    calls = {"n": 0}
+
+    async def _counting_analyzer(*_a, **_k):
+        calls["n"] += 1
+        raise RuntimeError("the analyzer must not run on a re-cut")
+
+    monkeypatch.setattr(hat_analysis_pipeline, "analyze_hat_image", _counting_analyzer)
+
+    async def _key(db):
+        return "sk-ant-fake", "database"
+
+    monkeypatch.setattr(settings_service, "get_anthropic_key", _key)
+    await db_session.execute(sa_update(Hat).where(Hat.id == hat_id).values(
+        model_name="My Own Name", design_notes="owner wrote this",
+        analysis_status="ok", analysis_error=None,
+    ))
+    await db_session.commit()
+    before_thumb = (settings.upload_dir / body["thumb_path"]).stat().st_mtime_ns
+
+    resp = await client.post(f"/api/hats/{hat_id}/recut")
+
+    assert resp.status_code == 200, resp.text
+    assert calls["n"] == 0, "a re-cut spent a Claude call"
+    after = resp.json()
+    assert after["model_name"] == "My Own Name"
+    assert after["design_notes"] == "owner wrote this"
+    assert after["analysis_status"] == "ok"
+    assert after["analysis_stage"] is None
+    assert after["photo_path"].endswith(".png")
+    assert (settings.upload_dir / after["thumb_path"]).stat().st_mtime_ns >= before_thumb
 
 
 async def test_replacing_a_photo_clears_the_previous_derivatives(client, fake_cutout):
