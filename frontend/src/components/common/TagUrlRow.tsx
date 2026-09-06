@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getTagBase } from '../../api/settings';
+import { copyText } from '../../lib/clipboard';
 
 /**
  * Copy the URL to write onto an NFC tag for this hat or case.
@@ -19,26 +20,11 @@ export function TagUrlRow({ kind, ident }: { kind: 'h' | 'c'; ident: string | nu
   const url = `${data.base_url}/t/${kind}/${ident}`;
 
   async function copy() {
-    const input = inputRef.current;
-    try {
-      // `navigator.clipboard` only exists in a secure context. Headroom is
-      // commonly served over plain HTTP on the LAN (docker-compose.http80),
-      // where this is undefined — so the fallback isn't a legacy nicety, it's
-      // the path most installs actually take. Without it the button would
-      // appear to work and copy nothing.
-      if (window.isSecureContext && navigator.clipboard) {
-        await navigator.clipboard.writeText(url);
-      } else if (input) {
-        input.select();
-        input.setSelectionRange(0, url.length); // iOS ignores select() alone
-        document.execCommand('copy');
-      }
+    // See `lib/clipboard.copyText` — the secure-context check and the
+    // selection fallback lived here first and are shared now.
+    if (await copyText(url, inputRef.current)) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1600);
-    } catch {
-      // Both paths refused (older iOS Safari can). The field is readonly and
-      // selectable, so long-press → Copy still works; select it for them.
-      input?.select();
     }
   }
 

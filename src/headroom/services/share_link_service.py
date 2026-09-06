@@ -16,15 +16,15 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
-from headroom.models.case import Case
 from headroom.models.hat import Hat
 from headroom.models.user import ShareLink
+from headroom.services.hat_service import hat_loads
 from headroom.services.activity_service import log_and_commit
 
 # 32 bytes -> 256 bits of entropy, url-safe. The token IS the credential for
 # the public endpoints, so it has to be unguessable rather than merely unique.
+from headroom.schemas.share import SharedColor, SharedHat
 _TOKEN_BYTES = 32
 
 
@@ -109,7 +109,7 @@ async def shared_hats(db: AsyncSession) -> list[Hat]:
     """
     result = await db.execute(
         select(Hat)
-        .options(selectinload(Hat.case).selectinload(Case.room), selectinload(Hat.colors))
+        .options(*hat_loads())
         .where(Hat.disposed_at.is_(None))
         .order_by(Hat.id)
     )
@@ -136,9 +136,7 @@ async def shared_hat(db: AsyncSession, hat_id: int) -> Hat | None:
     result = await db.execute(
         select(Hat)
         .options(
-            selectinload(Hat.case).selectinload(Case.room),
-            selectinload(Hat.direct_room),
-            selectinload(Hat.colors),
+            *hat_loads(),
         )
         .where(Hat.id == hat_id, Hat.disposed_at.is_(None))
     )
@@ -158,7 +156,6 @@ def to_shared_hat(hat: Hat, photo_url: str | None):
     different routes (a token path vs the guest path). It is the only thing
     that legitimately differs.
     """
-    from headroom.schemas.share import SharedColor, SharedHat
 
     return SharedHat(
         id=hat.id,

@@ -25,6 +25,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from headroom.utils.redaction import redact_share_tokens
+from headroom.services.activity_service import log_activity
 
 logger = logging.getLogger(__name__)
 
@@ -80,10 +81,12 @@ async def log_unhandled(request: Request, exc: Exception) -> JSONResponse:
     # seam the test suite swaps for its in-memory database, and a handler
     # bound to the module-level factory writes to the real one.
     try:
-        from headroom.database import async_session
-        from headroom.services.activity_service import log_activity
 
-        factory = getattr(request.app.state, "session_factory", async_session)
+        # No fallback to the module-level `async_session`: `create_app` always
+        # sets the attribute, so the only thing a default could do is let an
+        # app that forgot the seam write to the production database quietly —
+        # the exact silent failure the seam exists to make loud.
+        factory = request.app.state.session_factory
         async with factory() as db:
             await log_activity(
                 db,
@@ -99,7 +102,7 @@ async def log_unhandled(request: Request, exc: Exception) -> JSONResponse:
                 },
             )
             await db.commit()
-    except Exception:  # noqa: BLE001 — best-effort; never mask the real error
+    except Exception:  # best-effort; never mask the real error
         logger.exception("Failed to record unhandled error [%s]", ref)
 
     logger.error(

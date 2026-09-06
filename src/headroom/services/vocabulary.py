@@ -36,7 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import InstrumentedAttribute
 
 
-def _fold(value: str) -> str:
+def fold(value: str) -> str:
     """Case-, whitespace- and accent-insensitive key for `value`.
 
     NFKD splits an accented character into its base letter plus a combining
@@ -64,9 +64,9 @@ def _preferred(variants: list[str], known: tuple[str, ...] = ()) -> str:
     so a single early typo doesn't rename what everything else uses; then
     alphabetical, purely so the result never depends on row order.
     """
-    key = _fold(variants[0])
+    key = fold(variants[0])
     for candidate in known:
-        if _fold(candidate) == key:
+        if fold(candidate) == key:
             return candidate
 
     counts: dict[str, int] = {}
@@ -92,7 +92,7 @@ async def distinct_values(
 
     seen: dict[str, str] = {}
     for raw in sorted((r.strip() for r in rows if r and r.strip()), key=str.casefold):
-        seen.setdefault(_fold(raw), raw)
+        seen.setdefault(fold(raw), raw)
     return list(seen.values())
 
 
@@ -126,15 +126,15 @@ async def canonicalize(
     if not cleaned:
         return None
 
-    key = _fold(cleaned)
+    key = fold(cleaned)
     for candidate in known:
-        if _fold(candidate) == key:
+        if fold(candidate) == key:
             return candidate
 
     rows = (
         await db.execute(select(column).where(column.is_not(None)).distinct())
     ).scalars().all()
-    matches = [" ".join(r.split()) for r in rows if r and r.strip() and _fold(r) == key]
+    matches = [" ".join(r.split()) for r in rows if r and r.strip() and fold(r) == key]
     if not matches:
         return cleaned
 
@@ -177,7 +177,7 @@ async def merge_case_variants(
     for raw in rows:
         if not raw or not raw.strip():
             continue
-        groups.setdefault(_fold(raw), []).append(raw)
+        groups.setdefault(fold(raw), []).append(raw)
 
     changed = 0
     for variants in groups.values():

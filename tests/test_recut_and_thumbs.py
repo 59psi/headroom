@@ -86,6 +86,41 @@ async def test_thumbnail_failure_is_survivable(tmp_path):
     assert make_thumbnail(tmp_path / "does-not-exist.png", tmp_path / "t") is None
 
 
+async def test_a_thumbnail_failure_is_logged_not_just_swallowed(tmp_path, caplog):
+    """Best-effort still gets a voice. `make_thumbnail` returned None with no
+    record, so a thumbnail pipeline failing on EVERY hat (disk full, a Pillow
+    build without WebP) read exactly like "already existed"."""
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="headroom.utils.photo"):
+        assert make_thumbnail(tmp_path / "does-not-exist.png", tmp_path / "thumbs" / "x") is None
+    assert any("Thumbnail failed" in r.getMessage() for r in caplog.records)
+
+
+async def test_a_sideways_phone_photo_is_stored_upright(tmp_path):
+    """Phones shoot portrait with the sensor sideways and record Orientation 6
+    in EXIF. `.convert("RGB")` + a JPEG save dropped the tag without honoring
+    it, so the stored photo — and the cutout, the thumbnail and everything
+    Claude saw — was on its side."""
+    from PIL import Image
+
+    from headroom.utils.photo import process_image
+
+    # A 60x30 landscape image tagged "rotate 90° CW to display" (Orientation 6)
+    # must come out as a 30x60 portrait once the tag is honored.
+    src = Image.new("RGB", (60, 30), (200, 40, 40))
+    exif = src.getexif()
+    exif[0x0112] = 6
+    src_path = tmp_path / "sideways.jpg"
+    src.save(src_path, "JPEG", exif=exif.tobytes())
+
+    out = process_image(src_path, tmp_path / "upright.jpg")
+
+    with Image.open(out) as img:
+        assert img.size == (30, 60), f"orientation tag ignored: {img.size}"
+        assert not img.getexif().get(0x0112), "the tag must not survive to re-rotate the image"
+
+
 async def test_upload_keeps_the_original_and_makes_a_thumbnail(client, fake_cutout):
     """Without the original there is nothing to re-cut from later."""
     body = await _hat_with_photo(client)

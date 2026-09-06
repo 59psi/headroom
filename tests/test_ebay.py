@@ -134,6 +134,35 @@ async def test_find_comps_aggregates_only_valid_positive_prices(db_session, monk
     assert result["ebay_search_url"] is not None
 
 
+async def test_the_listing_count_is_the_market_total_not_the_page(db_session, monkeypatch):
+    """The Browse API pages at `max_results` (25) and publishes `total` beside
+    the page. The count used to be `len(items)`, rendered on the hat page as
+    "median of N live listings" — so a model with 300 live listings read as 25,
+    the exact first-page-is-the-market shape `melin_recap.query_all_listings`
+    documents fixing. Without a `total` the page length is the honest fallback."""
+
+    async def _fake_creds(_db):
+        return ("app", "cert", "EBAY_US")
+
+    async def _fake_token(_app, _cert):
+        return "tok"
+
+    payload = {
+        "total": 300,
+        "itemSummaries": [{"price": {"value": str(40 + i)}} for i in range(25)],
+    }
+    monkeypatch.setattr(ebay_service, "get_creds", _fake_creds)
+    monkeypatch.setattr(ebay_service, "_ensure_token", _fake_token)
+    monkeypatch.setattr(
+        ebay_service.httpx, "AsyncClient", lambda *a, **k: _FakeClient(payload)
+    )
+
+    result = await ebay_service.find_comps(
+        db_session, brand="Melin", model="A-Game Hydro", style="a_game"
+    )
+    assert result["ebay_listing_count"] == 300, "the page is not the market"
+
+
 async def test_find_comps_no_valid_prices_yields_none_stats(db_session, monkeypatch):
     """Items present but no usable prices → avg/median None, count still counts."""
 

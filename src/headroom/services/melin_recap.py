@@ -4,8 +4,9 @@ melinrecap.com is a Treet marketplace running on Sharetribe Flex. The
 storefront is client-rendered (static HTML has no prices), but its own
 frontend talks to the public Sharetribe Marketplace API with an anonymous
 `public-read` token — the client id is embedded in their JS bundle. We use
-the same API the same way any visitor's browser does: one listings query per
-analysis, filtered by the hat's style category, prices aggregated to a
+the same API the same way any visitor's browser does: a paginated listings
+query per analysis (`query_all_listings`, up to `_MAX_PAGES` pages of
+`PAGE_SIZE`), filtered by the hat's style category, prices aggregated to a
 median. No scraping, no headless browser (Pi-friendly).
 
 Deep links are still generated as the browse affordance; the live median
@@ -17,9 +18,11 @@ behavior.
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import re
 import time
+from contextlib import asynccontextmanager
 from statistics import median
 from urllib.parse import urlencode
 
@@ -28,7 +31,7 @@ from typing import NamedTuple
 import httpx
 
 from headroom.config import settings
-from headroom.schemas.hat import KNOWN_CONSTRUCTIONS
+from headroom.schemas.hat import constructions_in
 
 logger = logging.getLogger(__name__)
 
@@ -125,23 +128,60 @@ async def _get_anon_token(client: httpx.AsyncClient, *, force: bool = False) -> 
     return _token
 
 
+#: A connection shared across the pages of one sweep. `query_listings(params)`
+#: is the single network seam and fourteen test stubs replace it with a
+#: one-argument coroutine, so the client cannot travel as a parameter without
+#: breaking every one of them; a context variable lets `shared_client()` hand
+#: the pages of one sweep one pool while the seam's signature stays put. Unset
+#: (the default), each call opens and closes its own client, as before.
+_shared_client: contextvars.ContextVar[httpx.AsyncClient | None] = contextvars.ContextVar(
+    "melin_recap_client", default=None
+)
+
+
+@asynccontextmanager
+async def shared_client():
+    """Run a sweep's page fetches over ONE connection pool.
+
+    `query_all_listings` opens a new `httpx.AsyncClient` — a TCP + TLS
+    handshake to the marketplace — per page: six per pricing call, and the
+    harvest up to 450 per run. Inside this block every `query_listings` reuses
+    the same pool; the block closes it.
+    """
+    async with httpx.AsyncClient(timeout=settings.http_timeout) as client:
+        token = _shared_client.set(client)
+        try:
+            yield client
+        finally:
+            _shared_client.reset(token)
+
+
+async def _query_with(client: httpx.AsyncClient, params: dict) -> httpx.Response:
+    token = await _get_anon_token(client)
+    resp = await client.get(
+        f"{FLEX_API}/api/listings/query",
+        params=params,
+        headers={"Authorization": f"bearer {token}"},
+    )
+    if resp.status_code == 401:  # stale cached token — re-auth once
+        token = await _get_anon_token(client, force=True)
+        resp = await client.get(
+            f"{FLEX_API}/api/listings/query",
+            params=params,
+            headers={"Authorization": f"bearer {token}"},
+        )
+    return resp
+
+
 async def query_listings(params: dict) -> list[dict]:
     """One listings query against the Flex API. Seam for tests."""
     try:
-        async with httpx.AsyncClient(timeout=settings.http_timeout) as client:
-            token = await _get_anon_token(client)
-            resp = await client.get(
-                f"{FLEX_API}/api/listings/query",
-                params=params,
-                headers={"Authorization": f"bearer {token}"},
-            )
-            if resp.status_code == 401:  # stale cached token — re-auth once
-                token = await _get_anon_token(client, force=True)
-                resp = await client.get(
-                    f"{FLEX_API}/api/listings/query",
-                    params=params,
-                    headers={"Authorization": f"bearer {token}"},
-                )
+        shared = _shared_client.get()
+        if shared is not None:
+            resp = await _query_with(shared, params)
+        else:
+            async with httpx.AsyncClient(timeout=settings.http_timeout) as client:
+                resp = await _query_with(client, params)
     except httpx.HTTPError as exc:
         # ERROR, not a bare raise. The caller catches MelinRecapError and
         # degrades to a link, which is right — but it means a total outage is
@@ -162,7 +202,7 @@ async def query_listings(params: dict) -> list[dict]:
 
 #: The API's maximum page size. Its `meta` block reports `totalItems` and
 #: `totalPages` alongside every response — both were discarded.
-_PAGE_SIZE = 100
+PAGE_SIZE = 100
 
 #: Pages walked per category before giving up. Six covers every melinrecap
 #: category with room to spare; the largest (odysea) holds 436 listings.
@@ -199,11 +239,12 @@ async def query_all_listings(params: dict, max_pages: int = _MAX_PAGES) -> list[
     a second one that only the real API populates.
     """
     out: list[dict] = []
-    for page in range(1, max_pages + 1):
-        rows = await query_listings({**params, "perPage": _PAGE_SIZE, "page": page})
-        out.extend(rows)
-        if len(rows) < _PAGE_SIZE:
-            break
+    async with shared_client():
+        for page in range(1, max_pages + 1):
+            rows = await query_listings({**params, "perPage": PAGE_SIZE, "page": page})
+            out.extend(rows)
+            if len(rows) < PAGE_SIZE:
+                break
     return out
 
 
@@ -241,7 +282,7 @@ class Listing(NamedTuple):
     """One marketplace listing, reduced to what pricing needs.
 
     A NamedTuple rather than a bare tuple because this grew from four fields to
-    six and the call sites index into it positionally.
+    five and the call sites used to index into it positionally.
 
     `product` is the important addition. Every listing publishes melin's own
     `shopifyProductName` ("Trenches Hydrolite - White") — 986 of 986 across 510
@@ -317,19 +358,13 @@ def _rival_construction(product: str, construction: str | None) -> bool:
 
     # `<Model> - <Colorway>`; without a separator the whole string is the model.
     model_half = product.split(" - ", 1)[0]
-    theirs = {
-        c for c in KNOWN_CONSTRUCTIONS
-        if set(model_tokens(c)) <= set(model_tokens(model_half))
-    }
+    theirs = constructions_in(model_half)
     if not theirs:
         return False  # names no construction — contradicts nothing
-    mine = {
-        c for c in KNOWN_CONSTRUCTIONS
-        if set(model_tokens(c)) <= set(model_tokens(construction))
-    }
+    mine = constructions_in(construction)
     # HYDROLite contains "hydro" as a substring but tokenizes distinctly, so
     # this stays exact — the confusion CLAUDE.md warns about repeatedly.
-    return bool(theirs) and not (theirs & mine)
+    return not (theirs & mine)
 
 
 def _product_comp(
@@ -373,9 +408,17 @@ def _product_comp(
             # No separator means no colorway is being named, so there is no
             # product here to identify — only a line.
             return False
+        # Model half: CONTAINMENT (a photo cannot show the sub-line, so the
+        # hat's name lands on the family). Colorway half: EQUALITY. This was
+        # containment too, and containment on the colorway leaks whichever way
+        # it points — `catalog_service.is_real_product` spends forty lines on
+        # exactly that — so a hat whose colorway is `Camo` was priced as the
+        # median of `- Camo`, `- Rain Camo` and `- Hawaii 808 Camo` together:
+        # three different products under one "its own item" label. The two
+        # validators for "is this the hat's own product" now agree.
         return (
             want_model <= set(model_tokens(model_half))
-            and want_colorway <= set(model_tokens(colorway_half))
+            and want_colorway == set(model_tokens(colorway_half))
         )
 
     matched = [
@@ -399,7 +442,7 @@ def _product_comp(
         if not rows:
             continue
         # Named from the rows that actually priced it, NOT from the wider
-        # pre-narrowing set: labelling a hat with three products when one
+        # pre-narrowing set: labeling a hat with three products when one
         # listing set the number is a source sentence that cites goods which
         # had no part in it.
         products = {f.product for f in rows}

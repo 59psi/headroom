@@ -273,8 +273,16 @@ async def test_an_unusable_destination_is_recorded_not_merely_skipped(
 
     from headroom.services import settings_service
 
+    from tests.conftest import test_session_factory
+
     backup_service._health = backup_service.BackupHealth()
     monkeypatch.setattr(backup_service, "_upload_state_path", lambda: tmp_path / ".up")
+    # The hook resolves its session through `_sessions()`. Left unset, that
+    # falls back to the module-level `async_session` — which conftest poisons —
+    # so this test used to record "unable to open database file" and pass on
+    # THAT failure, never reaching the validation it claims to pin. Deleting the
+    # use-time validation left it green. Point the hook at the test database.
+    monkeypatch.setattr(backup_service, "_session_factory", test_session_factory)
 
     await settings_service.set_setting(
         db_session, backup_service.UPLOAD_PROVIDER_KEY, "rclone"
@@ -289,6 +297,10 @@ async def test_an_unusable_destination_is_recorded_not_merely_skipped(
     health = backup_service._health
     assert health.last_upload_ok is False, "an unusable destination must read as failed"
     assert health.last_upload_error, "and must say why"
+    assert "Destination may not start with" in health.last_upload_error, (
+        f"recorded the wrong failure: {health.last_upload_error!r}"
+    )
+    assert "unable to open database" not in health.last_upload_error
 
 
 async def test_no_destination_configured_stays_silent(client, monkeypatch, tmp_path):
@@ -474,11 +486,25 @@ async def test_configuring_it_is_audited(client):
 # ---- test-now --------------------------------------------------------- #
 
 
-async def test_test_now_says_so_when_nothing_is_configured(client):
+async def test_test_now_says_so_when_nothing_is_configured(client, monkeypatch, tmp_path):
+    """Both branches, each pinned to its own message. This was a disjunction
+    — `"configured" in detail or "backup on disk" in detail` — and with no
+    backup on disk in the test volume only the second arm ever ran, so the
+    "nothing configured" branch the test is named for was never exercised."""
+    # No backup written yet: the button says so, and does not blame the config.
     body = (await client.post("/api/admin/backups/upload/test")).json()
-
     assert body["ok"] is False
-    assert "configured" in body["detail"] or "backup on disk" in body["detail"]
+    assert "No backup on disk" in body["detail"]
+
+    # A backup exists but no upload is configured: the OTHER message.
+    (tmp_path / "bk").mkdir()
+    fake = tmp_path / "bk" / backup_service._timestamped_name()
+    fake.write_bytes(b"tarball")
+    monkeypatch.setattr(backup_service, "_backup_dir", lambda: tmp_path / "bk")
+    monkeypatch.delenv("HEADROOM_BACKUP_UPLOAD_CMD", raising=False)
+    body = (await client.post("/api/admin/backups/upload/test")).json()
+    assert body["ok"] is False
+    assert "No off-box upload is configured" in body["detail"]
 
 
 async def test_a_failed_upload_is_recorded_as_a_failure(monkeypatch):

@@ -2,16 +2,19 @@ import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate } from 'react-router';
 import {
-  getHat, updateHat, uploadHatPhoto, assignHat, updateHatColors,
+  getHat, updateHat, uploadHatPhoto, assignHat, updateHatColors, getColorwayOptions,
 } from '../api/hats';
-import { apiFetch } from '../api/client';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { NewCaseModal } from '../components/common/NewCaseModal';
+import { Combobox } from '../components/common/Combobox';
+import { useDebouncedValue } from '../lib/useDebouncedValue';
 import {
   useHatFormOptions, useHatPhoto, PhotoCard, HatBasicsCard, type HatBasics,
 } from '../components/hats/HatFormFields';
 import type { ColorTag } from '../types';
-import { invalidateHatViews } from '../lib/invalidate';
+
+type ColorRow = ColorTag & { rowKey: number };
+import { invalidateHatViews, invalidateHatVocabulary } from '../lib/invalidate';
 
 export function EditHatPage() {
   const { hatId } = useParams<{ hatId: string }>();
@@ -34,17 +37,26 @@ export function EditHatPage() {
   const [resalePrice, setResalePrice] = useState('');
   const [designNotes, setDesignNotes] = useState('');
   const { photo, photoPreview, setPhotoPreview, onCapture } = useHatPhoto();
-  const [colors, setColors] = useState<ColorTag[]>([]);
+  // Each row carries a local key that survives removal of the row above it.
+  // Keyed by index, deleting color 2 of 3 handed color 3's data to color 2's
+  // inputs — correct on screen, but the focused field and its native color
+  // picker stayed on the row that had just changed meaning.
+  const [colors, setColors] = useState<ColorRow[]>([]);
+  const nextRowKey = useRef(0);
+  const withKey = (c: ColorTag): ColorRow => ({ ...c, rowKey: nextRowKey.current++ });
   const [showNewCase, setShowNewCase] = useState(false);
 
   const modelOptions = useQuery({
     queryKey: ['meta', 'colorways', 'models'],
-    queryFn: () => apiFetch<{ value: string }[]>('/api/meta/colorways'),
+    queryFn: () => getColorwayOptions(),
   });
+  // Scoped to the model, so it has to follow the model box — but only once
+  // the typing has stopped, not on every keystroke (see `useDebouncedValue`).
+  const settledModel = useDebouncedValue(modelName.trim());
   const colorwayOptions = useQuery({
-    queryKey: ['meta', 'colorways', modelName],
-    queryFn: () => apiFetch<{ value: string }[]>(`/api/meta/colorways?model=${encodeURIComponent(modelName)}`),
-    enabled: modelName.length > 1,
+    queryKey: ['meta', 'colorways', settledModel],
+    queryFn: () => getColorwayOptions(settledModel),
+    enabled: settledModel.length > 1,
   });
 
   // Seed the form once per hat, not on every refetch. Since 2.6.0 analysis runs
@@ -108,7 +120,7 @@ export function EditHatPage() {
       if (hat.data.photo_path) {
         setPhotoPreview(`/uploads/${hat.data.photo_path}`);
       }
-      setColors(hat.data.colors.map(c => ({ ...c })));
+      setColors(hat.data.colors.map(withKey));
     }
   }, [hat.data]);
 
@@ -179,10 +191,16 @@ export function EditHatPage() {
         await uploadHatPhoto(id, photo);
       }
 
-      await updateHatColors(id, colors);
+      await updateHatColors(id, colors.map(({ rowKey: _key, ...c }) => c));
     },
     onSuccess: () => {
       invalidateHatViews(qc, id);
+      // A resale price typed here stamps the hat `manual`, which removes it
+      // from the shared-price report, and a colorway flips `missing_colorway`
+      // — so that report is stale the moment this saves. A SIBLING key, not
+      // covered by anything above (CLAUDE.md, `shared_price_audit`).
+      qc.invalidateQueries({ queryKey: ['admin', 'shared-prices'] });
+      invalidateHatVocabulary(qc);
       navigate(`/hats/${id}`);
     },
   });
@@ -221,16 +239,23 @@ export function EditHatPage() {
             </p>
 
             <div className="mb-3">
-              <label className="form-label">Brand</label>
-              <input type="text" className="form-control" value={brand} onChange={e => setBrand(e.target.value)} placeholder="e.g. Melin" />
+              <label className="form-label" htmlFor="hat-brand">Brand</label>
+              <input id="hat-brand" type="text" className="form-control" value={brand} onChange={e => setBrand(e.target.value)} placeholder="e.g. Melin" />
             </div>
 
+            {/* A Combobox, not a <datalist>: iOS renders a datalist as a thin
+                strip above the keyboard that is easy to miss entirely, so 188
+                harvested colorways read as a blank text box. Same component
+                the Basics card uses for construction and collection. */}
             <div className="mb-3">
-              <label className="form-label">Model Name</label>
-              <input type="text" className="form-control" value={modelName} onChange={e => setModelName(e.target.value)} placeholder="e.g. A-Game Hydro" list="model-options" />
-              <datalist id="model-options">
-                {modelOptions.data?.map(o => <option key={o.value} value={o.value} />)}
-              </datalist>
+              <Combobox
+                id="hat-model-name"
+                label="Model Name"
+                value={modelName}
+                onChange={setModelName}
+                options={(modelOptions.data ?? []).map(o => o.value)}
+                placeholder="e.g. A-Game Hydro"
+              />
             </div>
 
             {/* Collection / collab lives in the Basics card, beside
@@ -239,12 +264,15 @@ export function EditHatPage() {
                 in `HatFormFields`, rendered by both pages. */}
 
             <div className="mb-3">
-              <label className="form-label">Colorway</label>
-              <input type="text" className="form-control" value={colorway} onChange={e => setColorway(e.target.value)} placeholder="e.g. Heather Ocean" list="colorway-options" />
-              <datalist id="colorway-options">
-                {colorwayOptions.data?.map(o => <option key={o.value} value={o.value} />)}
-              </datalist>
-              <div className="form-text small">Suggestions come from the Melin Recap catalog (refresh it in Settings)</div>
+              <Combobox
+                id="hat-colorway"
+                label="Colorway"
+                value={colorway}
+                onChange={setColorway}
+                options={(colorwayOptions.data ?? []).map(o => o.value)}
+                placeholder="e.g. Heather Ocean"
+                help={<>Suggestions come from the Melin Recap catalog for this model (refresh it under Settings &rarr; Data).</>}
+              />
             </div>
 
             {/* Price paid moved up into HatBasicsCard, where the Add form has
@@ -284,10 +312,11 @@ export function EditHatPage() {
             <div className="card-title">Colors</div>
 
             {colors.map((color, i) => (
-              <div key={i} className="mb-2">
+              <div key={color.rowKey} className="mb-2">
                 <div className="d-flex align-items-center gap-2 flex-wrap">
                   <input
                     type="color"
+                    aria-label={`Color ${i + 1} swatch`}
                     className="form-control form-control-color"
                     value={color.hex_value}
                     onChange={e => {
@@ -301,6 +330,7 @@ export function EditHatPage() {
                     className="form-control flex-grow-1"
                     style={{ minWidth: 120 }}
                     placeholder="Color name"
+                    aria-label={`Color ${i + 1} name`}
                     value={color.color_name}
                     onChange={e => {
                       const updated = [...colors];
@@ -313,6 +343,7 @@ export function EditHatPage() {
                     className="form-control flex-grow-1"
                     style={{ minWidth: 120 }}
                     placeholder="General"
+                    aria-label={`Color ${i + 1} general color`}
                     value={color.general_color}
                     onChange={e => {
                       const updated = [...colors];
@@ -338,7 +369,7 @@ export function EditHatPage() {
               className="btn btn-outline-secondary btn-sm"
               onClick={() => setColors([
                 ...colors,
-                { color_name: '', general_color: '', hex_value: '#000000', dominance_rank: colors.length + 1, tier: 'primary' },
+                withKey({ color_name: '', general_color: '', hex_value: '#000000', dominance_rank: colors.length + 1, tier: 'primary' }),
               ])}
             >+ Add Color</button>
           </div>

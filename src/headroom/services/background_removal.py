@@ -57,7 +57,11 @@ _inference_sem: asyncio.Semaphore | None = None
 
 
 def _concurrency() -> int:
-    """Bound on concurrent inferences. Read per-call so tests can vary it."""
+    """Bound on concurrent inferences.
+
+    Read ONCE, when `_get_inference_sem` first builds the semaphore — a test
+    that wants a different bound must reset `_inference_sem` to None first.
+    """
     return max(1, env_int("HEADROOM_REMBG_CONCURRENCY", 1))
 
 
@@ -95,7 +99,7 @@ def _harden_alpha(cut):
 
     * Use it raw and mid-confidence regions render semi-transparent, so the hat
       looks washed out — "ghosted" — against the near-black canvas.
-    * Binarise it (rembg's `post_process_mask`: blur, then threshold at 127) and
+    * Binarize it (rembg's `post_process_mask`: blur, then threshold at 127) and
       the ghosting goes, but every pixel the model was less than ~50% sure about
       is *deleted*. Measured on a synthetic brim: at confidence 128 about 76% of
       it survives, at 120 that collapses to 6%, and by 40 the brim is gone

@@ -188,6 +188,27 @@ async def test_reassigning_writes_the_right_answer(client):
     assert hat["hydrolite"] is False
 
 
+async def test_a_typed_replacement_is_canonicalized_like_every_other_write(client):
+    """`to=hydro` must land as `HYDRO`.
+
+    Every other construction writer goes through `vocabulary.canonicalize`; this
+    one — the only writer that touches a whole shelf at once — did not, so a
+    lower-case replacement stamped dozens of rows with a second spelling of a
+    construction the vocabulary already held, splitting the filter and the
+    picker exactly the way canonicalization exists to prevent.
+    """
+    hat_id = await _hat(client, construction="HYDROLite")
+
+    body = (await client.post(
+        "/api/admin/constructions/clear?value=HYDROLite&to=hydro&dry_run=false"
+    )).json()
+
+    assert body["to"] == "HYDRO", "the report names the spelling that was written"
+    hat = (await client.get(f"/api/hats/{hat_id}")).json()
+    assert hat["construction"] == "HYDRO"
+    assert hat["hydro"] is True
+
+
 async def test_reassigning_reprices_from_the_new_construction(client, db_session):
     """The old price was looked up FROM the construction being replaced, so it
     has to be recomputed rather than kept — HYDROLite $99 becomes HYDRO $79."""

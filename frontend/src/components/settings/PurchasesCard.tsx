@@ -1,3 +1,4 @@
+import { copyText } from '../../lib/clipboard';
 import { useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -22,7 +23,7 @@ function readItems(text: string): Record<string, unknown>[] {
  * (`_line_fields`, `_units_to_add`, and the `Purchase(...)` construction) —
  * notably `order_date`, not `purchased_at`. A prompt that names a field the
  * importer ignores fails silently: the import succeeds, the data is simply
- * absent, and nothing says so. `tests/test_catalog.py` pins the field set.
+ * absent, and nothing says so. `tests/test_purchase_prompt_parity.py` pins the field set.
  */
 const EMAIL_IMPORT_PROMPT = `Search my email for melin order confirmations and receipts.
 
@@ -58,14 +59,12 @@ function EmailPromptDisclosure() {
   const [copied, setCopied] = useState(false);
 
   async function copy() {
-    try {
-      await navigator.clipboard.writeText(EMAIL_IMPORT_PROMPT);
+    // `copyText` carries the plain-HTTP fallback; the prompt is on screen and
+    // selectable either way, so a refusal costs the convenience, not the feature.
+    if (await copyText(EMAIL_IMPORT_PROMPT)) {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Clipboard is permission-gated and absent over plain HTTP. The prompt
-      // is on screen and selectable either way, so a failure here costs the
-      // convenience, not the feature.
+    } else {
       setCopied(false);
     }
   }

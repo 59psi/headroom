@@ -15,6 +15,18 @@ from headroom.services import sweep_progress
 pytestmark = pytest.mark.anyio
 
 
+@pytest.fixture(autouse=True)
+def _fresh_progress(monkeypatch):
+    """`repricing.progress` and `catalog_service.progress` are module globals
+    that several tests below drive to a failed state and leave there — `error`
+    deliberately outlives `finish()`, so without this the failure of one test
+    was visible to the next module's status assertions."""
+    from headroom.services import catalog_service, repricing
+
+    monkeypatch.setattr(repricing, "progress", sweep_progress.SweepProgress())
+    monkeypatch.setattr(catalog_service, "progress", sweep_progress.SweepProgress())
+
+
 async def test_a_fresh_sweep_reports_itself_idle():
     p = sweep_progress.SweepProgress()
     snap = p.snapshot()
@@ -80,6 +92,55 @@ async def test_progress_never_exceeds_its_total():
     assert snap["pct"] == 100
 
 
+async def test_a_unit_is_named_before_it_starts_and_counted_after_it_ends():
+    """Naming and counting are two events. `advance(label)` did both, and every
+    caller called it BEFORE the unit's work — so the bar read 100% for the whole
+    last category, and "3 of 12 · Odysea" meant Odysea had not started."""
+    p = sweep_progress.SweepProgress()
+    p.begin(2)
+    p.start_unit("aGame")
+    snap = p.snapshot()
+    assert snap["done"] == 0 and snap["label"] == "aGame", "named, not yet counted"
+    p.advance()
+    p.start_unit("odysea")
+    snap = p.snapshot()
+    assert snap["done"] == 1 and snap["label"] == "odysea"
+    assert snap["pct"] == 50, "the last unit is in flight, not finished"
+    p.advance()
+    assert p.snapshot()["done"] == 2
+
+
+async def test_the_repricing_sweep_counts_a_hat_only_once_it_is_done(client, db_session, monkeypatch):
+    """Through the real loop: the progress seen DURING the last hat's marketplace
+    call is one short of the total, with that hat named."""
+    from headroom.models.hat import Hat
+    from headroom.services import repricing
+
+    for _ in range(2):
+        await client.post("/api/hats", json={"condition": "new", "size": "classic", "style": "a_game"})
+    hats = (await db_session.execute(__import__("sqlalchemy").select(Hat))).scalars().all()
+    for h in hats:
+        h.brand = "melin"
+        h.model_name = "A-Game Hydro"
+    await db_session.commit()
+
+    seen: list[tuple[int, str | None]] = []
+
+    async def _observe(hat):
+        snap = repricing.progress.snapshot()
+        seen.append((snap["done"], snap["label"]))
+
+    monkeypatch.setattr(
+        "headroom.services.hat_analysis_pipeline.refresh_melin_resale", _observe
+    )
+    repricing.progress.begin(len(hats))
+    await repricing._sweep(db_session, hats, delay=0)
+    repricing.progress.finish()
+
+    assert [d for d, _ in seen] == [0, 1], "counted after each hat, not before"
+    assert all(label == "A-Game Hydro" for _, label in seen), "named while in flight"
+
+
 async def test_repricing_exposes_progress_through_its_status(client):
     """The card reads this endpoint; a field it cannot see does not exist."""
     body = (await client.get("/api/admin/repricing")).json()
@@ -115,7 +176,7 @@ async def test_a_sweep_that_raises_does_not_stay_running_forever(monkeypatch):
         async def __aexit__(self, *exc):
             return False
 
-    monkeypatch.setattr(repricing, "_eligible_hats", lambda db, limit=None: _noop())
+    monkeypatch.setattr(repricing, "_eligible_hats", lambda db, limit=None, **kw: _noop())
 
     async def _noop():
         return []
@@ -155,7 +216,7 @@ async def test_a_failed_harvest_records_why(monkeypatch):
     assert snap["error"] == "Melin Recap query 429"
 
 
-async def test_a_cancelled_sweep_does_not_stay_running_forever(monkeypatch):
+async def test_a_canceled_sweep_does_not_stay_running_forever(monkeypatch):
     """`except Exception` is not enough: CancelledError is a BaseException.
 
     "Re-price now" is a ~50s blocking POST, so a phone disconnecting mid-sweep
@@ -171,7 +232,7 @@ async def test_a_cancelled_sweep_does_not_stay_running_forever(monkeypatch):
     async def _hang(db, hats, delay):
         await asyncio.sleep(30)
 
-    async def _three(db, limit=None):
+    async def _three(db, limit=None, **kw):
         return [1, 2, 3]
 
     monkeypatch.setattr(repricing, "_sweep", _hang)
@@ -196,5 +257,5 @@ async def test_a_cancelled_sweep_does_not_stay_running_forever(monkeypatch):
         await task
 
     assert repricing.progress.snapshot()["running"] is False, (
-        "a cancelled sweep must not report itself as still in flight"
+        "a canceled sweep must not report itself as still in flight"
     )

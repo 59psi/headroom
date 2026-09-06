@@ -1,6 +1,7 @@
 """Tests for hat disposition (sold/gifted/lost) tracking."""
 
 import pytest
+from headroom.services import capacity
 
 pytestmark = pytest.mark.anyio
 
@@ -27,11 +28,14 @@ async def test_dispose_sets_fields(client):
 
 
 async def test_dispose_rejects_invalid_via(client):
+    """A closed vocabulary is an enum, validated at the schema — 422 like
+    style/size/condition, not a hand-rolled 400 in the service."""
     hat = await _make_hat(client)
     resp = await client.post(
         f"/api/hats/{hat['id']}/dispose", json={"via": "destroyed"}
     )
-    assert resp.status_code == 400
+    assert resp.status_code == 422
+    assert "destroyed" not in resp.text, "422 bodies must not echo the input"
 
 
 async def test_undispose_clears_fields(client):
@@ -120,7 +124,7 @@ async def test_restoring_into_a_full_case_still_leaves_the_hat_in_the_room(clien
     await client.post(f"/api/hats/{hat['id']}/dispose", json={"via": "sold"})
 
     # Refill the freed slot and the rest of the case, so the restore cannot fit.
-    for _ in range(6):
+    for _ in range(capacity.MAX_BEANIE):
         assert (await add_beanie()).status_code == 201
 
     restored = await client.delete(f"/api/hats/{hat['id']}/dispose")

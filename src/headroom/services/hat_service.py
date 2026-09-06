@@ -7,7 +7,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
 from headroom.models.case import Case
-from headroom.models.hat import Hat
+from headroom.models.hat import Hat, ResaleScope
 from headroom.models.room import Room
 from headroom.schemas.hat import (
     KNOWN_CONSTRUCTIONS,
@@ -22,19 +22,16 @@ from headroom.services import retail_pricing
 from headroom.services import vocabulary
 from headroom.services.activity_service import log_and_commit
 
-# Re-exported for the tests and callers that referenced them here first; the
-# rule itself lives in `capacity` so the picker and the validator agree.
-MAX_REGULAR = capacity_rules.MAX_REGULAR
-MAX_BEANIE = capacity_rules.MAX_BEANIE
 
-# Disposition `via` values accepted by the API.
-DISPOSITION_VIAS = {"sold", "gifted", "lost", "trashed", "trade"}
-
-
-def _hat_loads():
+from headroom.models.hat_color import HatColor
+from headroom.services.color_extraction import normalize_hex_name
+def hat_loads():
     """The eager-load set every Hat query needs (CLAUDE.md: always selectinload).
-    One definition — it was copy-pasted at three call sites, so adding a
-    relationship meant remembering all three. `wear_logs` is deliberately absent:
+
+    One definition, PUBLIC. It was copy-pasted at three call sites inside this
+    module, then restated by hand in six other services — three of which had
+    dropped `direct_room` and were saved only by the mapper's `lazy="selectin"`.
+    Any query that returns hats splats this. `wear_logs` is deliberately absent:
     the model already declares it `lazy="selectin"`.
     """
     return (
@@ -47,7 +44,7 @@ async def _reload_hat(db: AsyncSession, hat_id: int) -> Hat:
     db.expire_all()
     result = await db.execute(
         select(Hat)
-        .options(*_hat_loads())
+        .options(*hat_loads())
         .where(Hat.id == hat_id)
     )
     return result.scalar_one()
@@ -70,8 +67,6 @@ async def normalize_existing_colors(db: AsyncSession) -> int:
     "light blue"). Recomputes general_color from the stored hex; color_name
     keeps the original phrasing. Idempotent — safe to re-run.
     """
-    from headroom.models.hat_color import HatColor
-    from headroom.services.color_extraction import normalize_hex_name
 
     result = await db.execute(select(HatColor))
     changed = 0
@@ -230,7 +225,7 @@ async def list_hats(
 ) -> list[Hat]:
     query = (
         select(Hat)
-        .options(*_hat_loads())
+        .options(*hat_loads())
         .where(*_hat_list_filters(case_id, style, condition, status))
     )
     query = query.order_by(Hat.id).offset(offset).limit(limit)
@@ -241,7 +236,7 @@ async def list_hats(
 async def get_hat(db: AsyncSession, hat_id: int) -> Hat:
     result = await db.execute(
         select(Hat)
-        .options(*_hat_loads())
+        .options(*hat_loads())
         .where(Hat.id == hat_id)
     )
     hat = result.scalar_one_or_none()
@@ -312,6 +307,15 @@ async def update_hat(db: AsyncSession, hat_id: int, data: HatUpdate) -> Hat:
         update_data["artist_series"] = await vocabulary.canonicalize(
             db, Hat.artist_series, update_data["artist_series"]
         )
+    # Colorway is free text with the same failure mode — "heather grey" typed
+    # beside a stored "Heather Grey" splits the picker feed and, worse, the
+    # token-set EQUALITY `is_real_product` and `_product_comp` apply to it is
+    # case-folded only by luck of casing. The analysis path canonicalized it;
+    # this path and the purchase matcher wrote straight through.
+    if update_data.get("colorway"):
+        update_data["colorway"] = await vocabulary.canonicalize(
+            db, Hat.colorway, update_data["colorway"]
+        )
 
     # A resale price that arrived in a PUT came from a person, and that is the
     # one thing valuation must not discount or let a later analysis overwrite.
@@ -328,7 +332,7 @@ async def update_hat(db: AsyncSession, hat_id: int, data: HatUpdate) -> Hat:
 
     if "resale_price" in update_data:
         hat.resale_price_scope = (
-            "manual" if update_data["resale_price"] is not None else None
+            ResaleScope.MANUAL if update_data["resale_price"] is not None else None
         )
         hat.resale_price_source = (
             "Entered manually" if update_data["resale_price"] is not None else None
@@ -395,14 +399,13 @@ async def assign_hat(
         room = await db.get(Room, room_id)
         if not room:
             raise HTTPException(status_code=404, detail="Room not found")
-        hat.case_id = None
-        hat.position_in_case = None
-        hat.direct_room_id = room_id
+        # Through the model's one writer of "no longer in a case", not by
+        # hand — this function carried two more copies of the three-column
+        # write `Hat.detach_from_case` was created to be the only home of.
+        hat.detach_from_case(room_id)
         where = f"placed in room {room_id} with no case"
     else:
-        hat.case_id = None
-        hat.position_in_case = None
-        hat.direct_room_id = None
+        hat.detach_from_case(None)
         where = "unassigned"
 
     await db.commit()
@@ -417,12 +420,9 @@ async def dispose_hat(db: AsyncSession, hat_id: int, data: HatDispose) -> Hat:
     """Soft-delete a hat. Takes the whole `HatDispose` — the five fields always
     travel together, so unpacking them into kwargs only created a clump to
     re-assemble at the call site."""
-    via = data.via
-    if via not in DISPOSITION_VIAS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid disposal kind. Must be one of: {', '.join(sorted(DISPOSITION_VIAS))}",
-        )
+    # `via` is a `DisposedVia`; an unknown value never reaches here — the schema
+    # rejects it with a 422 like every other enum field.
+    via = str(data.via)
     hat = await get_hat(db, hat_id)
     hat.disposed_at = data.disposed_at or datetime.now(timezone.utc)
     hat.disposed_via = via
@@ -613,11 +613,11 @@ async def list_by_analysis_status(
     """Hats in a given `analysis_status`, for the admin queue and error views.
 
     Lives here rather than in the admin routes so the one place that knows how
-    to load a Hat (`_hat_loads`) stays the one place that does. Entities, not
+    to load a Hat (`hat_loads`) stays the one place that does. Entities, not
     columns: `display_id` is a derived property that walks `hat.case`, so it
     cannot be selected — and it is the label a person actually recognizes.
     """
-    query = select(Hat).options(*_hat_loads()).where(Hat.analysis_status == status)
+    query = select(Hat).options(*hat_loads()).where(Hat.analysis_status == status)
     if newest_first:
         query = query.order_by(Hat.analyzed_at.desc().nulls_last(), Hat.id.desc())
     else:
@@ -716,7 +716,7 @@ async def list_for_analysis_job(
     """
     query = (
         select(Hat)
-        .options(*_hat_loads())
+        .options(*hat_loads())
         .where(Hat.analysis_job_id == job_id)
         .order_by(
             # Failures first: a finished run is opened to find out what broke.
@@ -774,7 +774,7 @@ async def list_failed_analyses(
     """
     query = (
         select(Hat)
-        .options(*_hat_loads())
+        .options(*hat_loads())
         .where(*failed_analysis_filters())
     )
     if newest_first:

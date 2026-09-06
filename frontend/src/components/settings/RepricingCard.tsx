@@ -27,8 +27,9 @@ export function RepricingCard() {
     // fields below it describe the last run that FINISHED.
     refetchInterval: (q) => {
       if (q.state.data?.progress?.running) return 2000;
-      // Grace window, the same one the colorway card needs and for the same
-      // reason. `reprice_once` does not call `progress.begin()` until it has
+      // Grace window. (The colorway card used to carry one too and replaced it
+      // with the server's `in_flight`; this one still needs it.) `reprice_once`
+      // does not call `progress.begin()` until it has
       // taken the sweep lock and run its query, so a status fetch issued the
       // instant the button is pressed still answers `running: false` — the
       // interval would then return false and polling would stop for the whole
@@ -163,7 +164,12 @@ export function RepricingCard() {
         {run.isSuccess && (
           <p className="text-secondary small mb-0 mt-2">
             {run.data.repriced} of {run.data.considered} hats changed price.
-            {run.data.remaining > run.data.considered && (
+            {/* `remaining` is what is still DUE after this run (2.76.0), not
+                "eligible at all" — so the test is "any left", never a comparison
+                with `considered`. Under the old `remaining > considered` the last
+                page of a bounded sweep (50 swept, 30 due) said nothing and read
+                as finished. */}
+            {run.data.remaining > 0 && (
               <> {run.data.remaining} still to sweep &mdash; press again to continue.</>
             )}
           </p>

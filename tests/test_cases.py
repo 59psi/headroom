@@ -1,4 +1,5 @@
 import pytest
+from headroom.services import capacity
 
 
 @pytest.mark.anyio
@@ -133,7 +134,7 @@ async def test_moving_a_case_to_a_real_room_works_and_a_missing_one_is_rejected(
 
 @pytest.mark.anyio
 async def test_case_read_reports_what_it_can_accept(client):
-    """The picker greys out cases from these fields, so they must match the
+    """The picker grays out cases from these fields, so they must match the
     rule the write path enforces — a picker that disagrees produces a 409 on
     save with no warning, which at 40-60 cases is not something you can
     eyeball."""
@@ -171,13 +172,13 @@ async def test_a_full_case_reports_itself_full_but_still_takes_one_more(client):
             "condition": "new", "size": "classic", "style": "a_game", "case_id": case["id"],
         })
 
-    for _ in range(3):
+    for _ in range(capacity.MAX_REGULAR):
         assert (await add()).status_code == 201
 
     full = (await client.get(f"/api/cases/{case['display_id']}")).json()
     assert full["free_regular"] == 0, "no room left before it is overfull"
     assert full["overfull"] is False
-    assert full["nominal_capacity"] == 3
+    assert full["nominal_capacity"] == capacity.MAX_REGULAR
     assert full["accepts_regular"] is True, "the fourth still fits"
 
     assert (await add()).status_code == 201
@@ -200,7 +201,7 @@ async def test_a_disposed_hat_frees_its_slot_in_the_read_model(client):
     """Disposed hats stay in the database but free their slot.
 
     The occupancy shown must match: counting a disposed hat would render a
-    case as fuller than the validator considers it, so the picker would grey
+    case as fuller than the validator considers it, so the picker would gray
     out a case that a save would happily accept.
     """
     case = (await client.post("/api/cases", json={"case_type": "daily_wear"})).json()
@@ -214,8 +215,12 @@ async def test_a_disposed_hat_frees_its_slot_in_the_read_model(client):
     await client.post(f"/api/hats/{hat['id']}/dispose", json={"via": "sold"})
 
     after = (await client.get(f"/api/cases/{case['display_id']}")).json()
-    assert after["free_regular"] == 3, "a disposed hat is still occupying a slot"
+    assert after["free_regular"] == capacity.MAX_REGULAR, "a disposed hat is still occupying a slot"
     assert after["hat_count"] == 0
+    # The detail's hat LIST must agree with its own count. It did not: the
+    # count filtered disposed hats and the list did not, so the case page
+    # showed a sold hat as present under a header that said the case was empty.
+    assert after["hats"] == [], "a disposed hat is still listed as being in the case"
 
 
 @pytest.mark.anyio

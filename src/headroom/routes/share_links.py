@@ -31,8 +31,14 @@ from headroom.utils.paths import safe_file
 
 router = APIRouter(tags=["share-links"])
 
-# Every failure to resolve a token answers identically — see `ShareLinkInvalid`.
-_NOT_FOUND = HTTPException(status_code=404, detail="Share link not found")
+def _not_found() -> HTTPException:
+    """Every failure to resolve a token answers identically — see `ShareLinkInvalid`.
+
+    A factory rather than a shared instance, for the reason `routes/guest.py`
+    documents: a module-level exception re-raised per request accumulates
+    traceback frames forever, and `/api/public/share/<junk>` is anonymous.
+    """
+    return HTTPException(status_code=404, detail="Share link not found")
 
 
 def _url_path(token: str) -> str:
@@ -75,7 +81,7 @@ async def create_share_link(data: ShareLinkCreate, db: AsyncSession = Depends(ge
 @router.delete("/api/share-links/{link_id}", status_code=204)
 async def revoke_share_link(link_id: int, db: AsyncSession = Depends(get_db)):
     if await share_link_service.revoke_link(db, link_id) is None:
-        raise _NOT_FOUND
+        raise _not_found()
 
 
 # ------------------------------- public -------------------------------- #
@@ -86,7 +92,7 @@ async def public_collection(token: str, db: AsyncSession = Depends(get_db)):
     try:
         link = await share_link_service.resolve_token(db, token)
     except ShareLinkInvalid:
-        raise _NOT_FOUND from None
+        raise _not_found() from None
 
     hats = await share_link_service.shared_hats(db)
     return SharedCollection(
@@ -102,7 +108,7 @@ async def public_collection(token: str, db: AsyncSession = Depends(get_db)):
     )
 
 
-@router.get("/api/public/share/{token}/photo/{hat_id}")
+@router.get("/api/public/share/{token}/photo/{hat_id}", response_class=FileResponse)
 async def public_photo(token: str, hat_id: int, db: AsyncSession = Depends(get_db)):
     try:
         await share_link_service.resolve_token(db, token)

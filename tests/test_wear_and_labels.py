@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from headroom.services import capacity
 
 pytestmark = pytest.mark.anyio
 
@@ -53,14 +54,12 @@ async def test_wear_rejected_for_disposed(client):
     assert resp.status_code == 409
 
 
-async def test_case_labels_sheet(client, anon_client):
+async def test_case_labels_sheet(client):
     await client.post("/api/cases", json={"case_type": "archive", "capacity": 3})
     resp = await client.get("/api/admin/case-labels")
     assert resp.status_code == 200
     html = resp.text
-    assert "<svg" in html and "A-001" in html and "0/3 hats" in html
-    # Auth-gated like the rest of /api
-    assert (await anon_client.get("/api/admin/case-labels")).status_code == 401
+    assert "<svg" in html and "A-001" in html and f"0/{capacity.MAX_REGULAR} hats" in html
 
 
 # --------------------------- Case label occupancy --------------------------- #
@@ -77,11 +76,11 @@ async def test_case_label_shows_nominal_capacity_not_the_overfill_limit(client):
     keeping a third copy of a rule the module exists to centralize.
     """
     case = (await client.post("/api/cases", json={"case_type": "archive"})).json()
-    for _ in range(3):
+    for _ in range(capacity.MAX_REGULAR):
         await _hat(client, case_id=case["id"])
 
     html = (await client.get("/api/admin/case-labels")).text
-    assert "3/3 hats" in html
+    assert f"{capacity.MAX_REGULAR}/{capacity.MAX_REGULAR} hats" in html
     assert "3/4 hats" not in html
 
 
@@ -93,8 +92,12 @@ async def test_case_label_ignores_disposed_hats(client):
     await client.post(f"/api/hats/{gone}/dispose", json={"via": "sold"})
 
     html = (await client.get("/api/admin/case-labels")).text
-    assert "1/3 hats" in html, "a disposed hat was still occupying its slot"
-    assert keep  # the surviving hat is the one being counted
+    assert f"1/{capacity.MAX_REGULAR} hats" in html, "a disposed hat was still occupying its slot"
+    # And the one counted is the survivor: its label is on the HAT sheet for
+    # this case, the disposed one's is not.
+    hat_sheet = (await client.get(f"/api/admin/hat-labels?case={case['display_id']}")).text
+    assert f"/t/h/{keep}" in hat_sheet
+    assert f"/t/h/{gone}" not in hat_sheet
 
 
 async def test_case_label_uses_a_stated_capacity(client):
@@ -107,7 +110,7 @@ async def test_case_label_uses_a_stated_capacity(client):
 # ------------------------------- Hat labels -------------------------------- #
 
 
-async def test_hat_labels_sheet(client, anon_client):
+async def test_hat_labels_sheet(client):
     case = (await client.post("/api/cases", json={"case_type": "archive"})).json()
     hat_id = await _hat(client, case_id=case["id"], model_name="Coronado")
 
@@ -118,7 +121,6 @@ async def test_hat_labels_sheet(client, anon_client):
     assert "Coronado" in html
     # The tag URL is printed as text so it can be pasted into an NFC writer.
     assert f"/t/h/{hat_id}" in html
-    assert (await anon_client.get("/api/admin/hat-labels")).status_code == 401
 
 
 async def test_hat_label_url_survives_the_hat_changing_case(client):

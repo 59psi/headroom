@@ -20,7 +20,7 @@ export interface HatBasics {
   construction: string;
   /** Collection / collaboration name ('' = not stated). */
   artistSeries: string;
-  /** Case id as a string ('' = unassigned), matching the <select> value. */
+  /** Case id as a string ('' = unassigned) — the `CasePicker`'s value. */
   caseId: string;
   /** Room id as a string, for a hat kept with NO case — a shelf, a hook, a
    *  stand. Ignored while `caseId` is set: a cased hat's room is its case's,
@@ -137,7 +137,7 @@ interface BasicsCardProps {
   dateLabel?: string;
 }
 
-/** Style / Size / Condition / Case / Date Last Worn — identical on both forms. */
+/** The fields every hat has — style, size, condition, construction, series, case or room, dates, price — identical on both forms. */
 export function HatBasicsCard({
   values, onChange, options, onCreateCase,
   caseLabel = 'Case Assignment',
@@ -196,8 +196,10 @@ export function HatBasicsCard({
             options={options.constructions.data ?? []}
             placeholder="HYDRO, HYDROLite, Thermal…"
             help={
-              <>Tap a known build or type the fabric. Leave blank if it's a
-              standard one — analysis fills it in when it can identify the hat.</>
+              <>Tap a known build or type the fabric. Leave it blank if you
+              don&rsquo;t know — analysis never sets this (a photo can&rsquo;t
+              tell HYDRO from HYDROLite reliably, and it moves the price), so a
+              blank is an honest &ldquo;nobody has looked&rdquo;.</>
             }
           />
         </div>

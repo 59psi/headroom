@@ -35,7 +35,7 @@ def stub_claude(monkeypatch):
     async def _fake_get_key(_db):
         return "sk-ant-test", "database"
 
-    async def _fake_analyze(_path, _key, model=None, selected_style=None, **_kw):  # noqa: ARG001
+    async def _fake_analyze(_path, _key, model=None, selected_style=None, **_kw):
         return HatAnalysis(
             brand="Melin", model_name="A-Game Hydro", model_confidence="high",
             style_descriptor="snapback", design_notes="Queued-path fixture.",
@@ -202,3 +202,37 @@ async def test_inline_failure_marks_the_hat_instead_of_stranding_it(
     assert resp.status_code == 200
     assert resp.json()["analysis_status"] == "error"
     assert "pipeline exploded" in (resp.json()["analysis_error"] or "")
+
+
+async def test_an_inline_reanalyze_failure_marks_the_hat_instead_of_stranding_it(
+    client, stub_claude, monkeypatch
+):
+    """The THIRD inline path, which had no guard.
+
+    Upload and re-cut each caught an inline pipeline failure and stamped the
+    terminal status; `/reanalyze` marked the hat `pending`, ran
+    `reanalyze_existing_photo` with no worker behind it, and let anything but
+    a `ClaudeAnalysisError` escape as a 500 — leaving the hat `pending` forever
+    with no error text and nothing to clear it. Same guard, same test shape.
+    """
+    created = await client.post(
+        "/api/hats", json={"condition": "new", "size": "classic", "style": "a_game"}
+    )
+    hat_id = created.json()["id"]
+    assert (
+        await client.post(
+            f"/api/hats/{hat_id}/photo", files={"photo": ("h.jpg", _jpeg(), "image/jpeg")}
+        )
+    ).status_code == 200
+
+    async def _boom(*_a, **_k):
+        raise RuntimeError("reanalysis exploded")
+
+    monkeypatch.setattr("headroom.routes.hats.reanalyze_existing_photo", _boom)
+
+    resp = await client.post(f"/api/hats/{hat_id}/reanalyze")
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["analysis_status"] == "error", "never left on pending"
+    assert "reanalysis exploded" in (body["analysis_error"] or "")

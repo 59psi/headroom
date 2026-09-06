@@ -682,7 +682,7 @@ wheels = [
 
 [[package]]
 name = "headroom"
-version = "2.77.3"
+version = "2.78.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },
@@ -713,6 +713,7 @@ dev = [
     { name = "httpx2" },
     { name = "pytest" },
     { name = "pytest-cov" },
+    { name = "pyyaml" },
     { name = "ruff" },
 ]
 
@@ -746,6 +747,7 @@ dev = [
     { name = "httpx2" },
     { name = "pytest" },
     { name = "pytest-cov", specifier = ">=7.1.0" },
+    { name = "pyyaml" },
     { name = "ruff" },
 ]
 

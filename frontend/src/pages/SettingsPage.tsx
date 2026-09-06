@@ -144,7 +144,11 @@ export function SettingsPage() {
         // console warning nobody read, and the tabpanel lost its name.
         aria-labelledby={`settings-tab-${active.id}`}
       >
-        {active.cards.map(Card => <Card key={Card.name} />)}
+        {/* Position IS identity here: the roster is a constant and never
+            reorders, and a different component type at the same key remounts
+            anyway. `Card.name` was the key before, and esbuild minifies
+            function names to a letter — two cards could share one. */}
+        {active.cards.map((Card, i) => <Card key={i} />)}
       </div>
     </>
   );

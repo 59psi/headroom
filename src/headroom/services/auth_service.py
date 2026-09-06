@@ -57,7 +57,7 @@ def _prune(key: str, now: float) -> list[float]:
     nothing ever visits them again. Measured: 200 distinct usernames left 200
     live keys, still 200 after touching an unrelated key.
 
-    The sweep is amortised on a counter rather than run every call, because
+    The sweep is amortized on a counter rather than run every call, because
     the common case is a handful of keys and walking the dict on each login
     would be the wrong trade in the other direction.
     """

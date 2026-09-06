@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate } from 'react-router';
 import { getCase, updateCase } from '../api/cases';
@@ -21,23 +21,32 @@ export function EditCasePage() {
   const roomsQ = useQuery({ queryKey: ['rooms'], queryFn: listRooms });
 
   const [caseType, setCaseType] = useState('');
-  const [roomId, setRoomId] = useState(1);
+  // No room until the case says which — a hardcoded `1` was the seed room's
+  // id on a fresh install and some other room's on any install that had
+  // deleted it, so the select could name a room the case was never in.
+  const [roomId, setRoomId] = useState<number | ''>('');
   const [capacity, setCapacity] = useState('');
 
+  // Seed the form ONCE per case, not on every refetch — the same rule the
+  // Edit-hat page follows. This query refetches on window focus, and re-running
+  // the seed then reverted a half-edited form to the server's values.
+  const seededFor = useRef<string | null>(null);
   useEffect(() => {
-    if (caseQuery.data) {
-      setCaseType(caseQuery.data.case_type);
-      setRoomId(caseQuery.data.room_id);
-      setCapacity(caseQuery.data.capacity != null ? String(caseQuery.data.capacity) : '');
-    }
+    if (!caseQuery.data || seededFor.current === caseQuery.data.display_id) return;
+    seededFor.current = caseQuery.data.display_id;
+    setCaseType(caseQuery.data.case_type);
+    setRoomId(caseQuery.data.room_id);
+    setCapacity(caseQuery.data.capacity != null ? String(caseQuery.data.capacity) : '');
   }, [caseQuery.data]);
 
   const mutation = useMutation({
     mutationFn: async () => {
       await updateCase(displayId!, {
         case_type: caseType,
-        room_id: roomId,
-        ...(capacity ? { capacity: Number(capacity) } : {}),
+        ...(roomId === '' ? {} : { room_id: roomId }),
+        // An emptied box sends `null` — "back to the type default" — rather
+        // than omitting the field, which the server reads as "leave it".
+        capacity: capacity ? Number(capacity) : null,
       });
     },
     onSuccess: () => {
@@ -66,23 +75,24 @@ export function EditCasePage() {
         <div className="card mb-3">
           <div className="card-body">
             <div className="mb-3">
-              <label className="form-label">Case Type</label>
-              <select className="form-select" value={caseType} onChange={e => setCaseType(e.target.value)}>
+              <label className="form-label" htmlFor="case-type">Case Type</label>
+              <select id="case-type" className="form-select" value={caseType} onChange={e => setCaseType(e.target.value)}>
                 <option value="archive">Archive</option>
                 <option value="daily_wear">Daily Wear</option>
               </select>
             </div>
             <div className="mb-3">
-              <label className="form-label">Room</label>
-              <select className="form-select" value={roomId} onChange={e => setRoomId(Number(e.target.value))}>
+              <label className="form-label" htmlFor="case-room">Room</label>
+              <select id="case-room" className="form-select" value={roomId} onChange={e => setRoomId(Number(e.target.value))}>
                 {roomsQ.data?.map(r => (
                   <option key={r.id} value={r.id}>{r.name}</option>
                 ))}
               </select>
             </div>
             <div className="mb-3">
-              <label className="form-label">Capacity (hats)</label>
+              <label className="form-label" htmlFor="case-capacity">Capacity (hats)</label>
               <input
+                id="case-capacity"
                 type="number"
                 className="form-control"
                 min={1}

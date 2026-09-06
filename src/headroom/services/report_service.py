@@ -12,13 +12,14 @@ from html import escape
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from headroom.models.case import Case
 from headroom.models.hat import Hat
+from headroom.services.hat_service import hat_loads
 from headroom.services import valuation
 
 
+from importlib.metadata import version
 def _fmt_dollars(v: float | None) -> str:
     return f"${v:,.0f}" if v is not None else "—"
 
@@ -50,16 +51,22 @@ async def render_report(
     """Return a fully-rendered standalone HTML page."""
     stmt = (
         select(Hat)
-        .options(selectinload(Hat.case).selectinload(Case.room))
+        .options(*hat_loads())
         .order_by(Hat.id)
     )
     if not include_disposed:
         stmt = stmt.where(Hat.disposed_at.is_(None))
     rows = (await db.execute(stmt)).scalars().all()
 
-    total_count = len(rows)
-    total_new = sum((h.estimated_new_price or 0) for h in rows)
-    total_value = sum(_best_value(h)[0] or 0 for h in rows)
+    # The totals are over what is still OWNED, whatever the listing shows.
+    # `include_disposed` adds sold and gifted hats to the table for the record;
+    # summing them into "Current Value" put hats that have left the collection
+    # on the insurer's document as if they were on the shelf. The valuation
+    # page keeps realized totals on their own line for the same reason.
+    owned = [h for h in rows if h.disposed_at is None]
+    total_count = len(owned)
+    total_new = sum((h.estimated_new_price or 0) for h in owned)
+    total_value = sum(_best_value(h)[0] or 0 for h in owned)
 
     # The cases are part of what you own, and this report is the document that
     # goes to an insurer — leaving dozens of $49 cases out understated the
@@ -88,7 +95,6 @@ async def render_report(
 
 def _version_label() -> str:
     try:
-        from importlib.metadata import version
         return f"Headroom v{version('headroom')}"
     except Exception:  # noqa: BLE001
         return "Headroom"

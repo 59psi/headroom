@@ -187,9 +187,10 @@ async def test_the_record_and_the_damage_land_together(client, db_session, monke
     async def refuse(*a, **kw):
         raise RuntimeError("could not record the repair")
 
-    # Patched at `activity_service`, not at the pipeline: the backfill imports
-    # the name inside the function, so a module-level rebind there is replaced
-    # on every call and the patch would silently do nothing.
+    # Patched at `activity_service`, not at the pipeline: the backfill calls
+    # `activity_service.log_activity` through the module attribute, so this is
+    # the name it reads at call time; a `from … import` in the pipeline would
+    # have bound the real function at import and the patch would do nothing.
     monkeypatch.setattr(activity_service, "log_activity", refuse)
 
     with pytest.raises(RuntimeError):

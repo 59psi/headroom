@@ -29,13 +29,15 @@ from sqlalchemy.orm import selectinload
 
 from headroom.models.catalog import ColorwayEntry, Purchase
 from headroom.models.hat import Hat
-from headroom.schemas.hat import KNOWN_CONSTRUCTIONS
-from headroom.services import sweep_progress
+from headroom.schemas.hat import CONSTRUCTION_TOKENS
+from headroom.services import sweep_progress, vocabulary
 from headroom.services.activity_service import log_and_commit
 from headroom.services.melin_recap import (
+    PAGE_SIZE,
     STYLE_TO_CATEGORY,
     MelinRecapError,
     query_listings,
+    shared_client,
 )
 
 logger = logging.getLogger(__name__)
@@ -99,7 +101,14 @@ def harvest_in_flight() -> bool:
     """
     return _harvest_claimed or progress.running
 
-_PER_PAGE = 100
+
+# Page size is `melin_recap.PAGE_SIZE`, imported rather than restated: the
+# harvest used to carry its own `_PER_PAGE = 100` AND send it under the wrong
+# key (`per_page`; the Sharetribe parameter is `perPage`). The API ignored the
+# unknown key and served its default page, which happened to be 100 — so the
+# loop worked by coincidence, and a change to either side would have truncated
+# every category to one page with nothing to say so, since termination is "a
+# short page arrived".
 _MAX_PAGES_PER_CATEGORY = 50  # safety backstop; ~5000 listings/category
 
 
@@ -144,7 +153,7 @@ async def _sweep_category(db: AsyncSession, category: str, now) -> tuple[int, in
         listings = await _fetch_page(
             {
                 "pub_category": category,
-                "per_page": _PER_PAGE,
+                "perPage": PAGE_SIZE,
                 "page": page,
                 "fields.listing": "title",
             }
@@ -174,7 +183,7 @@ async def _sweep_category(db: AsyncSession, category: str, now) -> tuple[int, in
                 row.listing_count += 1
                 row.last_seen = now
         await db.commit()
-        if len(listings) < _PER_PAGE:
+        if len(listings) < PAGE_SIZE:
             break
     return seen, new
 
@@ -190,14 +199,15 @@ async def harvest_catalog(db: AsyncSession) -> dict:
     """
     now = datetime.now(timezone.utc)
 
-    # try/except/finally: this runs as a BackgroundTask behind a 202, so an exception
-    # here reaches nobody. Leaving `running` true would make a crashed harvest
+    # try/except/finally: this runs as an `asyncio.create_task` behind a 202 (a
+    # `BackgroundTask` until 2.76.0, when it started claiming a slot), so an
+    # exception here reaches nobody. Leaving `running` true would make a crashed harvest
     # read as one still in flight, forever — the precise false signal the
     # progress record exists to remove.
     progress.begin(len(STYLE_TO_CATEGORY))
     # try/FINALLY, with the error recorded in `except` — see the same shape in
     # `repricing.reprice_once`. `except Exception` alone misses CancelledError
-    # (a BaseException), which would leave a cancelled harvest reporting itself
+    # (a BaseException), which would leave a canceled harvest reporting itself
     # as running forever.
     error: str | None = None
     try:
@@ -213,33 +223,37 @@ async def _harvest(db, now) -> dict:
     seen_titles = 0
     new_entries = 0
     failed: list[str] = []
-    for category in STYLE_TO_CATEGORY.values():
-        progress.advance(category)
-        try:
-            seen, new = await _sweep_category(db, category, now)
-        except Exception as exc:  # noqa: BLE001 — see below; NOT BaseException
-            # Keep going. The next category is independent, and a partial
-            # harvest that KNOWS it is partial beats one that doesn't.
-            #
-            # `Exception`, not `MelinRecapError`. Narrowing it to the API error
-            # made the isolation cover only the failure that was in mind when
-            # it was written, while the stated property is broader — one bad
-            # category cannot abandon the rest — and anything else escaped and
-            # killed the whole run: an `IntegrityError` from a racing harvest
-            # (now prevented by the claim, but that is a second guard, not this
-            # one), a disk error mid-commit, a decode failure on a title. The
-            # narrow clause looked careful and was the reason a single bad
-            # category could still lose eight good ones.
-            #
-            # `Exception` deliberately excludes `CancelledError`, which is a
-            # `BaseException`: a shutdown must stop the sweep, not be absorbed
-            # into `failed` and reported as one flaky category.
-            logger.warning("Colorway harvest: category %s failed: %s", category, exc)
-            failed.append(category)
-            await db.rollback()
-            continue
-        seen_titles += seen
-        new_entries += new
+    # One connection pool for the whole run — see `melin_recap.shared_client`.
+    async with shared_client():
+        for category in STYLE_TO_CATEGORY.values():
+            progress.start_unit(category)
+            try:
+                seen, new = await _sweep_category(db, category, now)
+            except Exception as exc:  # noqa: BLE001 — see below; NOT BaseException
+                # Keep going. The next category is independent, and a partial
+                # harvest that KNOWS it is partial beats one that doesn't.
+                #
+                # `Exception`, not `MelinRecapError`. Narrowing it to the API error
+                # made the isolation cover only the failure that was in mind when
+                # it was written, while the stated property is broader — one bad
+                # category cannot abandon the rest — and anything else escaped and
+                # killed the whole run: an `IntegrityError` from a racing harvest
+                # (now prevented by the claim, but that is a second guard, not this
+                # one), a disk error mid-commit, a decode failure on a title. The
+                # narrow clause looked careful and was the reason a single bad
+                # category could still lose eight good ones.
+                #
+                # `Exception` deliberately excludes `CancelledError`, which is a
+                # `BaseException`: a shutdown must stop the sweep, not be absorbed
+                # into `failed` and reported as one flaky category.
+                logger.warning("Colorway harvest: category %s failed: %s", category, exc)
+                failed.append(category)
+                await db.rollback()
+                progress.advance()  # a failed category is still a finished one
+                continue
+            seen_titles += seen
+            new_entries += new
+            progress.advance()
 
     total = (await db.execute(select(func.count(ColorwayEntry.id)))).scalar_one()
     models = (await db.execute(
@@ -304,23 +318,34 @@ async def catalog_options(
     model must appear in the catalog entry, so `odysea hydro` reaches
     `Odysea Packable Hydro`, but a request for the more specific name does not
     pull in the whole family.
+
+    TOKENS, not substrings. This was written as one `ILIKE '%token%'` per
+    token — which is substring containment, and `hydro` is a substring of
+    `hydrolite`, so an `A-Game Hydro` hat was offered every HYDROLite colorway:
+    the exact confusion `_rival_construction` and the HatFilters predicate both
+    guard against by word boundary, in the one picker that writes the field.
+    The SQL keeps the `ILIKE`s as a coarse pre-filter (a superset of the token
+    match, and small), and the real test is `_model_tokens` set containment in
+    Python — the same rule `is_real_product` applies to the analyzer's answer.
     """
     if model:
-        tokens = [t for t in _model_tokens(model) if t]
-        stmt = (
-            select(ColorwayEntry.colorway, func.max(ColorwayEntry.listing_count))
-            .where(
-                ColorwayEntry.colorway.is_not(None),
-                *[ColorwayEntry.model_name.ilike(f"%{token}%") for token in tokens]
-                or [func.lower(ColorwayEntry.model_name) == model.strip().lower()],
-            )
-            .group_by(ColorwayEntry.colorway)
-            .order_by(func.max(ColorwayEntry.listing_count).desc())
+        wanted = _model_tokens(model)
+        stmt = select(
+            ColorwayEntry.model_name, ColorwayEntry.colorway, ColorwayEntry.listing_count
+        ).where(
+            ColorwayEntry.colorway.is_not(None),
+            *[ColorwayEntry.model_name.ilike(f"%{token}%") for token in wanted]
+            or [func.lower(ColorwayEntry.model_name) == model.strip().lower()],
         )
         if q:
             stmt = stmt.where(ColorwayEntry.colorway.ilike(f"%{q}%"))
-        rows = (await db.execute(stmt.limit(limit))).all()
-        return [{"value": colorway} for colorway, _count in rows]
+        best: dict[str, int] = {}
+        for entry_model, colorway, count in (await db.execute(stmt)).all():
+            if wanted and not wanted <= _model_tokens(entry_model):
+                continue
+            best[colorway] = max(best.get(colorway, 0), int(count or 0))
+        ranked = sorted(best.items(), key=lambda kv: (-kv[1], kv[0]))
+        return [{"value": colorway} for colorway, _count in ranked[:limit]]
 
     stmt = (
         select(ColorwayEntry.model_name, func.count(ColorwayEntry.id))
@@ -382,14 +407,14 @@ async def _units_to_add(
     # precisely so they cannot disagree, and an incidental flush was quietly
     # making them disagree anyway.
     with db.no_autoflush:
-        existing = len((await db.execute(
-            select(Purchase).where(
+        existing = int((await db.execute(
+            select(func.count(Purchase.id)).where(
                 Purchase.item_title == title,
                 Purchase.order_ref == item.get("order_ref"),
                 Purchase.price == price,
                 Purchase.size.is_(None) if size is None else Purchase.size == size,
             )
-        )).scalars().all())
+        )).scalar_one())
     wanted = max(quantity - existing - staged.get(key, 0), 0)
     staged[key] = staged.get(key, 0) + wanted
     return wanted, price, size
@@ -441,7 +466,7 @@ async def import_purchases(db: AsyncSession, items: list[dict]) -> dict:
                     item_title=title,
                     model_name=model,
                     colorway=colorway,
-                    size=normalize_size(item.get("size")),
+                    size=size,
                     price=price,
                     # Always 1: the row IS one unit. The original line quantity
                     # is recoverable by counting rows in the order.
@@ -485,6 +510,13 @@ def normalize_size(raw: str | None) -> str | None:
         return None
     key = raw.strip().lower().replace("-", "").replace(" ", "").replace("_", "")
     return _SIZE_ALIASES.get(key)
+
+
+async def list_purchases(db: AsyncSession) -> list[Purchase]:
+    """Every imported order line, newest order first — for the Settings card."""
+    return list(
+        (await db.execute(select(Purchase).order_by(Purchase.order_date.desc()))).scalars().all()
+    )
 
 
 async def _matchable_hats(db: AsyncSession) -> list[Hat]:
@@ -558,7 +590,7 @@ async def preview_import(db: AsyncSession, items: list[dict]) -> dict:
                 item_title=title,
                 model_name=model,
                 colorway=colorway,
-                size=normalize_size(item.get("size")),
+                size=size,
                 price=price,
                 quantity=1,
             )
@@ -574,7 +606,9 @@ async def preview_import(db: AsyncSession, items: list[dict]) -> dict:
     proposals: list[dict] = []
     backlog_matches = 0
     to_match = [*backlog, *would_import]
-    assignment = assign_purchases(to_match, [h for h in hats if h.id not in claimed])
+    assignment = await asyncio.to_thread(
+        assign_purchases, to_match, [h for h in hats if h.id not in claimed]
+    )
     for purchase in to_match:
         found = assignment.get(id(purchase))
         if found is None:
@@ -672,14 +706,12 @@ COLOR_WORD = 3
 PRICE_EXACT = 6
 
 
-#: Every word that is a CONSTRUCTION rather than a product line, lowercased and
-#: split the way `_model_tokens` splits. Used to retry the model gate with the
-#: construction removed — see `_model_tier`.
-_CONSTRUCTION_TOKENS: frozenset[str] = frozenset(
-    t
-    for known in KNOWN_CONSTRUCTIONS
-    for t in known.lower().replace("-", " ").split()
-)
+#: Every word that is a CONSTRUCTION rather than a product line, split the way
+#: `_model_tokens` splits. Used to retry the model gate with the construction
+#: removed — see `_model_tier`. Shared with the pipeline and the pricer via
+#: `schemas.hat`, so the four modules that ask "which construction does this
+#: text assert" cannot drift apart on the answer.
+_CONSTRUCTION_TOKENS: frozenset[str] = CONSTRUCTION_TOKENS
 
 
 @lru_cache(maxsize=4096)
@@ -691,9 +723,11 @@ def _model_tokens(name: str | None) -> frozenset[str]:
     "Trenches Thermal Camo".
 
     Cached because matching is quadratic — every purchase is scored against
-    every free hat, twice (once to rank scarcity, once to assign) — over a
-    vocabulary of a few hundred distinct strings. Pure function of its
-    argument, so the cache can only ever return what it would have computed.
+    every free hat, and `_match_score` tokenizes six strings per pair — over a
+    vocabulary of a few hundred distinct strings. (It used to say "twice, once
+    to rank scarcity, once to assign"; `_by_scarcity` is gone and each pair is
+    scored once.) Pure function of its argument, so the cache can only ever
+    return what it would have computed.
     """
     raw = (name or "").lower().replace("-", " ")
     return frozenset(t for t in raw.split() if t)
@@ -1138,7 +1172,12 @@ async def match_purchases_to_hats(db: AsyncSession, *, dry_run: bool = False) ->
     }
 
     free_hats = [h for h in hats if h.id not in linked_hat_ids]
-    assignment = assign_purchases(purchases, free_hats)
+    # Off the event loop: P x H `_match_score` calls plus the local search is
+    # ~70k scorings on the real history, all pure Python, inside an HTTP
+    # request. Everything it reads is already loaded (`_matchable_hats` eager-
+    # loads `colors`; preview rows are transient), so the thread never touches
+    # the session.
+    assignment = await asyncio.to_thread(assign_purchases, purchases, free_hats)
 
     matched = 0
     proposals: list[dict] = []
@@ -1173,7 +1212,9 @@ async def match_purchases_to_hats(db: AsyncSession, *, dry_run: bool = False) ->
         purchase.hat_id = hat.id
         linked_hat_ids.add(hat.id)
         if purchase.colorway and not hat.colorway:
-            hat.colorway = purchase.colorway
+            # Through the vocabulary, like every other colorway writer: a
+            # receipt's spelling must converge on the one already on record.
+            hat.colorway = await vocabulary.canonicalize(db, Hat.colorway, purchase.colorway)
         if purchase.price is not None and hat.purchase_price is None:
             hat.purchase_price = purchase.price
         if purchase.order_date is not None and hat.purchased_at is None:
@@ -1395,9 +1436,16 @@ async def is_real_product(db: AsyncSession, model_name: str | None, colorway: st
     if not want_model or not want_colorway:
         return False
 
+    # Narrowed in SQL first — the same per-token `ILIKE` pre-filter
+    # `catalog_options` uses, a strict superset of the token test below — so
+    # this no longer pulls the whole catalog (568+ rows) into Python for every
+    # analyzed hat. The decision itself is still made in Python, on tokens.
     rows = (
         await db.execute(
-            select(ColorwayEntry.model_name, ColorwayEntry.colorway)
+            select(ColorwayEntry.model_name, ColorwayEntry.colorway).where(
+                ColorwayEntry.colorway.is_not(None),
+                *[ColorwayEntry.model_name.ilike(f"%{token}%") for token in want_model],
+            )
         )
     ).all()
     for cat_model, cat_colorway in rows:

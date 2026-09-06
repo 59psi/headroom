@@ -1,4 +1,5 @@
 import logging
+import asyncio
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,12 +34,13 @@ from headroom.utils.photo import (
 )
 from headroom.utils.upload import copy_upload_capped
 
+from headroom.models.wear_log import WearLog
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/hats", tags=["hats"])
 
 
-def _hat_to_read(hat) -> HatRead:
+def hat_to_read(hat) -> HatRead:
     """Hat ORM object -> HatRead. Every field maps by name off a column or one
     of the model's derived properties, so there is nothing to hand-copy."""
     return HatRead.model_validate(hat)
@@ -47,11 +49,12 @@ def _hat_to_read(hat) -> HatRead:
 @router.post("", response_model=HatRead, status_code=201)
 async def create_hat(data: HatCreate, db: AsyncSession = Depends(get_db)):
     hat = await hat_service.create_hat(db, data)
-    return _hat_to_read(hat)
+    return hat_to_read(hat)
 
 
 @router.get("", response_model=list[HatRead])
 async def list_hats(
+    response: Response,
     case_id: int | None = Query(None),
     style: str | None = Query(None),
     condition: str | None = Query(None),
@@ -63,7 +66,6 @@ async def list_hats(
     # like the collection is worth less than it is. 1000 is well past a personal
     # collection while still bounding the response.
     limit: int = Query(50, ge=1, le=1000),
-    response: Response = None,  # type: ignore[assignment]
     db: AsyncSession = Depends(get_db),
 ):
     hats = await hat_service.list_hats(db, case_id, style, condition, status, offset, limit)
@@ -74,23 +76,26 @@ async def list_hats(
     # envelope because the body is a bare list that several callers consume
     # directly; reshaping it to add a total would be a breaking change to
     # solve a reporting problem.
-    if response is not None:
-        response.headers["X-Total-Count"] = str(
-            await hat_service.count_hats(db, case_id, style, condition, status)
-        )
-    if len(hats) == limit:
+    total = await hat_service.count_hats(db, case_id, style, condition, status)
+    response.headers["X-Total-Count"] = str(total)
+    # Warn only when a page was actually cut short of the total. The old
+    # condition was `len(hats) == limit`, which is every full page — and once
+    # the frontend started paging at 1000 (`listEveryHat`), every whole-
+    # collection load of a >1000-hat shelf logged a false alarm about a
+    # truncation the client was already handling.
+    if len(hats) == limit and offset + limit < total:
         logger.warning(
-            "GET /api/hats hit its limit of %d (offset=%d) — the response is "
-            "truncated and any client total computed from it is wrong",
-            limit, offset,
+            "GET /api/hats page of %d at offset=%d stopped short of %d total — a client "
+            "that does not page will compute a wrong total",
+            limit, offset, total,
         )
-    return [_hat_to_read(h) for h in hats]
+    return [hat_to_read(h) for h in hats]
 
 
 @router.get("/{hat_id}", response_model=HatRead)
 async def get_hat(hat_id: int, db: AsyncSession = Depends(get_db)):
     hat = await hat_service.get_hat(db, hat_id)
-    return _hat_to_read(hat)
+    return hat_to_read(hat)
 
 
 @router.put("/{hat_id}", response_model=HatRead)
@@ -98,7 +103,7 @@ async def update_hat(
     hat_id: int, data: HatUpdate, db: AsyncSession = Depends(get_db)
 ):
     hat = await hat_service.update_hat(db, hat_id, data)
-    return _hat_to_read(hat)
+    return hat_to_read(hat)
 
 
 @router.delete("/{hat_id}", status_code=204)
@@ -111,7 +116,7 @@ async def assign_hat(
     hat_id: int, data: HatAssign, db: AsyncSession = Depends(get_db)
 ):
     hat = await hat_service.assign_hat(db, hat_id, data.case_id, data.room_id)
-    return _hat_to_read(hat)
+    return hat_to_read(hat)
 
 
 @router.post("/{hat_id}/dispose", response_model=HatRead)
@@ -120,14 +125,14 @@ async def dispose_hat(
 ):
     """Mark a hat as sold/gifted/lost/trashed/trade. Soft delete — undoable."""
     hat = await hat_service.dispose_hat(db, hat_id, data)
-    return _hat_to_read(hat)
+    return hat_to_read(hat)
 
 
 @router.delete("/{hat_id}/dispose", response_model=HatRead)
 async def undispose_hat(hat_id: int, db: AsyncSession = Depends(get_db)):
     """Restore a previously-disposed hat back to active status."""
     hat = await hat_service.undispose_hat(db, hat_id)
-    return _hat_to_read(hat)
+    return hat_to_read(hat)
 
 
 @router.put("/{hat_id}/colors", response_model=HatRead)
@@ -149,7 +154,7 @@ async def update_hat_colors(
     for rank, c in enumerate(data.colors, start=1):
         # An explicitly-typed general_color is a CORRECTION and must win. This
         # used to derive the name from the hex whenever a hex was present, so
-        # editing a mis-detected color to "green" while its (wrong) grey hex
+        # editing a mis-detected color to "green" while its (wrong) gray hex
         # stayed put simply re-derived "gray" and overwrote the fix — the edit
         # looked like it silently reverted. Only fall back to the hex when the
         # field is blank. Names still snap to the palette's spelling so the
@@ -170,7 +175,7 @@ async def update_hat_colors(
 
     await db.commit()
     db.expire_all()
-    return _hat_to_read(await hat_service.get_hat(db, hat_id))
+    return hat_to_read(await hat_service.get_hat(db, hat_id))
 
 
 @router.post("/{hat_id}/photo", response_model=HatRead)
@@ -189,8 +194,12 @@ async def upload_hat_photo(
 
     filename = generate_filename(photo.filename or "photo.jpg")
     with tempfile.NamedTemporaryFile(delete=False, suffix=Path(filename).suffix) as tmp:
-        copy_upload_capped(photo, tmp, what="Photo")
         tmp_path = Path(tmp.name)
+    # Off the event loop, like the bulk-import and share-target routes: a 20 MB
+    # phone photo spooling through a `SpooledTemporaryFile` onto an SD card is
+    # not instant, and this was the one single-file route still doing it inline.
+    with tmp_path.open("wb") as fh:
+        await asyncio.to_thread(copy_upload_capped, photo, fh, what="Photo")
 
     output_path = upload_dir / filename
     try:
@@ -232,18 +241,10 @@ async def upload_hat_photo(
         # endpoint able to clear it. Stamp the terminal status the worker would
         # have. The photo itself saved fine, so this stays a 200 — a failed
         # analysis is what `analysis_status` exists to report.
-        try:
-            await finalize_hat_photo(db, hat, final_path)
-            await db.commit()
-        except Exception as exc:  # noqa: BLE001 — recorded on the hat instead
-            logger.exception("Inline analysis failed for hat=%s: %s", hat_id, exc)
-            await db.rollback()
-            hat = await hat_service.get_hat(db, hat_id)
-            analysis_queue.stamp_failure(hat, exc)
-            await db.commit()
+        await _run_inline(db, hat_id, "analysis", finalize_hat_photo(db, hat, final_path))
 
     db.expire_all()
-    return _hat_to_read(await hat_service.get_hat(db, hat_id))
+    return hat_to_read(await hat_service.get_hat(db, hat_id))
 
 
 @router.post("/{hat_id}/recut", response_model=HatRead)
@@ -279,18 +280,30 @@ async def recut_hat(hat_id: int, db: AsyncSession = Depends(get_db)):
     await db.commit()
 
     if not analysis_queue.enqueue(hat.id):
-        try:
-            await finalize_hat_photo(db, hat, original)
-            await db.commit()
-        except Exception as exc:  # noqa: BLE001 — recorded on the hat instead
-            logger.exception("Inline re-cut failed for hat=%s: %s", hat_id, exc)
-            await db.rollback()
-            hat = await hat_service.get_hat(db, hat_id)
-            analysis_queue.stamp_failure(hat, exc)
-            await db.commit()
+        await _run_inline(db, hat_id, "re-cut", finalize_hat_photo(db, hat, original))
 
     db.expire_all()
-    return _hat_to_read(await hat_service.get_hat(db, hat_id))
+    return hat_to_read(await hat_service.get_hat(db, hat_id))
+
+
+async def _run_inline(db: AsyncSession, hat_id: int, what: str, step) -> None:
+    """Run a pipeline step with no worker behind it, and never strand the hat.
+
+    Three routes fall back to running the pipeline inline when `enqueue()`
+    returns False. Each had its own copy of this try/except — until the third
+    (re-analyze) had none, and a failure there left `analysis_status='pending'`
+    forever. One definition: on failure, roll back, stamp the terminal status
+    the worker would have written, and commit that.
+    """
+    try:
+        await step
+        await db.commit()
+    except Exception as exc:
+        logger.exception("Inline %s failed for hat=%s: %s", what, hat_id, exc)
+        await db.rollback()
+        hat = await hat_service.get_hat(db, hat_id)
+        analysis_queue.stamp_failure(hat, exc)
+        await db.commit()
 
 
 @router.post("/{hat_id}/reanalyze", response_model=HatRead)
@@ -321,8 +334,19 @@ async def reanalyze_hat(hat_id: int, db: AsyncSession = Depends(get_db)):
         await db.commit()
         if analysis_queue.enqueue(hat.id):
             db.expire_all()
-            return _hat_to_read(await hat_service.get_hat(db, hat_id))
+            return hat_to_read(await hat_service.get_hat(db, hat_id))
+        # Worker off: the hat is already `pending`, so this is the third inline
+        # path and needs the same guard as the other two. It had none —
+        # `reanalyze_existing_photo` catches only `ClaudeAnalysisError`, so any
+        # other failure 500'd and left the hat `pending` forever with no error.
+        await _run_inline(
+            db, hat_id, "re-analysis", reanalyze_existing_photo(db, hat, photo_path)
+        )
+        db.expire_all()
+        return hat_to_read(await hat_service.get_hat(db, hat_id))
 
+    # No key: local fallback only. The hat was never marked pending, so a
+    # failure here cannot strand it; the 400 below is decided by attempting it.
     applied = await reanalyze_existing_photo(db, hat, photo_path)
     if not applied:
         raise HTTPException(
@@ -331,7 +355,7 @@ async def reanalyze_hat(hat_id: int, db: AsyncSession = Depends(get_db)):
         )
     await db.commit()
     db.expire_all()
-    return _hat_to_read(await hat_service.get_hat(db, hat_id))
+    return hat_to_read(await hat_service.get_hat(db, hat_id))
 
 @router.post("/{hat_id}/wear", response_model=HatRead)
 async def log_wear(
@@ -339,7 +363,6 @@ async def log_wear(
 ):
     """One tap: "wearing this today". Appends to the wear log and bumps
     date_last_worn. Idempotent per day — a second tap the same day is a no-op."""
-    from headroom.models.wear_log import WearLog
 
     hat = await hat_service.get_hat(db, hat_id)
     if hat.disposed_at is not None:
@@ -357,7 +380,7 @@ async def log_wear(
             # day is already logged, so this tap is simply a no-op.
             await db.rollback()
         db.expire_all()
-    return _hat_to_read(await hat_service.get_hat(db, hat_id))
+    return hat_to_read(await hat_service.get_hat(db, hat_id))
 
 
 @router.delete("/{hat_id}/wear/latest", response_model=HatRead)
@@ -371,5 +394,5 @@ async def undo_wear(hat_id: int, db: AsyncSession = Depends(get_db)):
     hat.date_last_worn = logs[-2].worn_at if len(logs) > 1 else None
     await db.commit()
     db.expire_all()
-    return _hat_to_read(await hat_service.get_hat(db, hat_id))
+    return hat_to_read(await hat_service.get_hat(db, hat_id))
 

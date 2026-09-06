@@ -101,11 +101,7 @@ async def recent_failures(db: AsyncSession, limit: int = 10) -> list[dict]:
     rows = (
         await db.execute(
             select(Hat.id, Hat.analysis_error, Hat.analyzed_at)
-            .where(
-                Hat.disposed_at.is_(None),
-                Hat.analysis_error.is_not(None),
-                Hat.analysis_error != "",
-            )
+            .where(Hat.disposed_at.is_(None), *hat_service.failed_analysis_filters())
             .order_by(Hat.analyzed_at.desc())
         )
     ).all()
@@ -180,7 +176,13 @@ async def _counts(db: AsyncSession, job_id: int) -> tuple[int, int, int]:
         await db.execute(
             select(
                 func.count(Hat.id).filter(Hat.analysis_status != PENDING),
-                func.count(Hat.id).filter(Hat.analysis_status == "error"),
+                # "Failed" is a non-empty `analysis_error`, never a status: a
+                # Claude outage degrades hats to `fallback`/`skipped` WITH a
+                # reason, and `== "error"` counted none of them — so during a
+                # total outage this read 0 while `failed_count` on the same
+                # payload (from `count_for_analysis_job`) read every hat. One
+                # predicate, owned by `hat_service.failed_analysis_filters`.
+                func.count(Hat.id).filter(*hat_service.failed_analysis_filters()),
                 func.count(Hat.id).filter(Hat.analysis_status == PENDING),
             ).where(Hat.analysis_job_id == job_id)
         )

@@ -22,7 +22,10 @@ export function createCase(caseType: string, roomId: number | null = null, capac
   });
 }
 
-export function updateCase(displayId: string, data: { case_type?: string; room_id?: number; capacity?: number }) {
+export function updateCase(
+  displayId: string,
+  data: { case_type?: string; room_id?: number; capacity?: number | null },
+) {
   return apiFetch<CaseRead>(`/api/cases/${displayId}`, {
     method: 'PUT',
     body: JSON.stringify(data),

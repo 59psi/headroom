@@ -33,6 +33,11 @@ services:
     network_mode: host
     # `--from :80` serves plain HTTP on port 80 for ANY host (headroom.local
     # AND the raw IP) — no TLS, no certificate to trust anywhere.
-    command: caddy reverse-proxy --from :80 --to http://localhost:8000
+    #
+    # `127.0.0.1`, NOT `localhost`: under host networking on a dual-stack box
+    # `localhost` resolves to `::1` first, uvicorn binds `0.0.0.0` only, and
+    # Caddy answered 502 rather than retry the v4 address. The Caddyfile the
+    # HTTPS overlays use had this fixed in 2.76.1; this overlay kept the name.
+    command: caddy reverse-proxy --from :80 --to http://127.0.0.1:8000
     depends_on:
       - headroom

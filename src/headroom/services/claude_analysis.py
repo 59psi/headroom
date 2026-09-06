@@ -8,8 +8,8 @@ repeated analysis calls are cheap.
 
 from __future__ import annotations
 
+import asyncio
 import base64
-import json
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -297,7 +297,9 @@ class HatAnalysis:
     logo_detected: str | None = None
     # Free-form since 2.11 — "HYDRO", "HYDROLite", "Thermal", or whatever the
     # tag says. Was a three-value enum; the tool schema above is the contract.
-    # Null means "could not tell", which leaves the stored value untouched.
+    # Carried for the record only: the pipeline never writes it to the hat
+    # (`_apply_construction` is a no-op — construction is owner-stated), so
+    # neither null nor a value changes what is stored.
     construction: str | None = None
     artist_series: str | None = None
     # The colorway half of melin's "<Model> - <Colorway>" naming, READ off the
@@ -472,60 +474,67 @@ async def analyze_hat_image(
     if not api_key:
         raise ClaudeAnalysisError("No Anthropic API key configured.")
 
-    b64, media_type = _read_image_b64(image_path)
+    # Off the event loop: the canonical cutout is a multi-megabyte PNG, and
+    # reading it plus base64-encoding it here stalled every other request for
+    # the duration — the same bar `backup_service.stream_backup` states for a
+    # 1 MB read on an SD card.
+    b64, media_type = await asyncio.to_thread(_read_image_b64, image_path)
 
-    client = _anthropic_client(api_key, config_settings.http_timeout)
     model_id = model or config_settings.anthropic_model
 
     user_text = _owner_context(selected_style, selected_construction, known_series)
 
-    try:
-        message = await client.messages.create(
-            model=model_id,
-            max_tokens=1024,
-            system=[
-                {
-                    "type": "text",
-                    "text": SYSTEM_PROMPT,
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ],
-            tools=[HAT_ANALYSIS_TOOL],
-            tool_choice={"type": "tool", "name": "record_hat_analysis"},
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": media_type,
-                                "data": b64,
+    # `async with`: each `AsyncAnthropic` owns an httpx connection pool, and one
+    # was built per analysis and never closed — a pool of sockets per hat left to
+    # the garbage collector.
+    async with _anthropic_client(api_key, config_settings.http_timeout) as client:
+        try:
+            message = await client.messages.create(
+                model=model_id,
+                max_tokens=1024,
+                system=[
+                    {
+                        "type": "text",
+                        "text": SYSTEM_PROMPT,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
+                tools=[HAT_ANALYSIS_TOOL],
+                tool_choice={"type": "tool", "name": "record_hat_analysis"},
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": media_type,
+                                    "data": b64,
+                                },
                             },
-                        },
-                        {
-                            "type": "text",
-                            "text": user_text,
-                        },
-                    ],
-                }
-            ],
-        )
-    # Logged here, not only where the caller happens to catch it. This module
-    # declared a logger and never used it, so the most expensive and most
-    # externally-dependent call in the app was the one with no voice of its
-    # own: a failing key or a rate limit was visible only as a status on a hat.
-    # The message text is safe — the key is never in it.
-    except AuthenticationError as exc:
-        logger.warning("Claude auth rejected for %s: %s", image_path.name, exc)
-        raise ClaudeAnalysisError("Invalid Anthropic API key.") from exc
-    except APIError as exc:
-        logger.warning("Claude API error for %s: %s", image_path.name, exc)
-        raise ClaudeAnalysisError(f"Anthropic API error: {exc}") from exc
-    except Exception as exc:
-        logger.exception("Claude analysis failed unexpectedly for %s", image_path.name)
-        raise ClaudeAnalysisError(f"Unexpected analysis failure: {exc}") from exc
+                            {
+                                "type": "text",
+                                "text": user_text,
+                            },
+                        ],
+                    }
+                ],
+            )
+        # Logged here, not only where the caller happens to catch it. This module
+        # declared a logger and never used it, so the most expensive and most
+        # externally-dependent call in the app was the one with no voice of its
+        # own: a failing key or a rate limit was visible only as a status on a hat.
+        # The message text is safe — the key is never in it.
+        except AuthenticationError as exc:
+            logger.warning("Claude auth rejected for %s: %s", image_path.name, exc)
+            raise ClaudeAnalysisError("Invalid Anthropic API key.") from exc
+        except APIError as exc:
+            logger.warning("Claude API error for %s: %s", image_path.name, exc)
+            raise ClaudeAnalysisError(f"Anthropic API error: {exc}") from exc
+        except Exception as exc:
+            logger.exception("Claude analysis failed unexpectedly for %s", image_path.name)
+            raise ClaudeAnalysisError(f"Unexpected analysis failure: {exc}") from exc
 
     tool_block = next(
         (b for b in message.content if getattr(b, "type", None) == "tool_use"), None
@@ -535,9 +544,6 @@ async def analyze_hat_image(
 
     payload = tool_block.input
     try:
-        # tool_use input may be a dict already (anthropic SDK >= 0.40)
-        if isinstance(payload, str):
-            payload = json.loads(payload)
         colors = [
             AnalyzedColor(name=c["name"], hex=c["hex"], tier=c.get("tier", "primary"))
             for c in payload.get("colors", [])
@@ -564,14 +570,14 @@ async def verify_api_key(api_key: str, model: str | None = None) -> tuple[bool, 
     """Cheap reachability check for a key + model combo. Returns (ok, message)."""
     if not api_key:
         return False, "No API key provided."
-    client = _anthropic_client(api_key, 10.0)
     model_id = model or config_settings.anthropic_model
     try:
-        await client.messages.create(
-            model=model_id,
-            max_tokens=4,
-            messages=[{"role": "user", "content": "ping"}],
-        )
+        async with _anthropic_client(api_key, 10.0) as client:
+            await client.messages.create(
+                model=model_id,
+                max_tokens=4,
+                messages=[{"role": "user", "content": "ping"}],
+            )
         return True, f"OK — model '{model_id}' reachable."
     except AuthenticationError:
         return False, "Authentication failed — check the key."

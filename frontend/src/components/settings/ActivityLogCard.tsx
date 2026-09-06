@@ -1,9 +1,12 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getActivityLog, getRetentionStatus } from '../../api/settings';
 
+const ROWS_SHOWN = 25;
+
 export function ActivityLogCard() {
   const qc = useQueryClient();
-  const activity = useQuery({ queryKey: ['admin', 'activity'], queryFn: () => getActivityLog(50) });
+  // Fetches exactly what it shows — it asked for 50 and sliced to 25.
+  const activity = useQuery({ queryKey: ['admin', 'activity'], queryFn: () => getActivityLog(ROWS_SHOWN) });
   // The daily prune is the only thing bounding this table and `auth_sessions`,
   // and it had no health record of any kind — a persistent failure was one
   // WARNING per day into a container log while an SD card filled. The row
@@ -22,7 +25,12 @@ export function ActivityLogCard() {
           <button
             type="button"
             className="btn btn-outline-secondary btn-sm"
-            onClick={() => qc.invalidateQueries({ queryKey: ['admin', 'activity'] })}
+            onClick={() => {
+              qc.invalidateQueries({ queryKey: ['admin', 'activity'] });
+              // A SIBLING key: the retention sentence rendered below reads it,
+              // and "activity" is not a prefix of "retention" (CLAUDE.md).
+              qc.invalidateQueries({ queryKey: ['admin', 'retention'] });
+            }}
             disabled={activity.isFetching}
           >{activity.isFetching ? '…' : 'Refresh'}</button>
         </div>
@@ -52,7 +60,7 @@ export function ActivityLogCard() {
           <p className="text-secondary small mb-0">No activity logged yet.</p>
         ) : (
           <div>
-            {activity.data?.slice(0, 25).map(row => (
+            {activity.data?.map(row => (
               <div key={row.id} className="hr-color-row" style={{ paddingTop: '0.5rem' }}>
                 <div className="flex-grow-1" style={{ minWidth: 0 }}>
                   <div className="small" style={{

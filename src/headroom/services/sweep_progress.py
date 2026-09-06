@@ -50,11 +50,26 @@ class SweepProgress:
         # until something actually supersedes it.
         self.error = None
 
+    def start_unit(self, label: str | None) -> None:
+        """Name the unit being worked on, without counting it done.
+
+        `advance(label)` used to do both, and every caller called it BEFORE the
+        unit's work — so the bar read 100% for the entire last category or hat,
+        and "3 of 12 · Odysea" meant Odysea had not started. Naming and counting
+        are two events; this is the first.
+        """
+        self.label = label
+
     def advance(self, label: str | None = None) -> None:
         """One unit done. Advancing past `total` is capped, never wrapped —
-        a bar reading 241/235 reads as a bug in the thing being measured."""
+        a bar reading 241/235 reads as a bug in the thing being measured.
+
+        `label`, when given, names the NEXT unit (a convenience for callers that
+        know it); the sweeps here call `start_unit` for that instead.
+        """
         self.done = min(self.done + 1, self.total) if self.total else self.done + 1
-        self.label = label
+        if label is not None:
+            self.label = label
 
     def finish(self, error: str | None = None) -> None:
         """Always call this, including on the failure path.

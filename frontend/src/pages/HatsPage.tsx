@@ -4,46 +4,14 @@ import { Link } from 'react-router';
 import { listAllHats } from '../api/hats';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ColorSwatches } from '../components/common/ColorSwatch';
-import { ConditionBadge } from '../components/common/ConditionBadge';
 import {
   useHatFilters, HatFilterBar, FilterToggleButton,
   collectGeneralColors, matchesHatFilters,
 } from '../components/hats/HatFilters';
 import type { HatRead } from '../types';
 import { tileSrc } from '../lib/photo';
-
-function HatRow({ hat }: { hat: HatRead }) {
-  return (
-    <Link to={`/hats/${hat.id}`} className="card mb-2 text-decoration-none">
-      <div className="card-body d-flex gap-3 align-items-center">
-        {hat.photo_path ? (
-          <img src={tileSrc(hat)} alt="" className="hr-thumb flex-shrink-0" style={{ width: 80, height: 80 }} />
-        ) : (
-          <div className="rounded flex-shrink-0" style={{ width: 80, height: 80, background: 'rgba(0,0,0,0.3)', border: '1px dashed var(--border)' }} />
-        )}
-        <div className="flex-grow-1" style={{ minWidth: 0 }}>
-          <div className="d-flex justify-content-between align-items-start gap-2">
-            <div>
-              <div className="fw-bold font-mono" style={{ color: 'var(--neon-cyan)' }}>{hat.display_id || `#${hat.id}`}</div>
-              {hat.brand && (
-                <div className="text-secondary small">
-                  <span style={{ color: 'var(--neon-pink)' }}>{hat.brand}</span>
-                  {hat.model_name && <> · {hat.model_name}</>}
-                </div>
-              )}
-            </div>
-            <ConditionBadge condition={hat.condition} />
-          </div>
-          <div className="text-muted small mb-1" style={{ marginTop: 4 }}>
-            {hat.style.replace(/_/g, ' ')} · {hat.size.replace(/_/g, ' ')}
-            {hat.room_name && <> · {hat.room_name}</>}
-          </div>
-          <ColorSwatches colors={hat.colors} showLabels={false} />
-        </div>
-      </div>
-    </Link>
-  );
-}
+import { placementOf, type Placement } from '../lib/placement';
+import { HatRow } from '../components/hats/HatRow';
 
 function GalleryItem({ hat }: { hat: HatRead }) {
   return (
@@ -78,16 +46,18 @@ export function HatsPage() {
 
   const [view, setView] = useState<'list' | 'gallery'>('gallery');
   const [filterBrand, setFilterBrand] = useState('');
-  // 'all' (default) | 'unassigned' (case_id IS NULL) | 'assigned'
-  const [filterAssignment, setFilterAssignment] = useState<'all' | 'unassigned' | 'assigned'>('all');
+  // 'all' (default) or one of the three placements — see `lib/placement`.
+  const [filterAssignment, setFilterAssignment] = useState<'all' | Placement>('all');
 
   const activeFilterCount =
     hatFilters.activeCount + (filterBrand ? 1 : 0) + (filterAssignment === 'all' ? 0 : 1);
 
-  const unassignedCount = useMemo(
-    () => (data ?? []).filter(h => h.case_id == null).length,
-    [data]
-  );
+  const placementCounts = useMemo(() => {
+    const counts: Record<Placement, number> = { case: 0, room: 0, none: 0 };
+    for (const h of data ?? []) counts[placementOf(h)]++;
+    return counts;
+  }, [data]);
+  const unassignedCount = placementCounts.none;
 
   const availableColors = useMemo(() => collectGeneralColors(data), [data]);
 
@@ -104,18 +74,19 @@ export function HatsPage() {
       // instead), so it isn't part of the shared predicate.
       if (filters.room && h.room_id !== Number(filters.room)) return false;
       if (filterBrand && h.brand !== filterBrand) return false;
-      if (filterAssignment === 'unassigned' && h.case_id != null) return false;
-      if (filterAssignment === 'assigned' && h.case_id == null) return false;
+      if (filterAssignment !== 'all' && placementOf(h) !== filterAssignment) return false;
       return true;
     });
   }, [data, filters, filterBrand, filterAssignment]);
 
   if (isLoading) return <LoadingSpinner />;
+  // A failed fetch must not render as an empty collection — Home, Valuation
+  // and Stats each say so, and this page still offered "Add First Hat" over a
+  // 500. An error is shown as an error; the empty state below is for a
+  // collection that really is empty.
   if (error) return (
-    <div className="text-center py-5">
-      <h5 className="mb-2">No hats to display</h5>
-      <p className="text-secondary small mb-3">The hat collection is empty or could not be loaded.</p>
-      <Link to="/hats/new" className="btn btn-primary">Add First Hat</Link>
+    <div className="alert alert-danger" role="alert">
+      Couldn&rsquo;t load your hats. Reload to try again.
     </div>
   );
 
@@ -154,8 +125,9 @@ export function HatsPage() {
         </div>
       </div>
 
-      {/* Quick chips: assignment + unassigned shortcut */}
-      {(unassignedCount > 0 || filterAssignment !== 'all') && (
+      {/* Quick chips: where the hat is. "In a room" only appears once a hat
+          is kept that way, so a collection that is all cases sees two chips. */}
+      {(unassignedCount > 0 || placementCounts.room > 0 || filterAssignment !== 'all') && (
         <div className="d-flex gap-2 mb-3 flex-wrap">
           <button
             type="button"
@@ -164,13 +136,25 @@ export function HatsPage() {
           >All</button>
           <button
             type="button"
-            className={`btn btn-sm ${filterAssignment === 'assigned' ? 'btn-primary' : 'btn-outline-secondary'}`}
-            onClick={() => setFilterAssignment('assigned')}
+            className={`btn btn-sm ${filterAssignment === 'case' ? 'btn-primary' : 'btn-outline-secondary'}`}
+            onClick={() => setFilterAssignment('case')}
           >In a Case</button>
+          {(placementCounts.room > 0 || filterAssignment === 'room') && (
+            <button
+              type="button"
+              className={`btn btn-sm ${filterAssignment === 'room' ? 'btn-primary' : 'btn-outline-secondary'}`}
+              onClick={() => setFilterAssignment('room')}
+            >
+              In a Room
+              {placementCounts.room > 0 && (
+                <span className="badge bg-white ms-1">{placementCounts.room}</span>
+              )}
+            </button>
+          )}
           <button
             type="button"
-            className={`btn btn-sm ${filterAssignment === 'unassigned' ? 'btn-primary' : 'btn-outline-secondary'}`}
-            onClick={() => setFilterAssignment('unassigned')}
+            className={`btn btn-sm ${filterAssignment === 'none' ? 'btn-primary' : 'btn-outline-secondary'}`}
+            onClick={() => setFilterAssignment('none')}
           >
             Unassigned
             {unassignedCount > 0 && (

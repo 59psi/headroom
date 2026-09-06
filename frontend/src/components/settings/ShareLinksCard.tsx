@@ -1,3 +1,4 @@
+import { copyText } from '../../lib/clipboard';
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { createShareLink, listShareLinks, revokeShareLink } from '../../api/auth';
@@ -36,6 +37,14 @@ export function ShareLinksCard() {
     onSuccess: () => { setLabel(''); qc.invalidateQueries({ queryKey: ['share-links'] }); },
   });
 
+  // Bare `await revokeShareLink()` in the handler until now — a failed revoke
+  // left the link listed as live with no message, which on a link that grants
+  // access to the whole collection is the wrong direction to fail silently.
+  const revokeMut = useMutation({
+    mutationFn: (id: number) => revokeShareLink(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['share-links'] }),
+  });
+
   const active = (links.data ?? []).filter(l => !l.revoked_at);
 
   return (
@@ -55,21 +64,22 @@ export function ShareLinksCard() {
               type="button"
               className="btn btn-outline-secondary btn-sm"
               onClick={async () => {
-                await navigator.clipboard.writeText(`${window.location.origin}${l.url_path}`);
-                setCopied(l.id);
-                setTimeout(() => setCopied(null), 1500);
+                // Through `copyText`: a bare `navigator.clipboard.writeText`
+                // threw on the plain-HTTP overlay and the button did nothing.
+                if (await copyText(`${window.location.origin}${l.url_path}`)) {
+                  setCopied(l.id);
+                  setTimeout(() => setCopied(null), 1500);
+                }
               }}
             >{copied === l.id ? 'Copied!' : 'Copy link'}</button>
             <button
               type="button"
               className="btn btn-link btn-sm p-0"
               style={{ color: 'var(--neon-red)' }}
-              onClick={async () => {
-                if (confirm('Revoke this link? Anyone holding it loses access.')) {
-                  await revokeShareLink(l.id);
-                  qc.invalidateQueries({ queryKey: ['share-links'] });
-                }
+              onClick={() => {
+                if (confirm('Revoke this link? Anyone holding it loses access.')) revokeMut.mutate(l.id);
               }}
+              disabled={revokeMut.isPending}
             >revoke</button>
           </div>
         ))}
@@ -92,6 +102,11 @@ export function ShareLinksCard() {
             Create link
           </button>
         </div>
+        {(createMut.error || revokeMut.error) && (
+          <div className="alert alert-danger mt-2 mb-0">
+            {String(createMut.error ?? revokeMut.error)}
+          </div>
+        )}
         <p className="text-secondary small mt-2 mb-0">
           A link shows the whole collection, including which room and case each
           hat is in. Anyone it is forwarded to has the same access, so prefer an

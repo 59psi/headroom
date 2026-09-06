@@ -100,7 +100,11 @@ async def update_case(
         if not await room_service.room_exists(db, data.room_id):
             raise HTTPException(status_code=404, detail=f"Room {data.room_id} not found")
         case.room_id = data.room_id
-    if data.capacity is not None:
+    # Omitted vs explicit null. `if data.capacity is not None` treated both as
+    # "leave it", so clearing the box in the Edit form — whose empty placeholder
+    # promises the type default — changed nothing: a per-case override could be
+    # set and never removed. A field the client SENT as null is a clear.
+    if "capacity" in data.model_fields_set:
         case.capacity = data.capacity
     await db.commit()
     return await _reload_case(db, case.id)
@@ -136,8 +140,9 @@ async def delete_case(db: AsyncSession, display_id: str) -> None:
         hat.detach_from_case(room_id)
     for hat in case.hats:
         if hat.disposed_at is not None:
-            hat.case_id = None
-            hat.position_in_case = None
+            # `None`, deliberately: a disposed hat is not filed onto a shelf it
+            # is not on. Same writer as the active hats above — the model's.
+            hat.detach_from_case(None)
     case_id = case.id
     await db.delete(case)
     await db.commit()

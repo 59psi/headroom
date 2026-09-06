@@ -1,6 +1,5 @@
 import { apiFetch, apiFetchWithHeaders } from './client';
-import type {
-  StyleOption, ColorTag, HatRead, MetaOption } from '../types';
+import type { StyleOption, ColorTag, HatRead, MetaOption, TextOption } from '../types';
 
 /**
  * Matches the `le=` ceiling on `GET /api/hats`.
@@ -179,6 +178,20 @@ export function getConstructions() {
  */
 export function getCollections() {
   return apiFetch<string[]>('/api/meta/collections');
+}
+
+/**
+ * The harvested colorway catalog, for the Edit form's two pickers: with no
+ * `model` the MODEL NAMES, with one the COLORWAYS recorded for it (token
+ * containment, so a hat named for the family still sees its line). Served
+ * whole — the server default is the entire catalog, since a capped list is
+ * invisible: it looks exactly like a short catalog (see `catalog_service`).
+ */
+export function getColorwayOptions(model?: string) {
+  const path = model
+    ? `/api/meta/colorways?model=${encodeURIComponent(model)}`
+    : '/api/meta/colorways';
+  return apiFetch<TextOption[]>(path);
 }
 
 /** Log a wear for today. Idempotent server-side (one row per hat per day). */

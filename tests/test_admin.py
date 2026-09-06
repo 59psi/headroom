@@ -1,6 +1,7 @@
 """Tests for the admin endpoints (recent errors + backup) and model setting."""
 
 import pytest
+from headroom.config import settings
 
 pytestmark = pytest.mark.anyio
 
@@ -21,7 +22,12 @@ async def test_set_model_persists(client):
     # by the write rather than coincidentally true.
     resp = await client.put("/api/settings/model", json={"model_id": "claude-opus-5"})
     assert resp.status_code == 200
-    assert resp.json() == {"model_id": "claude-opus-5", "source": "database"}
+    body = resp.json()
+    assert body["model_id"] == "claude-opus-5"
+    assert body["source"] == "database"
+    # The default rides along so the card can say "(default)" without a copy
+    # of `config.anthropic_model` in TypeScript.
+    assert body["default_model_id"] == settings.anthropic_model
 
     # GET reflects the change
     resp = await client.get("/api/settings/model")
@@ -128,7 +134,5 @@ async def test_list_backups_empty_initially(client):
     assert resp.status_code == 200
     assert resp.json() == []
 
-
-# ---- Admin auth gate ------------------------------------------------ #
 
 

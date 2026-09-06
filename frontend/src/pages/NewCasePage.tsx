@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
 import { createCase } from '../api/cases';
 import { listRooms } from '../api/rooms';
-import { CAPACITY_PLACEHOLDER } from '../lib/capacity';
+import { CAPACITY_PLACEHOLDER, DEFAULT_REGULAR_CAPACITY } from '../lib/capacity';
 import { invalidateHatViews } from '../lib/invalidate';
 
 export function NewCasePage() {
@@ -38,8 +38,8 @@ export function NewCasePage() {
       <div className="card">
         <div className="card-body">
           <div className="mb-3">
-            <label className="form-label">Case Type</label>
-            <select className="form-select" value={caseType} onChange={e => setCaseType(e.target.value)}>
+            <label className="form-label" htmlFor="new-case-type">Case Type</label>
+            <select id="new-case-type" className="form-select" value={caseType} onChange={e => setCaseType(e.target.value)}>
               <option value="archive">Archive</option>
               <option value="daily_wear">Daily Wear</option>
             </select>
@@ -55,8 +55,9 @@ export function NewCasePage() {
           </div>
 
           <div className="mb-3">
-            <label className="form-label">Capacity (hats)</label>
+            <label className="form-label" htmlFor="new-case-capacity">Capacity (hats)</label>
             <input
+              id="new-case-capacity"
               type="number"
               className="form-control"
               min={1}
@@ -65,7 +66,9 @@ export function NewCasePage() {
               value={capacity}
               onChange={e => setCapacity(e.target.value)}
             />
-            <div className="form-text small">e.g. 3 for a Melin case that fits 3 hats comfortably</div>
+            <div className="form-text small">
+              e.g. {DEFAULT_REGULAR_CAPACITY} for a Melin case that fits {DEFAULT_REGULAR_CAPACITY} hats comfortably
+            </div>
           </div>
 
           {mutation.error && (

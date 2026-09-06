@@ -19,7 +19,7 @@ class ImportJob(Base):
     status: Mapped[str] = mapped_column(String(20), default="queued")
     defaults_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    items: Mapped[list["ImportJobItem"]] = relationship(  # noqa: F821
+    items: Mapped[list["ImportJobItem"]] = relationship(
         back_populates="job", lazy="selectin", cascade="all, delete-orphan"
     )
 

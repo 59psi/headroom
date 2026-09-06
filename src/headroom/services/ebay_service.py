@@ -245,11 +245,18 @@ async def find_comps(
         return {
             "ebay_avg_price": round(statistics.fmean(prices), 2) if prices else None,
             "ebay_median_price": round(statistics.median(prices), 2) if prices else None,
-            "ebay_listing_count": len(items),
+            # The Browse API publishes `total` beside a page capped at
+            # `max_results` (25). `len(items)` was the page length, rendered on
+            # the hat page as "median of N live listings" — the same
+            # first-page-is-the-market shape `melin_recap.query_all_listings`
+            # documents fixing. The median itself is still over the page the
+            # API ranked first; the count at least no longer claims the page is
+            # the market.
+            "ebay_listing_count": int(body.get("total") or len(items)),
             "ebay_search_url": search_url,
             "ebay_checked_at": datetime.now(timezone.utc),
         }
     except EbayError:
         raise
-    except Exception as exc:  # noqa: BLE001 — surfaced to caller
+    except Exception as exc:  # surfaced to caller
         raise EbayError(f"eBay lookup failed: {exc}") from exc

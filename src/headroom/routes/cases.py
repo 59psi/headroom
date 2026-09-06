@@ -10,7 +10,7 @@ from headroom.services import retail_pricing
 router = APIRouter(prefix="/api/cases", tags=["cases"])
 
 
-def _case_to_read(case) -> CaseRead:
+def case_to_read(case) -> CaseRead:
     # Disposed hats free their slot, so they must not count toward occupancy —
     # `_validate_capacity` filters them, and a read model that didn't would
     # show a case as fuller than the validator considers it.
@@ -26,7 +26,6 @@ def _case_to_read(case) -> CaseRead:
         case_type=case.case_type,
         sequence_number=case.sequence_number,
         display_id=case.display_id,
-        photo_path=case.photo_path,
         capacity=case.capacity,
         retail_price=retail_pricing.CASE_RETAIL,
         hat_count=len(hats),
@@ -60,9 +59,15 @@ def _case_to_read(case) -> CaseRead:
 
 def _case_to_detail(case) -> CaseDetail:
     # CaseDetail is CaseRead plus the hat list — derive the shared fields rather
-    # than restating all 13 of them (they drifted apart too easily).
+    # than restating every one of them (they drifted apart too easily).
+    #
+    # Disposed hats are filtered here exactly as `case_to_read` filters them
+    # out of `hat_count`/`hat_thumbs` forty lines up. They were not, so the
+    # case page listed a sold hat as present under a header that counted it
+    # gone. `dispose_hat` keeps `case_id` on purpose (a "previously held" view
+    # may want it one day); until something renders that, it is not on show.
     return CaseDetail(
-        **_case_to_read(case).model_dump(),
+        **case_to_read(case).model_dump(),
         hats=[
             HatSummary(
                 id=h.id,
@@ -73,6 +78,7 @@ def _case_to_detail(case) -> CaseDetail:
                 thumb_path=h.thumb_path,
             )
             for h in (case.hats or [])
+            if h.disposed_at is None
         ],
     )
 
@@ -80,13 +86,13 @@ def _case_to_detail(case) -> CaseDetail:
 @router.post("", response_model=CaseRead, status_code=201)
 async def create_case(data: CaseCreate, db: AsyncSession = Depends(get_db)):
     case = await case_service.create_case(db, data)
-    return _case_to_read(case)
+    return case_to_read(case)
 
 
 @router.get("", response_model=list[CaseRead])
 async def list_cases(db: AsyncSession = Depends(get_db)):
     cases = await case_service.list_cases(db)
-    return [_case_to_read(c) for c in cases]
+    return [case_to_read(c) for c in cases]
 
 
 @router.get("/{display_id}", response_model=CaseDetail)
@@ -100,7 +106,7 @@ async def update_case(
     display_id: str, data: CaseUpdate, db: AsyncSession = Depends(get_db)
 ):
     case = await case_service.update_case(db, display_id, data)
-    return _case_to_read(case)
+    return case_to_read(case)
 
 
 @router.delete("/{display_id}", status_code=204)

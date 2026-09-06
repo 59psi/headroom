@@ -12,14 +12,12 @@ import { listCases } from '../api/cases';
 import { DEFAULT_HAT_BASICS } from '../components/hats/HatFormFields';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { invalidateHatViews } from '../lib/invalidate';
+import { formatBytes } from '../lib/format';
 
 const MAX_FILES = 100;
 
-function shortBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 ** 2) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / 1024 ** 2).toFixed(1)} MB`;
-}
+/** What identifies a picked file — the row key, and the dedupe key. */
+const fileKey = (f: File) => `${f.name}:${f.size}:${f.lastModified}`;
 
 export function BulkImportPage() {
   const navigate = useNavigate();
@@ -102,12 +100,19 @@ export function BulkImportPage() {
 
   function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const picked = Array.from(e.target.files ?? []);
-    setFiles(prev => [...prev, ...picked].slice(0, MAX_FILES));
+    // Keyed on what identifies a file rather than its position: removing row
+    // 3 of 10 with index keys re-labels every row beneath it. The same key
+    // also dedupes a file picked twice.
+    setFiles(prev => {
+      const seen = new Set(prev.map(fileKey));
+      const fresh = picked.filter(f => !seen.has(fileKey(f)) && seen.add(fileKey(f)));
+      return [...prev, ...fresh].slice(0, MAX_FILES);
+    });
     e.target.value = ''; // allow re-picking same files
   }
 
-  function removeFile(idx: number) {
-    setFiles(prev => prev.filter((_, i) => i !== idx));
+  function removeFile(key: string) {
+    setFiles(prev => prev.filter(f => fileKey(f) !== key));
   }
 
   if (styles.isLoading || sizes.isLoading || conditions.isLoading) {
@@ -206,20 +211,20 @@ export function BulkImportPage() {
               ) : (
                 <div>
                   {files.map((f, idx) => (
-                    <div key={idx} className="hr-color-row" style={{ paddingTop: '0.5rem' }}>
+                    <div key={fileKey(f)} className="hr-color-row" style={{ paddingTop: '0.5rem' }}>
                       <div className="font-mono small text-muted" style={{ minWidth: 28 }}>{idx + 1}.</div>
                       <div className="flex-grow-1" style={{ minWidth: 0 }}>
                         <div className="small" style={{
                           whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                         }}>{f.name}</div>
                         <div className="text-muted small font-mono" style={{ fontSize: '0.7rem' }}>
-                          {shortBytes(f.size)}
+                          {formatBytes(f.size)}
                         </div>
                       </div>
                       <button
                         type="button"
                         className="btn btn-outline-danger btn-sm"
-                        onClick={() => removeFile(idx)}
+                        onClick={() => removeFile(fileKey(f))}
                       >×</button>
                     </div>
                   ))}
@@ -285,25 +290,23 @@ export function BulkImportPage() {
                   <div className={
                     item.status === 'done' ? 'badge bg-info' :
                     item.status === 'error' ? 'badge bg-warning' :
-                    item.status === 'cancelled' ? 'badge bg-secondary' :
+                    item.status === 'canceled' ? 'badge bg-secondary' :
                     'badge bg-light'
                   }>{item.status}</div>
                   {item.hat_id && (
                     <div className="small mt-1">
-                      <a href={`/hats/${item.hat_id}`} onClick={(e) => { e.preventDefault(); navigate(`/hats/${item.hat_id}`); }}>
-                        view hat →
-                      </a>
+                      <Link to={`/hats/${item.hat_id}`}>view hat →</Link>
                     </div>
                   )}
                 </div>
               </div>
             ))}
-            {(job.data.status === 'done' || job.data.status === 'cancelled') && (
+            {(job.data.status === 'done' || job.data.status === 'canceled') && (
               <button
                 type="button"
                 className="btn btn-primary w-100 mt-3"
                 onClick={() => { setActiveJobId(null); navigate('/hats'); }}
-              >{job.data.status === 'done' ? 'Done — go to Hats' : 'Cancelled — go to Hats'}</button>
+              >{job.data.status === 'done' ? 'Done — go to Hats' : 'Canceled — go to Hats'}</button>
             )}
           </div>
         </div>

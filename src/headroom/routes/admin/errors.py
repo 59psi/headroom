@@ -5,27 +5,18 @@ from __future__ import annotations
 from datetime import datetime
 from typing import cast
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.database import get_db
-from headroom.schemas.admin import RecentError
-from headroom.models.hat import Hat
+from headroom.schemas.admin import CountRead, RecentError
 from headroom.services import hat_service
 
 router = APIRouter()
 
 
-def _safe_display_id(hat: Hat) -> str | None:
-    """display_id depends on hat.case being loaded; tolerate missing relationship."""
-    try:
-        return hat.display_id
-    except Exception:  # noqa: BLE001
-        return None
-
-
 @router.get("/recent-errors", response_model=list[RecentError])
-async def recent_errors(limit: int = 20, db: AsyncSession = Depends(get_db)):
+async def recent_errors(limit: int = Query(20, ge=1, le=200), db: AsyncSession = Depends(get_db)):
     """Most recent hats carrying an analysis failure, newest first.
 
     Keyed on the failure TEXT (`hat_service.failed_analysis_filters`), not on
@@ -42,7 +33,7 @@ async def recent_errors(limit: int = 20, db: AsyncSession = Depends(get_db)):
     return [
         RecentError(
             hat_id=h.id,
-            display_id=_safe_display_id(h),
+            display_id=h.display_id,
             analysis_error=h.analysis_error,
             analyzed_at=cast(datetime | None, h.analyzed_at),
             photo_path=h.photo_path,
@@ -51,7 +42,7 @@ async def recent_errors(limit: int = 20, db: AsyncSession = Depends(get_db)):
     ]
 
 
-@router.get("/recent-errors/count")
+@router.get("/recent-errors/count", response_model=CountRead)
 async def recent_errors_count(db: AsyncSession = Depends(get_db)):
     """Cheap count for nav-badge display. Same predicate as the list above.
 

@@ -13,69 +13,13 @@ import {
   costOf, realizedTotals, valueCases, valueCollection, valueHat,
 } from './valuation';
 import type { HatRead, CaseRead } from '../types';
+import { caseFixture, hatFixture } from '../test/fixtures';
 
 /** A hat with nothing priced. Tests set only the fields they're about. */
 function hat(over: Partial<HatRead> = {}): HatRead {
-  return {
-    id: 1, direct_room_id: null, limited_edition: false,
-    case_id: null,
-    position_in_case: null,
-    display_id: 'A-001-01',
-    case_display_id: null,
-    case_type: null,
-    photo_path: null,
-    original_path: null,
-    thumb_path: null,
-    condition: 'new_with_tags',
-    date_last_worn: null,
-    wear_count: 0,
-    size: 'classic',
-    style: 'a_game',
-    is_beanie: false,
-    colors: [],
-    room_id: null,
-    room_name: null,
-    brand: null,
-    logo_detected: null,
-    artist_series: null,
-    construction: null,
-    hydrolite: false,
-    hydro: false,
-    model_name: null,
-    colorway: null,
-    purchase_price: null,
-    purchased_at: null,
-    model_confidence: null,
-    style_descriptor: null,
-    design_notes: null,
-    owner_notes: null,
-    estimated_new_price: null,
-    estimated_new_price_source: null,
-    resale_price: null,
-    resale_price_source: null,
-    resale_price_url: null,
-    resale_checked_at: null,
-    resale_price_scope: null,
-    analysis_status: null,
-    analysis_stage: null,
-    analysis_stage_at: null,
-    analysis_job_id: null,
-    analysis_error: null,
-    analyzed_at: null,
-    disposed_at: null,
-    disposed_via: null,
-    disposed_price: null,
-    disposed_to: null,
-    disposed_notes: null,
-    ebay_avg_price: null,
-    ebay_median_price: null,
-    ebay_listing_count: null,
-    ebay_search_url: null,
-    ebay_checked_at: null,
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
-    ...over,
-  };
+  // The shared fixture, not a second ~50-field literal: adding a column used
+  // to break this file independently of every other one.
+  return hatFixture({ id: 1, case_display_id: null, condition: 'new_with_tags', ...over });
 }
 
 describe('valueHat — signal priority', () => {
@@ -232,13 +176,7 @@ describe('realizedTotals', () => {
 
 describe('valueCases', () => {
   const c = (over: Partial<CaseRead> = {}): CaseRead => ({
-    id: 1, case_type: 'archive', sequence_number: 1, display_id: 'A-001',
-    photo_path: null, capacity: null, retail_price: 49,
-    hat_count: 0, beanie_count: 0, regular_count: 0,
-    room_id: 1, room_name: 'Closet', hat_thumbs: [],
-    overfull: false, nominal_capacity: 3, nominal_regular: 3, nominal_beanie: 6,
-    accepts_regular: true, accepts_beanie: true, free_regular: 3, free_beanie: 6,
-    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    ...caseFixture({ room_name: 'Closet' }),
     ...over,
   });
 

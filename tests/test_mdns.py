@@ -233,11 +233,11 @@ async def test_advertises_both_address_families_so_aaaa_is_answerable(monkeypatc
 async def test_ipv4_only_host_still_binds_v4_only(monkeypatch):
     """No global IPv6 → don't bind a v6 socket we can do nothing with.
 
-    Such a host still trips the upstream NSEC defect; that is upstream's to fix
-    and there is no way to correct it from here (zeroconf ships compiled
-    Cython, so a ServiceInfo subclass overriding _dns_nsec is never consulted).
-    This test exists so the v4-only path stays deliberate rather than becoming
-    an accident of a future edit.
+    A v4-only host used to trip the upstream NSEC defect (fixed in
+    python-zeroconf 0.150.4, and this app negates the missing AAAA itself via
+    `_NsecProtocol` — see `test_mdns_nsec.py`), so the v4-only path was once
+    the broken one. This test exists so it stays deliberate rather than
+    becoming an accident of a future edit.
     """
     from zeroconf import IPVersion
 
@@ -275,7 +275,7 @@ async def test_start_mdns_pins_lan_interface(monkeypatch):
     ``_lan_ipv6`` is pinned to None rather than left live: this asserts the
     exact interface list, and on any host that has a global IPv6 the real
     detector would (correctly) add a second address and fail it for the wrong
-    reason. The v6 path has its own tests below.
+    reason. The v6 path has its own tests above.
     """
     import socket
 

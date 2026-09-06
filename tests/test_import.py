@@ -5,7 +5,6 @@ import io
 import pytest
 from PIL import Image
 
-from headroom.services.claude_analysis import AnalyzedColor, HatAnalysis
 
 pytestmark = pytest.mark.anyio
 
@@ -15,32 +14,6 @@ def _jpeg(color=(180, 60, 200)) -> bytes:
     buf = io.BytesIO()
     img.save(buf, "JPEG")
     return buf.getvalue()
-
-
-@pytest.fixture
-def stub_pipeline(monkeypatch):
-    """Stub Claude + key for the import worker so jobs can complete."""
-    async def _fake_get_key(_db):
-        return "sk-ant-test", "database"
-
-    async def _fake_analyze(_path, _key, model=None, selected_style=None, **_kw):  # noqa: ARG001
-        return HatAnalysis(
-            brand="Melin",
-            model_name="A-Game Hydro",
-            model_confidence="high",
-            style_descriptor="snapback",
-            design_notes="Test fixture hat.",
-            estimated_new_price_usd=60.0,
-            colors=[AnalyzedColor(name="navy", hex="#1c2541", tier="primary")],
-            raw=None,
-        )
-
-    monkeypatch.setattr(
-        "headroom.services.settings_service.get_anthropic_key", _fake_get_key
-    )
-    monkeypatch.setattr(
-        "headroom.services.hat_analysis_pipeline.analyze_hat_image", _fake_analyze
-    )
 
 
 async def test_create_import_job_returns_id(client):
@@ -83,7 +56,7 @@ async def test_invalid_content_type_rejected(client):
     assert resp.status_code == 400
 
 
-async def test_cancel_marks_queued_items_cancelled(client):
+async def test_cancel_marks_queued_items_canceled(client):
     """Worker is not started in tests, so items stay queued — perfect for cancel."""
     create = await client.post(
         "/api/hats/import",
@@ -94,8 +67,8 @@ async def test_cancel_marks_queued_items_cancelled(client):
     resp = await client.delete(f"/api/hats/import/{job_id}")
     assert resp.status_code == 200
     body = resp.json()
-    assert body["status"] == "cancelled"
-    assert all(it["status"] == "cancelled" for it in body["items"])
+    assert body["status"] == "canceled"
+    assert all(it["status"] == "canceled" for it in body["items"])
 
 
 @pytest.mark.anyio

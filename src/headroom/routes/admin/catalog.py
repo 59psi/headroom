@@ -5,18 +5,21 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.database import get_db
-from headroom.models.catalog import Purchase
 from headroom.schemas.admin import (
     CatalogRefreshStarted,
     CatalogStatus,
+    ImportPreview,
+    ImportResult,
+    MatchResult,
     PurchaseImport,
     PurchaseRead,
     UnclaimedFromPurchases,
+    UnmatchAllResult,
+    UnmatchOneResult,
 )
 from headroom.services import catalog_service
 from headroom.services.melin_recap import MelinRecapError
@@ -46,7 +49,7 @@ async def colorway_catalog_status(db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/colorways/refresh", status_code=202, response_model=CatalogRefreshStarted)
-async def refresh_colorway_catalog():
+async def refresh_colorway_catalog(request: Request):
     """Harvest melinrecap listing titles into the colorway catalog.
 
     Runs in the background and returns immediately. The harvest is up to 9
@@ -75,18 +78,22 @@ async def refresh_colorway_catalog():
             already_running=True,
             detail="A catalog refresh is already running — watch its progress.",
         )
-    task = asyncio.create_task(_harvest_in_background())
+    # The app's session factory, captured from the request — the seam every
+    # other background job takes. This reached for the module-level
+    # `async_session`, which is the same engine in production and an
+    # unopenable one under test, so the STARTED path of this endpoint could
+    # never run in the suite and had no test; only the refusal branch did.
+    factory = request.app.state.session_factory
+    task = asyncio.create_task(_harvest_in_background(factory))
     _running_harvests.add(task)
     task.add_done_callback(_running_harvests.discard)
     return CatalogRefreshStarted()
 
 
-async def _harvest_in_background() -> None:
+async def _harvest_in_background(session_factory) -> None:
     """Own session: the request's is closed by the time this runs."""
-    from headroom.database import async_session
-
     try:
-        async with async_session() as db:
+        async with session_factory() as db:
             result = await catalog_service.harvest_catalog(db)
         logger.info("Colorway catalog refresh finished: %s", result)
     except MelinRecapError as exc:
@@ -95,12 +102,12 @@ async def _harvest_in_background() -> None:
         logger.exception("Colorway catalog refresh crashed")
     finally:
         # `finally`, not the happy path: CancelledError is a BaseException, and
-        # a harvest cancelled at shutdown that kept the slot would refuse every
+        # a harvest canceled at shutdown that kept the slot would refuse every
         # press after the next start.
         catalog_service.release_harvest()
 
 
-@router.post("/purchases/import")
+@router.post("/purchases/import", response_model=ImportPreview | ImportResult)
 async def import_purchases(
     data: PurchaseImport,
     dry_run: bool = False,
@@ -124,10 +131,7 @@ async def import_purchases(
 
 @router.get("/purchases", response_model=list[PurchaseRead])
 async def list_purchases(db: AsyncSession = Depends(get_db)):
-    rows = (
-        await db.execute(select(Purchase).order_by(Purchase.order_date.desc()))
-    ).scalars().all()
-    return list(rows)
+    return await catalog_service.list_purchases(db)
 
 
 # Registered BEFORE `{purchase_id}` for the same reason `unmatch-all` is: a
@@ -144,7 +148,7 @@ async def unclaimed_from_purchases(db: AsyncSession = Depends(get_db)):
     return UnclaimedFromPurchases(**await catalog_service.unclaimed_from_purchases(db))
 
 
-@router.post("/purchases/match")
+@router.post("/purchases/match", response_model=MatchResult)
 async def rematch_purchases(
     dry_run: bool = False, db: AsyncSession = Depends(get_db)
 ):
@@ -158,7 +162,7 @@ async def rematch_purchases(
 # `unmatch-all` rather than `/purchases/unmatch`, and it is registered BEFORE
 # the `{purchase_id}` route: a literal segment that can be read as an id is
 # how `/api/hats/import` got shadowed once already.
-@router.post("/purchases/unmatch-all")
+@router.post("/purchases/unmatch-all", response_model=UnmatchAllResult)
 async def unmatch_all(db: AsyncSession = Depends(get_db)):
     """Break every purchase→hat link, reverting the fields each one set.
 
@@ -169,7 +173,7 @@ async def unmatch_all(db: AsyncSession = Depends(get_db)):
     return await catalog_service.unmatch_all_purchases(db)
 
 
-@router.post("/purchases/{purchase_id}/unmatch")
+@router.post("/purchases/{purchase_id}/unmatch", response_model=UnmatchOneResult)
 async def unmatch_one(purchase_id: int, db: AsyncSession = Depends(get_db)):
     """Break one purchase→hat link and return the purchase to the pool.
 

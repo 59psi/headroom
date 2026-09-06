@@ -3,7 +3,8 @@
 Journey, Destination and All Day are named and priced like any other melin
 model (see melin's own "Beanie Shape Guide"), so they are styles. The risk in
 adding them is that `Hat.is_beanie` is a real column — search filters query it
-and case capacity depends on it, 6 beanies per case against 3 regular hats —
+and case capacity depends on it (`capacity.MAX_BEANIE` beanies per case against
+`capacity.MAX_REGULAR` regular hats) —
 that is DERIVED from style. A new beanie shape missing from `BEANIE_STYLES`
 packs 3-to-a-case, vanishes from the Beanies filter, and makes the case picker
 offer cases the save then rejects with a 409.
@@ -17,6 +18,7 @@ import pytest
 
 from headroom.schemas.hat import BEANIE_STYLES, HatStyle, is_beanie_style
 from headroom.services import retail_pricing
+from headroom.services import capacity
 
 pytestmark = pytest.mark.anyio
 
@@ -66,14 +68,15 @@ async def test_is_beanie_style_handles_absent_values():
 
 
 async def test_named_beanies_pack_six_to_a_case(client):
-    """The reason the derivation matters. A case takes 6 beanies, not 3 hats."""
+    """The reason the derivation matters: a case takes MAX_BEANIE beanies, not
+    MAX_REGULAR hats — the figures come from `capacity`, never retyped here."""
     case = (await client.post("/api/cases", json={"case_type": "archive"})).json()
-    for i in range(6):
+    for i in range(capacity.MAX_BEANIE):
         resp = await _hat(client, style="journey", case_id=case["id"])
         assert resp.status_code == 201, f"beanie {i + 1} rejected: {resp.text}"
 
     detail = (await client.get(f"/api/cases/{case['display_id']}")).json()
-    assert detail["beanie_count"] == 6
+    assert detail["beanie_count"] == capacity.MAX_BEANIE
     assert detail["regular_count"] == 0
 
 

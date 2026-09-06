@@ -70,7 +70,22 @@ class ExtractedColor:
 
 
 def nearest_color_name(rgb: tuple[int, int, int]) -> str:
-    """Map an RGB triple to the closest curated palette name."""
+    """Map an RGB triple to the closest curated palette name.
+
+    RGB Euclidean, deliberately — and this was checked rather than assumed.
+    `families_of_lab` below classifies by CIEDE2000, and unifying the two on
+    ΔE looked like the obvious tidy-up. Measured over a 512-point RGB grid the
+    two metrics disagree on 39% of points, and the ΔE-nearest NAME is wrong in
+    the direction that matters: pure blue (`#0000c0`) comes out "purple" —
+    CIELAB's hue angle is non-linear through the blue region, the very defect
+    `_INCOMPATIBLE_FAMILIES` exists to veto — while RGB gets it right. RGB has
+    its own miss (a neutral `#2b2b2b` reads "dark brown" where ΔE says
+    charcoal). Neither single-nearest metric names colors reliably; the
+    classifier avoids the question by keeping every candidate within a margin
+    and then reasoning about FAMILIES. So the stored name stays RGB-nearest,
+    search membership stays categorical, and this comment is here so the next
+    reader does not re-run the experiment expecting a different answer.
+    """
     r, g, b = rgb
     return min(
         _PALETTE,
@@ -136,7 +151,7 @@ def normalize_color_name(name: str) -> str:
 # apart in a*b* while looking near-identical, so a navy search returned a
 # spread of blues ranked in an order that didn't match what you see, and
 # two navies a person would call the same shade scored further apart than a
-# navy and a slate grey.
+# navy and a slate gray.
 #
 # CIEDE2000 is the current CIE standard and fixes that with weighting terms
 # for lightness, chroma and hue plus a rotation term for the blue region.
@@ -194,7 +209,7 @@ def lab_distance(a: tuple[float, float, float], b: tuple[float, float, float]) -
     c2 = math.hypot(a2, b2)
     c_bar = (c1 + c2) / 2.0
 
-    # G expands a* in low-chroma colors so near-greys don't get a hue that
+    # G expands a* in low-chroma colors so near-grays don't get a hue that
     # swamps the comparison.
     c_bar7 = c_bar ** 7
     g = 0.5 * (1.0 - math.sqrt(c_bar7 / (c_bar7 + 25.0 ** 7)))
@@ -277,8 +292,8 @@ def color_distance(hex_a: str, hex_b: str) -> float | None:
     return lab_distance(a, b)
 
 
-# ------------------------ grey is not a dark color -------------------- #
-# Chroma is how much color a color has: 0 is a pure grey, ~60 a vivid
+# ------------------------ gray is not a dark color -------------------- #
+# Chroma is how much color a color has: 0 is a pure gray, ~60 a vivid
 # purple. Below NEUTRAL there is no hue worth speaking of; at or above
 # CHROMATIC there plainly is.
 #
@@ -286,20 +301,20 @@ def color_distance(hex_a: str, hex_b: str) -> float | None:
 # no amount of tuning a single threshold will make it. CIEDE2000 divides the
 # chroma difference by S_C = 1 + 0.045 * C_bar, which is correct for the job
 # it was designed for — judging whether two nearly-identical samples of a dye
-# match — and wrong here. A mid grey and a saturated purple differ by 55 units
+# match — and wrong here. A mid gray and a saturated purple differ by 55 units
 # of chroma; that divisor compresses the gap to ~22, and when their lightness
-# happens to agree the pair scores ~17. So a grey hat sat NEARER the purple
+# happens to agree the pair scores ~17. So a gray hat sat NEARER the purple
 # swatch than two genuinely different purples sit to each other, and every
-# color search returned the whole shelf of black/charcoal/navy/grey caps.
+# color search returned the whole shelf of black/charcoal/navy/gray caps.
 #
 # The test is a RATIO, not an absolute floor, because "how much color counts
 # as some color" depends on the color. Teal is itself only C=27 where red is
 # C=73, so a muted teal at C=10 has a real share of teal's chroma while a
-# blue-grey at C=12 has almost none of purple's C=59. An absolute floor cannot
+# blue-gray at C=12 has almost none of purple's C=59. An absolute floor cannot
 # see that difference: set low enough to keep the muted teal findable, it lets
-# blue-grey match purple; set high enough to stop that, it throws away every
+# blue-gray match purple; set high enough to stop that, it throws away every
 # dark teal and forest green in the collection. The ratio separates them —
-# 0.39 for the teal, 0.20 for the blue-grey.
+# 0.39 for the teal, 0.20 for the blue-gray.
 #
 # CHROMATIC_CHROMA gates the whole rule: below it the target is itself muted
 # enough that nothing is claimed, so white/cream and navy/charcoal are judged
@@ -309,7 +324,7 @@ MIN_CHROMA_RATIO = 0.25
 
 
 def chroma_of(lab: tuple[float, float, float]) -> float:
-    """C* — distance from the neutral axis. 0 is grey, ~73 is a vivid red."""
+    """C* — distance from the neutral axis. 0 is gray, ~73 is a vivid red."""
     _l, a, b = lab
     return math.hypot(a, b)
 
@@ -322,10 +337,10 @@ def is_neutral_mismatch(
     Deliberately NOT a penalty on the chroma difference in general. Navy and
     blue differ by 41 units of chroma, red and maroon by 36, and those pairs
     must keep matching — they are the dark and bright versions of one hue.
-    What makes grey-vs-purple different is not the size of the gap but that
+    What makes gray-vs-purple different is not the size of the gap but that
     one side has no hue at all, so there is nothing for the other to be a
     darker version OF. Hence a ratio: a muted teal keeps 39% of teal's chroma
-    and stays a teal, while a blue-grey holds 20% of purple's and is a grey.
+    and stays a teal, while a blue-gray holds 20% of purple's and is a gray.
     """
     c_a, c_b = chroma_of(lab_a), chroma_of(lab_b)
     paler, bolder = min(c_a, c_b), max(c_a, c_b)
@@ -365,7 +380,7 @@ def is_neutral_mismatch(
 # entry away — whereas a search that returns everything is not fixable by the
 # person using it.
 # A name may belong to more than one word. Charcoal is both a soft black and
-# a dark grey, and someone searching either should find it — forcing it into
+# a dark gray, and someone searching either should find it — forcing it into
 # one bucket makes the other search wrong.
 _COLOR_FAMILIES: dict[str, frozenset[str]] = {
     "black": frozenset({"black"}), "charcoal": frozenset({"black", "gray"}),
@@ -402,7 +417,7 @@ NAME_UNRELIABLE_CHROMA = CHROMATIC_CHROMA
 
 #: A swatch needs at least this much chroma for its hue angle to mean
 #: anything. Under it the hue is numerical noise off the neutral axis, and
-#: admitting it is how a grey hat starts matching pink.
+#: admitting it is how a gray hat starts matching pink.
 MIN_HUE_CHROMA = 6.0
 
 #: How far apart two hue angles may be and still be the same color.
@@ -429,6 +444,19 @@ def color_family(name: str | None) -> frozenset[str]:
     return _COLOR_FAMILIES.get((name or "").strip().lower(), frozenset())
 
 
+def _palette_lab() -> tuple[tuple[str, tuple[float, float, float]], ...]:
+    """The palette in LAB, converted ONCE. `families_of_lab` used to convert
+    all 26 entries on every call, and the color search calls it once per
+    stored swatch — thousands of `** 2.4` powers per query for a table that
+    never changes."""
+    return tuple(
+        (name, lab_of(f"#{r:02x}{g:02x}{b:02x}")) for name, (r, g, b) in _PALETTE
+    )
+
+
+_PALETTE_LAB = _palette_lab()
+
+
 def families_of_lab(lab: tuple[float, float, float]) -> frozenset[str]:
     """Every basic color word that could reasonably describe this color.
 
@@ -437,10 +465,7 @@ def families_of_lab(lab: tuple[float, float, float]) -> frozenset[str]:
     decide about is reported as belonging to all its candidates rather than
     to whichever one happened to win by half a unit.
     """
-    scored = sorted(
-        (lab_distance(lab, lab_of(f"#{r:02x}{g:02x}{b:02x}")), name)
-        for name, (r, g, b) in _PALETTE
-    )
+    scored = sorted((lab_distance(lab, pal_lab), name) for name, pal_lab in _PALETTE_LAB)
     if not scored:
         return frozenset()
     cutoff = scored[0][0] + FAMILY_AMBIGUITY_MARGIN
@@ -467,6 +492,8 @@ def is_same_color(
     target_lab: tuple[float, float, float],
     swatch_lab: tuple[float, float, float],
     swatch_name: str | None = None,
+    *,
+    target_families: frozenset[str] | None = None,
 ) -> bool:
     """Whether a swatch is the color being searched for.
 
@@ -476,14 +503,18 @@ def is_same_color(
     Two ways to qualify, and the second exists for one specific failure of
     the first. Nearest-name classification is driven by ΔE, which is
     dominated by LIGHTNESS: a dark teal at L=21 lands nearest charcoal
-    because it is dark, not because it is grey. Its hue angle, though, is
+    because it is dark, not because it is gray. Its hue angle, though, is
     197° — the same as a mid teal's. So when a swatch is too muted for its
     name to be trustworthy, the hue answers instead, which is exactly the
     axis that survives being darkened.
     """
     stored = color_family(swatch_name)
     swatch_families = stored or families_of_lab(swatch_lab)
-    target_families = families_of_lab(target_lab)
+    # The target is one color per query; its families are computed once by the
+    # caller and passed in. Recomputing them here ran the 26-way classification
+    # once per swatch of every hat on the shelf.
+    if target_families is None:
+        target_families = families_of_lab(target_lab)
     if swatch_families & target_families:
         return True
 
@@ -521,9 +552,9 @@ def is_same_color(
         return False
     # The chroma RATIO decides whether this swatch has enough of the target's
     # color to be a muted version of it rather than a neutral near it. It is
-    # the same test, and the same constant, that keeps a blue-grey from
+    # the same test, and the same constant, that keeps a blue-gray from
     # matching purple — and it is what separates the two cases the hue angle
-    # alone cannot: a dark teal holds 41% of teal's chroma, a blue-grey 20%
+    # alone cannot: a dark teal holds 41% of teal's chroma, a blue-gray 20%
     # of blue's, and their absolute chromas are 11.1 and 11.7.
     if is_neutral_mismatch(target_lab, swatch_lab):
         return False

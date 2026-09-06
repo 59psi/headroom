@@ -93,12 +93,20 @@ async def test_backup_download_streams_in_chunks(client, tmp_path, monkeypatch):
     from headroom.services import backup_service
 
     # Force several chunks out of a small payload rather than fabricating a
-    # multi-megabyte fixture.
+    # multi-megabyte fixture. The payload has to be INCOMPRESSIBLE, though: an
+    # empty test database gzips to under 512 bytes, so the old `>= 1` assertion
+    # was satisfied by a single chunk and never showed streaming at all.
+    import os
+
+    from headroom.config import settings
+
+    (settings.upload_dir / "hats").mkdir(parents=True, exist_ok=True)
+    (settings.upload_dir / "hats" / "noise.bin").write_bytes(os.urandom(4096))
     monkeypatch.setattr(backup_service, "_STREAM_CHUNK", 512)
 
     chunks = [c async for c in backup_service.stream_backup(include_uploads=True)]
 
-    assert len(chunks) >= 1
+    assert len(chunks) > 1, "a test named 'streams in chunks' must see more than one"
     assert all(len(c) <= 512 for c in chunks), "a chunk exceeded the read size"
     # Still a valid gzip stream once reassembled.
     assert b"".join(chunks)[:2] == b"\x1f\x8b"

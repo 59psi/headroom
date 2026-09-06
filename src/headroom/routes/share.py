@@ -30,14 +30,10 @@ from headroom.utils.upload import copy_upload_truncating
 
 logger = logging.getLogger(__name__)
 
-#: Ceiling on ONE shared batch. Mirrors `routes/import_jobs._MAX_TOTAL_UPLOAD_BYTES`
-#: — same operation, same machine, same SD card.
-_MAX_TOTAL_SHARE_BYTES = 750 * 1024 * 1024
-
 router = APIRouter()
 
 
-@router.post("/share")
+@router.post("/share", response_class=RedirectResponse)
 async def share_target(
     photos: list[UploadFile] | None = None,
     db: AsyncSession = Depends(get_db),
@@ -55,7 +51,7 @@ async def share_target(
     if not incoming:
         return RedirectResponse("/hats/import", status_code=303)
 
-    staging = Path(tempfile.mkdtemp(prefix="share-"))
+    staging = Path(tempfile.mkdtemp(prefix="share-", dir=import_service.spool_dir()))
     try:
         files: list[tuple[str, Path]] = []
         total = 0
@@ -82,10 +78,10 @@ async def share_target(
             # `utils/disk.py` exists to notice, caused by the app itself.
             # `routes/import_jobs` has enforced this since it was written;
             # sharing from the phone was the path without it.
-            if total > _MAX_TOTAL_SHARE_BYTES:
+            if total > import_service.MAX_TOTAL_UPLOAD_BYTES:
                 logger.warning(
                     "Share-target batch over %d MB — keeping the first %d file(s)",
-                    _MAX_TOTAL_SHARE_BYTES // 1024 // 1024, len(files),
+                    import_service.MAX_TOTAL_UPLOAD_BYTES // 1024 // 1024, len(files),
                 )
                 dest.unlink(missing_ok=True)
                 break
@@ -100,6 +96,6 @@ async def share_target(
         )
         return RedirectResponse(f"/hats/import?job={job.id}", status_code=303)
     finally:
-        # `create_job` copies what it keeps into the job's own staging dir, so
+        # `create_job` MOVES what it keeps into the job's own staging dir, so
         # these are always disposable — including on the error paths.
         shutil.rmtree(staging, ignore_errors=True)

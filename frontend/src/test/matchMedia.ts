@@ -22,8 +22,8 @@ function matches(query: string): boolean {
 
 /**
  * Answer media queries as though the window were `px` wide. Reset after every
- * test by `installMatchMedia`'s afterEach, so one test's viewport can't leak
- * into the next.
+ * test by the `afterEach` in `test/setup.ts`, so one test's viewport can't
+ * leak into the next.
  */
 export function setViewportWidth(px: number): void {
   viewportWidth = px;

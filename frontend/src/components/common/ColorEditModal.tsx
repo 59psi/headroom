@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { portalToBody } from './ModalPortal';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { updateHatColors } from '../../api/hats';
@@ -34,22 +34,11 @@ export function ColorEditModal({ hatId, colors, editingRank, onClose }: Props) {
   const [general, setGeneral] = useState(target?.general_color ?? '');
   const [tier, setTier] = useState(target?.tier ?? 'primary');
 
-  // Re-sync when the editing target changes (modal stays mounted between opens)
-  useEffect(() => {
-    if (target) {
-      setHex(target.hex_value);
-      setHexText(target.hex_value);
-      setName(target.color_name);
-      setGeneral(target.general_color);
-      setTier(target.tier ?? 'primary');
-    } else {
-      setHex('#888888');
-      setHexText('#888888');
-      setName('');
-      setGeneral('');
-      setTier('primary');
-    }
-  }, [target?.dominance_rank]); // eslint-disable-line react-hooks/exhaustive-deps
+  // No re-sync effect: `HatDetailPage` mounts this modal only while it is open
+  // (`colorEditOpen !== null && <ColorEditModal …/>`), so every open is a fresh
+  // instance and the `useState` seeds above ARE the sync. An effect keyed on
+  // `target?.dominance_rank` sat here for a mount-once modal that no longer
+  // exists, and could never fire.
 
   const saveMut = useMutation({
     mutationFn: () => {
@@ -145,8 +134,9 @@ export function ColorEditModal({ hatId, colors, editingRank, onClose }: Props) {
               autoComplete="off"
             />
 
-            <label className="form-label">Specific name</label>
+            <label className="form-label" htmlFor="color-specific-name">Specific name</label>
             <input
+              id="color-specific-name"
               type="text"
               className="form-control mb-3"
               placeholder="e.g. cobalt blue"
@@ -154,8 +144,9 @@ export function ColorEditModal({ hatId, colors, editingRank, onClose }: Props) {
               onChange={e => setName(e.target.value)}
             />
 
-            <label className="form-label">General color (for filters)</label>
+            <label className="form-label" htmlFor="color-general-name">General color (for filters)</label>
             <input
+              id="color-general-name"
               type="text"
               className="form-control mb-3"
               placeholder="e.g. blue"

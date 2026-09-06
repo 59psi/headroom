@@ -53,16 +53,27 @@ async def test_upload_hook_runs_command_with_substituted_placeholders(tmp_path, 
     ],
     ids=["nonzero-exit", "missing-binary", "timeout"],
 )
-async def test_upload_hook_never_raises(tmp_path, monkeypatch, cmd, timeout):
-    """However the uploader fails, the hook returns quietly.
+async def test_upload_hook_never_raises_and_records_the_failure(
+    tmp_path, monkeypatch, cmd, timeout
+):
+    """However the uploader fails, the hook returns quietly — and RECORDS it.
 
     The local backup is already safely on disk — an off-box copy that blows up
-    (or hangs) must never propagate into the scheduler loop.
+    (or hangs) must never propagate into the scheduler loop. But "returned
+    quietly" is only half the contract: `BackupHealth.record_upload` exists so
+    an owner can see the nightly copy has been failing, and this test used to
+    assert nothing at all, so a hook that swallowed the failure without
+    recording it passed.
     """
     monkeypatch.setenv("HEADROOM_BACKUP_UPLOAD_CMD", cmd)
     if timeout:
         monkeypatch.setenv("HEADROOM_BACKUP_UPLOAD_TIMEOUT", timeout)
+    before = backup_service.health().upload_failures
     await backup_service._run_upload_hook(_fake_backup(tmp_path))
+    health = backup_service.health()
+    assert health.last_upload_ok is False
+    assert health.upload_failures == before + 1
+    assert health.last_upload_error, "the reason is what makes the record actionable"
 
 
 async def test_scheduled_backup_ships_off_box_and_local_survives(tmp_path, monkeypatch):

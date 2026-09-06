@@ -122,8 +122,9 @@ jobs:
           docker run -d --name ci -p 8000:8000 headroom:ci
           # /health/ready, not /health. `/health` is a static 200 that proves
           # only that the process is listening; /health/ready is what
-          # docker-compose's healthcheck uses and what `restart: unless-stopped`
-          # acts on, and it gates on the disk floor and worker liveness. A
+          # docker-compose's healthcheck, the host watchdog and the autoheal
+          # overlay read (Docker's own restart policy never acts on health —
+          # only on exit), and it gates on the disk floor and worker liveness. A
           # regression that makes readiness 500 or hang shipped green while
           # this probe watched the endpoint that cannot fail.
           timeout 120 bash -c 'until curl -fsS localhost:8000/health/ready; do sleep 2; done' \

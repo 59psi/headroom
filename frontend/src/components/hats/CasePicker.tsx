@@ -1,7 +1,8 @@
-import { useState, useRef, useEffect, useId, useMemo } from 'react';
+import { useState, useRef, useId, useMemo } from 'react';
 import type { CaseRead } from '../../types';
 import { usePickerOpen } from '../common/usePickerOpen';
 import { AnchoredList } from '../common/AnchoredList';
+import { useClickOutside } from '../common/useClickOutside';
 
 /** How many freshly-made cases to pin above the room groups. */
 const RECENT_COUNT = 3;
@@ -57,17 +58,7 @@ export function CasePicker({
 
   const selected = cases.find(c => String(c.id) === value) ?? null;
 
-  useEffect(() => {
-    if (!open) return;
-    function onDocDown(e: PointerEvent) {
-      const target = e.target as HTMLElement;
-      // Portalled into <body>, so the list is not a descendant of the wrapper.
-      if (wrapRef.current?.contains(target) || target.closest('.hr-combobox-list')) return;
-      setOpen(false);
-    }
-    document.addEventListener('pointerdown', onDocDown);
-    return () => document.removeEventListener('pointerdown', onDocDown);
-  }, [open]);
+  useClickOutside(open, wrapRef, () => setOpen(false));
 
   const { recent, groups } = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -208,25 +199,27 @@ export function CasePicker({
           </li>
 
           {recent.length > 0 && (
-            <li>
-              <div className="hr-case-group" aria-hidden="true">Recently added</div>
-              <ul className="hr-plain-list">
+            <li role="presentation">
+              <div className="hr-case-group" id={`${listId}-recent`}>Recently added</div>
+              <ul className="hr-plain-list" role="group" aria-labelledby={`${listId}-recent`}>
                 {recent.map(c => renderCase(c))}
               </ul>
             </li>
           )}
 
-          {groups.map(({ room, list }) => (
-            <li key={room}>
-              <div className="hr-case-group" aria-hidden="true">{room}</div>
-              <ul className="hr-plain-list">
+          {groups.map(({ room, list }, gi) => (
+            <li key={room} role="presentation">
+              <div className="hr-case-group" id={`${listId}-group-${gi}`}>{room}</div>
+              <ul className="hr-plain-list" role="group" aria-labelledby={`${listId}-group-${gi}`}>
                 {list.map(c => renderCase(c))}
               </ul>
             </li>
           ))}
 
           {groups.length === 0 && recent.length === 0 && (
-            <li className="hr-case-empty">No case matches “{query}”</li>
+            <li className="hr-case-empty">
+              {query ? <>No case matches “{query}”</> : 'No cases yet — “Create New Case” above makes one.'}
+            </li>
           )}
       </AnchoredList>
     </div>

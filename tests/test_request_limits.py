@@ -91,7 +91,7 @@ async def test_a_rejected_password_is_not_echoed_back(anon_client):
     # sentinel is present in a correctly-redacted body and the assertion would
     # fail on working code. A password-shaped value that appears nowhere in
     # the framework's vocabulary is the only thing this can test with.
-    secret = "Zq4!v"  # noqa: S105 — the point of the test
+    secret = "Zq4!v"  # the point of the test
 
     resp = await anon_client.post(
         "/api/auth/setup", json={"username": "owner", "password": secret}

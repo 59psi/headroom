@@ -1,9 +1,23 @@
 from datetime import date, datetime
+from enum import StrEnum
 
 from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, func, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from headroom.database import Base
+
+
+class ResaleScope(StrEnum):
+    """What `Hat.resale_price` is a price OF — the one definition.
+
+    Three different measurements that share a column, not degrees of confidence
+    in one. Seven modules compared against the bare strings and one of them had
+    its own `MANUAL_SCOPE`; this is the enum they all read now.
+    """
+
+    MANUAL = "manual"      # a person typed it; nothing is ever applied to it
+    MODEL = "model"        # median live ask for this model (or product), used as-is
+    CATEGORY = "category"  # median live ask for the whole style category
 
 
 class Hat(Base):
@@ -72,8 +86,12 @@ class Hat(Base):
     # not degrees of confidence in one measurement -- they are three different
     # measurements that happen to share a column:
     #   "manual"   -- a person typed it. Authoritative; nothing is applied to it.
-    #   "model"    -- median asking price of listings matching this model name.
-    #                 A comparable. Still an ASK, so valuation discounts it.
+    #   "model"    -- median asking price of listings matching this model name
+    #                 (or, with a colorway, this exact product). A comparable,
+    #                 used AS-IS: melinrecap is a fixed-price marketplace, so
+    #                 the ask is the sale price and valuation does not discount
+    #                 it (this comment claimed a discount for several releases
+    #                 after `lib/valuation.ts` stopped applying one).
     #   "category" -- median asking price of every listing in the style category,
     #                 because too few model listings existed to be worth using.
     #                 That is a price level for "an Odysea", not a value for this
@@ -86,10 +104,6 @@ class Hat(Base):
     resale_price_scope: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     # Analysis bookkeeping
-    # What logo/wordmark the analyzer actually SAW, and whose it is — kept apart
-    # from `brand` because that can be inferred from shape, colorway or a hang
-    # tag with no logo in frame at all. This one answers "was a mark visible,
-    # and who owns it", which is the difference between a guess and evidence.
     # What the hat is BUILT from, free-form. Construction is orthogonal to the
     # model line -- melin offers a given build across A-Game, Coronado, Trenches
     # and the rest, so ANY hat can be any of them, which is why this is its own
@@ -119,6 +133,10 @@ class Hat(Base):
     # this says WHICH, which is the part that drives collectability and resale.
     artist_series: Mapped[str | None] = mapped_column(String(160), nullable=True)
 
+    # What logo/wordmark the analyzer actually SAW, and whose it is — kept apart
+    # from `brand` because that can be inferred from shape, colorway or a hang
+    # tag with no logo in frame at all. This one answers "was a mark visible,
+    # and who owns it", which is the difference between a guess and evidence.
     logo_detected: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     analysis_status: Mapped[str | None] = mapped_column(String(20), nullable=True)  # pending/ok/fallback/skipped/error

@@ -281,7 +281,10 @@ fi
 # has to be written on the host, into the `.env` that compose reads
 # automatically. Hooks keep it current after a pull, so the habit stays
 # `docker compose up -d --build` with nothing to remember.
-if [ -d .git ]; then
+# `git rev-parse`, not `[ -d .git ]`: in a git WORKTREE `.git` is a file, not a
+# directory, so the old test silently skipped the stamp and the hooks on every
+# worktree checkout. `stamp-build.sh` already resolves the git dir properly.
+if git rev-parse --git-dir >/dev/null 2>&1; then
   ./scripts/stamp-build.sh --install-hooks || warn "Could not write the build stamp (non-fatal)."
 fi
 

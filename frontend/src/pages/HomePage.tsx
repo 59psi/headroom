@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { Link, useNavigate } from 'react-router';
+import { Link } from 'react-router';
 import { listCases } from '../api/cases';
 import { listAllHats } from '../api/hats';
 import { listRooms } from '../api/rooms';
@@ -27,7 +27,6 @@ export function HomePage() {
   const hats = useQuery({ queryKey: ['hats'], queryFn: listAllHats });
   const rooms = useQuery({ queryKey: ['rooms'], queryFn: listRooms });
   const logo = useQuery({ queryKey: ['settings', 'logo'], queryFn: getLogo });
-  const navigate = useNavigate();
   const [activeIndex, setActiveIndex] = useState(0);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const touchStartX = useRef<number | null>(null);
@@ -67,7 +66,7 @@ export function HomePage() {
     [hatsWithPhotos, activeIndex, visibleCount]
   );
 
-  // Nothing to page to when every hat is already on screen. Generalises the
+  // Nothing to page to when every hat is already on screen. Generalizes the
   // old `length <= 1` guard, which on a two-up view left the arrows visible
   // for a two-hat collection and stepping by 2 landed back where it started.
   const canPage = hatsWithPhotos.length > visibleCount;
@@ -245,8 +244,9 @@ export function HomePage() {
                 },
               ]} />
               <p className="text-muted small mb-0 mt-3" style={{ fontSize: '0.72rem', lineHeight: 1.5 }}>
-                Sale value is an estimate from asking prices, discounted for
-                condition — not a quote. <Link to="/valuation">See how it's worked out</Link>.
+                Sale value is an estimate from live asking prices matched to
+                each hat&rsquo;s own condition and size — not a quote.{' '}
+                <Link to="/valuation">See how it&rsquo;s worked out</Link>.
               </p>
             </>
           )}
@@ -261,11 +261,10 @@ export function HomePage() {
         >
           <div className="hr-carousel-track">
             {visibleHats.map(hat => (
-              <div
+              <Link
                 key={hat.id}
+                to={`/hats/${hat.id}`}
                 className="hr-carousel-slide"
-                onClick={() => navigate(`/hats/${hat.id}`)}
-                style={{ cursor: 'pointer' }}
               >
                 <img
                   src={`/uploads/${hat.photo_path}`}
@@ -275,7 +274,7 @@ export function HomePage() {
                   <h6>{hat.display_id || `Hat #${hat.id}`}</h6>
                   <small>{hat.style.replace(/_/g, ' ')}</small>
                 </div>
-              </div>
+              </Link>
             ))}
           </div>
           {canPage && (

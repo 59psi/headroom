@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 
+import json
+
 import pytest
 
 from headroom.services.catalog_service import parse_listing_title
@@ -28,7 +30,13 @@ def _pages(monkeypatch, pages_by_category):
         cat = params["pub_category"]
         page = params.get("page", 1)
         titles = pages_by_category.get(cat, [])
-        per = params["per_page"]
+        # `perPage` is the Sharetribe parameter. The harvest sent `per_page`,
+        # which the API ignored — the loop worked only because the API's
+        # default page size happened to equal ours. A stub that read the
+        # wrong key back would have hidden that forever, so this one demands
+        # the real key and fails on the old spelling.
+        assert "per_page" not in params, "Sharetribe ignores per_page; the parameter is perPage"
+        per = params["perPage"]
         chunk = titles[(page - 1) * per : page * per]
         return [{"attributes": {"title": t}} for t in chunk]
 
@@ -50,6 +58,35 @@ async def test_harvest_upserts_and_counts(client, db_session, monkeypatch):
     result = await harvest_catalog(db_session)
     assert result["new_entries"] == 0
     assert result["catalog_total"] == 3
+
+
+async def test_a_started_harvest_runs_against_the_apps_database(client, monkeypatch):
+    """The STARTED path, end to end, for the first time.
+
+    `_harvest_in_background` opened its session on the module-level
+    `async_session` — the same engine in production and an unopenable one under
+    test — so this endpoint's only test was the refusal branch, and a harvest
+    that wrote to the wrong database would have shown up nowhere. It now takes
+    the app's session factory, which is what this test can see the result in.
+    """
+    from headroom.routes.admin import catalog as catalog_routes
+    from headroom.services import catalog_service
+
+    _pages(monkeypatch, {"aGame": ["A-Game Hydro - Navy", "A-Game Hydro - Bone"]})
+
+    resp = await client.post("/api/admin/colorways/refresh")
+    assert resp.status_code == 202
+    assert resp.json()["started"] is True
+
+    # The 202 is sent before the work runs; wait for the task the route held.
+    assert catalog_routes._running_harvests, "the route must hold its task"
+    for task in list(catalog_routes._running_harvests):
+        await task
+
+    assert catalog_service.harvest_in_flight() is False, "the slot is released"
+    status = (await client.get("/api/admin/colorways/status")).json()
+    assert status["entries"] == 2, status
+    assert status["progress"]["running"] is False
 
 
 async def test_a_second_harvest_is_refused_while_one_is_in_flight(client):
@@ -92,7 +129,7 @@ async def test_colorway_autocomplete_endpoint(client, db_session, monkeypatch):
     from headroom.services.catalog_service import harvest_catalog
 
     _pages(monkeypatch, {
-        "aGame": ["A-Game Hydro - Heather Grey", "A-Game Hydro - Red", "A-Game Scout - Grey"],
+        "aGame": ["A-Game Hydro - Heather Grey", "A-Game Hydro - Red", "A-Game Scout - Gray"],
     })
     await harvest_catalog(db_session)
 
@@ -101,7 +138,7 @@ async def test_colorway_autocomplete_endpoint(client, db_session, monkeypatch):
 
     cws = (await client.get("/api/meta/colorways", params={"model": "a-game hydro"})).json()
     values = [c["value"] for c in cws]
-    assert "Heather Grey" in values and "Red" in values and "Grey" not in values
+    assert "Heather Grey" in values and "Red" in values and "Gray" not in values
 
 
 async def test_purchase_import_dedupe_and_match(client, db_session):
@@ -554,9 +591,12 @@ async def test_unmatch_is_audited(client, db_session):
     pid = (await client.get("/api/admin/purchases")).json()[0]["id"]
     await client.post(f"/api/admin/purchases/{pid}/unmatch")
 
-    kinds = [r["kind"] for r in (await client.get("/api/admin/activity-log")).json()]
+    rows = (await client.get("/api/admin/activity-log")).json()
+    kinds = [r["kind"] for r in rows]
     assert "purchase.unmatched" in kinds, f"no audit row for the undo: {kinds}"
-    assert hat_id  # referenced so the fixture's intent is clear
+    # The row names the hat the link was broken from — the audit is useless without it.
+    row = next(r for r in rows if r["kind"] == "purchase.unmatched")
+    assert json.loads(row["details"])["hat_id"] == hat_id
 
 
 # ------------------- harvest resilience + real counts ------------------ #
@@ -632,13 +672,13 @@ async def test_isolation_covers_any_failure_not_just_the_marketplace_one(
     assert result["distinct_models"] >= 8, result
 
 
-async def test_a_cancelled_harvest_stops_rather_than_becoming_a_failed_category(
+async def test_a_canceled_harvest_stops_rather_than_becoming_a_failed_category(
     db_session, monkeypatch,
 ):
     """`Exception`, not `BaseException` — the difference is a shutdown.
 
     Widening the per-category clause must not swallow `CancelledError`. If it
-    did, cancelling at shutdown would be absorbed into `failed_categories`, the
+    did, canceling at shutdown would be absorbed into `failed_categories`, the
     sweep would carry on to the next category, and a stopping container would
     report itself as one flaky category rather than stopping.
     """
@@ -646,16 +686,16 @@ async def test_a_cancelled_harvest_stops_rather_than_becoming_a_failed_category(
 
     calls: list[str] = []
 
-    async def cancelled(params):
+    async def canceled(params):
         calls.append(params["pub_category"])
         raise asyncio.CancelledError()
 
-    monkeypatch.setattr("headroom.services.catalog_service.query_listings", cancelled)
+    monkeypatch.setattr("headroom.services.catalog_service.query_listings", canceled)
 
     with pytest.raises(asyncio.CancelledError):
         await catalog_service.harvest_catalog(db_session)
 
-    assert len(calls) == 1, "the sweep kept going after being cancelled"
+    assert len(calls) == 1, "the sweep kept going after being canceled"
 
 
 async def test_a_transient_page_failure_is_retried(db_session, monkeypatch):
@@ -782,6 +822,37 @@ async def test_the_picker_reaches_a_family_named_hat(client, db_session):
     assert "Hickory Denim" in values, values
     # Asymmetric: a different family must NOT be dragged in by a shared token.
     assert "Camo" not in values, values
+
+
+async def test_the_picker_does_not_offer_hydrolite_colorways_to_a_hydro_hat(client, db_session):
+    """Containment is by TOKEN, not by substring.
+
+    The picker matched each requested token with `ILIKE '%token%'`, and
+    `hydro` is a substring of `hydrolite` — so an `A-Game Hydro` hat was offered
+    every HYDROLite colorway, in the one control that WRITES `colorway`, while
+    `_rival_construction` and the HatFilters predicate both keep the two apart
+    by word boundary. `test_the_picker_reaches_a_family_named_hat` could not see
+    this: `odysea hydro` vs `Trenches Icon Hydro` is rejected by both rules.
+    """
+    from headroom.models.catalog import ColorwayEntry
+
+    db_session.add(ColorwayEntry(
+        title="A-Game Hydro - Navy", model_name="A-Game Hydro", colorway="Navy",
+        category="aGame", listing_count=4,
+    ))
+    db_session.add(ColorwayEntry(
+        title="A-Game HYDROLite - Heather Grey", model_name="A-Game HYDROLite",
+        colorway="Heather Grey", category="aGame", listing_count=9,
+    ))
+    await db_session.commit()
+
+    got = (await client.get("/api/meta/colorways", params={"model": "A-Game Hydro"})).json()
+    values = [c["value"] for c in got]
+    assert values == ["Navy"], values
+
+    # And the other way round, for the same reason.
+    got = (await client.get("/api/meta/colorways", params={"model": "A-Game HYDROLite"})).json()
+    assert [c["value"] for c in got] == ["Heather Grey"]
 
 
 async def test_the_preview_predicts_a_multi_line_import_exactly(client):
@@ -927,7 +998,7 @@ def _maximum_matching(purchases, hats) -> int:
 
 
 async def test_matching_achieves_the_maximum_possible(client, db_session):
-    """Greedy + scarcity ordering must equal the true optimum, not approach it.
+    """The assignment must equal the true optimum, not approach it.
 
     The arrangement is the one that breaks naive greedy. Two hats of the same
     model differing only in size; a sizeless purchase can take EITHER, a
@@ -974,8 +1045,8 @@ async def test_matching_achieves_the_maximum_possible(client, db_session):
     result = await match_purchases_to_hats(db_session)
 
     assert result["matched"] == best, (
-        f"matched {result['matched']} of a possible {best} — scarcity ordering "
-        "is not achieving the optimum"
+        f"matched {result['matched']} of a possible {best} — the augmenting-path "
+        "assignment is not achieving the optimum"
     )
 
 
@@ -1025,21 +1096,18 @@ async def test_the_preview_predicts_what_importing_actually_does(client, db_sess
 
 # ---- regressions from the real order history --------------------------- #
 
-from headroom.models.catalog import Purchase  # noqa: E402
-from headroom.models.hat import Hat  # noqa: E402
-from headroom.services import catalog_service  # noqa: E402
+from headroom.models.catalog import Purchase
+from headroom.models.hat import Hat
+from headroom.services import catalog_service
 
 
 def _hat(**kw):
-    """A hat with just the fields matching reads."""
+    """A transient hat with just the fields matching reads; no colors unless given."""
     h = Hat(condition="new", size=kw.pop("size", "classic"), style="a_game")
     for k, v in kw.items():
         setattr(h, k, v)
-    for attr in ("colors", "colorway", "artist_series", "construction",
-                 "purchase_price", "model_name"):
-        if not hasattr(h, attr) or getattr(h, attr, None) is None:
-            if attr == "colors":
-                h.colors = []
+    if not h.colors:
+        h.colors = []
     return h
 
 

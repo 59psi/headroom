@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import { auditSharedPrices, getUnclaimedFromPurchases } from '../../api/settings';
 import { rematchPurchases } from '../../api/purchases';
-import { invalidateHatViews } from '../../lib/invalidate';
+import { invalidateHatViews, invalidatePurchaseDerived } from '../../lib/invalidate';
 
 /**
  * Which resale prices describe a LINE rather than the hat beside them.
@@ -48,8 +48,7 @@ export function SharedPricesCard() {
   const fill = useMutation({
     mutationFn: rematchPurchases,
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['admin', 'unclaimed-purchases'] });
-      qc.invalidateQueries({ queryKey: ['admin', 'shared-prices'] });
+      invalidatePurchaseDerived(qc);
       qc.invalidateQueries({ queryKey: ['admin', 'purchases'] });
       invalidateHatViews(qc);
     },

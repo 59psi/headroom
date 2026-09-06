@@ -201,7 +201,8 @@ ENTRYPOINT ["/usr/bin/tini", "--"]
 # flag behind the Caddy HTTPS overlay. Which peers are TRUSTED to send those
 # headers is controlled by uvicorn's FORWARDED_ALLOW_IPS env var — default
 # 127.0.0.1, so clients hitting :8000 directly cannot spoof their IP (which
-# would defeat login rate limiting). The HTTPS overlay sets it to "*" only
-# because it stops publishing :8000 — then only in-network Caddy can connect.
+# would defeat login rate limiting). The Let's Encrypt overlay pins it to the
+# compose network's own subnet (172.31.71.0/24, docker-compose.https.yml), so
+# only the Caddy container beside it is trusted; the LAN overlays keep loopback.
 CMD ["uvicorn", "headroom.app:app", "--host", "0.0.0.0", "--port", "8000", \
      "--proxy-headers"]

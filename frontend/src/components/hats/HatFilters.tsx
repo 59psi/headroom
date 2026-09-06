@@ -13,8 +13,9 @@ export interface FilterableHat {
   condition: string;
   is_beanie: boolean;
   /** Free-form fabric/build ("HYDRO", "HYDROLite", "Thermal", "Piña"…), and
-   *  frequently absent — analysis never fills it in over a stated value, and
-   *  clearing it is how you ask for a re-identification. */
+   *  frequently absent — analysis NEVER writes it (owner-only; see
+   *  `_apply_construction`), so a blank means nobody has recorded it, which is
+   *  why `(none)` is an askable filter value. */
   construction: string | null;
   colors: ColorTag[];
 }
@@ -138,7 +139,7 @@ interface FilterBarProps {
   state: ReturnType<typeof useHatFilters>;
   /** Colors present in the current result set. */
   colors: string[];
-  /** Total active count including page-specific extras. Defaults to the shared six. */
+  /** Total active count including page-specific extras. Defaults to the shared seven. */
   activeCount?: number;
   /** Reset page-specific extras; runs alongside clearing the shared filters. */
   onClearExtras?: () => void;
@@ -229,6 +230,7 @@ export function FilterToggleButton({ activeCount, isOpen, onToggle }: {
       type="button"
       className={`btn btn-sm ${activeCount ? 'btn-primary' : 'btn-outline-secondary'}`}
       onClick={() => onToggle(!isOpen)}
+      aria-expanded={isOpen}
     >
       Filters{activeCount > 0 && <span className="badge bg-white ms-1">{activeCount}</span>}
     </button>

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.database import get_db
-from headroom.schemas.admin import EbayCredsStatus, EbayCredsUpdate
+from headroom.schemas.admin import EbayComps, EbayCredsStatus, EbayCredsUpdate, EbayTestResult
 from headroom.services import activity_service, ebay_service, hat_service, settings_service
 
 router = APIRouter()
@@ -73,13 +73,13 @@ async def delete_ebay_creds(db: AsyncSession = Depends(get_db)):
     await db.commit()
 
 
-@router.post("/ebay/test")
+@router.post("/ebay/test", response_model=EbayTestResult)
 async def test_ebay_creds(db: AsyncSession = Depends(get_db)):
     """End-to-end probe of OAuth + Browse search. Returns {ok, stage, detail}."""
     return await ebay_service.verify_creds(db)
 
 
-@router.post("/ebay/refresh/{hat_id}")
+@router.post("/ebay/refresh/{hat_id}", response_model=EbayComps)
 async def refresh_ebay_for_hat(hat_id: int, db: AsyncSession = Depends(get_db)):
     """Refresh eBay comp prices for a single hat. Returns the updated price block."""
     hat = await hat_service.get_hat(db, hat_id)

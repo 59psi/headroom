@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from headroom.models.hat import Hat
+from headroom.models.hat import Hat, ResaleScope
 
 #: A source shared by MORE than this many hats is describing a line. Up to
 #: THREE hats sharing a number is ordinary — two or three examples of one
@@ -140,7 +140,7 @@ async def audit(db: AsyncSession, threshold: int = MAX_UNREMARKABLE) -> list[Pri
                 Hat.disposed_at.is_(None),
                 Hat.resale_price.is_not(None),
                 (Hat.resale_price_scope.is_(None))
-                | (Hat.resale_price_scope != "manual"),
+                | (Hat.resale_price_scope != ResaleScope.MANUAL),
             )
             .order_by(Hat.id)
         )

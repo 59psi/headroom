@@ -571,7 +571,7 @@ async def test_the_upstream_is_the_v4_loopback_not_localhost():
     """`localhost` resolves to `::1` first; uvicorn binds IPv4 only.
 
     The Dockerfile binds uvicorn to `0.0.0.0`, so nothing is listening on the
-    v6 loopback. With `reverse_proxy localhost:8000` Caddy dialled `[::1]:8000`
+    v6 loopback. With `reverse_proxy localhost:8000` Caddy dialed `[::1]:8000`
     on this dual-stack host, got `connection refused`, and returned **502**
     instead of retrying the v4 address — observed on the live deployment
     against `/api/admin/recent-errors/count`.
@@ -588,3 +588,16 @@ async def test_the_upstream_is_the_v4_loopback_not_localhost():
     assert "reverse_proxy localhost:" not in text, (
         "`reverse_proxy localhost:` is the 502 this test exists to prevent"
     )
+
+    # The same rule for every compose overlay that proxies under host
+    # networking. `docker-compose.http80.yml` kept `--to http://localhost:8000`
+    # for two releases after the Caddyfile was corrected — the plain-HTTP path
+    # is the one most installs take, and it was the one still 502ing.
+    for overlay in sorted(CADDYFILE.parent.glob("docker-compose*.yml")):
+        body = overlay.read_text()
+        if "network_mode: host" not in body:
+            continue
+        assert "localhost:8000" not in body, (
+            f"{overlay.name} proxies to localhost:8000 under host networking — "
+            "use 127.0.0.1:8000 (uvicorn does not listen on ::1)"
+        )

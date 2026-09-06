@@ -2,7 +2,8 @@
 
 Everything under /api/auth/ is exempt from the gate middleware; each
 endpoint enforces its own requirements. Passwords never leave this module
-unhashed; the API token is only readable by an authenticated session.
+unhashed; the API token is returned only by the two password-gated routes
+(`/token/reveal`, `/token/rotate`) — never by `/me`, never on a session alone.
 """
 
 from __future__ import annotations
@@ -23,15 +24,26 @@ from headroom.models.user import PasskeyCredential, User
 from headroom.services import auth_service, passkey_service
 from headroom.services.activity_service import log_activity
 from headroom.schemas.auth import (
+    ApiTokenRead,
     AuthStatus,
     Credentials,
+    MeRead,
+    OkRead,
+    PasskeyCeremonyOptions,
     PasskeyLoginVerify,
+    PasskeyRead,
     PasskeyRegisterVerify,
     PasswordChange,
     PasswordConfirm,
 )
+from headroom.auth import resolve_user
+from headroom.services import guest_view_service
 
 logger = logging.getLogger(__name__)
+
+#: The `app_settings` primary key that serializes first-run setup. Named once:
+#: the recovery path below and the migration guide both refer to it.
+SETUP_SENTINEL_KEY = "owner_setup_done"
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -52,11 +64,9 @@ def _set_session_cookie(response: Response, request: Request, session_id: str) -
 
 @router.get("/status", response_model=AuthStatus)
 async def auth_status(request: Request, db: AsyncSession = Depends(get_db)):
-    from headroom.auth import resolve_user
 
     needs_setup = (await auth_service.user_count(db)) == 0
     user = None if needs_setup else await resolve_user(request)
-    from headroom.services import guest_view_service
 
     return AuthStatus(
         needs_setup=needs_setup,
@@ -99,15 +109,24 @@ async def first_run_setup(
         logger.warning("Rejected /api/auth/setup: HEADROOM_SETUP_TOKEN mismatch")
         raise HTTPException(status_code=403, detail="Setup already completed")
     if await auth_service.user_count(db) > 0:
-        # `from None`, not `from exc`: an auth response must not carry the
-        # database error that produced it, and here the IntegrityError is
-        # expected — it IS the concurrency guard working.
-        raise HTTPException(status_code=403, detail="Setup already completed") from None
+        raise HTTPException(status_code=403, detail="Setup already completed")
+    # No owner row exists. If the sentinel from a PREVIOUS setup is still here,
+    # the owner account was deleted out from under it — which is exactly what
+    # the documented forgot-password recovery does (`DELETE FROM users`). A
+    # sentinel that outlives the row it guards refused setup forever: the form
+    # came back (`needs_setup` counts users) and then answered "Setup already
+    # completed". Clear it, so a box with no owner can be claimed again. The
+    # race guard below is unaffected: two racing setups both reach this point,
+    # both delete the same stale row, and only one INSERT can win the key.
+    stale = await db.get(AppSetting, SETUP_SENTINEL_KEY)
+    if stale is not None:
+        await db.delete(stale)
+        await db.flush()
     # Serialize first-run setup against a racing second POST: app_settings.key
     # is a PRIMARY KEY, so only one concurrent transaction can claim this
     # sentinel — the loser's INSERT collides and rolls back its owner account
     # too, instead of both check-then-inserting two co-equal owners (S5/R10 — docs/AUDIT-HISTORY.md).
-    db.add(AppSetting(key="owner_setup_done", value="1"))
+    db.add(AppSetting(key=SETUP_SENTINEL_KEY, value="1"))
     try:
         user = await auth_service.create_user(db, data.username, data.password)
     except IntegrityError:
@@ -186,7 +205,7 @@ async def logout(request: Request, response: Response, db: AsyncSession = Depend
     response.delete_cookie(auth_service.SESSION_COOKIE, path="/")
 
 
-@router.get("/me")
+@router.get("/me", response_model=MeRead)
 async def me(user: User = Depends(require_user)):
     """Profile. Deliberately NOT the bearer token.
 
@@ -200,10 +219,10 @@ async def me(user: User = Depends(require_user)):
     `token_set` rather than the value: the card needs to know the field exists
     to render its controls, and that is not secret.
     """
-    return {"username": user.username, "token_set": bool(user.api_token)}
+    return MeRead(username=user.username, token_set=bool(user.api_token))
 
 
-@router.post("/token/reveal")
+@router.post("/token/reveal", response_model=ApiTokenRead)
 async def reveal_api_token(
     data: PasswordConfirm,
     user: User = Depends(require_user),
@@ -224,10 +243,10 @@ async def reveal_api_token(
         summary=f"API token revealed for '{user.username}'",
     )
     await db.commit()
-    return {"api_token": user.api_token}
+    return ApiTokenRead(api_token=user.api_token)
 
 
-@router.post("/token/rotate")
+@router.post("/token/rotate", response_model=ApiTokenRead)
 async def rotate_api_token(
     data: PasswordConfirm,
     user: User = Depends(require_user),
@@ -252,7 +271,7 @@ async def rotate_api_token(
         summary=f"API token rotated for '{user.username}'",
     )
     await db.commit()
-    return {"api_token": user.api_token}
+    return ApiTokenRead(api_token=user.api_token)
 
 
 @router.post("/password", status_code=204)
@@ -288,20 +307,17 @@ async def change_password(
 # ------------------------------ passkeys ------------------------------ #
 
 
-@router.get("/passkeys")
+@router.get("/passkeys", response_model=list[PasskeyRead])
 async def list_passkeys(
     user: User = Depends(require_user), db: AsyncSession = Depends(get_db)
 ):
     result = await db.execute(
         select(PasskeyCredential).where(PasskeyCredential.user_id == user.id)
     )
-    return [
-        {"id": c.id, "name": c.name, "created_at": c.created_at}
-        for c in result.scalars().all()
-    ]
+    return [PasskeyRead.model_validate(c) for c in result.scalars().all()]
 
 
-@router.post("/passkeys/register/options")
+@router.post("/passkeys/register/options", response_model=PasskeyCeremonyOptions)
 async def passkey_register_options(
     user: User = Depends(require_user), db: AsyncSession = Depends(get_db)
 ):
@@ -311,10 +327,10 @@ async def passkey_register_options(
     state_id, options = passkey_service.registration_options(
         user, list(result.scalars().all())
     )
-    return {"state_id": state_id, "options": options}
+    return PasskeyCeremonyOptions(state_id=state_id, options=options)
 
 
-@router.post("/passkeys/register/verify")
+@router.post("/passkeys/register/verify", response_model=OkRead)
 async def passkey_register_verify(
     data: PasskeyRegisterVerify,
     user: User = Depends(require_user),
@@ -326,9 +342,11 @@ async def passkey_register_verify(
     try:
         verified = passkey_service.verify_registration(data.credential, entry[0])
     except Exception as exc:  # noqa: BLE001 — library raises many subtypes
-        raise HTTPException(
-            status_code=400, detail=f"Passkey verification failed: {exc}"
-        ) from None
+        # Logged, not echoed: the library's message names internals (expected
+        # origin, RP id, challenge state) that belong in the container log,
+        # not in a response body.
+        logger.warning("Passkey registration rejected for user=%s: %s", user.id, exc)
+        raise HTTPException(status_code=400, detail="Passkey verification failed") from None
     db.add(
         PasskeyCredential(
             user_id=user.id,
@@ -343,7 +361,7 @@ async def passkey_register_verify(
         summary=f"Passkey '{data.name[:80] or 'Passkey'}' registered for '{user.username}'",
     )
     await db.commit()
-    return {"ok": True}
+    return OkRead()
 
 
 @router.delete("/passkeys/{passkey_id}", status_code=204)
@@ -363,10 +381,10 @@ async def delete_passkey(
     await db.commit()
 
 
-@router.post("/passkeys/login/options")
+@router.post("/passkeys/login/options", response_model=PasskeyCeremonyOptions)
 async def passkey_login_options():
     state_id, options = passkey_service.authentication_options()
-    return {"state_id": state_id, "options": options}
+    return PasskeyCeremonyOptions(state_id=state_id, options=options)
 
 
 @router.post("/passkeys/login/verify", response_model=AuthStatus)
@@ -393,9 +411,9 @@ async def passkey_login_verify(
             data.credential, entry[0], stored
         )
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(
-            status_code=401, detail=f"Passkey login failed: {exc}"
-        ) from None
+        # Same rule, on an ANONYMOUS route: the text goes to the log.
+        logger.warning("Passkey login rejected for credential=%s: %s", stored.id, exc)
+        raise HTTPException(status_code=401, detail="Passkey login failed") from None
     stored.sign_count = new_count
     user = stored.user
     session = await auth_service.create_session(db, user)

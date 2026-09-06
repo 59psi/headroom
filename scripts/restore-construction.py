@@ -6,8 +6,9 @@ overwrite a construction the owner had typed. It reads HYDRO and HYDROLite off
 a single photo unreliably — the distinguishing features are bonded seams, a
 gel-welded logo and a sweatband, none of which reliably survive a front-on shot
 — so "correcting" often meant replacing a right answer from the person holding
-the hat with a wrong one from a picture. 2.12.0 stops it (analysis now only
-fills a construction that is empty), but that does not undo what already
+the hat with a wrong one from a picture. 2.12.0 stopped the overwrite and a
+later release stopped analysis writing construction at all — it is owner-only
+now (`_apply_construction` is a no-op) — but neither undoes what already
 happened, and the audit log of the time recorded only WHICH fields changed, not
 their previous values.
 

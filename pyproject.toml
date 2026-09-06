@@ -1,6 +1,6 @@
 [project]
 name = "headroom"
-version = "2.77.3"
+version = "2.78.0"
 description = "Headroom — AI-powered hat collection tracker"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -61,6 +61,10 @@ dev = [
     # which is current at 0.28.1 and not deprecated in its own right.
     "httpx2",
     "pytest-cov>=7.1.0",
+    # `tests/test_env_passthrough.py` parses docker-compose.yml. PyYAML was
+    # already in the tree as uvicorn[standard]'s dependency; a test importing
+    # a package nobody declared is one extras change away from an ImportError.
+    "pyyaml",
 ]
 
 [tool.uv]
@@ -112,20 +116,17 @@ select = [
     "E", "F", "W",   # pyflakes + pycodestyle: real errors, unused names
     "B",             # bugbear: mutable defaults, shadowed loop vars
     "BLE",           # blind except — 40+ `noqa: BLE001` here were never checked
-    "PLC0415",       # import-outside-top-level — the other suppression in use
+    "PLC0415",       # import-outside-top-level: ENFORCED. A local import needs a
+                     # `noqa` with a reason (a real cycle, or a heavy module kept
+                     # off the boot path). It was selected AND ignored for several
+                     # releases, so the select was a no-op and the twenty-odd
+                     # existing suppressions were checked by nothing.
+    "RUF100",        # unused-noqa — so a suppression that stops suppressing is removed
     "S105", "S106",  # hardcoded credentials
 ]
 ignore = [
     "E501",     # line length: prose-heavy comments are deliberate here
     "B008",     # FastAPI's `Depends()` in a default IS the framework's idiom
-    "PLC0415",  # import-outside-top-level: a deliberate pattern here, used to
-                # break import cycles and keep heavy modules (sqlite3, rembg,
-                # retail_pricing) off the boot path. All intentional. (A count
-                # lived here and was exactly right the day it was written; at
-                # this release cadence it was 18% stale within a week. This
-                # project has learned that lesson for test counts — the same
-                # rule applies to every self-referential number in a file that
-                # is not regenerated.)
     "E402",     # same reason in reverse — `tests/conftest.py` MUST pop the API
                 # keys out of os.environ before any app module is imported, or
                 # config.py reads them at import time and the suite starts

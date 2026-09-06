@@ -134,6 +134,22 @@ _PURCHASE_COLUMN_DDL: dict[str, str] = {
     "size": "ALTER TABLE purchases ADD COLUMN size VARCHAR(20)",
 }
 
+# `cases` and `hat_colors` used to carry hand-written `if "x" not in columns`
+# blocks here, so a column added to either model had no guard at all —
+# `test_schema_consistency` covered hats, purchases and rooms only. Same
+# contract as the two dicts around it: one static entry per column added after
+# the table first shipped, and a parity test that fails when the model grows.
+_CASE_COLUMN_DDL: dict[str, str] = {
+    # v0.9 — per-case capacity override (NULL → type default)
+    "capacity": "ALTER TABLE cases ADD COLUMN capacity INTEGER",
+    "room_id": "ALTER TABLE cases ADD COLUMN room_id INTEGER DEFAULT 1 REFERENCES rooms(id)",
+}
+
+_HAT_COLOR_COLUMN_DDL: dict[str, str] = {
+    "general_color": "ALTER TABLE hat_colors ADD COLUMN general_color VARCHAR(30) DEFAULT ''",
+    "tier": "ALTER TABLE hat_colors ADD COLUMN tier VARCHAR(12) DEFAULT 'primary'",
+}
+
 _HAT_COLUMN_DDL: dict[str, str] = {
     "original_path": "ALTER TABLE hats ADD COLUMN original_path VARCHAR(255)",
     "thumb_path": "ALTER TABLE hats ADD COLUMN thumb_path VARCHAR(255)",
@@ -190,6 +206,19 @@ _HAT_COLUMN_DDL: dict[str, str] = {
 }
 
 
+# Static DML for the `cancelled` → `canceled` rename; keyed by table so the
+# loop that runs it never interpolates a name into SQL.
+_STATUS_RENAME_DML: dict[str, str] = {
+    "import_jobs": "UPDATE import_jobs SET status = 'canceled' WHERE status = 'cancelled'",
+    "import_job_items": (
+        "UPDATE import_job_items SET status = 'canceled' WHERE status = 'cancelled'"
+    ),
+    "activity_log": (
+        "UPDATE activity_log SET kind = 'import.canceled' WHERE kind = 'import.cancelled'"
+    ),
+}
+
+
 def _run_migrations(conn) -> None:
     """Add missing tables and columns to existing databases."""
     inspector = inspect(conn)
@@ -239,25 +268,16 @@ def _run_migrations(conn) -> None:
             )
 
     if "cases" in existing_tables:
-        columns = [c["name"] for c in inspector.get_columns("cases")]
-        if "room_id" not in columns:
-            conn.execute(
-                text("ALTER TABLE cases ADD COLUMN room_id INTEGER DEFAULT 1 REFERENCES rooms(id)")
-            )
-        # v0.9 — per-case capacity override (NULL → type default)
-        if "capacity" not in columns:
-            conn.execute(text("ALTER TABLE cases ADD COLUMN capacity INTEGER"))
+        existing_cols = {c["name"] for c in inspector.get_columns("cases")}
+        for col_name, ddl in _CASE_COLUMN_DDL.items():
+            if col_name not in existing_cols:
+                conn.execute(text(ddl))
 
     if "hat_colors" in existing_tables:
-        columns = [c["name"] for c in inspector.get_columns("hat_colors")]
-        if "general_color" not in columns:
-            conn.execute(
-                text("ALTER TABLE hat_colors ADD COLUMN general_color VARCHAR(30) DEFAULT ''")
-            )
-        if "tier" not in columns:
-            conn.execute(
-                text("ALTER TABLE hat_colors ADD COLUMN tier VARCHAR(12) DEFAULT 'primary'")
-            )
+        existing_cols = {c["name"] for c in inspector.get_columns("hat_colors")}
+        for col_name, ddl in _HAT_COLOR_COLUMN_DDL.items():
+            if col_name not in existing_cols:
+                conn.execute(text(ddl))
 
     if "wear_log" in existing_tables:
         # Enforce one wear per hat per day on already-created tables: dedupe any
@@ -290,6 +310,16 @@ def _run_migrations(conn) -> None:
         for col_name, ddl in _PURCHASE_COLUMN_DDL.items():
             if col_name not in existing_cols:
                 conn.execute(text(ddl))
+
+    # v2.78 — the import job/item status `cancelled` became `canceled`. It is
+    # a value this app invented (unlike "Heather Grey", which is melin's), it
+    # is rendered raw as a badge, and the owner's rule is American spelling
+    # everywhere. Static, idempotent DML: a box already migrated matches no
+    # rows. The activity kind moves with it so the log does not carry two
+    # spellings of one event.
+    for table, dml in _STATUS_RENAME_DML.items():
+        if table in existing_tables:
+            conn.execute(text(dml))
 
 
 def _backfill_construction(conn) -> None:
@@ -409,7 +439,7 @@ async def init_db(bind=None, session_factory=None) -> None:
     what the health records are seeded with — was unverified while every
     function it calls had its own tests. Function tested, wiring untested.
     """
-    from headroom.models import __all_models__  # noqa: F811
+    from headroom.models import __all_models__  # noqa: PLC0415 — models import `Base` from here; a top-level import is a cycle
 
     _ = __all_models__  # ensure models are registered
     bind = bind if bind is not None else engine

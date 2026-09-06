@@ -6,6 +6,248 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.78.0] — 2026-09-06
+
+The whole project, reviewed at maximum effort on both axes and fixed in one
+pass — 168 findings, every one of them either fixed or written down with the
+reason in `docs/CODE-REVIEW-2026-09.md`. The method that found the most was
+not reading but **executing the claim**: registering a second passkey, running
+the documented password-recovery recipe, resolving `localhost` on a dual-stack
+host, deleting one call and watching the suite stay green. Backend 997 →
+**1036**; frontend 253 → **278**.
+
+### Breaking (wire level — no client of this API exists but the SPA, which moved with it)
+- **`ImportJob.status` and `ImportJobItem.status` say `canceled`, not
+  `cancelled`**, and the activity kind is `import.canceled`. Stored rows are
+  rewritten on every boot by `_STATUS_RENAME_DML` (three static `UPDATE`s,
+  idempotent, so a downgrade-then-upgrade cannot strand one). The only
+  British spelling that had made it onto the wire.
+- **`CaseRead` no longer carries `photo_path`.** There is no case-photo
+  feature; the field was published to every client and read by none.
+  `HatSummary.photo_path` — a hat's — is unchanged.
+- **`HatDispose.via` is validated** (`DisposedVia`), so an unknown channel is
+  a 422 rather than a stored typo. `GET /api/settings/model` gained
+  `default_model_id`, so the card can label the default without a copy of
+  `config.anthropic_model` in TypeScript.
+- **Every route declares a `response_model`.** Some twenty returned hand-built
+  dicts — `/api/auth/me`, the passkey ceremonies, every `/api/meta/*` lookup,
+  the whole `/api/admin/config`, and the purchase import/match/unmatch trio,
+  one of which writes prices — invisible to the TypeScript types.
+  `tests/test_api_contract.py` enumerates the OpenAPI document and fails on
+  any 2xx without a schema.
+
+### Fixed — things that did not work
+- **A second passkey could not be registered.** `exclude_credentials` was
+  passed as dicts; py_webauthn 3.0's `options_to_json` reads `.id` and
+  `.type.value` off each entry and raised `AttributeError`, so the second
+  registration was a 500 on every install. Verified by executing against the
+  locked library; the test now registers twice.
+- **The documented password-recovery recipe did not work.** `DELETE FROM
+  users` left the `owner_setup_done` marker behind, so `/api/auth/setup`
+  answered "Setup already completed" forever — on an image that ships no
+  `sqlite3` to fix it with. Reproduced. The marker is cleared when the users
+  table is empty (a sentinel outliving the row it guards was the bug), and
+  the recipe borrows `sqlite3` from `alpine`.
+- **Compose forwarded almost none of the documented `HEADROOM_*` variables
+  to the app.** A `.env` beside the compose file is interpolation for Compose,
+  not the container's environment. `HEADROOM_SETUP_TOKEN` in `.env` protected
+  nothing; `HEADROOM_MDNS_HOSTNAME=hats` renamed Caddy's site while the app
+  advertised `headroom.local`; the four re-pricing knobs, the disk floors, the
+  body cap and the SQLite durability setting reached nothing. Every knob is
+  now in a passthrough block as `${VAR:-}`, an empty string is treated as
+  unset everywhere (`env_ignore_empty`, `env_flag`/`env_int`/`env_float`), and
+  `tests/test_env_passthrough.py` parses the compose file against every name
+  the code reads.
+- **The Trust-this-device card never rendered.** Its "is there a local CA"
+  probe went through `apiFetch`, whose `resp.json()` rejects on a PEM, so the
+  answer was "no" on every install — and the test mocked `apiFetch`
+  resolving `'cert'`, which cannot happen. A plain `fetch` and `resp.ok`.
+- **Five write paths swallowed their errors.** Photo upload, eBay refresh,
+  undispose, passkey removal and share-link revoke were bare `await`s in
+  click handlers: a 413 from the size cap or a dropped LAN un-pressed the
+  button and said nothing. All are `useMutation`s with the error rendered.
+- **`?next=` on sign-in was honored only for a visitor already signed in**;
+  submitting the form or a passkey went to `/`. A tag tapped with an expired
+  session now lands on the hat.
+- **A 422 rendered as `[object Object]`.** The `detail` is an array.
+- **Bulk import committed the hat row before decoding the photo**, so a bad
+  file left a photoless hat forever. Decode first; the created id is cleaned
+  up on failure.
+- **A per-case capacity override could be set but never cleared**: the form
+  omitted an emptied field and the server read `None` as "leave it". The
+  form sends `null`; the server reads `model_fields_set`.
+- **A case's detail listed its disposed hats** while its counts excluded them.
+- **The inventory report summed disposed hats into the current total** when
+  asked to include them.
+- **`ebay_listing_count` was `len()` of a 25-row page**; the Browse response
+  carries `total`.
+- **`docker-compose.http80.yml` proxied to `localhost`** — `::1` on a
+  dual-stack host, and a 502. The Caddyfile had already learned this;
+  the compose file had not, and the test that guards one now greps the other.
+- **The inline reanalyze path was unguarded** when the worker is off, so any
+  non-Claude error left the hat `pending` forever. One `_run_inline` guard for
+  the three inline paths.
+- **`upload_logo` deleted the old logo before checking the new one**, so an
+  oversize or corrupt upload left no logo at all. And three modules each held
+  their own list of what counts as a logo; one lacked `.jpeg`, so a
+  `logo.jpeg` was served to the login page, invisible to Settings and never
+  replaced. `utils/branding.py` is the one list.
+- **A module-level `HTTPException` re-raised per request grew its traceback
+  without bound** — measured 0 → 30 frames after five anonymous requests to
+  the guest view, each pinning a `Request` and a database session. Factories
+  now; a test raises five times and asserts no module-level exception holds
+  a traceback.
+- **The re-pricing scheduler swept the whole shelf on every boot.** No
+  staleness gate, where the backup loop skips when a recent archive exists.
+  `stale_before` is threaded from the loop to the query.
+- **`_publish_stage`, the only writer of the analysis stage, reached for the
+  module-level session** — poisoned under test, so the stage writes had never
+  once been observed by a test. A session maker bound to the pipeline's own
+  engine, and the stage is asserted through the test session.
+- **Ten Bootstrap-era classes were styled by nothing** (`col-7`, `table-sm`,
+  `form-switch`, a `badge bg-danger` with the severity inverted, …), **26
+  form controls had no accessible name** (Login's username and password,
+  every API-key box, the whole Edit-hat form — a screen reader said "edit
+  text"), and **four `var(--x)` tokens were defined nowhere** (`--hr-pink`, on
+  the card whose whole point was to turn red). All fixed, and each class of
+  bug now has a source-scanning test: every class literal in TSX against
+  `app.css`, every form control for a name, every `var()` against the
+  stylesheets.
+- **"Unassigned" meant `case_id == null`**, which included every hat kept out
+  in a room — the Hats chip counted them and the Duplicates page captioned a
+  shelf hat "Unassigned · Living room". Three states now (`lib/placement`).
+- **Edit-hat's Model and Colorway were `<datalist>`s**, which iOS draws as a
+  strip above the keyboard that is easy to miss entirely — the reason the
+  `Combobox` component exists — and the colorway lookup refetched on every
+  keystroke. Comboboxes, and a debounced query.
+- **The harvest's colorway picker matched `hydro` inside `hydrolite`**
+  (`ilike %token%` under a docstring saying "token containment"), so an
+  A-Game Hydro hat was offered HYDROLite colorways. Set containment in
+  Python behind a cheap prefilter.
+- **`_product_comp` matched colorways by containment** while the catalog
+  validator used equality, so `Camo` was priced against `Rain Camo` and `808
+  Camo`. Equality on the colorway half.
+- **Colorways were not canonicalized on the edit form's PUT or on the
+  matcher's write** — only on the analysis path.
+- Edit-case re-seeded the form on every refetch (the bug Edit-hat had already
+  fixed) and started with room id `1`, which is the seed room on a fresh
+  install and some other room on any install that has deleted it.
+- The re-pricing card's "press again" hint compared `remaining` against
+  `considered`; `remaining` has meant "still due" since 2.76.
+- Edit-hat saves that change a colorway or a manual price left the
+  shared-price report stale; Activity's Refresh missed the sibling retention
+  key; a first-time construction or collection did not appear in the next
+  form's picker for 30 s.
+- The Valuation card was hidden for a hat whose only figure was the resale
+  price the owner had just typed — the figure the totals use, nowhere on its
+  own page.
+
+### Changed
+- **`PLC0415` is enforced** (no imports inside functions) and `RUF100` (no
+  unused `noqa`) with it. The local-import idiom had spread to ~90 sites and
+  is how late-binding seams break silently: a test patches
+  `module.async_session` and a function importing it locally binds the real
+  one at call time — nine tests failed the moment the imports were hoisted,
+  each a seam that had been working by accident. A seam that must follow a
+  monkeypatch is now a module-attribute call
+  (`hat_analysis_pipeline.refresh_melin_resale(hat)`), and every surviving
+  `noqa` carries its reason in prose on the line.
+- **Constants and enums replace strings and copies.** `ResaleScope`,
+  `DisposedVia`, `CONSTRUCTION_TOKENS`/`constructions_in`/`strip_constructions`
+  (four tokenizations became one), `PAGE_SIZE` shared by the harvest and the
+  pricing client (the harvest had been sending `per_page` to an API that
+  reads `perPage`, working only because the default page size matched),
+  `MAX_TOTAL_UPLOAD_BYTES` (two copies of 750 MB), the capacity figures
+  (typed by hand in four source files and eleven tests), and `hat_loads()`
+  public (restated in six modules).
+- **Frontend duplicates folded into shared components**: the nav's
+  failed-analysis badge (two copies, one unlabeled), the two API-key cards
+  (one `KeyCard` over a `KeyProviderSpec` — the twin of the backend's
+  `KeyProvider`; the Google card had already lost its loading state), the
+  ranked "top N" list (Stats and Valuation, already diverged on what a hat
+  with no brand is called), the case tile (the room page's had lost the
+  full/overfull tag), the hat row, two time formatters with two output
+  styles, two byte formatters, the portalled-list click-outside rule, the
+  clipboard routine (three copies, one with no secure-context fallback, so
+  the copy button threw on the http80 overlay).
+- **Every Settings link names its section** (`?tab=analysis|data|sharing`);
+  a chart row and the import page's "view hat" are `<Link>`s rather than
+  full reloads; the lightbox thumbnail is a real button opening a dialog
+  Escape closes; the home carousel slide is a link; the combobox announces
+  its active option; the case picker's groups are groups; the filter toggle
+  says whether it is open. The manifest no longer locks the iPad to portrait.
+- **Rosters that will rot are derived or pointed at.** The Settings test's
+  `api/settings` mock is built from the real module's exports (it had caught
+  `auditSharedPrices`, `getUnclaimedFromPurchases` and `runRepricingAll` in
+  three consecutive releases and was about to catch three more); `CLAUDE.md`'s
+  card list points at `SECTIONS`; the lifespan roster is stated in code order.
+- **Off-loop where it wasn't**: the per-file copy in `create_job` (up to 100 ×
+  20 MB), the logo's Pillow work, the upload cap's copy, multi-MB PNG reads for
+  Claude and Vision, QR rendering, Kuhn's assignment; `AsyncAnthropic` is
+  opened with `async with` and closed; the marketplace client is shared across
+  pages rather than built per page; EXIF orientation is honored on upload.
+- **The stored palette name stays RGB-nearest, and that was measured rather
+  than tidied**: over a 512-point grid the RGB and CIEDE2000 nearest-name
+  answers disagree on 39% of points, and ΔE calls pure blue "purple" — the
+  same non-linearity the family classifier vetoes. Palette LAB is precomputed
+  and the target's families computed once per search instead of per swatch.
+- The Activity card fetches the 25 rows it renders; `LogoCard` reads
+  `isPending` instead of shadowing it; the construction audit's button says
+  "Change them" on a rename; the case picker's empty state distinguishes no
+  query from no match.
+
+### Tests
+- **Mutation testing is the documented method** for anything that writes a
+  number, and `CLAUDE.md` says how. The score/tier assertions that had crept
+  into the outcome-only matcher suite are outcomes again — contended hats
+  where only that tier decides which receipt writes the price.
+- **Fifteen per-endpoint "requires auth" assertions removed** across twelve
+  files; none would have caught the `/openapi.json` leak, and the enumeration
+  test is the guard. The rule is written down.
+- **Tests that asserted nothing or the wrong thing**: three `never_raises`
+  with zero assertions, a WAL checkpoint test with none, an
+  `in ("wal", "memory")` that was always memory, a validation test recording
+  the poisoned-engine error instead of the validation, a labels test with
+  `or "0 labels"`, a source check reading only past the last docstring, six
+  tautologies, a Claude test mocking the SDK wholesale. Each rewritten
+  against an outcome or deleted. Fixture state that leaked across tests
+  (backup health, sweep progress, the rate limiter, `_session_factory`) is
+  reset by autouse fixtures and `try/finally`.
+- New parity tests: `test_api_contract`, `test_env_passthrough`,
+  `test_frontend_constants_parity` (`STAGES`, `DEFAULT_HAT_BASICS`,
+  `MAX_FILES`, the share-expiry seed), `test_the_npm_pin_is_one_number_in_three_files`,
+  the `_CASE_COLUMN_DDL`/`_HAT_COLOR_COLUMN_DDL` coverage checks, and on the
+  frontend `styles/classes`, `test/accessibleNames`, `styles/tokens`,
+  `lib/format`, `lib/placement`, `lib/clipboard`, `api/client`, `api/settings`.
+- Typed mock factories (`vi.fn<typeof fn>`) and a shared `caseFixture()`, so
+  a payload that drifts from the real shape fails `tsc`.
+
+### Documentation
+- **`CLAUDE.md`**: the iPhone stall was HTTP/3, not mDNS (the bullet ended a
+  release behind its own resolution); `_tls_watch_loop`, `price_audit.py`,
+  `GET /api/admin/config`, the autoheal and rsync overlays, the watchdog, the
+  recut route, the upload endpoints and `/api/settings/tls` documented; the
+  harvest's `create_task`, the repricing factory threading, the share-expiry
+  default, the `_model_tokens` cache reason, the three-move local search and
+  the shared-price measurement corrected; the lifespan roster complete and
+  in code order; rosters that rot replaced by pointers.
+- **README / OPERATIONS / USAGE**: the compose passthrough; the working
+  password-recovery recipe; `FORWARDED_ALLOW_IPS` on the LE overlay; the
+  token's real path (password-gated reveal, rotated on password change);
+  eBay as live asks; retail as a lookup; the re-pricing subsystem, its four
+  env rows and its card; the guest view and the full open-route roster; the
+  watchdog's URL on the LE overlay and its knobs; the real `/health/ready`
+  payload and 503 conditions; the 30-day share default; the README env table
+  deduplicated, anchored and given its eight missing rows; the rsync overlay
+  named with its two mounts; the five Settings tabs and every card USAGE had
+  never mentioned; the purchase-import flow as the card actually presents it.
+- **CHANGELOG**: three false facts corrected in place (2.76.0's test counts
+  and fsync order, 2.77.3's "fifteen sites"); `[2.24.0]` and `[2.23.1]`
+  annotated as never tagged; `docs/AUDIT-HISTORY.md` gained the `S1`, `S3`
+  and `S4` rows that test comments had been citing into a void; British
+  spellings across four documents.
+- `docs/CODE-REVIEW-2026-09.md` records every finding and its status.
+
 ## [2.77.3] — 2026-09-05
 
 The other three workers, booted for real. 2.77.2 proved the lifespan's gates
@@ -14,7 +256,7 @@ in the OFF direction for all four workers and in the ON direction for one.
 ### Fixed
 - **Three workers could not be booted under test at all.** `import_service`,
   `analysis_queue` and `backup_service`'s upload hook each reached for the
-  module-level `async_session` directly (fifteen sites), so their own suites
+  module-level `async_session` directly (twelve sites), so their own suites
   redirect that name by monkeypatch and the lifespan — which now refuses the
   module engine under test — could start none of them. Each takes
   `session_factory=` now, resolved at call time so the existing monkeypatches
@@ -117,7 +359,7 @@ call behind the core feature. Plus the dependency queue, taken properly.
 ### Added
 - `app.state.boot_tasks` — the lifespan's one-shot boot work (thumbnail and
   export backfills, mDNS start), published so a test can await it before
-  shutting down. Not cosmetic: cancelling a task mid-aiosqlite-call
+  shutting down. Not cosmetic: canceling a task mid-aiosqlite-call
   invalidates its connection, and on the test suite's in-memory `StaticPool`
   that single connection *is* the database.
 - `claude_analysis._anthropic_client` — the one place an SDK client is built.
@@ -319,7 +561,7 @@ bind-mounted, so `docker compose restart caddy` applies them.
 
 - **Intermittent 502s from the reverse proxy.** `reverse_proxy localhost:8000`
   resolves to `::1` first on a dual-stack host, and uvicorn binds `0.0.0.0` —
-  IPv4 only. Caddy dialled the v6 loopback, got `connection refused`, and
+  IPv4 only. Caddy dialed the v6 loopback, got `connection refused`, and
   returned 502 instead of retrying v4; observed six times in the live log
   against `/api/admin/recent-errors/count`, so the nav badge was failing
   outright. Now `127.0.0.1:8000`. This also affected the Caddyfile's own claim
@@ -462,8 +704,12 @@ and connects them to nothing.**
 
 - The import worker confirms no item is still live before deleting a job's
   staging directory, rather than trusting a counter a boot recount rewrites.
-- `record_upload` fsyncs the file and its directory before rename.
-- Backend 962 → **971**; frontend 240 → **243**.
+- `record_upload` fsyncs the file, renames it into place, then fsyncs the
+  directory — the order that makes the rename durable. (An earlier version of
+  this line said "before rename" for both; 2.77.0 corrected the code comment
+  and this corrects the entry.)
+- Backend 956 → **971**; frontend 239 → **243**. (Measured by checking out
+  the tags; the figures first written here, 962 and 240, were a guess.)
 
 ## [2.75.3] — 2026-08-30
 
@@ -791,7 +1037,7 @@ Two-axis code review of 2.72.1 → 2.75.1.
 ## [2.72.1] — 2026-08-29
 
 Two-axis code review of 2.72.0. Both axes independently found the same
-mislabelling bug, from different directions.
+mislabeling bug, from different directions.
 
 ### Fixed
 - **The shared-price report could hide the very cluster it exists to reveal.**
@@ -891,7 +1137,7 @@ actively worse.
   CLAUDE.md already documented this exact `denim`-in-the-colorway-half trap for
   `catalog_service`; the new code walked into it anyway.
 
-- **A cancelled sweep reported itself as running forever.** 2.71.0 replaced
+- **A canceled sweep reported itself as running forever.** 2.71.0 replaced
   `try/finally` with `try/except Exception`, and `CancelledError` is a
   `BaseException`. "Re-price now" is a ~50s blocking POST, so a phone
   disconnecting mid-sweep left `progress.running` true permanently with the
@@ -922,7 +1168,7 @@ actively worse.
 
 ### Fixed
 - **Hats are priced against melin's own PRODUCT now, not the line they belong
-  to.** 2.69.0 fixed the sample and the labelling but not the symptom: measured
+  to.** 2.69.0 fixed the sample and the labeling but not the symptom: measured
   across the real collection afterwards, **168 of 235 hats still shared just
   five prices** — 76 at $85.00, 34 at $79.00, 21 at $82.50. The scope read
   `model`, but `Trenches Hydro` matches 76 different hats.
@@ -1701,7 +1947,7 @@ it also turned up four real bugs, one of which was quietly rewriting prices.
   `<kbd>` is styled rather than left at its own default, for the same reason.
 
 ### Fixed
-- **Editing any field silently froze a hat's prices and relabelled them as
+- **Editing any field silently froze a hat's prices and relabeled them as
   yours.** `EditHatPage` seeds both price boxes from the loaded hat and sent
   them on *every* save; `hat_service.update_hat` reads a sent key as "a person
   typed this number" and stamps the price `manual`. So changing a colorway
@@ -1933,7 +2179,7 @@ and nothing noticed when it was replaced.
 - **Touch targets on small controls.** `.btn-sm`, `.form-select-sm` and
   `.form-control-sm` were 36px against a documented 44px minimum — fine under
   a mouse, and on a phone these are the destructive buttons ("Unlink all",
-  "Delete") sitting in a row beside their neighbours. Now 44px under
+  "Delete") sitting in a row beside their neighbors. Now 44px under
   `@media (pointer: coarse)`, keyed on what is doing the pointing rather than a
   width breakpoint: an iPad is a wide touch screen and a small laptop window is
   a narrow mouse one. Padding is unchanged, so nothing reflows.
@@ -2677,7 +2923,7 @@ A test-coverage audit, and the bug it found.
   weakest coverage.
   - `import_service` **46% → 87%** — the durability claims (`the loop survives
     ANY per-item exception`, the boot sweep healing crash-stranded state, a
-    cancelled job never being resurrected) were prose, not tests.
+    canceled job never being resurrected) were prose, not tests.
   - `utils/upload` — the 413 cap, a security control whose own docstring says
     an untestable limit "is how the last one went missing".
   - `report_service` **53% → 97%** — the document that goes to an insurer, and
@@ -2721,7 +2967,7 @@ The remainder of the archaeology report, plus build-time work.
 - **Stats, Valuation and Home gate on `isError`.** `?? []` turned a failed
   fetch into "$0 across 0 hats" — a confident wrong answer, and precisely what
   `valueHat` returns `null` rather than 0 to avoid.
-- **The nav error badge is labelled.** A bare red dot is unreadable to a screen
+- **The nav error badge is labeled.** A bare red dot is unreadable to a screen
   reader and ambiguous to everyone else; it counts hats whose *analysis* failed,
   not errors in general.
 - **`melin_recap` logs.** A network service with a declared, never-used logger,
@@ -2778,10 +3024,10 @@ The remainder of the archaeology report, plus build-time work.
   nearest *charcoal* by ΔE because it is dark, but its hue is 197°, the same
   as a mid teal's — with the existing chroma-*ratio* guard separating the case
   that must match (a dark teal holds 41% of teal's chroma) from the one that
-  must not (a blue-grey holds 20% of blue's), since their absolute chromas are
+  must not (a blue-gray holds 20% of blue's), since their absolute chromas are
   11.1 and 11.7 and nothing else tells them apart. And blue/purple can never
   be bridged by hue at all, because CIELAB's hue angle is non-linear through
-  the blue region — a defect of the color space, not a judgement call.
+  the blue region — a defect of the color space, not a judgment call.
 
   A color chip now honors major colors the same way a typed color term has
   since 2.39, with a per-rank distance budget so "the hat with the pink brim"
@@ -2899,7 +3145,7 @@ backups that stop restating themselves.
   log on the way. The field and the reason stay; the value was the one part
   the caller already had.
 - **The Google Vision API key is no longer printed to the container log.** It
-  travelled as `?key=`, and httpx logs the full request URL at INFO on every
+  traveled as `?key=`, and httpx logs the full request URL at INFO on every
   call. It goes in the `X-Goog-Api-Key` header now, which is what Google
   documents it for.
 - **A bulk import with no worker running says so at ERROR**, and the check is
@@ -3164,7 +3410,7 @@ Findings from a two-axis review of 2.34–2.36.1.
   reasons, and both would have been invisible if ignored:
 
   - A case is not a hat. Quietly adding a couple of thousand to a number
-    labelled *market value* would make every comparison on the page — retail
+    labeled *market value* would make every comparison on the page — retail
     retention, unrealised gain, cost per hat — wrong in a way nobody could see.
   - The two are different *kinds* of number. Hats are valued from live
     comparable listings; cases have no resale market at all, so $49 is
@@ -3249,7 +3495,7 @@ Findings from a two-axis review of 2.34–2.36.1.
 
   - **It moved money.** `retail_pricing` prices HYDRO at $79 and HYDROLite at
     $99, so a guess skewing HYDROLite over-priced the hat by $20.
-  - **It hid hats.** 2.29 made construction a filter, so a mislabelled hat is
+  - **It hid hats.** 2.29 made construction a filter, so a mislabeled hat is
     absent from a filtered view rather than merely wrong in a detail pane.
 
   A blank construction is an honest *"nobody has looked yet"*. A guessed one is
@@ -3549,7 +3795,7 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
   What the table deliberately does **not** do is invent the numbers it cannot
   know. Thermal is $79/$89/$99 on caps but $139/$179 on Aviators, and the Mill
   straw line runs $99–$180 — so those fall through to Claude's estimate, which
-  is still labelled as a guess. And the table never pulls a *higher* estimate
+  is still labeled as a guess. And the table never pulls a *higher* estimate
   down: the base is what a plain example costs, and collabs, artist series and
   premium colorways genuinely exceed it. That is the "some hats are $89" case.
 
@@ -3605,7 +3851,7 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
   handler. It now spools to a temp dir in capped chunks and passes paths, like
   the bulk-import route it was always meant to mirror.
 
-- **Tests could make real, billable API calls.** `conftest` neutralised
+- **Tests could make real, billable API calls.** `conftest` neutralized
   Sharetribe only. `config.py` reads `HEADROOM_ANTHROPIC_API_KEY` /
   `HEADROOM_GOOGLE_VISION_API_KEY` at import and the key resolver falls back to
   the environment, so anyone with those exported hit the live APIs. The claim
@@ -3672,7 +3918,7 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
 - **`hat.case.room` is no longer walked outside the model.** Five call sites
   rebuilt what `Hat.room_name` / `Hat.case_display_id` / `Hat.display_id`
   already provide.
-- **Three unlabelled `<select>`s got their `aria-label`** — Case Type,
+- **Three unlabeled `<select>`s got their `aria-label`** — Case Type,
   Disposition Type, and color Tier. The visible labels carry no `htmlFor`, so
   nothing else associated them.
 - **The purchase-import dedupe is defined once.** Import and preview each had a
@@ -3688,7 +3934,7 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
 - **README and USAGE now document the zip export and per-hat notes**, which
   2.24.0 shipped into CLAUDE.md and the CHANGELOG only.
 
-## [2.24.0] — 2026-08-19
+## [2.24.0] — 2026-08-19 *(never tagged; shipped inside v2.25.0)*
 
 ### Added
 - **Download the collection as a zip.** `index.html` plus an `images/` folder:
@@ -3727,7 +3973,7 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
   other prose field on a hat is derived and gets rewritten, so the card says
   outright that this one survives.
 
-## [2.23.1] — 2026-08-18
+## [2.23.1] — 2026-08-18 *(never tagged; shipped inside v2.25.0)*
 
 ### Fixed
 - **The case part of a hat's ID is now a link back to that case.** `A-029-01`
@@ -3755,15 +4001,15 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
 ## [2.23.0] — 2026-08-18
 
 ### Fixed
-- **Color search: a grey hat is no longer a purple hat.** Searching purple
-  returned **22 of 22** hats, every one matched on a grey swatch at Δ13–19.
+- **Color search: a gray hat is no longer a purple hat.** Searching purple
+  returned **22 of 22** hats, every one matched on a gray swatch at Δ13–19.
   2.22.0 did not fix this and neither would a third attempt at the same
   approach, because the approach was wrong.
 
   **A distance threshold cannot answer "is this hat purple?"** CIEDE2000
   divides the chroma difference by `S_C = 1 + 0.045·C̄` — correct for the job
   it was designed for, judging whether two nearly-identical samples of a dye
-  match, and wrong for this one. A mid grey and a saturated purple differ by
+  match, and wrong for this one. A mid gray and a saturated purple differ by
   **55 units of chroma**; that divisor compresses the gap to ~22, and when
   their lightness happens to agree the pair scores **~17**. Two genuinely
   different purples score ~33. There is no cutoff that admits the second and
@@ -3777,22 +4023,22 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
   Deliberately **not** a general penalty on the chroma gap — that was tried
   first and it killed `navy`/`blue` (41 units apart) and `red`/`maroon` (36)
   along with the bug. Those are the dark and bright versions of one hue and
-  must keep matching. What makes grey different isn't the size of the gap but
+  must keep matching. What makes gray different isn't the size of the gap but
   that it has no hue to be a darker version *of*.
 
   The test is a **ratio** rather than an absolute chroma floor, because how
   much color counts as *some* color depends on the color. Teal is itself
   only C=27 where red is C=73, so a slate teal at C=10.5 holds **39%** of
-  teal's chroma and is a teal, while the blue-grey that must not match purple
-  holds **20%** of its C=59 and is a grey. An absolute floor cannot tell those
-  apart — set low enough to keep the teal findable it lets blue-grey match
+  teal's chroma and is a teal, while the blue-gray that must not match purple
+  holds **20%** of its C=59 and is a gray. An absolute floor cannot tell those
+  apart — set low enough to keep the teal findable it lets blue-gray match
   purple, set high enough to stop that it discards every dark teal and forest
   green in a collection full of them.
 
   Worth knowing: the guard is strong for emphatic targets like purple and
   inherently weaker for muted ones. Tapping **teal** still returns some slate
-  and blue-grey hats — which is fair, because teal genuinely is a desaturated
-  blue-green and those are its neighbours. Tapping purple no longer does.
+  and blue-gray hats — which is fair, because teal genuinely is a desaturated
+  blue-green and those are its neighbors. Tapping purple no longer does.
 
   Purple now returns **3** hats instead of 22: the purple one, the navy one
   and the pink one.
@@ -3803,14 +4049,14 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
   real matches — `navy`/`blue` (Δ23.3) and `charcoal`/`gray` (Δ25.3) were both
   casualties. With the hue guard doing that work properly, 26 is the first
   value that keeps all 17 same-family palette pairs; 28 would start admitting
-  `navy`/`maroon`. A charcoal hat is a dark grey hat again.
+  `navy`/`maroon`. A charcoal hat is a dark gray hat again.
 
 ## [2.22.0] — 2026-08-18
 
 ### Fixed
 - **Color search stops returning the whole collection.** Searching a color
   came back with everything, bunched at near-identical distances — four hats
-  all reading "Δ15", the top three matched on grey and the fourth, a green
+  all reading "Δ15", the top three matched on gray and the fourth, a green
   hat, matched on its pink logo. Two causes, both mine:
 
   **A hat was scored on the closest of ALL its swatches, with nothing
@@ -3831,10 +4077,10 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
   **The Δ30 cutoff was calibrated against the wrong distribution.** It was
   measured on the 26-color palette, whose entries are deliberately spread
   around the wheel. A hat collection is not: these are overwhelmingly black,
-  charcoal, navy and grey, and CIEDE2000 places a low-chroma neutral
-  moderately near *everything*. At 30, grey was a "match" for **17 of the
+  charcoal, navy and gray, and CIEDE2000 places a low-chroma neutral
+  moderately near *everything*. At 30, gray was a "match" for **17 of the
   other 25 palette colors** — red, orange, purple and pink included. Every
-  hat owns a grey swatch, so every search returned every hat.
+  hat owns a gray swatch, so every search returned every hat.
 
   Re-calibrated on the neutrals, where the problem lives, to **22**:
 
@@ -3846,12 +4092,12 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
   | red      | 6         | 1         |
 
   Saturated searches barely notice — they were never the complaint. Shades of
-  one color still match comfortably: a real grey crown is 8.0 from the grey
+  one color still match comfortably: a real gray crown is 8.0 from the gray
   chip, well inside.
 
 ### Added
 - **Results say which swatch they matched.** A hat matched on its accent is
-  labelled as such, so a row reading "Δ0 · accent" sitting below a row reading
+  labeled as such, so a row reading "Δ0 · accent" sitting below a row reading
   "Δ5" is legible rather than looking broken. `ColorSearchResult` gains
   `matched_rank`; `distance` keeps its meaning — the raw CIEDE2000 to the
   matched swatch — and is deliberately **not** the sort key.
@@ -3863,7 +4109,7 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
   numbers are gone: a 15% "ask-to-sold" haircut and a guessed condition
   multiplier.
 
-  The haircut was modelling a negotiation that doesn't happen. melinrecap is a
+  The haircut was modeling a negotiation that doesn't happen. melinrecap is a
   fixed-price Treet marketplace with automatic 10% drops — a buyer clicks buy
   at the number shown — so **the listed price is the sale price**, and
   discounting it was simply wrong.
@@ -4799,7 +5045,7 @@ was reported from use.
 - **Bulk Import dead-ended on a bad `?job=`.** The upload form is hidden whenever
   a job id is set, so a stale link showed a header and nothing else — while
   polling the 404 every two seconds forever. The error is now shown with a way
-  out, and a cancelled job gets an exit button like a finished one does.
+  out, and a canceled job gets an exit button like a finished one does.
 - **`hydro` / `hydrolite` searches found nothing.** USAGE promised "`hydro` finds
   every Hydro", but 2.6.0 moved them from `style` values to boolean columns that
   no text match could reach. Both terms match their flag again, and search now
@@ -4967,7 +5213,7 @@ is nothing to re-cut from.
   All four modals now render through a `<body>` portal, which also immunises
   them against the `overflow: hidden` and `transform` containing-block traps.
 - **Editing a mis-detected color silently reverted.** Typing "green" over a
-  color Claude had read as grey saved "gray": `PUT /api/hats/{id}/colors`
+  color Claude had read as gray saved "gray": `PUT /api/hats/{id}/colors`
   re-derived `general_color` from the stored hex whenever one was present, so
   the correction was overwritten by the very value being corrected. An
   explicitly-typed name now wins and is snapped to the palette's spelling (so
@@ -5024,7 +5270,7 @@ is nothing to re-cut from.
 ### Fixed
 - The Claude model `<select>` and its custom-id input had no accessible name —
   the visible `<label>` carries no `htmlFor`, so screen readers announced them
-  unlabelled. Both now set `aria-label`.
+  unlabeled. Both now set `aria-label`.
 
 ## [2.4.0] — 2026-08-16 — _any room can be the default_
 
@@ -5160,7 +5406,7 @@ Net, measured in CI's own log: image build **9 noise lines → 0**, and
 ### Fixed
 - **Form controls were not associated with their labels.** The `<label>`
   elements carry no `htmlFor` and do not wrap their inputs, so assistive tech
-  announced every filter and hat-form select as unlabelled. All eleven controls
+  announced every filter and hat-form select as unlabeled. All eleven controls
   now carry an `aria-label`. Found by the new tests.
 - **`HEADROOM_REMBG_MODEL` was documented as configurable but impossible to
   change.** `ARG` is stage-scoped, so the runtime stage discarded the build arg
@@ -5842,7 +6088,7 @@ PWA install + photo crop on upload. Pure UX wins, no data model touches.
 - **Photo edit on upload** via `react-easy-crop` (~30KB gzipped, no peer
   deps). PhotoCapture flow now: pick → crop modal (free aspect, 90°
   rotate, zoom slider) → upload. Cropping happens client-side via canvas;
-  backend pipeline is unchanged. Cancelling the crop modal uploads the
+  backend pipeline is unchanged. Canceling the crop modal uploads the
   original.
 
 ## [0.4.0] — 2026-05-03 — _Real Numbers_
@@ -5942,7 +6188,7 @@ Closes the action items from the 10 reviewer questions in the archaeology bundle
   tar of `/data/{headroom.db, uploads/}` with an `attachment` content-disposition.
 - **Scheduled rolling backups.** Background asyncio task writes a timestamped
   tar.gz to `/data/backups/` every 24 h (configurable: `HEADROOM_BACKUP_INTERVAL_HOURS`,
-  `HEADROOM_BACKUP_RETENTION_DAYS=7`, `HEADROOM_BACKUP_ENABLED`). Cancelled
+  `HEADROOM_BACKUP_RETENTION_DAYS=7`, `HEADROOM_BACKUP_ENABLED`). Canceled
   cleanly on lifespan exit. Initial snapshot at startup so a fresh deploy isn't
   one bad sector away from total loss.
 - **"Unassigned / In a Case / All" quick-chips** on the Hats page (auto-shown

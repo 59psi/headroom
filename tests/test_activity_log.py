@@ -36,9 +36,12 @@ async def test_dispose_emits_log_with_via(client):
 
 
 async def test_count_endpoint(client):
+    before = (await client.get("/api/admin/activity-log/count")).json()["count"]
     await client.post(
         "/api/hats", json={"condition": "new", "size": "classic", "style": "a_game"}
     )
     resp = await client.get("/api/admin/activity-log/count")
     assert resp.status_code == 200
-    assert resp.json()["count"] >= 1
+    # Exactly one more row than before — a `>= 1` passed on the login row the
+    # fixture writes, whether or not creating a hat was audited at all.
+    assert resp.json()["count"] == before + 1

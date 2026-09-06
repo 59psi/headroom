@@ -103,6 +103,96 @@ async def test_purchase_migration_ddl_covers_every_model_column():
     )
 
 
+# The first `cases` and `hat_colors` CREATE TABLEs. These two tables had
+# hand-written `if "x" not in columns` migrations and NO parity test, so a
+# column added to either model was guarded by nothing — the exact gap the two
+# tests above exist to close for hats and purchases.
+_ORIGINAL_CASE_COLUMNS = (
+    "id INTEGER PRIMARY KEY AUTOINCREMENT",
+    "case_type VARCHAR(12)",
+    "sequence_number INTEGER",
+    "display_id VARCHAR(10)",
+    "photo_path VARCHAR(255)",
+    "created_at DATETIME",
+    "updated_at DATETIME",
+)
+
+_ORIGINAL_HAT_COLOR_COLUMNS = (
+    "id INTEGER PRIMARY KEY AUTOINCREMENT",
+    "hat_id INTEGER",
+    "color_name VARCHAR(50)",
+    "hex_value VARCHAR(7)",
+    "dominance_rank INTEGER",
+)
+
+
+@pytest.mark.parametrize(
+    ("table", "original", "model_path"),
+    [
+        ("cases", _ORIGINAL_CASE_COLUMNS, "headroom.models.case:Case"),
+        ("hat_colors", _ORIGINAL_HAT_COLOR_COLUMNS, "headroom.models.hat_color:HatColor"),
+    ],
+)
+async def test_case_and_hat_color_migrations_cover_every_model_column(table, original, model_path):
+    """Same invariant, same total-outage failure mode, for the two tables that
+    used to be migrated by hand: every model column must exist after the
+    migration runs against the table as it first shipped."""
+    import importlib
+
+    module_name, class_name = model_path.split(":")
+    model = getattr(importlib.import_module(module_name), class_name)
+
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("CREATE TABLE rooms (id INTEGER PRIMARY KEY, name VARCHAR(100))"))
+            conn.execute(text(f"CREATE TABLE {table} ({', '.join(original)})"))
+            _run_migrations(conn)
+            migrated = {c["name"] for c in inspect(conn).get_columns(table)}
+    finally:
+        engine.dispose()
+
+    missing = set(model.__table__.columns.keys()) - migrated
+    assert not missing, (
+        f"{class_name} model columns absent from the {table} column DDL — an upgraded "
+        f"database would be missing these and every read would fail: {sorted(missing)}"
+    )
+
+
+async def test_the_import_status_rename_migrates_stored_rows():
+    """`cancelled` → `canceled` is a rename of a PERSISTED value, so an upgraded
+    database must come out speaking the new spelling everywhere the old one was
+    stored: both status columns and the activity kind. Idempotent — running the
+    migration twice changes nothing more."""
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("CREATE TABLE rooms (id INTEGER PRIMARY KEY, name VARCHAR(100))"))
+            conn.execute(text("CREATE TABLE import_jobs (id INTEGER PRIMARY KEY, status VARCHAR(20))"))
+            conn.execute(
+                text("CREATE TABLE import_job_items (id INTEGER PRIMARY KEY, status VARCHAR(20))")
+            )
+            conn.execute(text("CREATE TABLE activity_log (id INTEGER PRIMARY KEY, kind VARCHAR(60))"))
+            conn.execute(text("INSERT INTO import_jobs (status) VALUES ('cancelled'), ('done')"))
+            conn.execute(
+                text("INSERT INTO import_job_items (status) VALUES ('cancelled'), ('queued')")
+            )
+            conn.execute(
+                text("INSERT INTO activity_log (kind) VALUES ('import.cancelled'), ('import.created')")
+            )
+            _run_migrations(conn)
+            _run_migrations(conn)
+            jobs = [r[0] for r in conn.execute(text("SELECT status FROM import_jobs ORDER BY id"))]
+            items = [r[0] for r in conn.execute(text("SELECT status FROM import_job_items ORDER BY id"))]
+            kinds = [r[0] for r in conn.execute(text("SELECT kind FROM activity_log ORDER BY id"))]
+    finally:
+        engine.dispose()
+
+    assert jobs == ["canceled", "done"]
+    assert items == ["canceled", "queued"]
+    assert kinds == ["import.canceled", "import.created"]
+
+
 async def test_rooms_migration_backfills_exactly_one_default():
     """An upgraded DB must end up with exactly one room flagged is_default.
 

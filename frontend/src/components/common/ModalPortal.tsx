@@ -13,7 +13,7 @@ import { createPortal } from 'react-dom';
  * cropper lives inside the Photo card, which comes first.
  *
  * Portalling to `<body>` lifts the modal out of every card's context, so its
- * z-index is finally measured against the page. It also immunises modals
+ * z-index is finally measured against the page. It also immunizes modals
  * against the other two ancestor traps that silently clip `position: fixed`
  * children — `overflow: hidden`, and any `transform`/`filter`, which create a
  * containing block. The card hover rule uses `transform: translateY(-2px)`, so

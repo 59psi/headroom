@@ -4,51 +4,7 @@ import { Link, useSearchParams } from 'react-router';
 import { listCases } from '../api/cases';
 import { getRoomOptions } from '../api/rooms';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
-import type { CaseRead } from '../types';
-import { CaseCollage } from '../components/cases/CaseCollage';
-
-function CaseCard({ c }: { c: CaseRead }) {
-  const typeLabel = c.case_type === 'archive' ? 'Archive' : 'Daily Wear';
-
-  let countLabel: string;
-  if (c.hat_count === 0) {
-    countLabel = 'Empty';
-  } else if (c.beanie_count > 0) {
-    countLabel = `${c.beanie_count} beanie${c.beanie_count !== 1 ? 's' : ''}`;
-  } else {
-    countLabel = `${c.regular_count} hat${c.regular_count !== 1 ? 's' : ''}`;
-  }
-  // Full and overfull are different states and the grid is where you'd notice
-  // either. A bare count can't say which: "4 hats" looks identical whether the
-  // case holds four comfortably or has one crammed in.
-  //
-  // Asked of the type the case actually HOLDS. Cases are type-exclusive, so
-  // the unused type's `free_*` sits at its full nominal figure forever —
-  // `free_regular + free_beanie === 0` therefore could never be true for a
-  // case with regular hats in it (a full 3-hat case publishes
-  // `free_regular: 0, free_beanie: 6`), and the badge only ever appeared on
-  // beanie cases.
-  const isFull = c.beanie_count > 0 ? c.free_beanie === 0 : c.free_regular === 0;
-  const fillLabel = c.overfull ? 'overfull' : (c.hat_count > 0 && isFull ? 'full' : null);
-
-  return (
-    <Link to={`/cases/${c.display_id}`} className="card text-decoration-none h-100">
-      <CaseCollage thumbs={c.hat_thumbs} label={c.display_id} />
-      <div className="card-body d-flex justify-content-between align-items-center gap-2">
-        <div>
-          <div className="font-mono fw-bold fs-5" style={{ color: 'var(--neon-cyan)' }}>{c.display_id}</div>
-          <div className="text-secondary small">{typeLabel} · {c.room_name}</div>
-        </div>
-        <div className="text-end">
-          <div className="font-mono fw-semibold" style={{ color: 'var(--neon-pink)' }}>{countLabel}</div>
-          {fillLabel && (
-            <div className={`hr-fill-tag${c.overfull ? ' is-overfull' : ''}`}>{fillLabel}</div>
-          )}
-        </div>
-      </div>
-    </Link>
-  );
-}
+import { CaseTile } from '../components/cases/CaseTile';
 
 type CaseTypeFilter = 'all' | 'archive' | 'daily_wear';
 
@@ -78,11 +34,11 @@ export function CasesPage() {
   const [roomFilter, setRoomFilter] = useState('');
 
   if (isLoading) return <LoadingSpinner />;
+  // Same rule as Home/Valuation/Stats: a failed fetch is an error, not an
+  // empty collection with a "create your first one" call to action.
   if (error) return (
-    <div className="text-center py-5">
-      <h5 className="mb-2">No cases to display</h5>
-      <p className="text-secondary small mb-3">The case collection is empty or could not be loaded.</p>
-      <Link to="/cases/new" className="btn btn-primary">Create First Case</Link>
+    <div className="alert alert-danger" role="alert">
+      Couldn&rsquo;t load your cases. Reload to try again.
     </div>
   );
 
@@ -142,7 +98,7 @@ export function CasesPage() {
       ) : (
         <div className="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-3">
           {filtered.map(c => (
-            <div className="col" key={c.id}><CaseCard c={c} /></div>
+            <div className="col" key={c.id}><CaseTile c={c} /></div>
           ))}
         </div>
       )}

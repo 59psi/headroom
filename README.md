@@ -32,9 +32,11 @@ result, and three independent price signals per hat.
 ## What it does
 
 **🧠 Identify**
-- **Claude Vision analysis** — brand, specific model, tiered colors with hex,
-  design notes, estimated retail price. One tool-use call per photo, prompt
-  caching enabled.
+- **Claude Vision analysis** — brand, specific model, colorway, tiered colors
+  with hex, design notes. One tool-use call per photo, prompt caching enabled.
+  Retail price is **looked up**, not guessed: a table of melin's real list
+  prices by construction (cross-checked against order history) answers first,
+  and Claude's estimate only fills in where the table has no row.
 - **Works without any keys** — background removal and dominant-color detection
   run locally (colors are read *only* from the hat's cutout mask, so the
   background can never contaminate them). Add a Google Vision key for
@@ -49,7 +51,7 @@ result, and three independent price signals per hat.
 - **Search by color** — tap a swatch (or pick any color) and hats rank by
   *perceptual* closeness (CIEDE2000) over their stored hex values, weighted by
   how much of the hat wears that color. A hat whose secondary color matches
-  still surfaces, but never above a hat that *is* that color. Grey hats stay
+  still surfaces, but never above a hat that *is* that color. Gray hats stay
   out of a purple search: the hue question is settled before distance is
   measured, because a distance metric alone will happily call charcoal
   "nearly purple". "Light blue" works no matter what the analyzer called it.
@@ -62,9 +64,12 @@ result, and three independent price signals per hat.
   screen; scanning a case opens its contents.
 
 **💰 Value**
-- **Three price signals per hat** — Claude's retail estimate, eBay
-  sold-comparable stats (Browse API), and a **live median resale price** from
-  melinrecap's marketplace API (no scraping, no headless browser).
+- **Three price signals per hat** — the retail price (table first, Claude's
+  estimate second), eBay live asking prices for comparable listings (Browse
+  API — eBay publishes no sold history there), and a **live median resale
+  price** from melinrecap's marketplace API (no scraping, no headless browser)
+  matched to *this* product, condition and size — re-checked nightly without
+  spending a Claude call.
 - **Real cost basis** — import order line items from your purchase emails;
   they match to hats and record what you *actually paid*, and when.
 - **Valuation dashboard** — totals, retention %, top hats by value, realized
@@ -97,7 +102,9 @@ result, and three independent price signals per hat.
 - **Everything gated** — the API *and* the photo files require login; raw API
   keys never leave the server (masked reads only).
 - **Read-only share links** — show off the collection without handing out a
-  login; revocable, optionally expiring.
+  login; revocable, expiring after 30 days unless you say otherwise.
+- **Guest browsing** — optionally let anyone on the LAN browse read-only
+  (no prices, no notes) without a link at all. Off by default.
 - **Download the collection as a zip** — `index.html` plus an images folder.
   Opens in any browser, works offline, nothing to host, no login. For when the
   person you're showing it to can't reach the app: a share link only resolves
@@ -151,10 +158,13 @@ Things worth knowing from that picture:
 - **The original photo is never thrown away.** `rembg` output becomes the
   canonical image, but the flattened JPEG is retained as `original_path` — it
   is the only thing a re-cut can work from.
-- **The price lookups are gated on Claude succeeding.** Both fallback branches
-  return early. Without a model name there is nothing to look up comparables
-  *for*, and guessing from the style alone would price every hat in a shape
-  identically.
+- **On upload, the price lookups are gated on Claude succeeding** — both
+  fallback branches return early, because without a model name there is
+  nothing to look up comparables *for*, and guessing from the style alone
+  would price every hat in a shape identically. After that, re-pricing is
+  independent of analysis: a nightly sweep (and the *Re-price* buttons in
+  Settings → Data) re-checks every hat that already has a model name against
+  live asks, with no Claude call at all.
 - **Failure is recorded, not hidden.** `analysis_status` ends up `ok`,
   `fallback`, `skipped` or `error`, with the reason in `analysis_error`, and
   Settings surfaces the recent ones.
@@ -255,7 +265,7 @@ network, so stack the mDNS overlay (host networking — Linux/Pi only):
 docker compose -f docker-compose.yml -f docker-compose.mdns.yml up -d --build
 ```
 
-Host networking only claims the ports the app actually binds (8000 here) —
+Host networking only claims the ports the app actually binds (8000 here, plus UDP 5353 for the mDNS responder) —
 the rest of the Pi is unaffected, and other services can keep running on
 their own ports.
 
@@ -309,7 +319,7 @@ http://headroom.local:8000/api/public/ca-certificate
 ```
 
 That serves the **root** certificate with the right content type, so iOS
-offers to install it directly. It's also linked from **Settings → This device
+offers to install it directly. It's also linked from **Settings → Device
 → Trust this device**, which only appears when a local CA exists.
 
 > Upgrading from an overlay older than 2.45? Recreate the stack
@@ -405,8 +415,8 @@ uvicorn directly, bypassing Caddy. Plain HTTP, so no padlock and no passkeys.
   keychain, which cannot store certificates. Pick **login** or **System** in
   the Keychain Access sidebar, or use the `security add-trusted-cert` command
   in step 3, which never has to guess.
-- *Trusted the root and it is still "Not Secure"* — check **Settings → This
-  device → Trust this device**, which now reports the certificate actually
+- *Trusted the root and it is still "Not Secure"* — check **Settings → Device
+  → Trust this device**, which now reports the certificate actually
   being **served**. Leaf certificates are issued for 820 days (`./Caddyfile`)
   and Caddy renews them well before that; if renewal stops (a missing stored
   key will do it) Caddy keeps serving the old one and re-queues the renewal
@@ -474,7 +484,7 @@ applies inline SQLite migrations (`ALTER TABLE` for new columns, `CREATE
 TABLE` for new tables), so an old database upgrades itself the first time
 the new version starts. There's no separate migrate step — but there's no
 downgrade path either, so **take a backup before major upgrades**
-(Settings → Download backup, or grab the latest scheduled tarball from
+(Settings → Upkeep → Backups → *↓ Full Backup*, or grab the latest scheduled tarball from
 `/data/backups/`). Your data always survives a rebuild: the database and
 photos live in the `headroom-data` volume, not the image.
 
@@ -534,9 +544,12 @@ drop a Claude key in later and hit **Reanalyze** on any hat to upgrade.
 
 Melin hats get a **live median asking price** from melinrecap.com's public
 marketplace API (it's a Treet marketplace on Sharetribe Flex — we use the
-same anonymous API its own frontend uses), scoped to your exact model when
-enough listings match, plus a deep link to browse the comps. Degrades to
-link-only if the API is unreachable.
+same anonymous API its own frontend uses), matched to your exact product —
+model *and* colorway — in your hat's condition and size, widening to the line
+only when nothing that specific is listed; plus a deep link to browse the
+comps. Degrades to link-only if the API is unreachable. Prices are
+**re-checked nightly** (`HEADROOM_REPRICING_*`) and on demand from Settings →
+Data → Re-pricing; neither spends a Claude call.
 
 ---
 
@@ -552,22 +565,26 @@ link-only if the API is unreachable.
 | `HEADROOM_GOOGLE_VISION_API_KEY` | _(unset)_ | Fallback brand (logo) detection. DB value wins |
 | `HEADROOM_MELIN_CLIENT_ID` | _(baked in)_ | Public Sharetribe client id for live Melin resale stats |
 | `HEADROOM_EBAY_APP_ID` / `HEADROOM_EBAY_CERT_ID` | _(unset)_ | eBay Browse API comps (Production keyset) |
-| `HEADROOM_SETUP_TOKEN` | _(unset)_ | When set, first-run setup also requires this token (an extra field appears on the setup form). Closes the window where whoever reaches the host first can claim the owner account — worth setting on an internet-facing deployment, unnecessary on a LAN. See §6 |
+| `HEADROOM_SETUP_TOKEN` | _(unset)_ | When set, first-run setup also requires this token (the setup form's *Setup token* field). Closes the window where whoever reaches the host first can claim the owner account — worth setting on an internet-facing deployment, unnecessary on a LAN. See [security posture](docs/OPERATIONS.md#6-security-posture-v10) |
 | `HEADROOM_RP_ID` | `localhost` | Passkey relying-party id — must equal the serving domain (HTTPS overlay sets it) |
 | `HEADROOM_ORIGIN` | `http://localhost:8000` | Full origin for passkey verification (HTTPS overlay sets it) |
 | `HEADROOM_REMBG_MODEL` | `isnet-general-use` | rembg model (~179MB; keeps hat bills. `u2netp` is 4.7MB and far faster but trims thin brims) |
-| `HEADROOM_HTTP_TIMEOUT` | `30.0` | Outbound HTTP timeout in seconds |
+| `HEADROOM_HTTP_TIMEOUT` | `30.0` | Outbound HTTP timeout in seconds (Claude, Google Vision, Melin Recap; eBay has its own fixed timeouts) |
+| `HEADROOM_REMBG_CONCURRENCY` | `1` | Concurrent background-removal inferences — the app's largest allocation, so one at a time in a 1 GB container |
 | `HEADROOM_LOG_LEVEL` | `INFO` | Log level when running uvicorn directly |
 | `HEADROOM_BACKUP_ENABLED` | `true` | Scheduled backups on/off |
 | `HEADROOM_BACKUP_INTERVAL_HOURS` | `24` | Scheduled backup cadence |
-| `HEADROOM_BACKUP_INCLUDE_CA` | `true` | Fold Caddy's local CA — **including its private keys** — into each backup, under `data/caddy-pki/`. On by default because the root is installed by hand on every device and nothing can vouch for a replacement, so losing it means visiting them all. Set `false` if you would rather not have a key that can sign for *any* host sitting in an archive you upload off-box. See §4 |
-| `HEADROOM_BACKUP_UPLOAD_CMD` | _(unset)_ | Raw off-site upload command. Overrides the Settings UI — host access only, on purpose |
-| `HEADROOM_BACKUP_KEEP` | `5` | How many rolling local backups to keep (a **count**, not days) |
+| `HEADROOM_BACKUP_INCLUDE_CA` | `true` | Fold Caddy's local CA — **including its private keys** — into each backup, under `data/caddy-pki/`. On by default because the root is installed by hand on every device and nothing can vouch for a replacement, so losing it means visiting them all. Set `false` if you would rather not have a key that can sign for *any* host sitting in an archive you upload off-box. See [backups](docs/OPERATIONS.md#4-backups--restore) |
+| `HEADROOM_BACKUP_KEEP` | `5` | How many rolling local backups to keep (a **count**, not days). `HEADROOM_BACKUP_RETENTION_DAYS` is still read, as a count, for older `.env` files |
+| `HEADROOM_SQLITE_SYNCHRONOUS` | `FULL` | SQLite durability — `FULL` fsyncs every commit, so committed means committed through a power cut. `NORMAL`/`EXTRA`/`OFF` accepted; anything else falls back to `FULL` |
 | `HEADROOM_MAX_BODY_BYTES` | `2097152` | Cap on non-multipart request bodies (uploads have their own, larger caps) |
 | `HEADROOM_DISK_MIN_FREE_MB` | `500` | Below this free space, `/health/ready` fails |
 | `HEADROOM_DISK_WARN_PCT` | `15` | Below this share of the volume, log a warning |
-| `HEADROOM_BACKUP_UPLOAD_CMD` | _(unset)_ | Ship each scheduled backup off-box; `{path}`/`{dir}`/`{name}` substituted. See [off-site backups](docs/OPERATIONS.md#off-site--remote-backups) + `docker-compose.backup-rclone.yml` |
+| `HEADROOM_BACKUP_UPLOAD_CMD` | _(unset)_ | Ship each scheduled backup off-box; `{path}`/`{dir}`/`{name}` substituted. Overrides the provider chosen in the Settings UI — host access only, on purpose. See [off-site backups](docs/OPERATIONS.md#off-site--remote-backups) + `docker-compose.backup-rclone.yml` / `docker-compose.backup-rsync.yml` |
 | `HEADROOM_BACKUP_UPLOAD_TIMEOUT` | `600` | Seconds before the upload command is killed |
+| `HEADROOM_BACKUP_RSYNC_PASSWORD` | _(unset)_ | Password for the Synology / rsync-daemon provider; read from the host, never stored |
+| `HEADROOM_REPRICING_ENABLED` | `true` | Nightly re-pricing of melin hats against live Melin Recap asks (no Claude call) |
+| `HEADROOM_REPRICING_INTERVAL_HOURS` / `_DELAY_SECONDS` / `_BATCH_LIMIT` | `24` / `1.0` / `0` | Sweep cadence, pause between hats, cap per sweep (`0` = all) |
 | `HEADROOM_MDNS_INTERFACE` | _(detected LAN IP)_ | Interface the mDNS responder binds; an IP pins one NIC, `all` restores all-interfaces |
 | `HEADROOM_IMPORT_WORKER_ENABLED` | `true` | Bulk-import background worker |
 | `HEADROOM_ANALYSIS_WORKER_ENABLED` | `true` | Photo-analysis background worker (off ⇒ the upload route runs the pipeline inline) |
@@ -576,6 +593,15 @@ link-only if the API is unreachable.
 | `HEADROOM_MDNS_HOSTNAME` | `headroom` | mDNS host label — resolves as `<label>.local` |
 | `HEADROOM_MDNS_PORT` | `8000` | Port the mDNS advertisement points at |
 | `HEADROOM_SITE_ADDRESSES` | `<HEADROOM_MDNS_HOSTNAME>.local` | LAN HTTPS overlay only. Every name/address Caddy answers on **and** puts in the certificate, comma-separated. Add the LAN IP to reach it where `.local` can't resolve — a VPN, a tunnel, another subnet |
+| `HEADROOM_MEM_LIMIT` | `1g` | Container memory ceiling (compose `mem_limit`) |
+| `HEADROOM_BUILD_SHA` | _(local git SHA)_ | Build stamp shown in the footer; `scripts/stamp-build.sh` writes it into `.env` |
+| `FORWARDED_ALLOW_IPS` | `127.0.0.1` | Which peers uvicorn trusts for `X-Forwarded-*`; the Let's Encrypt overlay pins the compose subnet |
+
+Under Docker every `HEADROOM_*` row above is forwarded into the container by
+`docker-compose.yml` — a `.env` beside the compose file is interpolation for
+Compose, not the container's environment, and a variable Compose does not
+forward reaches nothing. The full table, with the operational reasoning, is in
+[OPERATIONS §2](docs/OPERATIONS.md#2-configuration).
 
 ---
 
@@ -639,10 +665,12 @@ src/headroom/
 ├── database.py                  # async engine + inline DDL migrations
 ├── models/                      # User, Case, Hat, HatColor, WearLog, Purchase,
 │                                #  ColorwayEntry, ShareLink, ImportJob, …
-├── routes/                      # auth, hats, cases, rooms, search, meta,
-│   │                            #  settings, import_jobs, share_links
+├── routes/                      # health, public, auth, hats, cases, rooms,
+│   │                            #  search, meta, settings, import_jobs, share,
+│   │                            #  share_links, guest, ca_cert
 │   └── admin/                   # errors, backups, activity, reports, ebay,
-│                                #  catalog — prefix + auth applied once
+│                                #  catalog, analysis, construction, prices,
+│                                #  repricing, config — prefix + auth once
 ├── schemas/                     # Pydantic I/O, one module per route area
 └── services/
     ├── claude_analysis.py       # Claude Vision tool-use → structured result

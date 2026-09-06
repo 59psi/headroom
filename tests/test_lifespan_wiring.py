@@ -156,6 +156,9 @@ def _fresh_process_state():
         repricing.release_full_sweep()
         backup_service._health = backup_service.BackupHealth()
         backup_service._upload_state_loaded = False
+        # `scheduled_backup_loop` sets this and nothing clears it; after this
+        # module it pointed at a factory over a DISPOSED engine.
+        backup_service._session_factory = None
 
     reset()
     yield

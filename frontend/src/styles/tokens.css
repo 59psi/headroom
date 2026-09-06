@@ -47,6 +47,10 @@
   --neon-yellow: #ffe156;
   --neon-green: #39ff14;
   --neon-red: #ff3860;
+  /* Seventh and eighth chart series — a sky blue and a rose that stay
+     distinguishable from the six above on the dark canvas. */
+  --neon-sky: #4aa8ff;
+  --neon-rose: #ff6b9d;
 
   /* === Aliases for legacy bootstrap overrides ====================== */
   --color-bg: var(--bg-deep);

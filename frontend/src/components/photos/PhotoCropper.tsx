@@ -120,8 +120,9 @@ export function PhotoCropper({ imageUrl, filename, onCancel, onUseOriginal, onCr
               />
             </div>
             <div style={{ padding: '1rem 1.25rem' }}>
-              <label className="form-label">Zoom</label>
+              <label className="form-label" htmlFor="crop-zoom">Zoom</label>
               <input
+                id="crop-zoom"
                 type="range"
                 min={1}
                 max={3}

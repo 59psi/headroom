@@ -187,14 +187,14 @@ async def _worker_loop() -> None:
             hat_id = await _queue.get()
             try:
                 await _process_hat(hat_id)
-            except Exception as exc:  # noqa: BLE001 — one bad hat must NOT kill
+            except Exception as exc:  # one bad hat must NOT kill
                 # the worker, or every later upload hangs on 'pending' forever.
                 logger.exception("Analysis worker: unhandled error on hat=%s: %s", hat_id, exc)
                 await mark_failed(hat_id, exc)
             finally:
                 _queue.task_done()
     except asyncio.CancelledError:
-        logger.info("Analysis worker cancelled.")
+        logger.info("Analysis worker canceled.")
         raise
 
 
@@ -222,9 +222,7 @@ async def start_worker(session_factory=None) -> None:
 
 
 async def stop_worker() -> None:
-    global _session_factory
-    _session_factory = None
-    global _queue, _worker_task
+    global _queue, _worker_task, _session_factory
     if _worker_task is not None:
         _worker_task.cancel()
         try:
@@ -233,6 +231,10 @@ async def stop_worker() -> None:
             pass
         _worker_task = None
     _queue = None
+    # Cleared LAST. This ran first, so a worker between two awaits could open
+    # one more session through the module-level fallback — the wrong database
+    # under test, and the seam this module exists to respect.
+    _session_factory = None
 
 
 def queue_depth() -> int:

@@ -378,3 +378,24 @@ export function runRepricing() {
     '/api/admin/repricing/run', { method: 'POST' },
   );
 }
+
+/**
+ * Whether Caddy's root certificate is being served — true only under the
+ * LAN-HTTPS overlay, which is the only place the Trust-this-device card makes
+ * sense.
+ *
+ * A plain `fetch`, NOT `apiFetch`. The endpoint answers a PEM file
+ * (`application/x-x509-ca-cert`), and `apiFetch` parses every 200 as JSON — so
+ * the probe rejected on SUCCESS, the card's catch returned false, and the card
+ * never rendered on the one deployment it exists for, from its first commit.
+ * The test that "proved" it appeared mocked `apiFetch` resolving a string,
+ * a value `apiFetch` cannot produce for this route.
+ */
+export async function caCertificateAvailable(): Promise<boolean> {
+  try {
+    const resp = await fetch('/api/public/ca-certificate', { credentials: 'same-origin' });
+    return resp.ok;
+  } catch {
+    return false;
+  }
+}

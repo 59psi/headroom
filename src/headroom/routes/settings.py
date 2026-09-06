@@ -1,10 +1,11 @@
 import asyncio
+import os
 import tempfile
 from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.auth import require_admin
@@ -20,6 +21,7 @@ from headroom.schemas.settings import (
     ModelUpdate,
     GuestViewStatus,
     GuestViewUpdate,
+    LogoStatus,
     TagBaseStatus,
     TagBaseUpdate,
 )
@@ -34,6 +36,7 @@ from headroom.services import (
 )
 from headroom.services.claude_analysis import verify_api_key
 from headroom.utils.photo import validate_image_content_type
+from headroom.utils import branding
 from headroom.utils.upload import copy_upload_capped
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -44,68 +47,76 @@ LOGO_MAX_HEIGHT = 96
 # ---------------------------- Logo ----------------------------------- #
 
 
-def _get_logo_path() -> Path | None:
-    branding_dir = settings.upload_dir / "branding"
-    if not branding_dir.exists():
-        return None
-    for f in branding_dir.iterdir():
-        if f.stem == "logo" and f.suffix in (".jpg", ".png", ".webp"):
-            return f
-    return None
+def _logo_status() -> LogoStatus:
+    logo = branding.find_logo()
+    return LogoStatus(logo_path=f"branding/{logo.name}" if logo else None)
 
 
-@router.get("/logo")
+@router.get("/logo", response_model=LogoStatus)
 async def get_logo():
-    logo = _get_logo_path()
-    if logo:
-        return {"logo_path": f"branding/{logo.name}"}
-    return {"logo_path": None}
+    return _logo_status()
 
 
-@router.post("/logo")
-async def upload_logo(photo: UploadFile):
-    if not validate_image_content_type(photo.content_type):
-        raise HTTPException(status_code=400, detail="Invalid image type")
-
-    branding_dir = settings.upload_dir / "branding"
-    branding_dir.mkdir(parents=True, exist_ok=True)
-
-    existing = _get_logo_path()
-    if existing:
-        existing.unlink(missing_ok=True)
-
-    suffix = Path(photo.filename or "logo.png").suffix.lower()
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        copy_upload_capped(photo, tmp, what="Logo")
-        tmp_path = Path(tmp.name)
-
-    try:
-        img = Image.open(tmp_path)
+def _encode_logo_sync(tmp_path: Path, staging: Path) -> None:
+    """Decode, resize and re-encode the upload as PNG — into `staging`, not
+    into place. Sync; runs under `to_thread`."""
+    with Image.open(tmp_path) as img:
         # Always written as PNG so transparency survives; only opaque modes
         # need the RGB conversion first.
         if img.mode not in ("RGBA", "P", "LA"):
             img = img.convert("RGB")
-        out_ext = ".png"
-        save_fmt = "PNG"
-
         if img.height > LOGO_MAX_HEIGHT:
             ratio = LOGO_MAX_HEIGHT / img.height
-            new_w = int(img.width * ratio)
-            img = img.resize((new_w, LOGO_MAX_HEIGHT), Image.LANCZOS)
+            img = img.resize((int(img.width * ratio), LOGO_MAX_HEIGHT), Image.LANCZOS)
+        img.save(staging, "PNG", optimize=True)
 
-        out_path = branding_dir / f"logo{out_ext}"
-        img.save(out_path, save_fmt, optimize=True)
+
+@router.post("/logo", response_model=LogoStatus)
+async def upload_logo(photo: UploadFile):
+    """Replace the site logo.
+
+    The old logo is removed only AFTER the new one has been read, decoded and
+    written to a staging file. It used to be deleted first — before the size
+    cap and before Pillow opened the bytes — so a 413 (too large) or a corrupt
+    file (a PNG content-type on bytes that were not a PNG) destroyed the logo
+    that was already there, and the corrupt case also 500'd. Nothing in the
+    suite seeded a prior logo, so the loss was invisible.
+
+    The read and the Pillow work run off the event loop; both are blocking.
+    """
+    if not validate_image_content_type(photo.content_type):
+        raise HTTPException(status_code=400, detail="Invalid image type")
+
+    branding_dir = branding.branding_dir()
+    branding_dir.mkdir(parents=True, exist_ok=True)
+
+    suffix = Path(photo.filename or "logo.png").suffix.lower()
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp_path = Path(tmp.name)
+    staging = branding_dir / ".logo.png.tmp"
+    try:
+        with tmp_path.open("wb") as fh:
+            await asyncio.to_thread(copy_upload_capped, photo, fh, what="Logo")
+        try:
+            await asyncio.to_thread(_encode_logo_sync, tmp_path, staging)
+        except (UnidentifiedImageError, OSError) as exc:
+            raise HTTPException(
+                status_code=400, detail="That file is not an image Headroom can read."
+            ) from exc
+        # Only now is there something to replace the old logo WITH.
+        branding.remove_logo()
+        out_path = branding_dir / f"{branding.LOGO_STEM}.png"
+        os.replace(staging, out_path)
     finally:
         tmp_path.unlink(missing_ok=True)
+        staging.unlink(missing_ok=True)
 
-    return {"logo_path": f"branding/{out_path.name}"}
+    return LogoStatus(logo_path=f"branding/{out_path.name}")
 
 
 @router.delete("/logo", status_code=204)
 async def delete_logo():
-    existing = _get_logo_path()
-    if existing:
-        existing.unlink(missing_ok=True)
+    branding.remove_logo()
 
 
 # ---------------------------- API keys -------------------------------- #
@@ -224,14 +235,14 @@ async def get_mdns_status():
 @router.get("/model", response_model=ModelStatus)
 async def get_model(db: AsyncSession = Depends(get_db)):
     model_id, source = await settings_service.get_anthropic_model(db)
-    return ModelStatus(model_id=model_id, source=source)
+    return ModelStatus(model_id=model_id, source=source, default_model_id=settings.anthropic_model)
 
 
 @router.put("/model", response_model=ModelStatus, dependencies=[Depends(require_admin)])
 async def set_model(data: ModelUpdate, db: AsyncSession = Depends(get_db)):
     await settings_service.set_anthropic_model(db, data.model_id)
     model_id, source = await settings_service.get_anthropic_model(db)
-    return ModelStatus(model_id=model_id, source=source)
+    return ModelStatus(model_id=model_id, source=source, default_model_id=settings.anthropic_model)
 
 
 @router.delete("/model", status_code=204, dependencies=[Depends(require_admin)])

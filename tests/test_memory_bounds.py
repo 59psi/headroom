@@ -156,6 +156,62 @@ async def test_the_logo_route_is_capped_too(client, monkeypatch):
     assert logo_resp.status_code == 413
 
 
+async def test_a_rejected_logo_upload_leaves_the_existing_logo_in_place(client, monkeypatch):
+    """The old logo is replaced only once there is a new one to replace it WITH.
+
+    `upload_logo` deleted the existing file BEFORE the size cap and before
+    Pillow opened the bytes, so a 413 or a corrupt file destroyed the logo that
+    was already there (and the corrupt case 500'd). This test seeds a prior
+    logo — which no test did, which is why the loss was invisible.
+    """
+    import io
+
+    from PIL import Image
+
+    from headroom.utils import branding, upload
+
+    good = io.BytesIO()
+    Image.new("RGBA", (40, 40), (255, 0, 128, 255)).save(good, "PNG")
+    first = await client.post(
+        "/api/settings/logo", files={"photo": ("logo.png", good.getvalue(), "image/png")}
+    )
+    assert first.status_code == 200
+    logo = branding.find_logo()
+    assert logo is not None
+    original_bytes = logo.read_bytes()
+
+    # Oversize → 413, logo untouched.
+    monkeypatch.setattr(upload, "MAX_PHOTO_BYTES", 2048)
+    big = b"\x89PNG" + b"\x00" * 8192
+    assert (
+        await client.post("/api/settings/logo", files={"photo": ("big.png", big, "image/png")})
+    ).status_code == 413
+    assert branding.find_logo() is not None
+    assert branding.find_logo().read_bytes() == original_bytes
+    monkeypatch.setattr(upload, "MAX_PHOTO_BYTES", 20 * 1024 * 1024)
+
+    # Corrupt → 400 (not 500), logo untouched.
+    corrupt = await client.post(
+        "/api/settings/logo", files={"photo": ("x.png", b"not a png at all", "image/png")}
+    )
+    assert corrupt.status_code == 400, corrupt.text
+    assert branding.find_logo().read_bytes() == original_bytes
+
+    # And no staging file is left behind in the branding directory.
+    assert not (branding.branding_dir() / ".logo.png.tmp").exists()
+
+    # A good replacement still replaces.
+    second = io.BytesIO()
+    Image.new("RGB", (30, 30), (0, 200, 255)).save(second, "JPEG")
+    assert (
+        await client.post(
+            "/api/settings/logo", files={"photo": ("new.jpg", second.getvalue(), "image/jpeg")}
+        )
+    ).status_code == 200
+    assert branding.find_logo().read_bytes() != original_bytes
+    assert (await client.get("/api/settings/logo")).json() == {"logo_path": "branding/logo.png"}
+
+
 async def test_a_photo_within_the_cap_still_works(client):
     """A cap that rejects real photos is worse than no cap."""
     created = await client.post(

@@ -1,5 +1,7 @@
 import pytest
 
+from headroom.services import capacity
+
 
 async def _create_case(client, case_type="archive"):
     resp = await client.post("/api/cases", json={"case_type": case_type})
@@ -30,7 +32,7 @@ async def test_beanie_capacity_limit(client):
     """Six beanies to a case. They have no brim and squash flat, so more fit in
     the same shell than the three the case is named for."""
     case = await _create_case(client)
-    for i in range(6):
+    for i in range(capacity.MAX_BEANIE):
         resp = await _create_hat(client, case_id=case["id"], style="beanie")
         assert resp.status_code == 201, f"beanie {i + 1} of 6 was refused"
 
@@ -122,11 +124,11 @@ async def test_delete_case_unassigns_hats(client):
 async def test_default_case_is_full_at_three_and_overfull_at_four(client):
     case = await _create_case(client)
 
-    for _ in range(3):
+    for _ in range(capacity.MAX_REGULAR):
         assert (await _create_hat(client, case_id=case["id"])).status_code == 201
 
     full = (await client.get(f"/api/cases/{case['display_id']}")).json()
-    assert full["nominal_capacity"] == 3
+    assert full["nominal_capacity"] == capacity.MAX_REGULAR
     assert full["free_regular"] == 0
     assert full["overfull"] is False
     assert full["accepts_regular"] is True, "the fourth is allowed"

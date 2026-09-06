@@ -30,15 +30,6 @@ from headroom.models.catalog import Purchase
 from headroom.models.hat import Hat
 from headroom.models.hat_color import HatColor
 from headroom.services import catalog_service
-from headroom.services.catalog_service import (
-    COLOR_WORD,
-    MODEL_CONTAINED,
-    MODEL_EXACT,
-    MODEL_EXACT_STRIPPED,
-    PRICE_EXACT,
-    STATED_FIELD,
-    _model_tier,
-)
 
 pytestmark = pytest.mark.anyio
 
@@ -221,56 +212,106 @@ async def test_the_best_evidenced_receipt_wins_even_after_kuhns_displaces_it(cli
 # --------------------------------------------------------------------------
 # Tier ORDERING, stated in the docstrings and checked nowhere. (Mutation:
 # `return MODEL_EXACT_STRIPPED` -> `return MODEL_CONTAINED` — survived.)
+#
+# As OUTCOMES, like everything else in this file. An earlier version asserted
+# `contained < stripped < exact` and `MODEL_CONTAINED + STATED_FIELD <
+# MODEL_EXACT` directly — score assertions, in the one file whose header
+# forbids them, and ones that pass under any mutation keeping the arithmetic
+# consistent. Each relationship below is a contended hat where only that
+# relationship decides which receipt writes its price.
 # --------------------------------------------------------------------------
 
 
-async def test_stripped_exact_ranks_strictly_between_contained_and_exact():
-    """A name that matches once the construction word is removed is a LINE match.
+async def test_a_stripped_exact_match_beats_a_mere_prefix_for_the_same_receipt(client, db_session):
+    """MODEL_EXACT_STRIPPED > MODEL_CONTAINED.
 
-    "Eagle Mill Union Denim" against a receipt for "Eagle Mill Union" is both
-    sides naming the same line, one of them also naming the fabric. That must
-    outrank "Eagle Mill", which is a prefix of the line — and must not equal a
-    literal exact match, because the names are not literally the same. The
-    tier existed; nothing checked where it sat.
+    One receipt for "Eagle Mill Union"; two free hats. "Eagle Mill Union Denim"
+    is both sides naming the same LINE (one also naming the fabric); "Eagle
+    Mill" is a prefix of it. The receipt must land on the Denim hat. Under the
+    collapse mutation the two tiers tie and insertion order decides — so the
+    prefix hat is created first, and takes the price under the mutation.
     """
-    exact = _model_tier("Eagle Mill Union", "Eagle Mill Union")
-    stripped = _model_tier("Eagle Mill Union Denim", "Eagle Mill Union")
-    contained = _model_tier("Eagle Mill", "Eagle Mill Union")
+    prefix_hat = await _hat(client, db_session, model="Eagle Mill")
+    line_hat = await _hat(client, db_session, model="Eagle Mill Union Denim")
 
-    assert exact == MODEL_EXACT
-    assert stripped == MODEL_EXACT_STRIPPED
-    assert contained == MODEL_CONTAINED
-    assert contained < stripped < exact, (
-        "the stripped-exact tier must sit strictly between contained and exact"
+    _purchase(db_session, title="Eagle Mill Union - Hickory",
+              model="Eagle Mill Union", size="classic", price=129.0)
+    await db_session.commit()
+
+    result = await catalog_service.match_purchases_to_hats(db_session)
+
+    assert result["matched"] == 1
+    assert await _price_of(client, line_hat) == 129.0, (
+        "the hat naming the receipt's own line lost to a hat that is merely a "
+        "prefix of it — the stripped-exact tier is not above the contained one"
     )
+    assert await _price_of(client, prefix_hat) is None
 
 
-async def test_the_scoring_constants_keep_the_relationships_the_docstrings_promise():
-    """The design rules beside each constant, made executable.
+async def test_a_literal_exact_match_beats_a_stripped_one(client, db_session):
+    """MODEL_EXACT > MODEL_EXACT_STRIPPED: the names being literally the same
+    outranks the names being the same once a fabric word is removed."""
+    stripped_hat = await _hat(client, db_session, model="Eagle Mill Union Denim")
+    exact_hat = await _hat(client, db_session, model="Eagle Mill Union")
 
-    Each of these is a sentence in `catalog_service.py` explaining why a
-    number is what it is. None was checked, so any of them could be violated
-    by an edit that left every constant positive and every test green. They
-    are cheap, and they are what a future "let's bump COLOR_WORD to 6" runs
-    into first.
+    _purchase(db_session, title="Eagle Mill Union - Hickory",
+              model="Eagle Mill Union", size="classic", price=129.0)
+    await db_session.commit()
+
+    await catalog_service.match_purchases_to_hats(db_session)
+
+    assert await _price_of(client, exact_hat) == 129.0
+    assert await _price_of(client, stripped_hat) is None
+
+
+async def test_an_exact_model_outranks_a_contained_one_carrying_the_series(client, db_session):
+    """MODEL_CONTAINED + STATED_FIELD < MODEL_EXACT.
+
+    The sentence beside the constants: "an exact model hit must outrank a
+    contained one that also carries a series, or the generic-family match
+    would beat the product the receipt names." One receipt for "Trenches Icon
+    Hydro - Camo"; the family-named hat ALSO carries the series `Icon` in its
+    owner-stated field, so it collects the series bonus on top of containment.
+    The product-named hat must still win.
     """
-    # "an exact model hit must outrank a contained one that also carries a
-    # series, or the generic-family match would beat the product the receipt
-    # names."
-    assert MODEL_CONTAINED + STATED_FIELD < MODEL_EXACT
-    # "Ranked above every descriptive signal because it is the only one that
-    # is a FACT rather than someone's words for a color."
-    assert PRICE_EXACT > STATED_FIELD and PRICE_EXACT > COLOR_WORD
-    # "Weakest signal here."
-    assert COLOR_WORD < STATED_FIELD
-    # Every tier and bonus is positive — a zero tier is a tier that decides
-    # nothing, which is the mutation this file exists to catch.
-    for name, value in (
-        ("MODEL_EXACT", MODEL_EXACT), ("MODEL_EXACT_STRIPPED", MODEL_EXACT_STRIPPED),
-        ("MODEL_CONTAINED", MODEL_CONTAINED), ("STATED_FIELD", STATED_FIELD),
-        ("COLOR_WORD", COLOR_WORD), ("PRICE_EXACT", PRICE_EXACT),
-    ):
-        assert value > 0, f"{name} is {value} and therefore decides nothing"
+    family_hat = await _hat(client, db_session, model="Trenches Hydro", artist_series="Icon")
+    product_hat = await _hat(client, db_session, model="Trenches Icon Hydro")
+
+    _purchase(db_session, title="Trenches Icon Hydro - Camo",
+              model="Trenches Icon Hydro", size="classic", colorway="Camo", price=79.0)
+    await db_session.commit()
+
+    await catalog_service.match_purchases_to_hats(db_session)
+
+    assert await _price_of(client, product_hat) == 79.0, (
+        "a generic family match plus a series bonus beat the product the receipt names"
+    )
+    assert await _price_of(client, family_hat) is None
+
+
+async def test_an_owner_stated_series_outranks_a_color_word(client, db_session):
+    """STATED_FIELD > COLOR_WORD: "Weakest signal here" is the color word.
+
+    Two hats of one model, both free. One carries the series the receipt names
+    in its owner-stated field; the other carries a color word the receipt's
+    colorway mentions, read off its photo. The series is a fact somebody
+    typed; the color is the analyzer's word for a swatch. The series wins.
+    """
+    color_hat = await _hat(client, db_session, model="Trenches Icon Hydro",
+                           colors=[("Black", "black")])
+    series_hat = await _hat(client, db_session, model="Trenches Icon Hydro",
+                            artist_series="Links")
+
+    _purchase(db_session, title="Trenches Icon Hydro - Links Black",
+              model="Trenches Icon Hydro", size="classic", colorway="Links Black", price=89.0)
+    await db_session.commit()
+
+    await catalog_service.match_purchases_to_hats(db_session)
+
+    assert await _price_of(client, series_hat) == 89.0, (
+        "a color word read off a photo outranked a series the owner stated"
+    )
+    assert await _price_of(client, color_hat) is None
 
 
 # --------------------------------------------------------------------------

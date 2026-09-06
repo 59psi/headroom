@@ -95,10 +95,8 @@ async def test_market_priced_only_narrows_to_the_likely_bug(client, db_session):
     )
 
 
-async def test_the_routes_are_admin_guarded_and_preview_by_default(client, anon_client):
-    assert (await anon_client.get("/api/admin/prices/frozen")).status_code == 401
-    assert (await anon_client.post("/api/admin/prices/release")).status_code == 401
-
+async def test_the_routes_preview_by_default(client):
+    """(Anonymous access is covered by the openapi enumeration in test_security.)"""
     hat_id = await _hat(client, resale_price=52.5)
     body = (await client.post("/api/admin/prices/release")).json()
 

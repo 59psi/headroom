@@ -37,10 +37,10 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from headroom.models.hat import Hat
+from headroom.models.hat import Hat, ResaleScope
 from headroom.services import retail_pricing
 
-MANUAL_SCOPE = "manual"
+MANUAL_SCOPE = ResaleScope.MANUAL  # this module's name for it; the enum is the definition
 
 
 @dataclass(frozen=True)

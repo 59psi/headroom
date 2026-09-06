@@ -89,6 +89,36 @@ async def test_the_report_values_hats_through_the_shared_rule(client, db_session
     assert valuation.BASIS_LABEL["manual"] in html
 
 
+async def test_listing_disposed_hats_does_not_sum_them_into_current_value(client, db_session):
+    """`include_disposed=true` adds sold and gifted hats to the TABLE, for the
+    record. It used to add them to the totals as well — a hat that left the
+    collection counted as current value on the insurer's document. Realized
+    value is a different number and the valuation page keeps it on its own
+    line for the same reason."""
+    from headroom.models.hat import Hat
+
+    kept = await _hat(client, model_name="KeptHat")
+    sold = await _hat(client, model_name="SoldHat")
+    for hat_id, price in ((kept, 100.0), (sold, 999.0)):
+        row = await db_session.get(Hat, hat_id)
+        row.resale_price = price
+        row.resale_price_scope = "manual"
+    await db_session.commit()
+    assert (
+        await client.post(
+            f"/api/hats/{sold}/dispose", json={"via": "sold", "price": 999.0}
+        )
+    ).status_code == 200
+
+    html = await _render(include_disposed=True)
+
+    assert "SoldHat" in html, "listed, for the record"
+    assert "$999" in html
+    assert "$1,099" not in html and "$1099" not in html, (
+        "the sold hat's price was summed into a total of hats still owned"
+    )
+
+
 async def test_an_unpriced_hat_shows_a_dash_and_not_a_zero(client, db_session):
     """`value_hat` returns None rather than 0 for exactly this reason.
 

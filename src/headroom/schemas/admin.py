@@ -454,7 +454,9 @@ class SharedPriceHat(BaseModel):
     hat_id: int
     display_id: str | None = None
     #: False is the actionable state — no colorway means no product can be
-    #: named for this hat, and the owner is the only source for it.
+    #: named for this hat. The owner is one source; already-imported orders are
+    #: the other (`UnclaimedFromPurchases` below), which is why the card offers
+    #: a re-match before asking anyone to type anything.
     has_colorway: bool
 
 
@@ -477,7 +479,9 @@ class SharedPriceGroup(BaseModel):
     #: the rows worth opening.
     hats: list[SharedPriceHat] = []
     #: How many carry no colorway — the actionable half. A missing colorway is
-    #: what prevents naming a product, and the one thing only the owner knows.
+    #: what prevents naming a product. Not owner-only: `unclaimed_from_purchases`
+    #: measured 17 colorways sitting in already-imported orders on the live
+    #: collection, so the card offers that re-match first.
     missing_colorway: int = 0
 
 
@@ -500,3 +504,167 @@ class RepricingSweepStarted(BaseModel):
 
     started: bool
     already_running: bool = False
+
+
+class WorkerConfig(BaseModel):
+    expected: bool
+    alive: bool
+    queued: int | None = None
+
+
+class WorkersConfig(BaseModel):
+    import_: WorkerConfig = Field(alias="import")
+    analysis: WorkerConfig
+
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
+
+class BackupsConfig(BaseModel):
+    enabled: bool
+    interval_hours: float
+    keep: int
+    off_box_upload_configured: bool
+
+
+class LimitsConfig(BaseModel):
+    max_body_bytes: int
+    disk_min_free_mb: int
+    disk_warn_pct: float
+
+
+class StorageConfig(BaseModel):
+    upload_dir: str
+    free_bytes: int | None
+    total_bytes: int | None
+    free_pct: float | None
+    low: bool
+
+
+class EffectiveConfig(BaseModel):
+    """`GET /api/admin/config` — the runtime toggles as the code will read them.
+
+    Declared, like every other response in this app: it was a hand-built dict,
+    so the one endpoint that exists to show an operator the truth had no stated
+    shape and no client could be typed against it.
+    """
+
+    workers: WorkersConfig
+    backups: BackupsConfig
+    limits: LimitsConfig
+    storage: StorageConfig
+    model: str
+    model_source: str
+
+
+class CountRead(BaseModel):
+    """A bare count — the nav badge and the activity-log header read these."""
+
+    count: int
+
+
+class TaskHealthRead(BaseModel):
+    """`services/task_health.TaskHealth.snapshot()` — the prune's health record."""
+
+    name: str
+    last_attempt_at: str | None
+    last_success_at: str | None
+    last_error: str | None
+    consecutive_failures: int
+    last_result: int | None
+
+
+class RetentionStatus(BaseModel):
+    retention_days: int
+    health: TaskHealthRead
+
+
+class EbayTestResult(BaseModel):
+    ok: bool
+    stage: str
+    detail: str
+
+
+class EbayComps(BaseModel):
+    """The price block `find_comps` writes onto a hat, echoed to the caller."""
+
+    ebay_avg_price: float | None
+    ebay_median_price: float | None
+    ebay_listing_count: int | None
+    ebay_search_url: str | None
+    ebay_checked_at: datetime | None
+
+
+class MatchProposal(BaseModel):
+    """One proposed purchase → hat link.
+
+    The matcher's proposals name the purchase row (`purchase_id`) and whether
+    the link would set a colorway; the import PREVIEW scores transient rows
+    that have no id yet, so it carries `size` and `already_on_record` instead.
+    One schema, with the fields that differ optional, rather than two that
+    would drift — the preview exists to predict the import exactly.
+    """
+
+    purchase_id: int | None = None
+    item_title: str
+    order_ref: str | None
+    price: float | None
+    size: str | None = None
+    hat_id: int
+    hat_display_id: str | None
+    score: int
+    matched_on: list[str]
+    ambiguous: bool
+    tied_hat_ids: list[int]
+    sets_price: bool
+    sets_colorway: bool | None = None
+    already_on_record: bool | None = None
+
+
+class MatchResult(BaseModel):
+    """`match_purchases_to_hats`: what was linked, or would be (`dry_run`)."""
+
+    dry_run: bool = False
+    matched: int
+    unmatched: int
+    ambiguous: int
+    proposals: list[MatchProposal] = []
+
+
+class ImportResult(BaseModel):
+    """The write path of `POST /api/admin/purchases/import`: rows imported plus
+    the matching run that follows — the one response in this app that reports
+    prices having been written onto hats. It was `{**result, **match}` in the
+    route, with no declared shape."""
+
+    imported: int
+    skipped: int
+    matched: int
+    unmatched: int
+    ambiguous: int
+
+
+class ImportPreview(BaseModel):
+    """`?dry_run=true`: what the click WOULD do, file lines and backlog apart."""
+
+    dry_run: bool = True
+    would_import: int
+    duplicates: int
+    unusable: int
+    likely_accessories: int
+    would_match: int
+    would_not_match: int
+    would_match_backlog: int
+    would_match_total: int
+    ambiguous: int
+    proposals: list[MatchProposal] = []
+
+
+class UnmatchOneResult(BaseModel):
+    unmatched: int
+    hat_id: int | None
+    cleared: list[str]
+
+
+class UnmatchAllResult(BaseModel):
+    unmatched: int
+    fields_cleared: int

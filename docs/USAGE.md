@@ -22,13 +22,25 @@ Then configure the integrations in **Settings**:
 1. **Claude API Key** — paste an Anthropic key
    ([console.anthropic.com](https://console.anthropic.com/)) and hit *Test
    connection*. This powers full hat identification: brand, specific model,
-   colors, design notes, and an estimated retail price.
+   colorway, colors and design notes. (Retail price comes from a lookup
+   table of melin's real list prices first; Claude's estimate fills in only
+   where the table has no row.)
 2. **Google Vision Key (optional)** — fallback brand detection for whenever
    Claude is unavailable. Colors fall back automatically without any key.
 3. **eBay credentials (optional)** — a Production App ID + Cert ID enables
-   sold-comparable price tiles.
+   the *eBay ask* tile: the median of live asking prices for comparable
+   listings (eBay publishes no sold history to this API).
 4. **Logo (optional)** — upload your own; it replaces the default in the
    header and home page.
+
+Settings is five tabs, grouped by errand rather than by subsystem —
+**Analysis** (the two keys above, the Claude model picker, the analysis
+queue, recent errors), **Data** (construction audit, re-pricing, frozen
+prices, shared prices, colorway catalog, purchase history, eBay),
+**Sharing** (guest browsing, share links, collection export, inventory
+report, tags, share-to-Headroom), **Device** (trust this device, account,
+LAN discovery, logo) and **Upkeep** (backups, off-site copy, activity log).
+The tab is in the URL (`/settings?tab=data`), so a section can be linked to.
 
 Nothing is mandatory: with zero keys, photos still upload, backgrounds are
 still removed, and fallback color swatches still appear.
@@ -87,13 +99,22 @@ The status pill on the hat page tells you where a hat is:
 |---|---|
 | **2/4 · Identifying** | Queued or in progress — the number is which of the four pipeline steps is running. Nothing to do; the page updates itself when it finishes |
 | **Analyzed** (green) | Full Claude identification: brand, model, colors, notes, estimated retail price |
-| **Basic ID (fallback)** (orange) | No Claude (or Claude errored). Colors were read from the hat cutout itself — background colors are excluded by design — and, with a Google key, the brand from its logo. Model/price stay empty |
+| **Basic ID** (orange) | No Claude (or Claude errored). Colors were read from the hat cutout itself — background colors are excluded by design — and, with a Google key, the brand from its logo. Model/price stay empty |
 | **No API key** (purple) | No keys and no usable cutout; fill fields manually or add keys later |
-| **Analysis failed** (red) | Claude errored and no fallback data was available; the error text is shown |
+| **Failed** (red) | Claude errored and no fallback data was available; the error text is shown |
 
 **Reanalyze** (on the hat page) re-runs the best available analysis against
-the existing photo — use it after adding/fixing a key, or to refresh prices.
-It upgrades fallback hats to full identification when a Claude key exists.
+the existing photo — use it after adding/fixing a key. It upgrades fallback
+hats to full identification when a Claude key exists. **✂ Redo cutout**
+re-runs only the background removal from the original photo, for a bill the
+model clipped, without spending a Claude call. For the whole collection,
+Settings → Analysis → *Analysis Queue* has **Re-analyze every hat**, a
+per-cause **Retry** for hats a transient error knocked over (an overload is
+worth retrying; a photo that has gone is not, and the card says which), and
+a *Recent runs* list where each run expands into its own hat-by-hat log.
+
+Photos are capped at 20 MB each; a bulk import batch at 750 MB and 100
+files.
 
 ## 4½. Names & colorways
 
@@ -103,11 +124,19 @@ melinrecap resale market (hundreds of entries, including long-sold-out
 drops). After that, the Edit Hat form autocompletes both the model name and
 the colorway ("Heather Ocean", "Sand Camo", …).
 
-**Purchase history** (Settings → Purchase History) stores order line items
-from your Melin emails; matched purchases automatically set a hat's
+**Purchase history** (Settings → Data → Purchase History) stores order line
+items from your Melin emails; matched purchases automatically set a hat's
 colorway and its **cost basis** — the price you actually paid, plus the
-order date. Matching links a purchase to a hat when the model names agree
-(and colorways don't conflict); re-run it any time after editing hats.
+order date. Nothing in the app can read your mailbox, so the card ships a
+prompt: **Copy prompt**, paste it into an AI assistant with access to your
+email, and it hands back the JSON the importer reads. **Import JSON…** then
+shows a preview — how many lines are new, how many would match a hat, and
+how many of the *already-imported* backlog would match too — before **Import
+N and match** writes anything. Matching links a purchase to a hat when the
+model names agree (and colorways don't conflict), on a best-overall
+assignment rather than first-come; re-run it any time after editing hats,
+and the *Prices shared by many hats* card offers to when it can see
+colorways sitting unclaimed in orders you already imported.
 
 For anything the import can't cover — bought secondhand, in person, or from a
 shop that doesn't email line items — enter **Price paid** and **Bought on**
@@ -118,8 +147,8 @@ missing a price so the gap is visible rather than assumed.
 colorway, and a hat that hasn't been analyzed yet will accept any colorway
 of the right model and size. So add and analyze your hats *first*, then
 import once — otherwise a purchase can attach to a stand-in hat and stamp the
-wrong colorway on it. Add `?dry_run=true` to the import to see every proposed
-match without writing anything.
+wrong colorway on it. The preview step shows every proposed match before
+anything is written (`?dry_run=true` on the API does the same).
 
 If a run does go wrong, it's reversible: **unmatch** a single purchase, or
 unmatch every one at once, which returns them all to the pool and clears the
@@ -142,17 +171,42 @@ the collection is in better shape.
 - **Paid** — what it actually cost you. The only figure here that's a fact
   rather than an estimate. Set it when adding a hat, on the edit page, or in
   bulk by importing order history (§4½).
-- **New retail** — Claude's estimate of the original price.
+- **New retail** — melin's list price for the construction, from a lookup
+  table cross-checked against real order lines (HYDRO $79, HYDROLite $99,
+  …); Claude's estimate only where the table has no row, and the table never
+  pulls a *higher* estimate down (collabs and Mill straw legitimately exceed
+  it).
 - **eBay ask** — median of *currently listed* comparable items, when eBay
   creds are set (*Test connection* on the Settings card verifies the keyset;
   sandbox keys are flagged). Per-hat refresh button available.
 - **Resale ask (Melin hats)** — median **asking** price across live
-  melinrecap.com listings, scoped to your hat's model when enough listings
-  match ("median of 83 live model listings") or to the whole style category
-  when they don't, plus a deep link to browse them. Refreshes on every
-  analysis.
+  melinrecap.com listings for *this product* — model and colorway — in your
+  hat's condition and size ("median of 11 live classic worn Odysea Rope Hydro
+  listings"), widening to the line and then the style category only when
+  nothing that specific is listed, plus a deep link to browse them. Refreshed
+  **nightly** by a sweep that needs no Claude call, and on demand from
+  Settings → Data → *Re-pricing* (**Re-price now** for the stalest fifty,
+  **Re-price all** for the shelf, with a progress bar). A hat with no colorway
+  can only be priced against its line, which is why the *Prices shared by
+  many hats* card lists the hats whose price is really a line's — filling in
+  the colorway is what makes the number its own.
 - **Est. sale value** — the single number the collection totals use, derived
   from the above.
+
+### Keeping the numbers honest (Settings → Data)
+
+- **Frozen prices** — a price the app marked "yours" by mistake. An old bug
+  stamped a scraped median as hand-entered whenever a hat was edited, which
+  froze it against every future refresh; this card finds those and releases
+  them, with a preview first.
+- **Prices shared by many hats** — resale prices that describe a *line*
+  rather than the hat beside them, grouped by price. The fixable half is the
+  hats with no colorway; the card links each to its edit form, and offers
+  to fill colorways from purchase history when it can.
+- **Construction audit** — analysis used to guess HYDRO vs HYDROLite off a
+  photo, and the guess moves both the price and the filters. This lists
+  what is recorded per construction and lets you clear or rename a value
+  across every hat, preview first, leaving anything you typed yourself alone.
 
 ### How "est. sale value" is worked out
 
@@ -242,11 +296,13 @@ there's still room, unassigned otherwise.
 
 ## 9. Reports & backups
 
-- **Inventory report** — Settings → *Inventory report* renders a
+- **Inventory report** — Settings → Sharing → *Inventory Report* renders a
   printer-friendly HTML report (thumbnails, totals, best-available value
   per hat). Use the browser's Print → *Save as PDF* for an insurance rider.
-- **Backup** — Settings → *Backup* downloads a `tar.gz` of the database +
-  photos on demand; scheduled backups run server-side (see
+- **Backup** — Settings → Upkeep → *Backups* downloads a `tar.gz` of the
+  database + photos on demand (**↓ Full Backup**, or **↓ DB Only**);
+  scheduled backups run server-side, and the *Off-site backup* card beside it
+  ships each one to a NAS or cloud remote (see
   [OPERATIONS.md §4](OPERATIONS.md#4-backups--restore)).
 
 ## 10. Install it like an app
@@ -298,11 +354,17 @@ silently open a *different* hat.
 
 ## 11. Showing off: share links
 
-**Settings → Share Links** creates read-only links (`/share/<token>`) you
-can send to anyone — they see the gallery (photos, names, colors, where
-each hat lives) without logging in, and can't change anything. Revoke a
-link any time; optionally give it an expiry when creating. Great for the
-group chat.
+**Settings → Sharing → Share Links** creates read-only links
+(`/share/<token>`) you can send to anyone — they see the gallery (photos,
+names, colors, where each hat lives) without logging in, and can't change
+anything. Links **expire after 30 days** unless you pick a different span
+(or *Never*) when creating — a link shows where every hat lives, so a
+forgotten one shouldn't. Revoke a link any time. Great for the group chat.
+
+**Guest browsing** (same tab) is the link-free version: switch it on and
+the login page grows a *Browse the collection as a guest* link that shows
+the same read-only gallery to anyone who can reach the app. Off by default,
+and invisible while off.
 
 ## 11½. Handing someone a copy
 

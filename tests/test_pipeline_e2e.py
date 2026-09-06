@@ -3,8 +3,11 @@
 This is the test the v0.2.0 release was missing — it exercises the full
 upload → bg-removal → Claude → DB write path with a stubbed Claude response,
 proving that the orchestration plumbing actually wires together. A regression
-in any of the pipeline boundaries (Anthropic SDK contract, color persistence,
-Melin pointer logic, status transitions) trips this test.
+in the pipeline's own boundaries (color persistence, Melin pointer logic,
+status transitions, stage publishing) trips this test. The Anthropic SDK
+contract is deliberately NOT one of them: `analyze_hat_image` is stubbed
+here, so the wire shape is pinned by `tests/test_claude_call_shape.py`, which
+drives the real SDK against an in-memory transport.
 """
 
 from __future__ import annotations
@@ -36,7 +39,7 @@ def stub_claude(monkeypatch):
     async def _fake_get_key(_db):
         return "sk-ant-test-fixture", "database"
 
-    async def _fake_analyze(_image_path, _api_key, model=None, selected_style=None, **_kw):  # noqa: ARG001
+    async def _fake_analyze(_image_path, _api_key, model=None, selected_style=None, **_kw):
         return HatAnalysis(
             brand="Melin",
             logo_detected="Melin — M monogram, front panel",
@@ -147,7 +150,7 @@ async def test_claude_error_marks_hat_status_error(client, monkeypatch):
     async def _fake_get_key(_db):
         return "sk-ant-fixture", "database"
 
-    async def _boom(_path, _key, model=None, selected_style=None, **_kw):  # noqa: ARG001
+    async def _boom(_path, _key, model=None, selected_style=None, **_kw):
         raise ClaudeAnalysisError("Invalid Anthropic API key.")
 
     monkeypatch.setattr(
@@ -349,7 +352,7 @@ async def test_the_owner_stated_construction_is_sent_to_claude(client, monkeypat
     async def _fake_get_key(_db):
         return "sk-ant-fixture", "database"
 
-    async def _capture(_path, _key, model=None, selected_style=None, **kw):  # noqa: ARG001
+    async def _capture(_path, _key, model=None, selected_style=None, **kw):
         seen["style"] = selected_style
         seen["construction"] = kw.get("selected_construction")
         # A complete value: an incomplete one raises inside the pipeline's
@@ -457,3 +460,37 @@ async def test_a_rescan_repairs_a_model_name_that_contradicts_the_construction(c
     ))
 
     assert hat.model_name == "A-Game", "the rescan preserved the contradicting name"
+
+
+@pytest.mark.anyio
+async def test_the_stage_is_written_through_the_callers_database(client, stub_claude, db_session):
+    """The stage publisher must reach the SAME database as the pipeline.
+
+    `_publish_stage` opens a sibling session so a stage lands without committing
+    the pipeline's own transaction. It used to open that session on the
+    module-level `async_session` — which under test is deliberately unopenable —
+    so every publish raised, was swallowed at DEBUG, and no test ever saw a
+    stage written. Observing the row through a separate session proves the
+    sibling now derives from the caller's engine.
+    """
+    from sqlalchemy import select
+
+    from headroom.models.hat import Hat
+    from headroom.services.hat_analysis_pipeline import STAGE_RESALE
+
+    create = await client.post(
+        "/api/hats", json={"condition": "new", "size": "classic", "style": "a_game"}
+    )
+    hat_id = create.json()["id"]
+    resp = await client.post(
+        f"/api/hats/{hat_id}/photo", files={"photo": ("hat.jpg", _jpeg(), "image/jpeg")}
+    )
+    assert resp.status_code == 200
+
+    row = (
+        await db_session.execute(
+            select(Hat.analysis_stage, Hat.analysis_stage_at).where(Hat.id == hat_id)
+        )
+    ).one()
+    assert row[0] == STAGE_RESALE, "the last stage the pipeline publishes must be on the row"
+    assert row[1] is not None, "the stamp is written by the same UPDATE as the stage"

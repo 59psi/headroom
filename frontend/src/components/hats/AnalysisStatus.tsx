@@ -12,7 +12,7 @@ export const STAGES = ['cutout', 'identifying', 'pricing', 'resale'] as const;
  * kept to one word so the badge stays on a single line on a phone; the long one
  * is the tooltip and the accessible name, where there is room to be clear.
  */
-const STAGE_SHORT: Record<string, string> = {
+export const STAGE_SHORT: Record<string, string> = {
   cutout: 'Cutout',
   identifying: 'Identifying',
   pricing: 'Pricing',

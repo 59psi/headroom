@@ -283,25 +283,28 @@ def _add_ca_to_tar(tar: tarfile.TarFile) -> None:
         info = tarfile.TarInfo(name="data/caddy-pki/READ-ME-CA-KEYS.txt")
         info.size = len(note)
         tar.addfile(info, io.BytesIO(note))
-    except Exception:  # noqa: BLE001 — a partial backup beats a failed one
+    except Exception:  # a partial backup beats a failed one
         logger.warning("Could not add Caddy CA to backup", exc_info=True)
 
 
-def _build_tarball_sync(target_path: Path | None = None, include_uploads: bool = True) -> bytes | None:
-    """Build a tar.gz of the DB (and optionally uploads). Always gzipped.
+def _build_tarball_sync(target_path: Path, include_uploads: bool = True) -> None:
+    """Build a tar.gz of the DB (and optionally uploads) at `target_path`. Always gzipped.
 
     `include_uploads=False` produces a DB-only snapshot — useful when the
     photo tree gets large and you only want the metadata captured. Photos
     are JPEG/PNG (already compressed), so gzipping them gains little; if
     you keep originals elsewhere you might never want them in the backup.
+
+    A path is REQUIRED. This used to accept `None` and return the archive as
+    `bytes` through a `BytesIO` — a branch no caller used, and the one
+    `stream_backup` documents as the way to OOM a 1 GB container holding a
+    multi-hundred-megabyte upload tree. A tempting default is how it would
+    have come back.
     """
     db = _db_path()
     uploads = settings.upload_dir
 
-    buf: io.BytesIO | None = None
-    sink = open(target_path, "wb") if target_path else (buf := io.BytesIO())
-
-    try:
+    with open(target_path, "wb") as sink:
         # gzip level 6 — same as the default; balances compression and CPU
         # on a Pi. JPEGs barely compress regardless, the DB compresses well.
         with tarfile.open(fileobj=sink, mode="w:gz", compresslevel=6) as tar:
@@ -311,12 +314,6 @@ def _build_tarball_sync(target_path: Path | None = None, include_uploads: bool =
                 if include_uploads and uploads.exists():
                     tar.add(uploads, arcname="data/uploads")
                 _add_ca_to_tar(tar)
-        if buf is not None:
-            return buf.getvalue()
-        return None
-    finally:
-        if target_path is not None:
-            sink.close()
 
 
 _STREAM_CHUNK = 1024 * 1024
@@ -644,6 +641,12 @@ def _sessions():
     return async_session()
 
 
+async def run_upload(path: Path, argv: list[str] | None = None) -> None:
+    """Public entry point for the "Test now" button: run the off-box upload for
+    `path` once, recording the outcome exactly as the scheduler would."""
+    await _run_upload_hook(path, argv=argv)
+
+
 async def _run_upload_hook(path: Path, argv: list[str] | None = None) -> None:
     """Best-effort off-box copy of a freshly written backup.
 
@@ -751,8 +754,6 @@ async def write_scheduled_backup(keep: int, fingerprint: str | None = None) -> P
 async def scheduled_backup_loop(
     interval_hours: float, keep: int, session_factory=None,
 ) -> None:
-    global _session_factory
-    _session_factory = session_factory
     """Long-running task: writes a backup every `interval_hours`, if anything changed.
 
     Every failure mode short of cancellation is survivable. This used to run the
@@ -764,8 +765,10 @@ async def scheduled_backup_loop(
     the last successful one. For the feature that IS the disaster-recovery
     story, silent permanent death is the worst available behavior.
 
-    Cancelled cleanly when the lifespan exits.
+    Canceled cleanly when the lifespan exits.
     """
+    global _session_factory
+    _session_factory = session_factory
     interval_s = max(60.0, interval_hours * 3600.0)
     logger.info(
         "Backup scheduler started: check every %.1f hours, keep newest %d, "
@@ -864,7 +867,7 @@ async def scheduled_backup_loop(
             first_pass = False
             await asyncio.sleep(interval_s)
     except asyncio.CancelledError:
-        logger.info("Backup scheduler cancelled cleanly.")
+        logger.info("Backup scheduler canceled cleanly.")
         raise
 
 
@@ -1011,7 +1014,7 @@ UPLOAD_PROVIDERS: dict[str, UploadProvider] = {
         destination_hint="user@host::module/path",
         example="backup@synology.local::backups/headroom",
         binary="rsync",
-        # noqa S106: this is the NAME of an environment variable, not a
+
         # password. The value is read from the host at upload time and is
         # deliberately never stored, logged, or returned by the API.
         secret_env="HEADROOM_BACKUP_RSYNC_PASSWORD",  # noqa: S106

@@ -19,20 +19,41 @@ redaction correct.
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from pathlib import Path
+
+from fastapi import APIRouter, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.config import settings
+from headroom.database import get_db
 from headroom.limits import max_body_bytes
-from headroom.services import analysis_queue, backup_service, import_service
+from headroom.schemas.admin import EffectiveConfig
+from headroom.services import analysis_queue, backup_service, import_service, settings_service
 from headroom.utils import disk
 
 router = APIRouter()
 
 
-@router.get("/config")
-async def effective_config():
-    """The runtime configuration in force, as the code sees it."""
+@router.get("/config", response_model=EffectiveConfig)
+async def effective_config(db: AsyncSession = Depends(get_db)):
+    """The runtime configuration in force, as the code sees it.
+
+    "As the code sees it" has to mean the RESOLVED value, not the environment
+    default: the model reported `settings.anthropic_model` while every caller
+    resolves it through `settings_service.get_anthropic_model(db)` (DB wins),
+    so with a model chosen in the UI this endpoint named the wrong one — the
+    opposite of its purpose. Same for the off-box upload, which counted only
+    the env command and ignored a provider configured in Settings.
+    """
     space = disk.check(settings.upload_dir)
+    model_id, model_source = await settings_service.get_anthropic_model(db)
+    try:
+        upload = await backup_service.resolve_upload_argv(db, Path("/probe.tar.gz"))
+        upload_configured = upload is not None
+    except ValueError:
+        # A stored destination that no longer validates IS configured — and
+        # broken. Reporting it as absent would hide the exact thing worth seeing.
+        upload_configured = True
     return {
         "workers": {
             # `expected` vs `alive` is the whole point of reporting both: they
@@ -58,7 +79,7 @@ async def effective_config():
             # most consequential unknown on this deployment: local rolling
             # backups on the same SD card protect against corruption, not
             # against the card.
-            "off_box_upload_configured": bool(backup_service.backup_upload_cmd()),
+            "off_box_upload_configured": upload_configured,
         },
         "limits": {
             "max_body_bytes": max_body_bytes(),
@@ -72,5 +93,6 @@ async def effective_config():
             "free_pct": space.free_pct,
             "low": space.low,
         },
-        "model": settings.anthropic_model,
+        "model": model_id,
+        "model_source": model_source,
     }

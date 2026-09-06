@@ -157,14 +157,33 @@ async def test_it_serves_the_root_and_only_the_root():
     The route takes no input, so there is nothing to traverse with — this pins
     that property rather than testing a validator that does not exist.
     """
+    import ast
     import inspect
 
     src = inspect.getsource(ca_cert)
-
     assert "root.crt" in src
-    # Nothing else in that directory may be nameable by this module.
+
+    # Nothing else in that directory may be nameable by this module's CODE.
+    # The docstrings legitimately name the keys (to say why they are never
+    # served), so strip every string constant and compare what executes. The
+    # previous check looked only at the text after the LAST triple quote —
+    # the final six lines of the file — so a `Path("/caddy-ca/root.key")`
+    # anywhere above it would have passed.
+    tree = ast.parse(src)
+    code_strings = {
+        node.value for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
+    docstrings = {
+        ast.get_docstring(node, clean=False)
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+    }
+    executable_strings = code_strings - {d for d in docstrings if d}
     for forbidden in ("root.key", "intermediate.key"):
-        assert forbidden not in src.replace("#", "").split('"""')[-1], forbidden
+        assert not any(forbidden in s for s in executable_strings), (
+            f"{forbidden} is nameable by code in routes/ca_cert.py"
+        )
 
     # The handler takes no parameters at all.
     sig = inspect.signature(ca_cert.ca_certificate)

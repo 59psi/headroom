@@ -53,15 +53,29 @@ async def test_a_connection_actually_gets_it(db_session):
     )
 
 
-async def test_wal_is_still_the_journal_mode(db_session):
+async def test_wal_is_still_the_journal_mode(tmp_path):
     """FULL must not have been achieved by giving up WAL.
 
     Rollback-journal mode would also be durable and would serialize readers
     against writers, which is what WAL is here to avoid on a Pi.
-    """
-    mode = (await db_session.execute(text("PRAGMA journal_mode"))).scalar()
 
-    assert str(mode).lower() in ("wal", "memory"), mode
+    On a FILE database, with the production connect hook attached. The suite's
+    in-memory engine always answers `memory` to this PRAGMA, so the previous
+    version accepted `("wal", "memory")` — and deleting `PRAGMA journal_mode=WAL`
+    from the hook left it green. Only a file can be in WAL mode.
+    """
+    from sqlalchemy import event
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'wal.db'}")
+    event.listen(engine.sync_engine, "connect", database._sqlite_pragmas)
+    try:
+        async with engine.connect() as conn:
+            mode = (await conn.execute(text("PRAGMA journal_mode"))).scalar()
+    finally:
+        await engine.dispose()
+
+    assert str(mode).lower() == "wal", mode
 
 
 @pytest.mark.parametrize("raw,expected", [
@@ -101,7 +115,7 @@ async def test_the_whitelist_is_the_only_thing_that_can_reach_the_pragma():
 # ---- the shutdown checkpoint ------------------------------------------- #
 
 
-async def test_checkpointing_the_wal_does_not_raise():
+async def test_checkpointing_the_wal_does_not_raise_and_says_it_ran(caplog):
     """Runs on the shutdown path, so it must never turn a stop into a crash.
 
     On `test_engine`, explicitly. The bare call used the module engine, which
@@ -109,8 +123,18 @@ async def test_checkpointing_the_wal_does_not_raise():
     working directory and touched its WAL sidecars on every run. Empty, so
     nobody noticed; `conftest` now points the module engine at an unopenable
     path so the same slip fails instead of leaving artifacts.
+
+    It also asserts something: this had no assertion at all, so a checkpoint
+    that silently did nothing passed. The log line is the shutdown path's
+    only report; `test_lifespan_wiring` checks the sidecar itself.
     """
-    await database.checkpoint_wal(engine_under_test)
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="headroom.database"):
+        await database.checkpoint_wal(engine_under_test)
+    assert any("WAL checkpointed" in r.getMessage() for r in caplog.records), (
+        [r.getMessage() for r in caplog.records]
+    )
 
 
 async def test_a_failing_checkpoint_is_swallowed(caplog):

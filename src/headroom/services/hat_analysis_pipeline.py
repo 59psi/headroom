@@ -19,19 +19,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy import update
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from headroom.config import settings
-from headroom.database import async_session
-from headroom.models.hat import Hat
+from headroom.models.hat import Hat, ResaleScope
 from headroom.models.hat_color import HatColor
-from headroom.schemas.hat import KNOWN_CONSTRUCTIONS
+from headroom.schemas.hat import KNOWN_CONSTRUCTIONS, strip_constructions
 from headroom.services import retail_pricing, settings_service
 from headroom.services.background_removal import remove_background
 from headroom.services.claude_analysis import (
@@ -54,6 +52,10 @@ from headroom.utils.photo import (
     make_export_image_async,
     make_thumbnail_async,
 )
+from headroom.services import vocabulary
+from headroom.services import catalog_service
+from sqlalchemy import select
+from headroom.services import activity_service
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +68,7 @@ STAGE_PRICING = "pricing"
 STAGE_RESALE = "resale"
 
 
-async def _publish_stage(hat_id: int | None, stage: str | None) -> None:
+async def _publish_stage(db: AsyncSession, hat_id: int | None, stage: str | None) -> None:
     """Say which step is running, so the UI can beat a bare "Analyzing…".
 
     Deliberately a SEPARATE session doing one targeted UPDATE, rather than a
@@ -81,23 +83,32 @@ async def _publish_stage(hat_id: int | None, stage: str | None) -> None:
       network calls. This takes the lock and gives it straight back, before the
       slow call begins.
 
+    The sibling session is opened on the CALLER'S engine (`db.bind`), not the
+    module-level `async_session`. That was the seam mistake `error_handler`
+    documents, one layer down: in production the two are the same engine, but
+    under test the module engine is deliberately unopenable, so every stage
+    publish raised, was swallowed at DEBUG, and no test ever observed a stage
+    being written — the writer of `analysis_stage` was covered and unconstrained.
+
     Best-effort: progress reporting must never be the thing that fails an
-    analysis.
+    analysis — but a failure is logged at WARNING, because a stage that never
+    updates is the symptom an owner sees, and DEBUG is where symptoms hide.
     """
     if hat_id is None:
         return
     try:
-        async with async_session() as db:
-            await db.execute(
+        sibling = async_sessionmaker(bind=db.bind, expire_on_commit=False)
+        async with sibling() as side:
+            await side.execute(
                 update(Hat)
                 .where(Hat.id == hat_id)
                 # Stamped by the SAME update that sets the stage, so the
                 # two can never disagree about when this step began.
                 .values(analysis_stage=stage, analysis_stage_at=datetime.now(timezone.utc))
             )
-            await db.commit()
+            await side.commit()
     except Exception as exc:  # noqa: BLE001 — cosmetic; never fail a run for it
-        logger.debug("Could not publish analysis stage for hat=%s: %s", hat_id, exc)
+        logger.warning("Could not publish analysis stage for hat=%s: %s", hat_id, exc)
 
 
 async def finalize_hat_photo(
@@ -126,7 +137,7 @@ async def finalize_hat_photo(
     t_rembg = 0.0
     canonical_path = processed_jpeg_path
     if processed_jpeg_path.suffix.lower() != ".png":
-        await _publish_stage(hat.id, STAGE_CUTOUT)
+        await _publish_stage(db, hat.id, STAGE_CUTOUT)
         t_rembg0 = time.monotonic()
         cutout_target = photo_dir / processed_jpeg_path.stem
         transparent_path = await remove_background(processed_jpeg_path, cutout_target)
@@ -195,7 +206,7 @@ async def finalize_hat_photo(
 
         model_id, _model_source = await settings_service.get_anthropic_model(db)
 
-        await _publish_stage(hat.id, STAGE_IDENTIFYING)
+        await _publish_stage(db, hat.id, STAGE_IDENTIFYING)
         t_claude0 = time.monotonic()
         try:
             analysis: HatAnalysis = await analyze_hat_image(
@@ -221,10 +232,10 @@ async def finalize_hat_photo(
         leaked = _apply_analysis(hat, analysis)
         await _canonicalize_analysis_text(db, hat)
         await _apply_analyzed_colorway(db, hat, analysis, leaked)
-        await _publish_stage(hat.id, STAGE_PRICING)
+        await _publish_stage(db, hat.id, STAGE_PRICING)
         t_ebay0 = time.monotonic()
         await _refresh_ebay_comps(db, hat)
-        await _publish_stage(hat.id, STAGE_RESALE)
+        await _publish_stage(db, hat.id, STAGE_RESALE)
         await refresh_melin_resale(hat)
     logger.info(
         "hat=%s analyzed · rembg=%.2fs claude=%.2fs ebay+resale=%.2fs status=%s",
@@ -269,7 +280,7 @@ async def reanalyze_existing_photo(
             )
 
         model_id, _msrc = await settings_service.get_anthropic_model(db)
-        await _publish_stage(hat.id, STAGE_IDENTIFYING)
+        await _publish_stage(db, hat.id, STAGE_IDENTIFYING)
         try:
             analysis = await analyze_hat_image(
                 photo_path, api_key, model=model_id, selected_style=hat.style,
@@ -289,9 +300,9 @@ async def reanalyze_existing_photo(
         leaked = _apply_analysis(hat, analysis)
         await _canonicalize_analysis_text(db, hat)
         await _apply_analyzed_colorway(db, hat, analysis, leaked)
-        await _publish_stage(hat.id, STAGE_PRICING)
+        await _publish_stage(db, hat.id, STAGE_PRICING)
         await _refresh_ebay_comps(db, hat)
-        await _publish_stage(hat.id, STAGE_RESALE)
+        await _publish_stage(db, hat.id, STAGE_RESALE)
         await refresh_melin_resale(hat)
         return True
 
@@ -333,10 +344,10 @@ async def refresh_melin_resale(hat: Hat) -> None:
     # A person's own number outranks a scraped median, and a re-analysis must
     # not quietly overwrite it -- reanalyze runs on a schedule and on demand,
     # so anything it clobbers is gone without a prompt.
-    if hat.resale_price_scope == "manual":
+    if hat.resale_price_scope == ResaleScope.MANUAL:
         return
     hat.resale_price = stats["median"]
-    scope = "model" if stats["sample"] == "model" else "category"
+    scope = ResaleScope.MODEL if stats["sample"] == "model" else ResaleScope.CATEGORY
     hat.resale_price_scope = scope
     # Name what was actually matched. "median of 8 live listings" gives no way
     # to tell a figure drawn from this exact hat in this exact condition from
@@ -464,7 +475,7 @@ def _apply_resale_pointer(hat: Hat) -> None:
     # person had typed in was gone with nothing logged -- on a path that also
     # runs unattended from the reanalyze-all queue.
     hat.resale_price_url = pointer["resale_price_url"]
-    if hat.resale_price_scope == "manual":
+    if hat.resale_price_scope == ResaleScope.MANUAL:
         return
     hat.resale_price = pointer["resale_price"]
     hat.resale_price_source = pointer["resale_price_source"]
@@ -547,25 +558,15 @@ def _strip_contradicting_construction(
 
     if not construction:
         # Nothing confirmed, so nothing may be claimed.
-        cleaned = model_name
-        for known in KNOWN_CONSTRUCTIONS:
-            cleaned = re.sub(rf"\b{re.escape(known)}\b", " ", cleaned, flags=re.IGNORECASE)
-        cleaned = " ".join(cleaned.split())
+        cleaned = strip_constructions(model_name)
         if cleaned != model_name:
             logger.info(
                 "Model name %r asserted a construction nobody stated; corrected to %r",
-                model_name, cleaned or None,
+                model_name, cleaned,
             )
-        return cleaned or None
+        return cleaned
 
-    own = construction.casefold()
-    cleaned = model_name
-    for known in KNOWN_CONSTRUCTIONS:
-        if known.casefold() == own:
-            continue
-        cleaned = re.sub(rf"\b{re.escape(known)}\b", " ", cleaned, flags=re.IGNORECASE)
-
-    cleaned = " ".join(cleaned.split())
+    cleaned = strip_constructions(model_name, keep=construction) or ""
     if cleaned != model_name:
         logger.info(
             "Model name %r contradicted construction %r; corrected to %r",
@@ -598,7 +599,6 @@ async def _known_series(db) -> list[str]:
     embroidery style — so an analyzer recalling them unaided misses most of
     them. Sending the ones already on record turns recall into recognition.
     """
-    from headroom.services import vocabulary
 
     return await vocabulary.distinct_values(db, Hat.artist_series)
 
@@ -625,9 +625,7 @@ async def _apply_analyzed_colorway(
       else's product, which is strictly worse than the blank it replaced —
       the same reasoning that keeps color-inferred colorways out entirely.
     """
-    from headroom.services import catalog_service
 
-    from headroom.services import vocabulary
 
     # `leaked` is the colorway half of a model name Claude wrote the old way,
     # split out by `_apply_analysis`. Claude's own field wins when it has one.
@@ -677,11 +675,12 @@ async def _canonicalize_analysis_text(db, hat: Hat) -> None:
     exactly the fragmentation `vocabulary` exists to prevent, and it was
     prevented on one of the two paths that write these fields.
 
-    Run AFTER `_apply_analysis`, so it also covers a construction Claude filled
-    in on a hat that had none.
+    Run AFTER `_apply_analysis`. Construction is NOT among the fields it can
+    touch in practice — analysis never writes one (`_apply_construction` is a
+    documented no-op) — so the `set_construction` branch below is reached only
+    if a stored value needs its spelling snapped; `artist_series` and
+    `colorway` are the fields this exists for.
     """
-    from headroom.schemas.hat import KNOWN_CONSTRUCTIONS
-    from headroom.services import vocabulary
 
     if hat.artist_series:
         hat.artist_series = await vocabulary.canonicalize(
@@ -789,9 +788,7 @@ async def backfill_split_model_names(db) -> int:
     "the log IS the undo" is only true for ninety days, and a backup taken
     before the upgrade is the durable copy.
     """
-    from sqlalchemy import select
 
-    from headroom.services.activity_service import log_activity
 
     hats = (
         await db.execute(select(Hat).where(Hat.model_name.is_not(None)))
@@ -822,7 +819,7 @@ async def backfill_split_model_names(db) -> int:
         # and the undo is not inverts the entire point of keeping one.
         # `log_activity` adds to the caller's transaction and never raises, so
         # this is atomic: either both land or neither does.
-        await log_activity(
+        await activity_service.log_activity(
             db, kind="hat.model_name_split", entity_type="system", entity_id=None,
             summary=f"Split a trailing colorway out of {len(repaired)} model name(s)",
             details={"repaired": repaired},

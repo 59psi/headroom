@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,7 +22,7 @@ from headroom.services import activity_service, backup_service, settings_service
 router = APIRouter()
 
 
-@router.get("/backup")
+@router.get("/backup", response_class=StreamingResponse)
 async def download_backup(
     include_uploads: bool = Query(True, description="Include uploads/ tree (photos)"),
     db: AsyncSession = Depends(get_db),
@@ -73,7 +73,7 @@ async def scheduled_backup_health(request: Request):
 
     return BackupHealthRead(
         enabled=backup_service.backup_enabled(),
-        # A cancelled/finished task means no further backups will be written,
+        # A canceled/finished task means no further backups will be written,
         # whatever the last attempt's outcome was.
         running=task is not None and not task.done(),
         last_attempt_at=h.last_attempt_at,
@@ -170,8 +170,6 @@ async def get_backup_upload(db: AsyncSession = Depends(get_db)):
 async def set_backup_upload(
     data: BackupUploadUpdate, db: AsyncSession = Depends(get_db)
 ):
-    from fastapi import HTTPException  # noqa: PLC0415
-
     # No membership check here: `validate_destination` already rejects an
     # unknown provider with the same message, and stating it twice is two
     # places for the wording — and the list of providers — to drift apart.
@@ -241,7 +239,7 @@ async def test_backup_upload(db: AsyncSession = Depends(get_db)):
         )
 
     before = backup_service.health().upload_failures
-    await backup_service._run_upload_hook(backups[0], argv=argv)
+    await backup_service.run_upload(backups[0], argv=argv)
     h = backup_service.health()
     ok = h.upload_failures == before and h.last_upload_ok is True
     if ok:

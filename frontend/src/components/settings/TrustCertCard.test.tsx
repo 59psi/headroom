@@ -9,14 +9,11 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { screen } from '@testing-library/react';
 import { renderWithProviders } from '../../test/utils';
 import { TrustCertCard } from './TrustCertCard';
-import * as client from '../../api/client';
 import * as settingsApi from '../../api/settings';
 import type { TlsStatus } from '../../types';
 
-vi.mock('../../api/client', () => ({ apiFetch: vi.fn() }));
-vi.mock('../../api/settings', () => ({ getTlsStatus: vi.fn() }));
+vi.mock('../../api/settings', () => ({ getTlsStatus: vi.fn(), caCertificateAvailable: vi.fn() }));
 
-const mocked = vi.mocked(client);
 const tlsApi = vi.mocked(settingsApi);
 
 function tls(over: Partial<TlsStatus> = {}): TlsStatus {
@@ -37,7 +34,7 @@ beforeEach(() => {
 
 describe('TrustCertCard', () => {
   it('appears when the server has a local CA', async () => {
-    mocked.apiFetch.mockResolvedValue('cert');
+    tlsApi.caCertificateAvailable.mockResolvedValue(true);
 
     renderWithProviders(<TrustCertCard />);
 
@@ -46,18 +43,18 @@ describe('TrustCertCard', () => {
 
   it('stays hidden when there is no local CA', async () => {
     // Every deployment except the LAN-HTTPS overlay.
-    mocked.apiFetch.mockRejectedValue(new Error('404'));
+    tlsApi.caCertificateAvailable.mockResolvedValue(false);
 
     const { container } = renderWithProviders(<TrustCertCard />);
 
-    await vi.waitFor(() => expect(mocked.apiFetch).toHaveBeenCalled());
+    await vi.waitFor(() => expect(tlsApi.caCertificateAvailable).toHaveBeenCalled());
     expect(container).toBeEmptyDOMElement();
   });
 
   it('links straight at the endpoint rather than fetching a blob', async () => {
     // iOS starts its install flow from a navigation; an XHR-fetched blob
     // never triggers it.
-    mocked.apiFetch.mockResolvedValue('cert');
+    tlsApi.caCertificateAvailable.mockResolvedValue(true);
 
     renderWithProviders(<TrustCertCard />);
 
@@ -70,7 +67,7 @@ describe('TrustCertCard', () => {
     // nothing for an expired leaf, so the card has to say so before it tells
     // you to install anything — otherwise the instructions look broken and
     // the certificate looks fine, which is exactly backwards.
-    mocked.apiFetch.mockResolvedValue('cert');
+    tlsApi.caCertificateAvailable.mockResolvedValue(true);
     tlsApi.getTlsStatus.mockResolvedValue(
       tls({ expired: true, needs_attention: true, days_remaining: -37.6 }),
     );
@@ -87,7 +84,7 @@ describe('TrustCertCard', () => {
     // means renewal has stopped — not that expiry is merely approaching. The
     // warning has to name the real number of days: "expires within hours" was
     // true of the old twelve-hour certificates and is now off by a month.
-    mocked.apiFetch.mockResolvedValue('cert');
+    tlsApi.caCertificateAvailable.mockResolvedValue(true);
     tlsApi.getTlsStatus.mockResolvedValue(
       tls({ expired: false, needs_attention: true, days_remaining: 11.4 }),
     );
@@ -98,7 +95,7 @@ describe('TrustCertCard', () => {
   });
 
   it('flags a certificate that does not cover the name it is served under', async () => {
-    mocked.apiFetch.mockResolvedValue('cert');
+    tlsApi.caCertificateAvailable.mockResolvedValue(true);
     tlsApi.getTlsStatus.mockResolvedValue(tls({ hostname_ok: false }));
 
     renderWithProviders(<TrustCertCard />);
@@ -107,7 +104,7 @@ describe('TrustCertCard', () => {
   });
 
   it('says nothing alarming when the certificate is healthy', async () => {
-    mocked.apiFetch.mockResolvedValue('cert');
+    tlsApi.caCertificateAvailable.mockResolvedValue(true);
 
     renderWithProviders(<TrustCertCard />);
     await screen.findByText('Trust this device');
@@ -119,7 +116,7 @@ describe('TrustCertCard', () => {
   it('gives the Mac command that avoids the iCloud-keychain trap', async () => {
     // -26276 reads like a bad file rather than a wrong destination, and the
     // command never has to guess which keychain you meant.
-    mocked.apiFetch.mockResolvedValue('cert');
+    tlsApi.caCertificateAvailable.mockResolvedValue(true);
 
     renderWithProviders(<TrustCertCard />);
 
@@ -130,7 +127,7 @@ describe('TrustCertCard', () => {
   it('says why an intermediate did nothing', async () => {
     // The reported symptom: installing the neighboring intermediate.crt
     // appears to succeed and changes nothing.
-    mocked.apiFetch.mockResolvedValue('cert');
+    tlsApi.caCertificateAvailable.mockResolvedValue(true);
 
     renderWithProviders(<TrustCertCard />);
 
@@ -144,7 +141,7 @@ describe('TrustCertCard', () => {
   it('raises the alarm when the authority itself was replaced', async () => {
     // Categorically worse than expiry and fixed differently: a leaf reissues
     // itself, a hand-installed root has to be reinstalled on every device.
-    mocked.apiFetch.mockResolvedValue('cert');
+    tlsApi.caCertificateAvailable.mockResolvedValue(true);
     tlsApi.getTlsStatus.mockResolvedValue(tls({
       ca_changed: true,
       ca_sha256: 'NEW:FF:EE',
@@ -171,7 +168,7 @@ describe('TrustCertCard', () => {
     // because the intermediate had seven days left. The card correctly warned
     // about a short certificate and then advised restarting Caddy -- which
     // reissues another six-day cert. Same symptom, opposite fix.
-    mocked.apiFetch.mockResolvedValue('cert');
+    tlsApi.caCertificateAvailable.mockResolvedValue(true);
     tlsApi.getTlsStatus.mockResolvedValue(tls({
       needs_attention: true, days_remaining: 4.2,
       clamped_by_issuer: true, issuer_not_after: '2026-08-30T05:31:42Z',
@@ -189,7 +186,7 @@ describe('TrustCertCard', () => {
   });
 
   it('stays quiet when the authority is the one the devices trust', async () => {
-    mocked.apiFetch.mockResolvedValue('cert');
+    tlsApi.caCertificateAvailable.mockResolvedValue(true);
 
     renderWithProviders(<TrustCertCard />);
 

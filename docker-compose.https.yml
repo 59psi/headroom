@@ -32,7 +32,9 @@ services:
       # SECURITY: still do not republish :8000 to the host/LAN here.
       FORWARDED_ALLOW_IPS: "172.31.71.0/24"
 
-  # Keep this block in sync with the caddy service in docker-compose.https-lan.yml.
+  # NOT interchangeable with the caddy service in docker-compose.https-lan.yml:
+  # that one runs a Caddyfile (its own CA, 820-day leaves, a CA-export sidecar)
+  # while this one keeps the CLI form because Let's Encrypt sets the lifetime.
   caddy:
     image: caddy:2-alpine
     container_name: headroom-caddy

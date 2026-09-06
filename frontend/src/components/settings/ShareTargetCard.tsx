@@ -1,3 +1,5 @@
+import { DEFAULT_HAT_BASICS } from '../hats/HatFormFields';
+
 /** Static how-to: Android PWA share target + the equivalent iOS Shortcut recipe. */
 export function ShareTargetCard() {
   return (
@@ -21,7 +23,7 @@ export function ShareTargetCard() {
             <ul style={{ paddingLeft: '1.2rem', marginTop: '0.25rem' }}>
               <li>URL: <code style={{ fontSize: '0.85em' }}>{`${window.location.origin}/api/hats/import`}</code></li>
               <li>Method: <code>POST</code></li>
-              <li>Headers → add: key=<code>Authorization</code>, value=<code>Bearer YOUR-API-TOKEN</code> (copy the token from the <strong>Account</strong> card below)</li>
+              <li>Headers → add: key=<code>Authorization</code>, value=<code>Bearer YOUR-API-TOKEN</code> (copy the token from the <strong>Account</strong> card on the <strong>Device</strong> tab)</li>
               <li>Request Body: <code>Form</code></li>
               <li>Add field: key=<code>photos</code>, type=<code>File</code>, value=<em>Shortcut Input</em></li>
             </ul>
@@ -31,8 +33,8 @@ export function ShareTargetCard() {
         <p className="text-muted small mb-0" style={{ fontSize: '0.75rem' }}>
           Now open Photos → select multiple → Share → "Add to Headroom".
           Each shared photo becomes a hat with the same defaults the Bulk Import
-          page uses (style: A-Game · size: classic · condition: new) — edit
-          after Claude finishes analyzing.
+          page uses (style: {DEFAULT_HAT_BASICS.style} · size: {DEFAULT_HAT_BASICS.size} ·
+          condition: {DEFAULT_HAT_BASICS.condition}) — edit after Claude finishes analyzing.
         </p>
       </div>
     </div>

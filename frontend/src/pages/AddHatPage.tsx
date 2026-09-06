@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useNavigate, useSearchParams } from 'react-router';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import { createHat, uploadHatPhoto } from '../api/hats';
 import { getApiKeyStatus } from '../api/settings';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
@@ -9,7 +9,7 @@ import {
   useHatFormOptions, useHatPhoto, PhotoCard, HatBasicsCard,
   DEFAULT_HAT_BASICS, type HatBasics,
 } from '../components/hats/HatFormFields';
-import { invalidateHatViews } from '../lib/invalidate';
+import { invalidateHatViews, invalidateHatVocabulary } from '../lib/invalidate';
 
 export function AddHatPage() {
   const navigate = useNavigate();
@@ -40,8 +40,10 @@ export function AddHatPage() {
         style: basics.style, size: basics.size, condition: basics.condition,
       };
       // Only sent when typed. An empty string would be stored as a real value,
-      // making the hat look annotated when nothing was entered — and, worse,
-      // would count as an answer that stops analysis filling the gap in.
+      // making the hat look annotated when nothing was entered — and for
+      // `artist_series` would read as an answer where analysis (which CAN fill
+      // that one in) should still be free to. Construction is owner-only either
+      // way; the blank there is simply "not recorded".
       if (basics.construction.trim()) data.construction = basics.construction.trim();
       if (basics.artistSeries.trim()) data.artist_series = basics.artistSeries.trim();
       if (basics.caseId) data.case_id = Number(basics.caseId);
@@ -63,6 +65,7 @@ export function AddHatPage() {
     },
     onSuccess: (hat) => {
       invalidateHatViews(qc);
+      invalidateHatVocabulary(qc);
       navigate(`/hats/${hat.id}`);
     },
   });
@@ -81,7 +84,7 @@ export function AddHatPage() {
       {photo && apiKey.data && !apiKey.data.configured && (
         <div className="alert alert-warning mb-3">
           No Anthropic API key configured — photo will save, but Claude won't run.
-          Set one in <a href="/settings" style={{ color: 'inherit', textDecoration: 'underline' }}>Settings</a> for brand / color / price detection.
+          Set one in <Link to="/settings?tab=analysis" style={{ color: 'inherit', textDecoration: 'underline' }}>Settings</Link> for brand / color / price detection.
         </div>
       )}
 

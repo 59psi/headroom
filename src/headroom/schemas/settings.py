@@ -4,7 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ApiKeyStatus(BaseModel):
-    """Public-facing view of the Anthropic API key — never the raw value."""
+    """Public-facing view of an external API key (Anthropic, Google Vision) — never the raw value."""
 
     configured: bool
     source: str | None = None  # "database" | "environment" | None
@@ -28,6 +28,10 @@ class ModelStatus(BaseModel):
 
     model_id: str
     source: str  # "database" | "environment" | "default"
+    # The built-in default, so the picker can mark that option itself instead
+    # of carrying "(default)" in a hand-typed label that a model bump left
+    # pointing at a superseded id for a whole generation.
+    default_model_id: str
 
 
 class ModelUpdate(BaseModel):
@@ -137,3 +141,62 @@ class GuestViewStatus(BaseModel):
 
 class GuestViewUpdate(BaseModel):
     enabled: bool
+
+
+class LogoStatus(BaseModel):
+    """Where the site logo is served from, or null when none is set.
+
+    Was a hand-built `{"logo_path": ...}` dict in three route handlers — the
+    shape CLAUDE.md's "no schema is declared inline in a route" exists to stop.
+    """
+
+    logo_path: str | None
+
+
+class MetaOption(BaseModel):
+    """One dropdown option: the stored value and the label a person reads."""
+
+    value: str | int
+    label: str
+
+
+class StyleOption(MetaOption):
+    """`is_beanie` is SERVED, not re-derived client-side: it decides which cases
+    the picker offers, and a TypeScript copy of `BEANIE_STYLES` would be a
+    second definition that disagrees the day a shape is added."""
+
+    is_beanie: bool
+
+
+class PaletteColor(BaseModel):
+    name: str
+    hex: str
+
+
+class TextOption(BaseModel):
+    """A free-text suggestion (colorways, model names) — `{value}` only."""
+
+    value: str
+
+
+class LivenessRead(BaseModel):
+    status: str
+
+
+class ReadinessCheck(BaseModel):
+    """One readiness probe. `ok` is always present; everything else is the
+    authenticated-caller detail (an anonymous caller — the Docker healthcheck —
+    gets booleans only, so `path`, `error`, `free_bytes` etc. are absent)."""
+
+    model_config = ConfigDict(extra="allow")
+
+    ok: bool
+
+
+class ReadinessRead(BaseModel):
+    """`GET /health/ready`. The check NAMES differ by caller: anonymous callers
+    get a collapsed `workers`, authenticated callers get `import_worker` and
+    `analysis_worker` — hence a mapping rather than fixed attributes."""
+
+    ok: bool
+    checks: dict[str, ReadinessCheck]

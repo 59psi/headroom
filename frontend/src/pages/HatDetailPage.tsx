@@ -80,10 +80,7 @@ export function HatDetailPage() {
   const { hatId } = useParams<{ hatId: string }>();
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const [uploading, setUploading] = useState(false);
-  const [reanalyzing, setReanalyzing] = useState(false);
   const [disposeOpen, setDisposeOpen] = useState(false);
-  const [refreshingEbay, setRefreshingEbay] = useState(false);
   // null = closed, -1 = adding, >= 1 = editing that dominance_rank
   const [colorEditOpen, setColorEditOpen] = useState<number | null>(null);
 
@@ -115,11 +112,26 @@ export function HatDetailPage() {
 
   const reanalyzeMut = useMutation({
     mutationFn: () => reanalyzeHat(id),
-    onMutate: () => setReanalyzing(true),
-    onSettled: () => setReanalyzing(false),
-    onSuccess: () => {
-      invalidateHatViews(qc, id);
-    },
+    onSuccess: () => invalidateHatViews(qc, id),
+  });
+
+  // Every write on this page goes through `useMutation` and renders `.error`.
+  // Five of them used to be bare `await`s in click handlers (this upload, the
+  // eBay refresh, undispose, and — in their own cards — passkey removal and
+  // share-link revoke): a 413 from the photo cap, a dropped LAN, a 502 from
+  // eBay each vanished into an unhandled rejection and the button simply
+  // un-pressed itself.
+  const uploadMut = useMutation({
+    mutationFn: (file: File) => uploadHatPhoto(id, file),
+    onSuccess: () => invalidateHatViews(qc, id),
+  });
+  const ebayMut = useMutation({
+    mutationFn: () => refreshEbayForHat(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['hat', id] }),
+  });
+  const undisposeMut = useMutation({
+    mutationFn: () => undisposeHat(id),
+    onSuccess: () => invalidateHatViews(qc, id),
   });
 
   // Wipe the whole palette in one call — PUT /colors replaces the set, so an
@@ -141,16 +153,6 @@ export function HatDetailPage() {
     mutationFn: () => undoLatestWear(id),
     onSuccess: () => invalidateHatViews(qc, id),
   });
-
-  async function handlePhotoUpload(file: File) {
-    setUploading(true);
-    try {
-      await uploadHatPhoto(id, file);
-      invalidateHatViews(qc, id);
-    } finally {
-      setUploading(false);
-    }
-  }
 
   if (isLoading) return <LoadingSpinner />;
   if (error || !data) return (
@@ -256,7 +258,7 @@ export function HatDetailPage() {
             <>
               <ImageLightbox src={`/uploads/${data.photo_path}`} alt={data.display_id || 'Hat photo'} hat />
               <div className="mt-3 d-flex gap-2 flex-wrap">
-                <PhotoCapture onCapture={handlePhotoUpload} hidePreview />
+                <PhotoCapture onCapture={file => uploadMut.mutate(file)} hidePreview />
                 {/* Up here with the other primary actions, not only at the foot
                     of the page. Correcting a misidentification is the most
                     common thing you do right after reading one, and the copy of
@@ -275,10 +277,10 @@ export function HatDetailPage() {
                     type="button"
                     className="btn btn-outline-secondary"
                     onClick={() => reanalyzeMut.mutate()}
-                    disabled={reanalyzing}
+                    disabled={reanalyzeMut.isPending}
                     title="Re-run analysis (Claude, or the fallback when no key is set)"
                   >
-                    {reanalyzing ? '↻ Analyzing…' : '↻ Reanalyze'}
+                    {reanalyzeMut.isPending ? '↻ Analyzing…' : '↻ Reanalyze'}
                   </button>
                 )}
                 {/* Only offered when there is an original to cut from. Hats
@@ -335,9 +337,12 @@ export function HatDetailPage() {
               )}
             </>
           ) : (
-            <PhotoCapture onCapture={handlePhotoUpload} previewUrl={null} />
+            <PhotoCapture onCapture={file => uploadMut.mutate(file)} previewUrl={null} />
           )}
-          {uploading && (
+          {uploadMut.error && (
+            <div className="alert alert-danger mt-2 mb-0">{String(uploadMut.error)}</div>
+          )}
+          {uploadMut.isPending && (
             <div className="text-secondary small mt-2 font-mono" style={{ letterSpacing: '0.08em' }}>
               {/* Since 2.6.0 the POST only saves the photo and queues the
                   rest, so claiming to remove backgrounds and call Claude here
@@ -349,8 +354,12 @@ export function HatDetailPage() {
         </div>
       </div>
 
-      {/* Pricing */}
-      {(data.estimated_new_price !== null || data.purchase_price !== null
+      {/* Pricing. Shown when ANY figure exists — `resale_price` and the eBay
+          median were missing from this gate, so a hat whose only number was
+          the resale price the owner had just typed showed no Valuation card
+          at all, and the figure the totals use was nowhere on its own page. */}
+      {(data.estimated_new_price != null || data.purchase_price != null
+        || data.resale_price != null || data.ebay_median_price != null
         || data.resale_price_url || data.ebay_search_url) && (
         <div className="card mb-3">
           <div className="card-body">
@@ -360,20 +369,17 @@ export function HatDetailPage() {
                 <button
                   type="button"
                   className="btn btn-outline-secondary btn-sm"
-                  onClick={async () => {
-                    setRefreshingEbay(true);
-                    try {
-                      await refreshEbayForHat(id);
-                      qc.invalidateQueries({ queryKey: ['hat', id] });
-                    } finally { setRefreshingEbay(false); }
-                  }}
-                  disabled={refreshingEbay}
+                  onClick={() => ebayMut.mutate()}
+                  disabled={ebayMut.isPending}
                   title="Refresh eBay comparable-listings prices"
                 >
-                  {refreshingEbay ? '↻ eBay…' : '↻ eBay'}
+                  {ebayMut.isPending ? '↻ eBay…' : '↻ eBay'}
                 </button>
               )}
             </div>
+            {ebayMut.error && (
+              <div className="alert alert-danger mt-2 mb-0">{String(ebayMut.error)}</div>
+            )}
             {/* Two-up rather than three-across: at 375px the old row gave each
                 tile ~110px, which a four-digit price and a source line don't
                 fit into. */}
@@ -478,14 +484,16 @@ export function HatDetailPage() {
               <button
                 type="button"
                 className="btn btn-outline-secondary btn-sm"
-                onClick={async () => {
-                  if (!confirm('Restore this hat to active inventory?')) return;
-                  await undisposeHat(id);
-                  invalidateHatViews(qc, id);
+                onClick={() => {
+                  if (confirm('Restore this hat to active inventory?')) undisposeMut.mutate();
                 }}
+                disabled={undisposeMut.isPending}
               >
                 Undo — restore to active
               </button>
+              {undisposeMut.error && (
+                <div className="alert alert-danger mt-2 mb-0">{String(undisposeMut.error)}</div>
+              )}
             </>
           ) : (
             <>
@@ -654,7 +662,7 @@ export function HatDetailPage() {
 
       {data.analysis_status === 'skipped' && (
         <div className="alert alert-info mb-3">
-          Configure your Anthropic API key in <Link to="/settings" style={{ color: 'inherit', textDecoration: 'underline' }}>Settings</Link> to enable AI brand/color/price detection.
+          Configure your Anthropic API key in <Link to="/settings?tab=analysis" style={{ color: 'inherit', textDecoration: 'underline' }}>Settings</Link> to enable AI brand/color/price detection.
         </div>
       )}
 
@@ -675,7 +683,7 @@ export function HatDetailPage() {
           ) : (
             <>
               {' '}Add a Claude API key in{' '}
-              <Link to="/settings" style={{ color: 'inherit', textDecoration: 'underline' }}>Settings</Link>
+              <Link to="/settings?tab=analysis" style={{ color: 'inherit', textDecoration: 'underline' }}>Settings</Link>
               {' '}and hit Reanalyze for full model + price identification.
             </>
           )}
@@ -696,7 +704,7 @@ export function HatDetailPage() {
           <div className="card-title">Tag this hat</div>
           <p className="text-secondary small">
             Write this to an NFC sticker, or print a QR from{' '}
-            <Link to="/settings">Settings</Link>. Scanning it opens a one-tap
+            <Link to="/settings?tab=sharing">Settings</Link>. Scanning it opens a one-tap
             “wore it today” screen.
           </p>
           <TagUrlRow kind="h" ident={data.id} />
@@ -712,10 +720,14 @@ export function HatDetailPage() {
           onClick={() => {
             if (confirm('Delete this hat?')) removeMutation.mutate();
           }}
+          disabled={removeMutation.isPending}
         >
           Delete
         </button>
       </div>
+      {removeMutation.error && (
+        <div className="alert alert-danger mt-2 mb-0">{String(removeMutation.error)}</div>
+      )}
 
       <DisposeModal hatId={data.id} show={disposeOpen} onClose={() => setDisposeOpen(false)} />
       {colorEditOpen !== null && (

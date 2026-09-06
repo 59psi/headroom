@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../../test/utils';
+import { caseFixture } from '../../test/fixtures';
 import { useHatFormOptions, HatBasicsCard, NEW_CASE_VALUE, type HatBasics } from './HatFormFields';
 
 // Deliberately NOT 'Closet': that is the case fixture's room name, and the
@@ -27,17 +28,16 @@ vi.mock('../../api/hats', () => ({
 }));
 
 vi.mock('../../api/cases', () => ({
+  // The shared, TYPED fixture: this literal was captioned "Real payload shape"
+  // while missing five fields pydantic always serializes. The picker renders
+  // occupancy from `nominal_capacity`, not `used + free`, so a partial shape
+  // silently rendered "2" instead of "2/3" — and only a typed fixture makes
+  // tsc notice the next such omission.
   listCases: vi.fn(async () => [
-    {
-      id: 4, display_id: 'A-001', case_type: 'archive', hat_count: 2, room_name: 'Closet',
-      beanie_count: 0, regular_count: 2, capacity: null,
-      accepts_regular: true, accepts_beanie: false, free_regular: 1, free_beanie: 0,
-      // Real payload shape: the picker renders occupancy from
-      // `nominal_capacity`, not `used + free`, so omitting it here would
-      // silently render "2" instead of "2/3".
-      overfull: false, nominal_capacity: 3, nominal_regular: 3, nominal_beanie: 6,
-      created_at: '2026-08-01T00:00:00', updated_at: '2026-08-01T00:00:00',
-    },
+    caseFixture({
+      id: 4, room_name: 'Closet', hat_count: 2, regular_count: 2,
+      accepts_beanie: false, free_regular: 1, free_beanie: 0,
+    }),
   ]),
 }));
 

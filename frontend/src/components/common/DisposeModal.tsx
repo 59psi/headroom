@@ -55,8 +55,9 @@ export function DisposeModal({ hatId, show, onClose }: Props) {
             </select>
             {(via === 'sold' || via === 'trade') && (
               <>
-                <label className="form-label">Price ($)</label>
+                <label className="form-label" htmlFor="dispose-price">Price ($)</label>
                 <input
+                  id="dispose-price"
                   type="number"
                   step="0.01"
                   className="form-control mb-3"
@@ -66,8 +67,9 @@ export function DisposeModal({ hatId, show, onClose }: Props) {
                 />
               </>
             )}
-            <label className="form-label">{via === 'sold' || via === 'trade' ? 'Buyer / Counterparty' : 'Recipient / Where'}</label>
+            <label className="form-label" htmlFor="dispose-to">{via === 'sold' || via === 'trade' ? 'Buyer / Counterparty' : 'Recipient / Where'}</label>
             <input
+              id="dispose-to"
               type="text"
               className="form-control mb-3"
               placeholder="e.g. Eric F. or Mercari"
