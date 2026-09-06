@@ -6,313 +6,244 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+### Changed
+
+- Internal engineering notes and security-review records are no longer tracked
+  in this public repository. `CLAUDE.md`, the `docs/CODE-REVIEW-*.md` files and
+  `docs/AUDIT-HISTORY.md` are now local-only and gitignored. Nothing in the
+  build, the test suite or CI referenced them, so the project still builds,
+  tests and ships from a fresh clone.
+- Historical changelog entries have been condensed. Every release still records
+  what changed and what to do about it — including each breaking change,
+  renamed variable and migration step — but no longer walks through how a
+  since-fixed weakness could have been abused. `docs/OPERATIONS.md` and
+  `docs/USAGE.md` are unchanged and remain the operator documentation.
+
 ## [2.79.0] — 2026-09-06
 
-A second whole-project review, adversarial this time: every sub-agent booted a
-live instance in an isolated repo copy, attacked it, and mutation-probed the
-code rather than reading it. What reading and 88% line coverage missed, a
-request and a reverted constant found.
+A whole-project review pass, verified by running a live instance against each
+finding rather than by reading the code.
 
 ### Security
 
-- **Login no longer leaks which username is the owner's.** A name that did
-  not exist skipped the argon2 verify and answered ~8× faster (measured 4 ms
-  vs 36 ms; hundreds of ms on a Pi), and the limiter keyed on (ip, username)
-  so rotating candidate names never locked out. Both branches now do equal
-  argon2 work, and a second rate-limit bucket keyed on the address alone
-  bounds an anonymous flood — rows, keys and work — however the username is
-  rotated.
-- **A `multipart/form-data` label no longer bypasses the body-size limit.**
-  The exemption keyed on the client-chosen Content-Type, so a 900 MB JSON body
-  labelled multipart was buffered whole into a 1 GB container — an
-  unauthenticated OOM. The cap is now chosen by the ENDPOINT (an `UploadFile`
-  route gets the large ceiling, everything else the 2 MB one), and even upload
-  routes have a wire ceiling.
-- **A share token can no longer reach the `error.unhandled` row or the log
-  through a database error.** SQLAlchemy renders bound parameters in its
-  exception text, and `resolve_token` binds the token; the engine now hides
-  parameters and the handler formats statement errors from their DBAPI cause.
-- **The hat-photo route answers 400, not 500, for an undecodable upload** (an
-  HTML file with an image MIME, a 0-byte file, a decompression bomb), matching
-  the logo route; Pillow's pixel ceiling is set centrally at 40 MP. One
-  decoder for both.
-- **The login page's `?next=` is no longer an open redirect.** A tab, LF or CR
-  survived the same-origin check and the browser's URL parser stripped it, so
-  `/%09/evil.com` navigated off-origin; the guard now resolves against the
-  real origin.
-- **Session cookie flags, the `Set-Cookie` attributes the whole CSRF defense
-  rests on, are now pinned by a test** (a mutation inverting `HttpOnly` /
-  `SameSite` / `Secure` had shipped green).
-- **No test can reach the network**, whichever HTTP library tries — a stored
-  key plus an un-stubbed analysis had made one real request to Anthropic
-  through `httpx2`, which no fixture watched.
+- Login now performs equal work for known and unknown usernames, and rate
+  limiting gained a second per-address bucket alongside the existing one.
+- Request body size limits are chosen by the endpoint rather than by the
+  client-supplied `Content-Type`; upload routes keep their own larger ceiling.
+- Database errors can no longer carry bound query parameters into logs or the
+  stored error record.
+- The hat-photo route answers 400 rather than 500 for an undecodable upload,
+  matching the logo route, and both share one decoder with a central pixel
+  ceiling.
+- The login page's `?next=` parameter is resolved against the real origin, so
+  only same-origin paths are honored.
+- Session cookie attributes (`HttpOnly` / `SameSite` / `Secure`) are pinned by
+  a test.
+- The test suite can no longer reach the network through any HTTP client.
 
 ### Data integrity
 
-- **Concurrent placement can no longer overfill a case or duplicate a shelf
-  label.** Ten simultaneous assigns into a three-hat case landed five at one
-  position (five hats, one `display_id`, one QR sticker); an in-process lock
-  serializes every placement writer and a partial unique index is the
-  backstop. Two concurrent imports of one order file no longer double the
-  rows.
-- **The purchase-import body is validated line by line** — it was the one
-  request body with no schema, and `quantity: 1e9` on a dry run allocated
-  15 GB, `price: "abc"` 500'd the real import after the preview passed it,
-  `price: -5` wrote `PAID $-5`.
-- **Money and text are validated at the wire everywhere.** `NaN`/`Infinity`/
-  negative prices are refused (a `NaN` had become a NULL price stamped
-  `manual`, immune to every refresh); names and notes are length-capped and
-  stripped of bidi and NUL controls (a 500-char room name stretched a select
-  5,205 px; a right-to-left override made `evil` read `live`). A dispose price
-  is rejected for a non-sale channel; a wear date cannot be in the future.
-- **Timestamps carry their zone on the wire.** Every `DateTime` column is now
-  UTC-aware, so the browser stops reading them as local time — a change made
-  seven hours in the future, a run "40 minutes ago" that started this morning.
-- **Restoring a hat into a full case no longer 500s**, and a crash between a
-  bulk-import hat row and its photo no longer leaves an orphan or makes a
-  duplicate on the re-run.
-- **Deleting a hat returns its receipt to the pool** instead of leaving a
-  purchase pointing at a row that no longer exists.
+- Concurrent placement can no longer overfill a case or duplicate a shelf
+  label: an in-process lock serializes every placement writer, with a partial
+  unique index as the backstop. Concurrent imports of one order file no longer
+  duplicate rows.
+- The purchase-import body is validated line by line — it was the one request
+  body with no schema.
+- Money and text are validated at the wire everywhere: non-finite and negative
+  prices are refused, names and notes are length-capped and stripped of
+  bidirectional and NUL control characters, a dispose price is rejected for a
+  non-sale channel, and a wear date cannot be in the future.
+- Timestamps carry their zone on the wire — every `DateTime` column is now
+  UTC-aware, so browsers stop reading them as local time.
+- Restoring a hat into a full case no longer 500s, and a crash between a
+  bulk-import hat row and its photo no longer leaves an orphan or a duplicate
+  on re-run.
+- Deleting a hat returns its receipt to the matching pool.
 
 ### Correctness
 
-- **"Redo cutout" spends no Claude call and touches nothing you wrote.** It
-  ran the whole pipeline — a call per press, the analyzer's `model_name` and
-  `design_notes` written over yours — despite the docs. It now re-cuts and
-  stops.
-- **A re-pricing sweep the marketplace never answered is recorded as a
-  failure, not a success** ("0 of 234 changed" with `last_error` null), and
-  the hats it could not reach are not stamped to the back of the queue.
-- **A colorway harvest that loses every category says so** rather than
-  reporting "finished — the counts are current" over zero entries.
-- **One reading of a product name** across the catalog matcher, the
-  marketplace pricer and the analyzer — they disagreed, so a quoted or
-  fullwidth name was priceable and unmatchable at once.
-- **Search matches a style as it is printed** (`A-Game`, not only `a_game`),
-  treats `%` and `_` as text, and a filtered-to-empty result no longer
-  strands the filter that produced it.
-- **The vocabulary tiebreak counts real rows**, so a typed `neon` snaps to a
-  collection recorded three times as `Neon` rather than to a single `NEON`.
+- "Redo cutout" re-cuts only. It no longer spends a Claude call or overwrites
+  analyzer-written fields.
+- A re-pricing sweep the marketplace never answered is recorded as a failure,
+  and the hats it could not reach are not stamped to the back of the queue.
+- A colorway harvest that loses every category reports the failure instead of
+  claiming the counts are current.
+- One reading of a product name across the catalog matcher, the marketplace
+  pricer and the analyzer — they had disagreed, so a quoted or fullwidth name
+  could be priceable and unmatchable at once.
+- Search matches a style as printed (`A-Game`, not only `a_game`), treats `%`
+  and `_` as literal text, and a filtered-to-empty result no longer strands the
+  filter that produced it.
+- The vocabulary tiebreak counts real rows, so a typed `neon` snaps to the
+  spelling most in use.
 
 ### Reliability & ops
 
-- **A scheduled backup interrupted mid-write no longer leaves a torn archive
-  under a real name** that the app then lists, trusts and keeps while deleting
-  the good one — it writes under `.partial` and renames only when whole, and
-  the app gets a 60 s stop grace period.
-- **The Let's Encrypt overlay stops advertising an HTTP/3 it cannot serve**
-  (the UDP port is published; a Caddyfile adds HSTS and compression), and both
-  Caddyfiles compress the bundle.
-- **The CA export no longer defeats the backup change-gate** — it rewrote the
-  same bytes every 60 s and the fingerprint keyed on mtime, so a full tarball
-  was written every cycle; the fingerprint hashes content and the sidecar
-  copies only what changed.
-- **Every `HEADROOM_*` knob a bad value could brick now degrades to its
-  default** (`nan`/`inf` intervals, a zeroed body cap, a zeroed retention).
-- **The image ships a smaller attack surface**: `/app` is root-owned (a
-  compromise cannot rewrite the code in place), the base compose runs the app
-  read-only, and the container declares its own healthcheck. The rembg model
-  is found at runtime (`U2NET_HOME`) instead of re-downloaded on every first
-  analysis. Responses carry a caching policy by path class, so a hat photo is
-  no longer served from the browser cache after sign-out.
-- **Dependabot can see the uv pin again** (a `FROM` line, not a `COPY --from`)
-  and now tracks the compose overlays' images; CI SHA-pins its actions and
-  carries per-job timeouts.
+- A scheduled backup interrupted mid-write no longer leaves a partial archive
+  under a real name: it writes under `.partial` and renames only when complete,
+  and the app gets a 60 s stop grace period.
+- The Let's Encrypt overlay stops advertising HTTP/3 it cannot serve; a
+  Caddyfile adds HSTS and compression, and both Caddyfiles compress responses.
+- The CA export no longer defeats the backup change-gate — the fingerprint
+  hashes content and the sidecar copies only what changed.
+- Every `HEADROOM_*` knob degrades to its default on a bad value.
+- Image and compose hardening: `/app` is root-owned, the base compose runs the
+  app read-only, and the container declares its own healthcheck. The rembg
+  model is found at runtime (`U2NET_HOME`) instead of re-downloaded on the
+  first analysis. Responses carry a caching policy by path class.
+- Dependabot can see the uv pin again (a `FROM` line, not a `COPY --from=`) and
+  now tracks the compose overlays' images; CI SHA-pins its actions and carries
+  per-job timeouts.
 
 ### Breaking
 
 - Stricter validation rejects request bodies that earlier releases stored as
-  garbage: non-finite or negative money, a purchase line with `quantity`
-  beyond 20 or a non-numeric price, a dispose price on a gift/loss, a
-  future wear date, a model id that is not `[A-Za-z0-9._:-]`, a tag base URL
-  with no host. Correct clients are unaffected. `SharedHat` gains
-  `thumb_url` (additive).
+  garbage: non-finite or negative money, a purchase line with `quantity` beyond
+  20 or a non-numeric price, a dispose price on a gift/loss, a future wear
+  date, a model id that is not `[A-Za-z0-9._:-]`, a tag base URL with no host.
+  Correct clients are unaffected. `SharedHat` gains `thumb_url` (additive).
 
 ## [2.78.0] — 2026-09-06
 
-The whole project, reviewed at maximum effort on both axes and fixed in one
-pass — 168 findings, every one of them either fixed or written down with the
-reason in `docs/CODE-REVIEW-2026-09.md`. The method that found the most was
-not reading but **executing the claim**: registering a second passkey, running
-the documented password-recovery recipe, resolving `localhost` on a dual-stack
-host, deleting one call and watching the suite stay green. Backend 997 →
-**1036**; frontend 253 → **278**.
+The whole project reviewed on both axes and fixed in one pass. Backend tests
+997 → **1036**; frontend 253 → **278**.
 
 ### Breaking (wire level — no client of this API exists but the SPA, which moved with it)
 - **`ImportJob.status` and `ImportJobItem.status` say `canceled`, not
   `cancelled`**, and the activity kind is `import.canceled`. Stored rows are
-  rewritten on every boot by `_STATUS_RENAME_DML` (three static `UPDATE`s,
-  idempotent, so a downgrade-then-upgrade cannot strand one). The only
-  British spelling that had made it onto the wire.
+  rewritten on every boot by three static, idempotent `UPDATE`s, so a
+  downgrade-then-upgrade cannot strand one.
 - **`CaseRead` no longer carries `photo_path`.** There is no case-photo
   feature; the field was published to every client and read by none.
   `HatSummary.photo_path` — a hat's — is unchanged.
-- **`HatDispose.via` is validated** (`DisposedVia`), so an unknown channel is
-  a 422 rather than a stored typo. `GET /api/settings/model` gained
-  `default_model_id`, so the card can label the default without a copy of
-  `config.anthropic_model` in TypeScript.
-- **Every route declares a `response_model`.** Some twenty returned hand-built
-  dicts — `/api/auth/me`, the passkey ceremonies, every `/api/meta/*` lookup,
-  the whole `/api/admin/config`, and the purchase import/match/unmatch trio,
-  one of which writes prices — invisible to the TypeScript types.
-  `tests/test_api_contract.py` enumerates the OpenAPI document and fails on
-  any 2xx without a schema.
+- **`HatDispose.via` is validated** (`DisposedVia`), so an unknown channel is a
+  422 rather than a stored typo. `GET /api/settings/model` gained
+  `default_model_id` so the card can label the default without a second copy of
+  the value in TypeScript.
+- **Every route declares a `response_model`.** Around twenty returned
+  hand-built dicts and were therefore invisible to the TypeScript types.
+  `tests/test_api_contract.py` enumerates the OpenAPI document and fails on any
+  2xx without a schema.
 
 ### Fixed — things that did not work
 - **A second passkey could not be registered.** `exclude_credentials` was
-  passed as dicts; py_webauthn 3.0's `options_to_json` reads `.id` and
-  `.type.value` off each entry and raised `AttributeError`, so the second
-  registration was a 500 on every install. Verified by executing against the
-  locked library; the test now registers twice.
-- **The documented password-recovery recipe did not work.** `DELETE FROM
-  users` left the `owner_setup_done` marker behind, so `/api/auth/setup`
-  answered "Setup already completed" forever — on an image that ships no
-  `sqlite3` to fix it with. Reproduced. The marker is cleared when the users
-  table is empty (a sentinel outliving the row it guards was the bug), and
-  the recipe borrows `sqlite3` from `alpine`.
-- **Compose forwarded almost none of the documented `HEADROOM_*` variables
-  to the app.** A `.env` beside the compose file is interpolation for Compose,
-  not the container's environment. `HEADROOM_SETUP_TOKEN` in `.env` protected
-  nothing; `HEADROOM_MDNS_HOSTNAME=hats` renamed Caddy's site while the app
-  advertised `headroom.local`; the four re-pricing knobs, the disk floors, the
-  body cap and the SQLite durability setting reached nothing. Every knob is
-  now in a passthrough block as `${VAR:-}`, an empty string is treated as
-  unset everywhere (`env_ignore_empty`, `env_flag`/`env_int`/`env_float`), and
-  `tests/test_env_passthrough.py` parses the compose file against every name
-  the code reads.
+  passed as dicts, which py_webauthn 3.0's `options_to_json` cannot read, so the
+  second registration failed on every install. The test now registers twice.
+- **The documented password-recovery recipe did not work.** The setup marker
+  outlived the users table, so `/api/auth/setup` answered "Setup already
+  completed" forever — on an image that ships no `sqlite3`. The marker is now
+  cleared when the users table is empty, and the recipe borrows `sqlite3` from
+  `alpine`.
+- **Compose forwarded almost none of the documented `HEADROOM_*` variables to
+  the app.** A `.env` beside the compose file is interpolation for Compose, not
+  the container's environment, so the re-pricing knobs, the disk floors, the
+  body cap, the SQLite durability setting and the mDNS hostname reached
+  nothing. Every knob is now in a passthrough block as `${VAR:-}`, an empty
+  string is treated as unset everywhere, and `tests/test_env_passthrough.py`
+  parses the compose file against every name the code reads.
 - **The Trust-this-device card never rendered.** Its "is there a local CA"
-  probe went through `apiFetch`, whose `resp.json()` rejects on a PEM, so the
-  answer was "no" on every install — and the test mocked `apiFetch`
-  resolving `'cert'`, which cannot happen. A plain `fetch` and `resp.ok`.
+  probe went through the JSON client, which rejects on a PEM. It uses a plain
+  `fetch` and `resp.ok` now.
 - **Five write paths swallowed their errors.** Photo upload, eBay refresh,
-  undispose, passkey removal and share-link revoke were bare `await`s in
-  click handlers: a 413 from the size cap or a dropped LAN un-pressed the
-  button and said nothing. All are `useMutation`s with the error rendered.
+  undispose, passkey removal and share-link revoke were bare `await`s in click
+  handlers, so a failure un-pressed the button silently. All are `useMutation`s
+  with the error rendered.
 - **`?next=` on sign-in was honored only for a visitor already signed in**;
   submitting the form or a passkey went to `/`. A tag tapped with an expired
   session now lands on the hat.
 - **A 422 rendered as `[object Object]`.** The `detail` is an array.
 - **Bulk import committed the hat row before decoding the photo**, so a bad
-  file left a photoless hat forever. Decode first; the created id is cleaned
-  up on failure.
+  file left a photoless hat forever. Decode first; the created id is cleaned up
+  on failure.
 - **A per-case capacity override could be set but never cleared**: the form
-  omitted an emptied field and the server read `None` as "leave it". The
-  form sends `null`; the server reads `model_fields_set`.
+  omitted an emptied field and the server read `None` as "leave it". The form
+  sends `null`; the server reads `model_fields_set`.
 - **A case's detail listed its disposed hats** while its counts excluded them.
 - **The inventory report summed disposed hats into the current total** when
   asked to include them.
 - **`ebay_listing_count` was `len()` of a 25-row page**; the Browse response
   carries `total`.
 - **`docker-compose.http80.yml` proxied to `localhost`** — `::1` on a
-  dual-stack host, and a 502. The Caddyfile had already learned this;
-  the compose file had not, and the test that guards one now greps the other.
-- **The inline reanalyze path was unguarded** when the worker is off, so any
-  non-Claude error left the hat `pending` forever. One `_run_inline` guard for
-  the three inline paths.
+  dual-stack host, and a 502. Now the v4 loopback, and the test that guards the
+  Caddyfile greps the compose file too.
+- **The inline reanalyze path was unguarded** when the worker is off, so a
+  non-Claude error left the hat `pending` forever. One guard for the three
+  inline paths.
 - **`upload_logo` deleted the old logo before checking the new one**, so an
-  oversize or corrupt upload left no logo at all. And three modules each held
-  their own list of what counts as a logo; one lacked `.jpeg`, so a
-  `logo.jpeg` was served to the login page, invisible to Settings and never
-  replaced. `utils/branding.py` is the one list.
+  oversize or corrupt upload left no logo at all. Three modules each held their
+  own list of what counts as a logo and one lacked `.jpeg`; `utils/branding.py`
+  is the one list now.
 - **A module-level `HTTPException` re-raised per request grew its traceback
-  without bound** — measured 0 → 30 frames after five anonymous requests to
-  the guest view, each pinning a `Request` and a database session. Factories
-  now; a test raises five times and asserts no module-level exception holds
-  a traceback.
-- **The re-pricing scheduler swept the whole shelf on every boot.** No
-  staleness gate, where the backup loop skips when a recent archive exists.
-  `stale_before` is threaded from the loop to the query.
+  without bound**, pinning a request and a database session each time.
+  Factories now, with a test asserting no module-level exception holds a
+  traceback.
+- **The re-pricing scheduler swept the whole shelf on every boot.** There was
+  no staleness gate; `stale_before` is threaded from the loop to the query.
 - **`_publish_stage`, the only writer of the analysis stage, reached for the
-  module-level session** — poisoned under test, so the stage writes had never
-  once been observed by a test. A session maker bound to the pipeline's own
-  engine, and the stage is asserted through the test session.
-- **Ten Bootstrap-era classes were styled by nothing** (`col-7`, `table-sm`,
-  `form-switch`, a `badge bg-danger` with the severity inverted, …), **26
-  form controls had no accessible name** (Login's username and password,
-  every API-key box, the whole Edit-hat form — a screen reader said "edit
-  text"), and **four `var(--x)` tokens were defined nowhere** (`--hr-pink`, on
-  the card whose whole point was to turn red). All fixed, and each class of
-  bug now has a source-scanning test: every class literal in TSX against
-  `app.css`, every form control for a name, every `var()` against the
-  stylesheets.
-- **"Unassigned" meant `case_id == null`**, which included every hat kept out
-  in a room — the Hats chip counted them and the Duplicates page captioned a
-  shelf hat "Unassigned · Living room". Three states now (`lib/placement`).
-- **Edit-hat's Model and Colorway were `<datalist>`s**, which iOS draws as a
-  strip above the keyboard that is easy to miss entirely — the reason the
-  `Combobox` component exists — and the colorway lookup refetched on every
-  keystroke. Comboboxes, and a debounced query.
-- **The harvest's colorway picker matched `hydro` inside `hydrolite`**
-  (`ilike %token%` under a docstring saying "token containment"), so an
-  A-Game Hydro hat was offered HYDROLite colorways. Set containment in
-  Python behind a cheap prefilter.
+  module-level session**, so stage writes had never been observed by a test. It
+  now uses a session maker bound to the pipeline's own engine.
+- **Ten Bootstrap-era classes were styled by nothing**, **26 form controls had
+  no accessible name** (Login, every API-key box, the whole Edit-hat form), and
+  **four `var(--x)` tokens were defined nowhere**. All fixed, and each class of
+  bug now has a source-scanning test.
+- **"Unassigned" meant `case_id == null`**, which included every hat kept
+  loose in a room. Three states now (`lib/placement`).
+- **Edit-hat's Model and Colorway were `<datalist>`s**, which iOS draws as an
+  easily-missed strip above the keyboard, and the colorway lookup refetched on
+  every keystroke. Comboboxes, and a debounced query.
+- **The harvest's colorway picker matched `hydro` inside `hydrolite`**, so an
+  A-Game Hydro hat was offered HYDROLite colorways. Set containment in Python
+  behind a cheap prefilter.
 - **`_product_comp` matched colorways by containment** while the catalog
-  validator used equality, so `Camo` was priced against `Rain Camo` and `808
-  Camo`. Equality on the colorway half.
-- **Colorways were not canonicalized on the edit form's PUT or on the
-  matcher's write** — only on the analysis path.
-- Edit-case re-seeded the form on every refetch (the bug Edit-hat had already
-  fixed) and started with room id `1`, which is the seed room on a fresh
-  install and some other room on any install that has deleted it.
-- The re-pricing card's "press again" hint compared `remaining` against
-  `considered`; `remaining` has meant "still due" since 2.76.
-- Edit-hat saves that change a colorway or a manual price left the
-  shared-price report stale; Activity's Refresh missed the sibling retention
-  key; a first-time construction or collection did not appear in the next
-  form's picker for 30 s.
+  validator used equality, so `Camo` was priced against `Rain Camo`. Equality on
+  the colorway half.
+- **Colorways were not canonicalized on the edit form's PUT or on the matcher's
+  write** — only on the analysis path.
+- Edit-case re-seeded the form on every refetch and started with a hardcoded
+  room id rather than the flagged default.
+- The re-pricing card's "press again" hint compared the wrong two counts.
+- Edit-hat saves that change a colorway or a manual price left the shared-price
+  report stale; Activity's Refresh missed the sibling retention key; a
+  first-time construction or collection did not appear in the next form's
+  picker for 30 s.
 - The Valuation card was hidden for a hat whose only figure was the resale
-  price the owner had just typed — the figure the totals use, nowhere on its
-  own page.
+  price the owner had just typed.
 
 ### Changed
-- **`PLC0415` is enforced** (no imports inside functions) and `RUF100` (no
-  unused `noqa`) with it. The local-import idiom had spread to ~90 sites and
-  is how late-binding seams break silently: a test patches
-  `module.async_session` and a function importing it locally binds the real
-  one at call time — nine tests failed the moment the imports were hoisted,
-  each a seam that had been working by accident. A seam that must follow a
-  monkeypatch is now a module-attribute call
-  (`hat_analysis_pipeline.refresh_melin_resale(hat)`), and every surviving
-  `noqa` carries its reason in prose on the line.
+- **`PLC0415` is enforced** (no imports inside functions), with `RUF100` (no
+  unused `noqa`). The local-import idiom had spread to ~90 sites and is how
+  late-binding test seams break silently; nine tests failed the moment the
+  imports were hoisted. A seam that must follow a monkeypatch is now a
+  module-attribute call, and every surviving `noqa` carries its reason inline.
 - **Constants and enums replace strings and copies.** `ResaleScope`,
-  `DisposedVia`, `CONSTRUCTION_TOKENS`/`constructions_in`/`strip_constructions`
-  (four tokenizations became one), `PAGE_SIZE` shared by the harvest and the
-  pricing client (the harvest had been sending `per_page` to an API that
-  reads `perPage`, working only because the default page size matched),
-  `MAX_TOTAL_UPLOAD_BYTES` (two copies of 750 MB), the capacity figures
-  (typed by hand in four source files and eleven tests), and `hat_loads()`
-  public (restated in six modules).
+  `DisposedVia`, the construction tokenizers (four became one), `PAGE_SIZE`
+  shared by the harvest and the pricing client, `MAX_TOTAL_UPLOAD_BYTES`, the
+  capacity figures (typed by hand in four source files and eleven tests), and
+  `hat_loads()` made public.
 - **Frontend duplicates folded into shared components**: the nav's
-  failed-analysis badge (two copies, one unlabeled), the two API-key cards
-  (one `KeyCard` over a `KeyProviderSpec` — the twin of the backend's
-  `KeyProvider`; the Google card had already lost its loading state), the
-  ranked "top N" list (Stats and Valuation, already diverged on what a hat
-  with no brand is called), the case tile (the room page's had lost the
-  full/overfull tag), the hat row, two time formatters with two output
-  styles, two byte formatters, the portalled-list click-outside rule, the
-  clipboard routine (three copies, one with no secure-context fallback, so
-  the copy button threw on the http80 overlay).
-- **Every Settings link names its section** (`?tab=analysis|data|sharing`);
-  a chart row and the import page's "view hat" are `<Link>`s rather than
-  full reloads; the lightbox thumbnail is a real button opening a dialog
-  Escape closes; the home carousel slide is a link; the combobox announces
-  its active option; the case picker's groups are groups; the filter toggle
-  says whether it is open. The manifest no longer locks the iPad to portrait.
-- **Rosters that will rot are derived or pointed at.** The Settings test's
-  `api/settings` mock is built from the real module's exports (it had caught
-  `auditSharedPrices`, `getUnclaimedFromPurchases` and `runRepricingAll` in
-  three consecutive releases and was about to catch three more); `CLAUDE.md`'s
-  card list points at `SECTIONS`; the lifespan roster is stated in code order.
-- **Off-loop where it wasn't**: the per-file copy in `create_job` (up to 100 ×
-  20 MB), the logo's Pillow work, the upload cap's copy, multi-MB PNG reads for
-  Claude and Vision, QR rendering, Kuhn's assignment; `AsyncAnthropic` is
-  opened with `async with` and closed; the marketplace client is shared across
-  pages rather than built per page; EXIF orientation is honored on upload.
+  failed-analysis badge, the two API-key cards (one `KeyCard` over a
+  `KeyProviderSpec`), the ranked "top N" list, the case tile, the hat row, two
+  time formatters, two byte formatters, the portalled-list click-outside rule,
+  and the clipboard routine (three copies, one with no secure-context
+  fallback).
+- **Every Settings link names its section** (`?tab=analysis|data|sharing`); a
+  chart row and the import page's "view hat" are `<Link>`s rather than full
+  reloads; the lightbox thumbnail is a real button opening a dialog Escape
+  closes; the home carousel slide is a link; the combobox announces its active
+  option; the case picker's groups are groups; the filter toggle says whether
+  it is open. The manifest no longer locks the iPad to portrait.
+- **Rosters that rot are derived or pointed at.** The Settings test's
+  `api/settings` mock is built from the real module's exports, and the lifespan
+  roster is stated in code order.
+- **Off-loop where it wasn't**: the per-file copy in `create_job`, the logo's
+  Pillow work, the upload cap's copy, multi-MB PNG reads for Claude and Vision,
+  QR rendering, and Kuhn's assignment. `AsyncAnthropic` is opened with
+  `async with` and closed; the marketplace client is shared across pages; EXIF
+  orientation is honored on upload.
 - **The stored palette name stays RGB-nearest, and that was measured rather
   than tidied**: over a 512-point grid the RGB and CIEDE2000 nearest-name
-  answers disagree on 39% of points, and ΔE calls pure blue "purple" — the
-  same non-linearity the family classifier vetoes. Palette LAB is precomputed
-  and the target's families computed once per search instead of per swatch.
+  answers disagree on 39% of points, and ΔE calls pure blue "purple". Palette
+  LAB is precomputed and the target's families computed once per search.
 - The Activity card fetches the 25 rows it renders; `LogoCard` reads
   `isPending` instead of shadowing it; the construction audit's button says
   "Change them" on a rename; the case picker's empty state distinguishes no
@@ -320,88 +251,58 @@ host, deleting one call and watching the suite stay green. Backend 997 →
 
 ### Tests
 - **Mutation testing is the documented method** for anything that writes a
-  number, and `CLAUDE.md` says how. The score/tier assertions that had crept
-  into the outcome-only matcher suite are outcomes again — contended hats
-  where only that tier decides which receipt writes the price.
+  number. The score/tier assertions that had crept into the outcome-only
+  matcher suite are outcomes again.
 - **Fifteen per-endpoint "requires auth" assertions removed** across twelve
-  files; none would have caught the `/openapi.json` leak, and the enumeration
-  test is the guard. The rule is written down.
-- **Tests that asserted nothing or the wrong thing**: three `never_raises`
-  with zero assertions, a WAL checkpoint test with none, an
-  `in ("wal", "memory")` that was always memory, a validation test recording
-  the poisoned-engine error instead of the validation, a labels test with
-  `or "0 labels"`, a source check reading only past the last docstring, six
-  tautologies, a Claude test mocking the SDK wholesale. Each rewritten
-  against an outcome or deleted. Fixture state that leaked across tests
-  (backup health, sweep progress, the rate limiter, `_session_factory`) is
-  reset by autouse fixtures and `try/finally`.
+  files; the enumeration test that probes every operation is the guard.
+- **Tests that asserted nothing or the wrong thing** were rewritten against an
+  outcome or deleted, and fixture state that leaked across tests (backup
+  health, sweep progress, the rate limiter, the session factory) is reset by
+  autouse fixtures and `try/finally`.
 - New parity tests: `test_api_contract`, `test_env_passthrough`,
-  `test_frontend_constants_parity` (`STAGES`, `DEFAULT_HAT_BASICS`,
-  `MAX_FILES`, the share-expiry seed), `test_the_npm_pin_is_one_number_in_three_files`,
-  the `_CASE_COLUMN_DDL`/`_HAT_COLOR_COLUMN_DDL` coverage checks, and on the
+  `test_frontend_constants_parity`, the npm-pin check, the
+  `_CASE_COLUMN_DDL`/`_HAT_COLOR_COLUMN_DDL` coverage checks, and on the
   frontend `styles/classes`, `test/accessibleNames`, `styles/tokens`,
   `lib/format`, `lib/placement`, `lib/clipboard`, `api/client`, `api/settings`.
-- Typed mock factories (`vi.fn<typeof fn>`) and a shared `caseFixture()`, so
-  a payload that drifts from the real shape fails `tsc`.
+- Typed mock factories (`vi.fn<typeof fn>`) and a shared `caseFixture()`, so a
+  payload that drifts from the real shape fails `tsc`.
 
 ### Documentation
-- **`CLAUDE.md`**: the iPhone stall was HTTP/3, not mDNS (the bullet ended a
-  release behind its own resolution); `_tls_watch_loop`, `price_audit.py`,
-  `GET /api/admin/config`, the autoheal and rsync overlays, the watchdog, the
-  recut route, the upload endpoints and `/api/settings/tls` documented; the
-  harvest's `create_task`, the repricing factory threading, the share-expiry
-  default, the `_model_tokens` cache reason, the three-move local search and
-  the shared-price measurement corrected; the lifespan roster complete and
-  in code order; rosters that rot replaced by pointers.
 - **README / OPERATIONS / USAGE**: the compose passthrough; the working
-  password-recovery recipe; `FORWARDED_ALLOW_IPS` on the LE overlay; the
-  token's real path (password-gated reveal, rotated on password change);
-  eBay as live asks; retail as a lookup; the re-pricing subsystem, its four
-  env rows and its card; the guest view and the full open-route roster; the
-  watchdog's URL on the LE overlay and its knobs; the real `/health/ready`
-  payload and 503 conditions; the 30-day share default; the README env table
-  deduplicated, anchored and given its eight missing rows; the rsync overlay
-  named with its two mounts; the five Settings tabs and every card USAGE had
-  never mentioned; the purchase-import flow as the card actually presents it.
-- **CHANGELOG**: three false facts corrected in place (2.76.0's test counts
-  and fsync order, 2.77.3's "fifteen sites"); `[2.24.0]` and `[2.23.1]`
-  annotated as never tagged; `docs/AUDIT-HISTORY.md` gained the `S1`, `S3`
-  and `S4` rows that test comments had been citing into a void; British
-  spellings across four documents.
-- `docs/CODE-REVIEW-2026-09.md` records every finding and its status.
+  password-recovery recipe; `FORWARDED_ALLOW_IPS` on the Let's Encrypt overlay;
+  how the API token is actually obtained and rotated; eBay as live asks; retail
+  as a lookup; the re-pricing subsystem, its four env rows and its card; the
+  guest view and the full open-route roster; the watchdog's URL on the LE
+  overlay and its knobs; the real `/health/ready` payload and 503 conditions;
+  the 30-day share default; the README env table deduplicated, anchored and
+  given its eight missing rows; the rsync overlay named with its two mounts;
+  the five Settings tabs and every card USAGE had never mentioned; the
+  purchase-import flow as the card actually presents it.
+- **CHANGELOG**: three inaccurate statements corrected in place; `[2.24.0]` and
+  `[2.23.1]` annotated as never tagged; British spellings across four
+  documents.
 
 ## [2.77.3] — 2026-09-05
 
-The other three workers, booted for real. 2.77.2 proved the lifespan's gates
-in the OFF direction for all four workers and in the ON direction for one.
+The other three background workers, booted for real under test.
 
 ### Fixed
 - **Three workers could not be booted under test at all.** `import_service`,
   `analysis_queue` and `backup_service`'s upload hook each reached for the
-  module-level `async_session` directly (twelve sites), so their own suites
-  redirect that name by monkeypatch and the lifespan — which now refuses the
-  module engine under test — could start none of them. Each takes
-  `session_factory=` now, resolved at call time so the existing monkeypatches
-  keep working, and the lifespan passes `app.state`'s. Three new boot tests
-  turn each on and assert the outcome against the app's database: a
-  crash-stranded import item is healed by the boot sweep; a `pending` hat is
-  re-queued and processed; the backup scheduler writes its first archive and
-  the upload hook resolves its argv through the right database (with the seam
-  dropped, the hook's own `except` records a failed upload — the assertion
-  cannot pass by accident). Each forward was removed in turn; each time the
-  test named for it was the one that failed.
+  module-level session factory directly (twelve sites), so the lifespan could
+  start none of them. Each takes `session_factory=` now, resolved at call time
+  so existing monkeypatches keep working. Three new boot tests turn each on and
+  assert the outcome against the app's database: a crash-stranded import item is
+  healed by the boot sweep; a `pending` hat is re-queued and processed; the
+  backup scheduler writes its first archive and the upload hook resolves its
+  argv through the right database.
 - **The lifespan tests were racing on a shared connection.** The suite's
-  in-memory engine is a `StaticPool` — one connection for every session. A
-  request test holds one session; a boot holds five. One session's `close()`
-  issues `ROLLBACK` on the shared connection and discards another's
-  uncommitted `UPDATE` before its `COMMIT`. Measured: the analysis worker
-  processed a re-queued hat, committed, and the hat stayed `pending` with no
-  error anywhere, because the prune loop closed its session in between — and
-  the import-worker test was passing on timing. The lifespan module now runs
-  on a file-backed SQLite with the production connect hook attached (WAL,
-  busy_timeout, synchronous=FULL), one connection per session as on the box.
-  It also made a real assertion possible that a recorder could not: after a
-  clean shutdown, the file's `-wal` sidecar is zero bytes.
+  in-memory engine is a `StaticPool` — one connection for every session — so one
+  session's `close()` could discard another's uncommitted work. The lifespan
+  module now runs on a file-backed SQLite with the production connect hook
+  attached (WAL, busy_timeout, synchronous=FULL), one connection per session as
+  on the box. That also made a real assertion possible: after a clean shutdown
+  the file's `-wal` sidecar is zero bytes.
 
 
 ## [2.77.2] — 2026-09-05
@@ -410,80 +311,50 @@ Two things the suite could not see, made visible: the lifespan, and the SDK
 call behind the core feature. Plus the dependency queue, taken properly.
 
 ### Fixed
-- **No test had ever run the lifespan.** `conftest` said so in a comment, and
-  the closest anything came was a test reading the lifespan's *source text*
-  with `inspect.getsource` to check the order of a tuple. So the one function
-  that wires the app together — which loops start, which one-time backfills
-  run, what seeds the health records, what shutdown cancels and in what order
-  — was the one function the suite never executed, while every function it
-  calls had tests. That includes 2.77.0's retention health record: the loop
-  wrote it, the route served it, the card rendered it, and coverage showed
-  `TaskHealth.record_success` and the route body **never executing**. The
-  cause was structural: the lifespan reached for the module-level
-  `async_session` in five places and `init_db()` on the module engine, both
-  bound to `settings.database_url` — under test, `./headroom.db` in the
-  checkout — so booting it would have written a real file. It now takes
-  `app.state.session_factory` and `app.state.engine`, the seam the auth gate
-  and `error_handler` already used, and `tests/test_lifespan_wiring.py` boots
-  it for real: the prune runs and records; the endpoint serves the record;
-  every backfill flag is stamped once and not re-run on a second boot;
-  branding seeds once and never overwrites the owner's logo; disabled workers
-  produce `None` not a dead task; the enabled repricing scheduler's first
-  sweep hits the **app's** database (with the seam broken it records
-  `unable to open database file` — the assertion cannot pass by accident);
-  shutdown stops workers then checkpoints the WAL **last, on the app's
-  engine**; a raising stop step does not skip the ones after it. Seven
-  sabotages, each caught by the test named for it.
+- **No test had ever run the lifespan** — the one function wiring the app
+  together (which loops start, which one-time backfills run, what seeds the
+  health records, what shutdown cancels and in what order) was the one function
+  the suite never executed. It now takes `app.state.session_factory` and
+  `app.state.engine`, the seam the auth gate already used, and
+  `tests/test_lifespan_wiring.py` boots it for real: the prune runs and records;
+  the endpoint serves the record; every backfill flag is stamped once and not
+  re-run on a second boot; branding seeds once and never overwrites the owner's
+  logo; disabled workers produce `None` not a dead task; shutdown stops workers
+  then checkpoints the WAL last on the app's engine; a raising stop step does
+  not skip the ones after it.
 - **The suite was writing to a real database file on every run.** A bare
-  `checkpoint_wal()` in `test_durability.py` opened the module engine, which
-  created an empty `./headroom.db` in the working directory and touched its
-  WAL sidecars each run — empty, so harmless, and invisible for exactly that
-  reason. A second test passed only because that stray file existed for it to
-  find. `conftest` now points the module engine at an unopenable path, so the
-  same slip raises on the spot; the guard immediately found a third site in
-  production code (`reattach_orphaned_cases` took the factory and dropped it
-  one call in).
-- **The Claude Vision call is now exercised through the real SDK.** Every
-  analysis test stubs `analyze_hat_image`, correctly, and the cost was that
-  nothing checked the request this app sends or the response parsing it does.
+  `checkpoint_wal()` opened the module engine, creating an empty `./headroom.db`
+  in the working directory. `conftest` now points the module engine at an
+  unopenable path so the same slip raises immediately; the guard found a third
+  site in production code.
+- **The Claude Vision call is now exercised through the real SDK.**
   `tests/test_claude_call_shape.py` drives the real `anthropic` client against
-  an `httpx2.MockTransport`: the cached `system` block, the forced
-  `tool_choice`, image-then-owner-facts order, the tool-use parse, and the
-  401/529 → `ClaudeAnalysisError` mapping. Written to make the SDK major bump
-  below safe, and it is what proves it was.
-- **The zeroconf NSEC story in `mdns_service` and CLAUDE.md was out of date.**
-  The owner-name defect it describes was fixed upstream in 0.150.4 (#1825),
-  and "the current release, so there is no upgrade" stopped being true a week
-  ago. Corrected — and verified against the installed 0.151.2 that upstream's
-  fix attaches an NSEC only to *address* answers, so a query for `HTTPS`/65 or
-  `SRV` at the hostname (the actual iPhone stall) is still silence and the
-  `_NsecProtocol` sidecar remains the only thing answering it.
+  an in-memory transport: the cached `system` block, the forced `tool_choice`,
+  image-then-owner-facts order, the tool-use parse, and the error mapping.
+  Written to make the SDK major bump below safe, and it is what proves it was.
+- **The zeroconf NSEC notes were out of date.** The owner-name defect described
+  there was fixed upstream in 0.150.4; verified against the installed 0.151.2
+  that upstream's fix attaches an NSEC only to *address* answers, so a query for
+  `HTTPS`/65 or `SRV` at the hostname is still silence and the sidecar responder
+  remains the only thing answering it.
 
 ### Changed
-- **Dependencies, the whole lock, taken on this branch** rather than merging
-  Dependabot #149 — which failed CI, as CLAUDE.md predicts for any backend
-  bump: `requirements.txt` is derived from `uv.lock` and Dependabot moved one
-  without the other. `uv lock --upgrade` took everything within
-  `exclude-newer` and regenerated the export: `anthropic` 0.122.0 → **1.2.0**
-  (a major; the SDK surface we use — `AsyncAnthropic(timeout=)`,
-  `messages.create(system/tools/tool_choice/messages)`, `message.content`
-  tool-use blocks, `APIError`/`AuthenticationError` — checked empirically
-  against 1.2.0 and covered by the new call-shape tests; `AuthenticationError`
-  now imported from the package root instead of the private `_exceptions`
-  path), `zeroconf` 0.150.0 → 0.151.2 (see above), `argon2-cffi-bindings`
-  25.1.0 → 26.1.0 (exercised by the real hash the suite makes each run),
-  `pydantic` 2.13.5, `pydantic-core` 2.46.5, `ruff` 0.16.5, `scipy` 1.18.1,
-  `protobuf` 7.36.0, `websockets` 17.1, `click` 8.5.0, `platformdirs` 4.11.5,
-  `tifffile` 2026.8.23, `coverage` 7.16.0; `distro` dropped (an anthropic 0.x
-  transitive, imported by nothing here). Frontend: Dependabot #146 merged as
-  is — it is self-contained. #149 closed as superseded.
+- **Dependencies, the whole lock, taken on this branch** rather than merging a
+  Dependabot PR that moved `requirements.txt` without `uv.lock`.
+  `uv lock --upgrade` took everything within `exclude-newer` and regenerated the
+  export: `anthropic` 0.122.0 → **1.2.0** (a major; the SDK surface in use was
+  checked empirically and is covered by the new call-shape tests;
+  `AuthenticationError` now imported from the package root), `zeroconf` 0.150.0
+  → 0.151.2, `argon2-cffi-bindings` 25.1.0 → 26.1.0, `pydantic` 2.13.5,
+  `pydantic-core` 2.46.5, `ruff` 0.16.5, `scipy` 1.18.1, `protobuf` 7.36.0,
+  `websockets` 17.1, `click` 8.5.0, `platformdirs` 4.11.5, `tifffile`
+  2026.8.23, `coverage` 7.16.0; `distro` dropped. Frontend Dependabot PR merged
+  as is.
 
 ### Added
 - `app.state.boot_tasks` — the lifespan's one-shot boot work (thumbnail and
   export backfills, mDNS start), published so a test can await it before
-  shutting down. Not cosmetic: canceling a task mid-aiosqlite-call
-  invalidates its connection, and on the test suite's in-memory `StaticPool`
-  that single connection *is* the database.
+  shutting down.
 - `claude_analysis._anthropic_client` — the one place an SDK client is built.
 - `init_db(bind=, session_factory=)`, `checkpoint_wal(bind=)`,
   `ensure_default_room(session_factory=)`,
@@ -499,162 +370,92 @@ No user-visible behavior changes; one source comment corrected.
 
 ### Fixed
 - **The purchase matcher's scoring was covered and unconstrained.** Line and
-  branch coverage of `catalog_service.py` read 93%, and each of these left
-  every one of 988 tests green: zeroing BOTH bonus tiers (`STATED_FIELD`,
-  `COLOR_WORD`), deleting the `_improve_by_swapping` call site, disabling the
-  exact-price tiebreak (`PRICE_EXACT`), collapsing `MODEL_EXACT_STRIPPED` into
-  `MODEL_CONTAINED`, and dropping `colorway` from the preview's `matched_on`.
-  The local-search one is the sharpest: 2.77.0 shipped tests for that function
-  that drive it directly, so removing its only caller was invisible — function
-  tested, wiring untested. `tests/test_matcher_evidence.py` pins each as an
-  OUTCOME (which receipt links to the hat, which price lands on it), never a
-  score; every test was confirmed to fail under the mutation it names, and to
-  fail on the test named for that tier. The fixture throughout is the review's
-  own finding: two receipts share a model, one is $79 and one is $999, and only
-  the tier under test separates them.
+  branch coverage read 93%, yet zeroing both bonus tiers, deleting the local
+  search's only call site, disabling the exact-price tiebreak, collapsing the
+  stripped-model tier and dropping `colorway` from the preview each left the
+  suite green. `tests/test_matcher_evidence.py` pins each as an **outcome**
+  (which receipt links to the hat, which price lands on it), never a score, and
+  every test was confirmed to fail under the mutation it names.
 - **The `assign_purchases` ordering comment described a mechanism that no
-  longer carries the result.** Reversing the purchase iteration order leaves
-  every outcome test green because `_improve_by_swapping` recovers from any
-  starting order the tests can construct; the comment still called the order
-  "not cosmetic" and the thing deciding who wins a contended hat. That is the
-  `_by_scarcity` pattern — prose outliving the mechanism — and it is now
-  written down as a fast path and tiebreak, load-bearing for neither.
-- A test docstring in `test_backup_upload_config.py` still carried the
-  overstated S-12 claim that 2.77.0's changelog correction retracted. Fixed at
-  the source.
+  longer carries the result.** The local-search pass recovers from any starting
+  order, so the visit order is a fast path and tiebreak, load-bearing for
+  neither. Written down as such.
+- A test docstring still carried an overstated claim that the previous release
+  had retracted. Fixed at the source.
 
 ### Removed
-- **Fifteen per-endpoint "requires auth" tests across twelve files.** Each
-  asserted one `/api/...` path answers 401 anonymously — and
-  `test_security.py::test_every_api_path_is_gated_unless_it_is_on_the_allowlist`
-  already enumerates `app.openapi()` and probes every operation, so each was a
-  strict subset of a check that runs anyway. None of the fifteen would have
-  caught the `/openapi.json` leak, because nobody had written one for that
-  path; the enumeration would have. The two that stay (`/uploads/`, and
-  `/openapi.json`/`/docs`/`/redoc`) cover a mount and the spec itself, which
-  the enumeration cannot reach. 988 → 980 tests, strictly more constrained.
+- **Fifteen per-endpoint "requires auth" tests across twelve files.** Each was a
+  strict subset of the enumeration test that probes every operation anyway. The
+  two that stay cover a mount and the spec itself, which the enumeration cannot
+  reach. 988 → 980 tests, strictly more constrained.
 
 ### Measured and left alone
 - Valuation and pricing were probed the same way and hold: reordering
   `category` above `retail`, ignoring the retention multiplier, and disabling
   the product-first comp each fail — by outcome tests, not only parity checks.
-  Swapping the `manual` and `comp` branches survives and correctly so: a hat
-  has one `resale_price_scope`, so the two are mutually exclusive and the
-  mutant is equivalent. Recorded in CLAUDE.md so the next probe does not
-  rediscover it.
+  Swapping the `manual` and `comp` branches survives and correctly so: a hat has
+  one scope, so the two are mutually exclusive and the mutant is equivalent.
 
 
 ## [2.77.0] — 2026-09-04
 
-The `/code-review xhigh` backlog, in full. The previous release said "fixed
-everything the archaeology pass found" and left ten items untouched; this is
-those, plus the review findings that surfaced while checking that claim. Every
-fix here is sabotage-checked — the bug reinstated, the test confirmed to fail
-with the right symptom.
+The review backlog, in full. Every fix here is sabotage-checked — the bug
+reinstated, the test confirmed to fail with the right symptom.
 
 ### Security
-- **`GET /api/auth/me` no longer returns the API token** (S-07). It is a
-  long-lived bearer credential that survives logout, password change and
-  `destroy_other_sessions`, so a session alone yielding it let a stolen session
-  upgrade into access that no revocation this app has can reach — and the
-  Account card fetches `/me` on every Settings load, so it was on the wire far
-  more often than the one moment somebody wanted to read it. Reading it is now
-  `POST /api/auth/token/reveal` with the current password. **Rotation is gated
-  too**, which is not belt-and-braces: rotate RETURNS the new token, so gating
-  reveal alone leaves the identical escalation behind a different verb.
-- **Share links expire in 30 days unless you choose otherwise** (S-06). A link
-  is unscoped and whole-collection — every hat, with photos, and the room and
-  case each one lives in — so a forwarded one is a lasting, room-by-room,
-  photographed inventory of somebody's valuables. "Never" was both the default
-  and invisible: the card offered no expiry control and showed none on existing
-  links. It now offers 7/30/90/365/Never and states each link's expiry.
-  `expires_days: null` still means never. The frontend used to send an explicit
-  `null` unconditionally, so a server-side default alone would have changed
-  nothing.
-- **Share tokens are redacted from the `error.unhandled` activity row and the
-  log line beside it**, not only from uvicorn's access log. A share token is a
-  PATH parameter, which defeats `error_handler`'s stated mitigation ("store
-  `path`, never the full URL, because query strings carry tokens") precisely.
-  The row is the serious half: the database is what the scheduled backup
-  uploads off the box, so an unredacted row puts a live token on a NAS or cloud
-  remote for as long as that archive is retained. `utils/redaction.py` now owns
-  the rule and all three sinks use it — the first version of this fix covered
-  one of the three, in a change whose entire subject was the leak.
-- **`HEADROOM_SETUP_TOKEN` closes the first-run land-grab window** (S-05).
-  Until the owner claims it, `/api/auth/setup` hands full control to whoever
-  posts first, and `/api/auth/status` advertises `needs_setup: true`. Nearly
-  theoretical on a LAN; on the Let's Encrypt overlay the hostname is in a
-  public certificate-transparency log within seconds. Opt-in — a required token
-  would put a mandatory step between `docker compose up` and a working LAN app
-  to defend against somebody already on the LAN. A wrong token answers with the
-  same "Setup already completed" as a claimed box.
-- **The rclone destination comment credited the regex with a guard it does not
-  have** (S-12). `[A-Za-z0-9_-]` contains `-`, so `-vv:path` and `--config:/x`
-  both match the pattern; what actually blocks them is the explicit
-  `startswith("-")` check in `validate_destination`. The hole was never open,
-  and the comment pointed at the wrong guard while making the real one look
-  redundant. **Correction to this entry as first published**: it claimed the
-  suite passed with that check deleted. It does not — `test_a_leading_dash_is_
-  called_out_as_a_flag` fails, but incidentally, because it asserts on the error
-  *message* and the regex rejects its input with a different one. The real gap
-  is narrower and still worth closing: every flag case in the file used input
-  the regex rejects anyway (`--config=/etc/x` fails on the `=`), so nothing
-  verified that an input the regex ACCEPTS — `-vv:path` — is refused at all.
-- **Client-IP behavior on the plain bridge compose is documented** (S-08). It
-  may be the Docker gateway, which collapses per-IP login rate limiting into
-  one shared bucket and makes the IP on `auth.login_failed` rows meaningless.
-  All three LAN overlays use host networking and are unaffected.
+- **`GET /api/auth/me` no longer returns the API token.** Reading it is now
+  `POST /api/auth/token/reveal` with the current password, and **rotation is
+  gated the same way**, since rotate returns the new token.
+- **Share links expire in 30 days unless you choose otherwise.** A link is
+  unscoped and whole-collection, and "Never" was both the default and invisible.
+  The card now offers 7/30/90/365/Never and states each link's expiry.
+  `expires_days: null` still means never.
+- **Share tokens are redacted everywhere a request path is recorded** — the
+  stored error record and the log line beside it, not only the access log. One
+  helper owns the rule and all three sinks use it.
+- **`HEADROOM_SETUP_TOKEN` gates first-run setup when set.** Opt-in, because
+  requiring it always would put a mandatory step between `docker compose up`
+  and a working LAN app. A wrong token answers exactly as a claimed box does.
+- **A comment credited a destination regex with a guard it does not have.**
+  The check that actually rejects flag-shaped input is an explicit one; the
+  comment pointed at the wrong guard while making the real one look redundant.
+  A test now covers an input the regex accepts and the explicit check refuses.
+- **Client-IP behavior on the plain bridge compose is documented** — it may be
+  the Docker gateway, which affects per-IP rate limiting and the address
+  recorded on login rows. All three LAN overlays use host networking and are
+  unaffected.
 
 ### Fixed
 - **Purchase matching gave a contended hat to the wrong receipt, and the local
-  search called it a fixpoint.** `_improve_by_swapping` had two moves — relocate
-  onto a free hat, and swap two matched pairs — and neither can move the
-  PURCHASE end of a pair. That is exactly the shape Kuhn's augmenting step
-  creates, since displacing an incumbent is how it finds a longer path.
-  Reproduced: three purchases, two hats, a maximum matching worth 1500, and this
-  returned 910. A third move (**substitute** a held hat's purchase for an
-  unheld purchase that scores higher on it) closes it; cardinality is untouched,
-  so the maximum-matching guarantee still holds. The docstring claimed the two
-  moves were "exact for the realistic contention shape"; a three-purchase
-  example defeated them, and the real limit — a 3-cycle rotation is still missed
-  — is now pinned by a test rather than asserted in prose.
+  search called it a fixpoint.** The two existing moves could not move the
+  *purchase* end of a pair — exactly the shape the augmenting step creates. A
+  third move (substitute a held hat's purchase for an unheld one that scores
+  higher) closes it; cardinality is untouched, so the maximum-matching guarantee
+  still holds. The real remaining limit — a 3-cycle rotation is still missed —
+  is now pinned by a test rather than asserted in prose.
 - **Whole-collection views silently dropped everything past 1000 hats.**
-  `GET /api/hats` caps `limit` at 1000 and the Hats grid, Valuation, Stats and
-  the Home carousel all ask for the lot, so a larger collection came back
-  truncated — which does not look truncated, it looks like hats vanished and the
-  collection is worth less. The server already published the real size in
-  `X-Total-Count` and logged a warning; **nothing read either**, so the guard
-  reported into a container log. `listAllHats` now pages.
+  `GET /api/hats` caps `limit` at 1000 while the Hats grid, Valuation, Stats and
+  the Home carousel all ask for the lot, so a larger collection looked smaller
+  and worth less. The server already published the real size in `X-Total-Count`
+  and nothing read it. `listAllHats` now pages.
 - **The retention prune had no health record** — the only background task with
-  none, and the only thing bounding `activity_log` and `auth_sessions`. A
-  persistent failure was one WARNING per day while an SD card filled. Now at
+  none, and the only thing bounding `activity_log` and `auth_sessions`. Now at
   `GET /api/admin/activity-log/retention` and on the Recent Activity card.
-- **Per-category isolation in the colorway harvest only caught
-  `MelinRecapError`.** The stated property is "one bad category cannot abandon
-  the rest", so anything else — a racing `IntegrityError`, a disk error
-  mid-commit, a decode failure on a title — escaped and killed the whole run.
-  The narrow `except` read as the careful choice and was the reason one bad
-  category could still cost eight good ones.
+- **Per-category isolation in the colorway harvest only caught one error
+  type.** The stated property is "one bad category cannot abandon the rest", so
+  anything else escaped and killed the whole run.
 - **The colorway card re-enabled its button during the window a harvest is
   claimed but not yet running.** `harvest_in_flight()` existed for exactly this
-  and had no caller; the card guessed with a 30-second wall-clock timer, which
-  was also purely local — a harvest started on a phone left the laptop's button
-  live and the next press was refused with nothing on screen saying why.
-- **A comment described the upload-state write as "fsync the FILE, then the
-  DIRECTORY, then rename".** The code does file-fsync → rename → dir-fsync,
-  which is correct and is the whole mechanism; syncing the directory before the
-  rename syncs a directory that does not contain it yet. Anyone "correcting" the
-  code to match the comment would have removed the durability guarantee while
-  the comment went on claiming it.
+  and had no caller; the card guessed with a local 30-second timer.
+- **A comment described the upload-state write in the wrong order.** The code
+  does file-fsync → rename → dir-fsync, which is correct; anyone "correcting"
+  the code to match the comment would have removed the durability guarantee.
 - **The staging directory could be deleted while an import item was still
-  reading from it.** The `still_live` guard against that had zero coverage; it
-  now has both halves (survives when live, cleaned up when not).
-- `CLAUDE.md`'s auth bullet no longer omits `/openapi.json`, `/docs` and
-  `/redoc` from the protected prefixes; three files cited `OPERATIONS §7` for
-  systemd units that live in §3; `HEADROOM_BACKUP_INCLUDE_CA` was documented in
-  prose but missing from both env tables. British spellings: `colour` ×2
-  (written in the same session that fixed thirteen others), `modelled`,
-  `labelled` ×3, `dialled`.
+  reading from it.** The guard against that had zero coverage; it now has both
+  halves.
+- Documentation fixes: three files cited the wrong operations section for the
+  systemd units; `HEADROOM_BACKUP_INCLUDE_CA` was described in prose but missing
+  from both env tables; several British spellings.
 
 
 ## [2.76.1] — 2026-09-04
@@ -665,42 +466,34 @@ bind-mounted, so `docker compose restart caddy` applies them.
 
 ### Fixed
 - **`https://headroom.local` was slow on the first load after idle, on iPhone
-  only — and it was never mDNS.** Caddy advertises HTTP/3 by default
-  (`alt-svc: h3=":443"; ma=2592000`), so Safari opens every fresh connection by
-  attempting QUIC over UDP 443 and remembers that advertisement for thirty
-  days. Measured against the live box: **every request in Caddy's log
-  negotiated h2 and none ever negotiated h3**, including from iOS 18.7 Safari,
-  with Caddy listening on UDP 443 and no firewall. The advertisement bought
-  nothing and cost a failed QUIC attempt before the TCP fallback every time.
-  `servers { protocols h1 h2 }` stops offering it.
+  only — and it was never mDNS.** Caddy advertises HTTP/3 by default, so Safari
+  attempts QUIC on every fresh connection and remembers the advertisement for
+  thirty days. Measured against the live box, every request negotiated h2 and
+  none ever negotiated h3, so the advertisement bought nothing and cost a failed
+  attempt before the TCP fallback each time. `servers { protocols h1 h2 }` stops
+  offering it.
 
-  It hid for a long time because it is invisible to the tools used to check it:
-  `curl` and Firefox do not attempt h3, and `:8000` sends no `Alt-Svc` — which
-  is exactly why "switch to the IP and it's instant" looked like a name
-  resolution problem. It is not. `dns-sd` shows `A` answered in milliseconds
-  and `SRV`/`HTTPS` both correctly answered "No Such Record" by the NSEC
-  responder, which is working.
+  It hid for a long time because it is invisible to the usual tools: `curl` and
+  Firefox do not attempt h3, and `:8000` sends no `Alt-Svc` — which is exactly
+  why "switch to the IP and it's instant" looked like a name-resolution problem.
 
 - **Intermittent 502s from the reverse proxy.** `reverse_proxy localhost:8000`
-  resolves to `::1` first on a dual-stack host, and uvicorn binds `0.0.0.0` —
-  IPv4 only. Caddy dialed the v6 loopback, got `connection refused`, and
-  returned 502 instead of retrying v4; observed six times in the live log
-  against `/api/admin/recent-errors/count`, so the nav badge was failing
-  outright. Now `127.0.0.1:8000`. This also affected the Caddyfile's own claim
-  that the app "trusts those headers from loopback only" — `::1` and
+  resolves to `::1` first on a dual-stack host while uvicorn binds `0.0.0.0`, so
+  Caddy dialed the v6 loopback, got `connection refused`, and returned 502
+  instead of retrying v4. Now `127.0.0.1:8000`. This also affected the
+  Caddyfile's own claim about trusting proxy headers from loopback: `::1` and
   `127.0.0.1` are not the same peer to `FORWARDED_ALLOW_IPS`.
 
 ### Internal
-- Two tests pin both directives (`tests/test_tls_health.py`), because deleting
-  either breaks nothing a laptop would notice and makes the phone slow again.
-  Both sabotage-checked. Backend 971 → **973**.
+- Two tests pin both directives, because deleting either breaks nothing a
+  laptop would notice and makes the phone slow again. Both sabotage-checked.
+  Backend 971 → **973**.
 
 ## [2.76.0] — 2026-09-04
 
-Everything the ten-agent archaeology pass found, fixed. Four must-fix items,
-nine should-fix, the security findings, and every documented claim the pass
-proved false. Two review recommendations were tested and **rejected** — noted
-below, because a report is not a mandate.
+Everything a ten-agent archaeology pass found, fixed. Two of its
+recommendations were tested and **rejected** — noted below, because a report is
+not a mandate.
 
 The recurring shape across all of it: **this app builds excellent measurements
 and connects them to nothing.**
@@ -708,95 +501,74 @@ and connects them to nothing.**
 ### Fixed — unattended-failure blindness
 
 - **The nav error badge read 0 during a total analysis outage.** It and the
-  Settings error list keyed on `analysis_status == "error"` while
-  `hat_service.failed_analysis_filters()` sat in the same tree with a docstring
-  explaining why that predicate does not work. When Claude is unreachable the
-  pipeline degrades to `fallback`, not `error` — so in the one situation where
-  every hat has failed, the badge was silent and the failures card listed the
-  whole collection. Both now key on the failure text.
+  Settings error list keyed on `analysis_status == "error"`, but when Claude is
+  unreachable the pipeline degrades to `fallback` — so in the one situation
+  where every hat has failed, the badge was silent and the failures card listed
+  the whole collection. Both now key on the failure text.
 - **Nothing consumed the container healthcheck.** Docker restart policies fire
   on container *exit*, never on `unhealthy`, so the disk-space floor and
-  worker-liveness gate — built specifically to catch unattended failure —
-  terminated in a `docker ps` string. `health.py` and `OPERATIONS.md` both
-  asserted otherwise. Two consumers now ship: `scripts/headroom-watchdog.sh`
-  with systemd units (no privileges), and an opt-in
-  `docker-compose.autoheal.yml`. Autoheal is **not** in the base compose
-  because it needs `/var/run/docker.sock`, which is root-equivalent on the
-  host — a trade not worth making silently.
-- **The TLS and CA checks had no caller that was not a request handler**, so
-  the 37-day-expired-certificate class of failure was visible only to someone
-  already looking at the page. Worse, `ca_vault.check_root` seeds the expected
-  fingerprint on *first sighting* — so a root regenerated before anyone opened
-  that card was recorded as correct and the alarm was permanently disarmed. A
+  worker-liveness gate terminated in a `docker ps` string. Two consumers now
+  ship: `scripts/headroom-watchdog.sh` with systemd units (no privileges), and
+  an opt-in `docker-compose.autoheal.yml`. Autoheal is **not** in the base
+  compose because it needs the Docker socket, which is root-equivalent on the
+  host.
+- **The TLS and CA checks had no caller that was not a request handler**, so a
+  long-expired certificate was visible only to someone already looking at the
+  page — and the CA check seeds its expected fingerprint on first sighting, so a
+  root regenerated before anyone opened that card was recorded as correct. A
   daily lifespan probe now runs both and seeds at boot.
-- **A broken off-site destination sat behind a green card.** `resolve_upload_argv`
+- **A broken off-site destination sat behind a green card.** The argv resolver
   returned `None` both for "nothing configured" and "configured but no longer
-  valid", so the hook returned silently and `BackupHealth` kept showing the last
-  success. The second case now raises `UploadConfigError` and is recorded; the
-  first stays silent, because declining the feature is not a fault.
+  valid". The second case now raises and is recorded; the first stays silent,
+  because declining the feature is not a fault.
 
 ### Fixed — matching and pricing
 
-- **Purchase assignment maximized link COUNT, not evidence.** Among the many
-  assignments of that same maximum size, which purchase got which hat was
-  decided by candidate count and then row order — so a receipt agreeing with a
-  hat on colorway, size *and* price to the cent could lose it to a line sharing
-  only a model name and listed earlier, writing the loser's cost basis onto the
-  hat. Measured: **$999 stored where $79 was provable.** Purchases are now
-  visited in descending top-score order and `_improve_by_swapping` runs 2-swaps
-  and relocations to fixpoint. Both moves preserve cardinality exactly, so the
-  maximum-matching guarantee is untouched. Not claimed to be globally
-  weight-optimal — that needs min-cost max-flow.
-- **`_by_scarcity` is deleted.** It had no call site, while its own docstring,
-  `CLAUDE.md` and a test docstring all described it as load-bearing — the test
-  claiming a *sabotage check against a function that never ran*. Kuhn's
-  cardinality is order-independent, which is exactly why nothing failed when it
-  rotted.
-- **`_product_comp` let a colorway token be satisfied by the model half.** A hat
-  whose model is `Trenches Hydro` and colorway is `Icon` matched
-  `Trenches Icon Hydro - Camo`, pricing it as a Camo product. The halves of
-  `<Model> - <Colorway>` are now checked separately — which is the entire reason
-  that naming convention is usable here.
-- **The colorway harvest took neither claim nor lock** while `/repricing/run-all`
-  — structurally the same endpoint — had both. Two harvests interleave inserts
-  of the same title and one dies on a UNIQUE violation, escaping the
-  per-category isolation the harvest exists to provide.
+- **Purchase assignment maximized link COUNT, not evidence.** Among assignments
+  of the same maximum size, which purchase got which hat was decided by
+  candidate count and then row order, so a receipt agreeing on colorway, size
+  and price to the cent could lose to a line sharing only a model name —
+  writing the loser's cost basis onto the hat. Purchases are now visited in
+  descending top-score order and a local-search pass runs swaps and relocations
+  to fixpoint. Both moves preserve cardinality exactly. Not claimed to be
+  globally weight-optimal — that needs min-cost max-flow.
+- **`_by_scarcity` is deleted.** It had no call site while its own docstring and
+  a test docstring both described it as load-bearing. Kuhn's cardinality is
+  order-independent, which is exactly why nothing failed when it rotted.
+- **`_product_comp` let a colorway token be satisfied by the model half**, so a
+  hat could be priced as a different product. The halves of `<Model> -
+  <Colorway>` are now checked separately.
+- **The colorway harvest took neither claim nor lock** while the structurally
+  identical re-pricing endpoint had both, so two harvests could interleave
+  inserts and one would die on a uniqueness violation.
 - **Re-pricing's `remaining` never decreased**, so the card could never say
   "done". It counted every eligible hat rather than those actually due.
 
 ### Fixed — security
 
-- **`/openapi.json`, `/docs` and `/redoc` answered 200 anonymously** — 101 paths
-  and every schema — because the auth gate is a prefix tuple and these begin
-  with none of its prefixes. Directly against the posture of `/health/ready`
-  next door, which redacts filesystem paths from the same caller.
-- **Nothing pinned the open set.** Authorization for ~85 data-bearing endpoints
-  rested on one `startswith`. A test now enumerates `app.openapi()["paths"]`,
+- **`/openapi.json`, `/docs` and `/redoc` are now behind the auth gate**, which
+  previously matched on a fixed set of path prefixes that none of the three
+  begin with.
+- **The open set is pinned by a test.** It enumerates the OpenAPI document,
   probes every operation anonymously, and fails unless each either 401s or
   appears on an explicit allowlist.
-- **Share-link tokens were written to the access log in clear** on every public
-  request — the documented `?key=` incident one layer down, missed by
-  `error_handler`'s "log the path, never the full URL" mitigation because the
-  secret is not in the query. Redacted by a logging filter; existing links keep
-  working.
-- **`_MAX_TRACKED_KEYS` named a bound the code did not enforce** — the only
-  eviction was an age sweep, so a burst removed nothing. Measured: 10,000 keys
-  survived a "bound" of 4,096.
+- **Share-link tokens are redacted from the access log** by a logging filter;
+  existing links keep working.
+- **The rate limiter's tracked-key bound is now enforced**, not just declared —
+  the only eviction had been an age sweep.
 - The off-site backup warning now appears **where the destination is typed**,
   not only inside the archive it warns about, with `rclone crypt` setup in
-  OPERATIONS §4. `safeNext` normalizes backslashes; `hex_value` is validated at
-  the export sink; `FORWARDED_ALLOW_IPS` is a pinned CIDR instead of `*`.
+  OPERATIONS §4. Next-URL normalization handles backslashes; the export sink
+  validates hex values; `FORWARDED_ALLOW_IPS` is a pinned CIDR instead of `*`.
 
 ### Fixed — claims that were false
 
-- `CLAUDE.md` asserted a lazy-load hazard that does not exist (`Hat.case` is
-  `lazy="selectin"`), and its admin roster omitted two live routers.
+- A documented lazy-load hazard does not exist (`Hat.case` is `lazy="selectin"`),
+  and the admin router roster omitted two live routers.
 - A `# noqa — cycle` annotation in `melin_recap` marked a cycle that is not
-  there; `schemas/hat` imports nothing from `headroom`.
-- The NSEC bitmap claimed an AAAA record on IPv4-only hosts — a *negative*
-  answer naming a type we cannot serve, which tells a client to keep waiting.
-  `tests/test_mdns_nsec.py` stated that rule in a docstring one line above the
-  assertion pinning the violation.
+  there.
+- The NSEC bitmap claimed an AAAA record on IPv4-only hosts — a negative answer
+  naming a type we cannot serve, which tells a client to keep waiting.
 - `FALLBACK_RETENTION` was module-private on both sides and therefore outside
   the parity check; mutation testing showed swinging it 125% left the suite
   green.
@@ -808,8 +580,7 @@ and connects them to nothing.**
 ### Rejected after testing
 
 - Dropping the whole-name disjunct in the title ladder. Once a prefix equals the
-  hat's *full* model name the comparison really is "listings of this model" —
-  the category holding nothing else is a fact about the market, not a mislabel.
+  hat's *full* model name the comparison really is "listings of this model".
   Four tests pinned it and were right.
 - A second module global for the NSEC held-types. Written that way first, it
   leaked across tests within the hour; derived from `_ipv6` instead.
@@ -819,115 +590,79 @@ and connects them to nothing.**
 - `docker-compose.autoheal.yml` and `scripts/headroom-watchdog.sh`.
 - `X-Total-Count` on `GET /api/hats`, plus a warning when the cap is reached —
   a ceiling hit silently is a wrong number, not a short page.
-- `cryptography`, `starlette`, `numpy` and `pydantic` declared, which is the
-  argument `pyproject.toml` already made for `httpx` and did not apply.
+- `cryptography`, `starlette`, `numpy` and `pydantic` declared explicitly.
 
 ### Internal
 
 - The import worker confirms no item is still live before deleting a job's
   staging directory, rather than trusting a counter a boot recount rewrites.
 - `record_upload` fsyncs the file, renames it into place, then fsyncs the
-  directory — the order that makes the rename durable. (An earlier version of
-  this line said "before rename" for both; 2.77.0 corrected the code comment
-  and this corrects the entry.)
-- Backend 956 → **971**; frontend 239 → **243**. (Measured by checking out
-  the tags; the figures first written here, 962 and 240, were a guess.)
+  directory — the order that makes the rename durable.
+- Backend 956 → **971**; frontend 239 → **243**. (Measured by checking out the
+  tags; the figures first written here, 962 and 240, were a guess.)
 
 ## [2.75.3] — 2026-08-30
 
-A second, adversarial two-axis review of the same range (2.72.0 → 2.75.2), with
-both axes told to assume the code is wrong and to verify by running it rather
-than by reading it. Every finding below was confirmed by execution before it was
-acted on. Three of them are defects in 2.75.2 — the release that fixed the
-*first* review's findings — and two of those are in its tests.
+A second, adversarial review of the same range (2.72.0 → 2.75.2), with both
+axes told to assume the code is wrong and to verify by running it. Three of the
+findings are defects in 2.75.2 — the release that fixed the first review's
+findings — and two of those are in its tests.
 
 ### Fixed
 - **`is_real_product` leaked in the other direction, and the test could not see
-  it.** 2.75.2 fixed containment on the colorway half by pointing it
-  `catalog ⊆ hat`; that accepts a colorway carrying EXTRA words. Against a
-  catalog holding only `Odysea Rope Hydro - Camo`, the colorway
-  `Hawaii 808 Camo` validated as a real product — the exact string the leaked-
-  colorway repair produces, so the guard was blindest at the input it was
-  written for. `Rain Camo` and `Camo Camo` passed too. The sibling test passed
-  throughout because its fixture colorway is `Deep Dive`: at two tokens,
-  containment happens to fail. **Single-word colorways are the common case**
-  (Camo, Black, Navy, Bone) and every one of them validated anything containing
-  it. Not cosmetic — whatever survives is WRITTEN to the hat, and a stored
-  colorway is a **veto** in `_match_score`, so an invented one rules the hat out
-  of its own receipt: the feature made matching worse in precisely the way it
-  existed to fix. The colorway half is now token-set **equality**, which is what
-  the docstring already promised; the model half keeps its `hat ⊆ catalog`
+  it.** 2.75.2 pointed colorway containment `catalog ⊆ hat`, which accepts a
+  colorway carrying extra words — the exact string the repair it guards
+  produces. Single-word colorways are the common case, and every one of them
+  validated anything containing it. Whatever survives is written to the hat, and
+  a stored colorway vetoes in the purchase matcher, so an invented one ruled the
+  hat out of its own receipt. The colorway half is now token-set **equality**,
+  which the docstring already promised; the model half keeps its `hat ⊆ catalog`
   asymmetry, which the photo justifies. New test uses one-token fixtures.
-- **The scheduled sweep never claimed the full-sweep slot.** `claim_full_sweep`
-  was reachable only from the route, so during the nightly `_loop()` —  minutes
-  long, every cycle, unattended — `full_sweep_in_flight()` answered False and
-  both routes asserted a property the code did not have: `/repricing/run-all`
-  would start a **second** full pass (the one thing it promises to refuse) and
-  `/repricing/run` would skip its 409 and block on `_sweep_lock` for the whole
-  nightly run, which is the dead spinner and proxy timeout its own cap exists to
-  prevent. The guard was written for two presses of one button and never asked
-  what else takes the lock. Every full sweep claims now, scheduler included.
+- **The scheduled sweep never claimed the full-sweep slot**, so during the
+  nightly loop both re-pricing routes asserted a property the code did not have:
+  "Re-price all" would start a second full pass and "Re-price now" would skip
+  its 409 and block on the lock for the whole run. Every full sweep claims now,
+  scheduler included.
 - **The regression test named for the sweep race did not test the race.** It
-  asserted `started is True` for BOTH presses and `swept == 6` — that each press
-  swept the whole shelf, the opposite of the name on the door — and passed
-  identically with the old broken `progress.running` guard restored, because
-  httpx's ASGI transport awaits BackgroundTasks and the two requests were
-  therefore strictly sequential. The comment explaining that sat inside the test,
-  reading as justification rather than as the admission it was. Rewritten to
-  block **before** `progress.begin()`, the only window in which a sweep is
-  claimed and scheduled but not yet visible, and it now asserts it is in that
-  window before pressing again.
-- **`run-all` could disable itself permanently.** Starlette runs a BackgroundTask
-  only after the response body is sent; if that send fails, the task never runs,
-  nothing releases the claim, and both routes are dead for the life of the
-  process with no way back but a restart. Scheduled with `asyncio.create_task`
-  now, which the event loop runs regardless of the response. (The colorway
-  harvest can keep its BackgroundTask precisely because it claims nothing.)
+  asserted both presses swept the whole shelf — the opposite of the name on the
+  door — and passed identically with the old broken guard restored, because the
+  test transport made the two requests strictly sequential. Rewritten to block
+  in the only window in which a sweep is claimed but not yet visible, and it now
+  asserts it is in that window before pressing again.
+- **"Re-price all" could disable itself permanently.** Starlette runs a
+  background task only after the response body is sent; if that send fails the
+  task never runs, nothing releases the claim, and both routes are dead for the
+  life of the process. Scheduled with `asyncio.create_task` now, which the event
+  loop runs regardless of the response.
 - **The model-name backfill committed the destruction before writing its own
-  undo.** It is the one repair in the app that destroys information rather than
-  recomputing it, and a crash between the two commits — or a failure in the
-  second — left the truncated names durable with no record of what they had
-  been. Record and mutation now land in one transaction. The docstring also
-  stopped implying the undo is permanent: activity rows prune at
-  `HEADROOM_ACTIVITY_LOG_RETENTION_DAYS` (default 90).
+  undo.** It is the one repair that destroys information rather than recomputing
+  it, so a crash between the two commits left truncated names durable with no
+  record of what they had been. Record and mutation now land in one transaction,
+  and the docstring stops implying the undo is permanent — activity rows prune
+  at `HEADROOM_ACTIVITY_LOG_RETENTION_DAYS` (default 90).
 - **The backfill logged sizes as colorways.** The splitter also takes
-  parentheses, and those hold `(Small)`, `(S/M)`, `(Classic)` and `(2-Pack)` as
-  often as artwork. Stripping them from `model_name` is right either way — a
-  size in the name breaks token containment against the receipt — but the audit
-  field is now `dropped`, not `colorway_dropped`, because only the catalog check
-  decides whether a string is a colorway and it runs later.
-- **13 British spellings**, six of them inside the `SYSTEM_PROMPT` and tool
-  schema sent to Claude (`colour`, `colours`, `recognise`), plus `tunnelling` in
-  the backup setup steps and `catalogue` in a test. `CLAUDE.md` requires American
-  spelling in code, docs, UI and prose.
-- **`CLAUDE.md` asserted a hazard that does not exist.** It said `display_id`
-  walks `hat.case` on rows loaded without `selectinload` and so fires a lazy load
-  mid-sweep. `Hat.case` is declared `lazy="selectin"`, so `display_id` resolves
-  on a plain `select(Hat)` — verified by execution. The new `shared_price_audit`
-  comment already said the opposite; the doc was the stale one.
+  parentheses, which hold `(Small)`, `(S/M)`, `(Classic)` and `(2-Pack)` as
+  often as artwork. Stripping them is right either way; the audit field is now
+  `dropped`, not `colorway_dropped`.
+- **13 British spellings**, six of them inside the system prompt and tool schema
+  sent to Claude, plus one in the backup setup steps and one in a test.
+- **A documented hazard that does not exist.** `Hat.case` is declared
+  `lazy="selectin"`, so `display_id` resolves on a plain `select(Hat)` —
+  verified by execution.
 
 ### Removed
 - `UnclaimedFromPurchases.hat_ids` — shipped over the wire with no reader
   anywhere in the frontend. The two tests that consumed it now assert the
-  stronger thing: they run the fill and check which hat actually changed, rather
-  than reading an id list back out of the query that produced the count.
+  stronger thing: they run the fill and check which hat actually changed.
 
 ### Internal
-- `tests/test_repricing.py` gained an autouse fixture that releases the claim and
-  drains in-flight sweeps. With `create_task` a sweep can outlive its test, and
-  `setup_db` drops every table on teardown — a detached coroutine querying a
-  dropped schema would fail into `record_failure`, be swallowed, and surface
-  later as an unrelated flake.
-- **Sweeps are awaited, not polled for.** The first version of that drain span
-  `await asyncio.sleep(0)` until `full_sweep_in_flight()` went false, which is
-  not a wait: it yields to the event loop and runs what is already ready, but it
-  does not wait for I/O, and a sweep sitting on an aiosqlite worker thread is
-  exactly that. It burned its whole iteration budget in microseconds and
-  reported the sweep unfinished — passing on a fast local machine three times in
-  a row and failing in CI, the signature of a timing assumption rather than a
-  wait. `create_task` hands back the task, so there is nothing to poll: `_drain_sweeps`
-  awaits it, bounded, so a genuinely wedged sweep fails with a timeout instead of
-  hanging until the job is killed.
+- `tests/test_repricing.py` gained an autouse fixture that releases the claim
+  and drains in-flight sweeps, so a detached sweep cannot outlive its test and
+  surface later as an unrelated flake.
+- **Sweeps are awaited, not polled for.** The first version of that drain
+  yielded to the event loop rather than waiting for I/O, so it reported the
+  sweep unfinished — passing locally and failing in CI. `create_task` hands back
+  the task, so `_drain_sweeps` awaits it, bounded.
 - Backend 953 → **956**; frontend 239.
 
 ## [2.75.2] — 2026-08-30
@@ -937,54 +672,43 @@ Two-axis code review of 2.72.1 → 2.75.1.
 ### Fixed
 - **`is_real_product` was inverted, and it is the guard the whole
   colorway-writing feature rests on.** It required token containment in *both*
-  halves, which meant any **shorter** colorway validated: against a catalog
-  holding only `Trenches Icon Hydro - Rain Camo`, the colorways `Camo` and
-  `Rain` both passed as real products. It rejected the specific readings it
-  existed to keep and accepted the vague ones it existed to stop.
+  halves, which meant any **shorter** colorway validated — so it rejected the
+  specific readings it existed to keep and accepted the vague ones it existed to
+  stop.
 
   The two halves need **opposite** asymmetries. A `model_name` comes from a
-  photo, which cannot show the sub-line, so hat ⊆ catalog (as `_model_tier`
-  already does). A colorway is *read off the hat*, so a correct reading is at
-  least as specific as the catalog's name — catalog ⊆ hat.
+  photo, which cannot show the sub-line, so hat ⊆ catalog. A colorway is *read
+  off the hat*, so a correct reading is at least as specific as the catalog's
+  name — catalog ⊆ hat.
 
-- **"Re-price all" could start twice.** The guard read `progress.running`, but
-  `progress.begin()` fires inside `reprice_once` *after* the sweep lock is
-  taken, and a BackgroundTask does not start until the response has been sent.
-  Two quick presses both read `False`, both returned `started: true`, and both
-  ran a full uncapped pass — serialized by the lock into twice the work, which
-  is exactly what the guard promised to refuse. The slot is now claimed
-  **synchronously in the handler** (`claim_full_sweep()`; no `await` between
-  check and set, so it is atomic on the event loop) and released in a
-  `finally`. The old test pre-called `progress.begin()`, the one arrangement
-  that could not fail; it now drives the real endpoint.
+- **"Re-price all" could start twice.** The guard read a flag set inside the
+  sweep, after the lock was taken, and a background task does not start until
+  the response has been sent — so two quick presses both started a full
+  uncapped pass, serialized by the lock into twice the work. The slot is now
+  claimed synchronously in the handler and released in a `finally`. The old test
+  pre-called the flag setter, the one arrangement that could not fail; it now
+  drives the real endpoint.
 
 - **`POST /api/admin/repricing/run` now 409s during a full sweep** instead of
-  blocking on `_sweep_lock` for minutes — the multi-minute request, dead
-  spinner and proxy timeout that route's own cap exists to prevent. The card
-  already disabled the button; a direct call could still walk into it.
+  blocking on the lock for minutes — the multi-minute request, dead spinner and
+  proxy timeout that route's own cap exists to prevent.
 
 - **The "unclaimed colorways" offer went stale after the button that consumes
-  it.** `PurchasesCard`'s import / re-run matching / unlink-all invalidated
-  only `['admin','purchases']`, so the offer went on advertising "Fill 17 from
-  purchase history" immediately after matching had claimed them. New
-  `invalidatePurchaseDerived()` helper covers both sibling keys from all three
-  call sites.
+  it.** Import, re-run matching and unlink-all invalidated only one of two
+  sibling keys, so the offer went on advertising work that had just been done. A
+  new `invalidatePurchaseDerived()` helper covers both from all three call
+  sites.
 
-- **The model-name backfill destroyed information silently.** It is the one
-  repair here that cannot be re-derived — `"Trenches (Curl Surf)" → "Trenches"`
-  discards the only record that the drop was a Curl Surf — and it runs once,
-  unattended, with no dry run. It now writes every change to the activity log
-  with the original name and the dropped half, so the log **is** the undo.
+- **The model-name backfill destroyed information silently.** It runs once,
+  unattended, with no dry run, and its change cannot be re-derived. It now
+  writes every change to the activity log with the original name and the dropped
+  half, so the log **is** the undo.
 
 ### Changed
 - `_apply_analysis` no longer writes back into its `analysis` argument. It
-  returns the leaked colorway, which the caller passes on explicitly — the
-  previous arrangement coupled two functions through a mutated parameter that
-  neither signature admitted to, and swapping the two calls would have silently
-  dropped the value.
+  returns the leaked colorway, which the caller passes on explicitly.
 - The `unclaimed` query carries a `staleTime`: answering it runs the whole
-  matcher (a full bipartite assignment), so it is not a free read to repeat on
-  every mount.
+  matcher, so it is not a free read to repeat on every mount.
 - `MAX_UNREMARKABLE`'s comment said "one or two hats sharing a number is
   ordinary" while the code treats three as ordinary too.
 
@@ -993,20 +717,17 @@ Two-axis code review of 2.72.1 → 2.75.1.
 ### Changed
 - **The LAN Discovery card now looks like it was designed rather than
   accumulated.** It reads as three facts — a state, the name devices resolve,
-  and the addresses behind it — and was being forced through `hr-metric`, which
-  has **two** slots. So the state and the IPv4 were fused into a single label
-  (`Advertising → 10.0.111.4`), and the IPv6, added later with dual-stack
-  advertising, was bolted underneath at a different size and color. Two
-  addresses of the same kind ended up reading as two unrelated things.
+  and the addresses behind it — and was being forced through a two-slot metric
+  component, which fused the state and the IPv4 into a single label and bolted
+  the IPv6 underneath at a different size and color.
 
   Now: a state line with a live dot (green and glowing only when actually
-  advertising, so the color carries the state and not just the words), the
-  URL as the one thing you click, and IPv4/IPv6 as an aligned pair below a
-  divider — same family, same size, labels in one column so the values share an
-  edge. A missing IPv6 still occupies its row, italic and muted, because its
+  advertising, so the color carries the state and not just the words), the URL
+  as the one thing you click, and IPv4/IPv6 as an aligned pair below a divider.
+  A missing IPv6 still occupies its row, italic and muted, because its
   **absence is the diagnosis**: with no IPv6 record every lookup of the name
   stalls for the client's full resolver timeout, which reads as a slow or dead
-  site rather than a missing record. Omitting the row would hide exactly that.
+  site rather than a missing record.
 
   The card had no tests; it has four now.
 
@@ -1015,36 +736,29 @@ Two-axis code review of 2.72.1 → 2.75.1.
 ### Added
 - **"Re-price all" — the whole shelf, in the background.**
 
-  `POST /api/admin/repricing/run` is bounded to `MANUAL_SWEEP_LIMIT`, and that
-  bound is right for it: it runs inline because the caller wants the number
-  back, and uncapped it is a multi-minute request against somebody else's
-  public API — a dead spinner on a phone, then a proxy timeout, after which the
-  result is discarded and nothing is recorded.
+  `POST /api/admin/repricing/run` is bounded, and that bound is right for it: it
+  runs inline because the caller wants the number back, and uncapped it is a
+  multi-minute request against somebody else's public API — a dead spinner on a
+  phone, then a proxy timeout, after which the result is discarded.
 
   The mistake was that blocking was the **only** option, so re-pricing the
   collection meant pressing a button repeatedly or waiting up to 24 hours for
-  the scheduler. Same shape as the gap `catalog_service.unclaimed_from_purchases`
-  documents: a useful operation reachable only from inside a bigger one.
+  the scheduler.
 
   `POST /api/admin/repricing/run-all` answers **202** and sweeps uncapped in the
-  background, exactly like the colorway harvest. Progress was already
-  observable — `repricing.progress` is published on `GET /api/admin/repricing`
-  and drawn by `SweepProgressBar` — so the card needed no new machinery.
+  background, exactly like the colorway harvest. Progress was already observable
+  and drawn by the shared progress bar, so the card needed no new machinery.
 
-  * It **refuses to start a second sweep** while one is in flight. `_sweep_lock`
-    would serialize them safely, but queueing a second full pass behind the
-    first is never what the press meant, and the card would show one progress
-    bar for two runs. `started` and `already_running` are separate booleans
-    because "not started" has two meanings and only one is a problem.
+  * It **refuses to start a second sweep** while one is in flight. `started` and
+    `already_running` are separate booleans because "not started" has two
+    meanings and only one is a problem.
   * A failure is **recorded, not swallowed** — nobody is watching a background
-    sweep, so a failure that vanished with the run could never be read.
-  * `record_success(..., scheduled=False)`: a button press proves the code
-    works, not that the background loop is alive, so a manual full sweep must
-    not clear a standing failure.
+    sweep.
+  * A manual full sweep does not clear a standing scheduler failure: a button
+    press proves the code works, not that the background loop is alive.
   * The card invalidates hat views on the **true → false edge** of `running`,
     not in the mutation's `onSuccess` — a 202 arrives long before any price
-    changes. That edge is also reached when the *scheduled* sweep finishes,
-    so the collection refreshes either way.
+    changes, and that edge is also reached when the scheduled sweep finishes.
 
 ## [2.74.1] — 2026-08-30
 
@@ -1054,21 +768,17 @@ Two-axis code review of 2.72.1 → 2.75.1.
 
   Step 1 correctly said DSM exposes your **shared folders** as modules and told
   you to discover the real list. The steps below it then insisted `NetBackup`
-  was the thing to enable, and closed by claiming the double colon is "what
-  selects the network backup service rather than SSH".
+  was the thing to enable, and closed by claiming the double colon selects the
+  network backup service rather than SSH.
 
   Both are wrong. Confirmed against a real NAS: any shared folder the daemon
   lists works as a module, and `NetBackup` is simply one *more* module that the
-  "Enable network backup service" checkbox adds — an option, not a
-  requirement. The double colon is about **transport**: it makes rsync talk to
-  the daemon on port 873 instead of tunneling over SSH, and makes the first
-  segment a module name rather than a directory. It has nothing to do with any
-  DSM feature.
+  "Enable network backup service" checkbox adds. The double colon is about
+  **transport**: it makes rsync talk to the daemon on port 873 instead of
+  tunneling over SSH, and makes the first segment a module name.
 
   The example destination no longer names `NetBackup` either — the example is
-  the part people copy, so leaving it there would reinstate the demand whatever
-  the prose around it said. `docs/OPERATIONS.md` carried the same framing and
-  is corrected to match.
+  the part people copy. `docs/OPERATIONS.md` is corrected to match.
 
 ## [2.74.0] — 2026-08-30
 
@@ -1078,52 +788,46 @@ Two-axis code review of 2.72.1 → 2.75.1.
 
   melin names its goods `<Model> - <Colorway>`. The Claude tool schema carried
   `model_name` and **no `colorway` field**, so a colorway plainly readable off
-  the hat (embroidered, printed, on the woven label) was appended to
-  `model_name`: `Trenches Hydro — Hawaii 808 Camo`, `Odysea Rope Hydro
-  (WATERCOLOR)`, `Trenches Hydro (GoPro)`.
+  the hat was appended to `model_name`: `Trenches Hydro — Hawaii 808 Camo`,
+  `Odysea Rope Hydro (WATERCOLOR)`.
 
-  That field is the gate for **both** purchase matching (every hat token must
-  appear in the receipt) and product pricing (every model token must appear in
-  the product). One foreign word — `camo`, `808`, `watercolor` — makes a hat
-  unmatchable against its own receipt and unpriceable against its own product.
-  This is the root of the "bad matching": the matcher is provably optimal under
-  its gate, and the gate was being fed corrupted input.
+  That field is the gate for **both** purchase matching and product pricing. One
+  foreign word — `camo`, `808`, `watercolor` — makes a hat unmatchable against
+  its own receipt and unpriceable against its own product. This is the root of
+  the "bad matching": the matcher is provably optimal under its gate, and the
+  gate was being fed corrupted input.
 
-  Measured against the 568 real products harvested from melinrecap: **89 of
+  Measured against the 568 real products harvested from the marketplace: **89 of
   235** stored model names matched no melin product at all, and 35 carried a
   literal separator.
 
   Four parts to the fix:
   * `colorway` is now a **required** field on the tool schema (null is a valid
-    answer), described as the colorway half of melin's naming, to be READ off
+    answer), described as the colorway half of melin's naming, to be read off
     the hat and never inferred from its colors.
-  * The system prompt states the `<Model> - <Colorway>` convention and forbids
-    a dash, em-dash or parentheses in `model_name`.
-  * A stored name is split on an explicit separator. **Only a spaced
-    separator counts** — `A-Game` is a melin line and the most common one in
-    the collection, so a naive split on `-` would break every A-Game hat and
-    make things worse than the bug.
-  * A one-time repair runs from lifespan behind `model_names_split_v1`, for
-    the same reason `retail_pricing.backfill_retail_prices` exists: fixing the
-    schema alone would leave a hat's name depending on *when* it was analyzed.
-    Splitting alone takes usable names from **146 to 174 of 235**, with no API
-    call.
+  * The system prompt states the `<Model> - <Colorway>` convention and forbids a
+    dash, em-dash or parentheses in `model_name`.
+  * A stored name is split on an explicit separator. **Only a spaced separator
+    counts** — `A-Game` is a melin line and the most common one in the
+    collection, so a naive split on `-` would break every A-Game hat.
+  * A one-time repair runs from lifespan behind `model_names_split_v1`, since
+    fixing the schema alone would leave a hat's name depending on *when* it was
+    analyzed. Splitting alone takes usable names from **146 to 174 of 235**,
+    with no API call.
 
 ### Added
 - **An analyzer-read colorway is validated before it is believed.**
   `catalog_service.is_real_product()` checks `<model> - <colorway>` against the
-  harvested catalog, so a colorway that survives names a good melin actually
-  sells. Deliberately **not** done by handing Claude a candidate list — a menu
-  invites a forced choice and a wrong pick is indistinguishable from a right
-  one, where a validator applied afterwards can only ever reject. A colorway
-  already on the hat is never overwritten: that came from a matched receipt or
-  from the owner, and both outrank a photo.
+  harvested catalog. Deliberately **not** done by handing Claude a candidate
+  list — a menu invites a forced choice and a wrong pick is indistinguishable
+  from a right one, where a validator applied afterwards can only ever reject. A
+  colorway already on the hat is never overwritten: that came from a matched
+  receipt or from the owner, and both outrank a photo.
 
   The leaked halves recovered from existing names are deliberately **dropped
   rather than stored** — measured against the live catalog, none of them
-  validate. They are collab and limited-run drops ("Hawaii 808 Camo", "Maui
-  Strong") that no longer appear on the resale market, and storing them would
-  trust a string exactly where there is no evidence for it.
+  validate. They are collab and limited-run drops that no longer appear on the
+  resale market.
 
 ## [2.73.0] — 2026-08-30
 
@@ -1133,28 +837,21 @@ Two-axis code review of 2.72.1 → 2.75.1.
   purchase prices** were already in the database, in orders imported weeks ago,
   waiting on a match that nothing was ever going to run.
 
-  Purchase→hat matching happens at the end of an **import** and nowhere else.
-  So every improvement to the matcher, and every re-analysis that finally gives
-  a hat the `model_name` that would have paired it, creates matchable pairs
-  that nothing looks at again unless somebody happens to press "Re-run
-  matching" in the Purchases card — with no indication it would do anything.
-  This is the same shape as the bug `repricing` was written to fix: a useful
-  operation reachable only from inside a bigger one, so it stops happening the
-  moment nobody runs the bigger one.
+  Purchase→hat matching happens at the end of an **import** and nowhere else. So
+  every improvement to the matcher, and every re-analysis that finally gives a
+  hat the `model_name` that would have paired it, creates matchable pairs that
+  nothing looks at again.
 
-  `GET /api/admin/purchases/unclaimed` reports what a re-run would fill, and
-  the shared-price card offers it. Derived from
-  `match_purchases_to_hats(dry_run=True)` rather than restating its rule — a
-  second implementation of "what would matching do" is a second thing to keep
-  in step, and the one that drifts is the one making the offer. Ambiguous
-  matches are counted and stated rather than hidden.
+  `GET /api/admin/purchases/unclaimed` reports what a re-run would fill, and the
+  shared-price card offers it — derived from the matcher's own dry run rather
+  than restating its rule. Ambiguous matches are counted and stated rather than
+  hidden.
 
 ### Fixed
 - **The shared-price card claimed a colorway was the one thing only the owner
   could supply.** That was false for 17 of the 82 colorway-less hats: the app
   already held the answer in its own purchase table. The card now offers those
-  first and asks for the rest — which remain genuinely owner-only, since color
-  inference measured 12% precision and most have no candidate product at all.
+  first and asks for the rest.
 
 ## [2.72.1] — 2026-08-29
 
@@ -1164,41 +861,32 @@ mislabeling bug, from different directions.
 ### Fixed
 - **The shared-price report could hide the very cluster it exists to reveal.**
   It grouped on the source sentence verbatim, and that sentence quotes how many
-  listings were live at the moment each hat was priced — "median of **18** live
-  … listings". Re-pricing is sequential, paced a second apart, oldest-first and
-  resumable, so hats priced against one line off one median routinely carry
-  different counts. One cluster therefore split into fragments that each fell
-  under the "more than three hats" threshold and disappeared, leaving a
-  collection of identical prices looking healthy. Grouping now runs on a
-  cleaned key that neutralizes that one integer, and the sentence is still
-  displayed verbatim — the same shape as `analysis_job_service._reason_key`.
-  Deliberately narrow: the size and condition qualifiers are stable facts about
-  the hat and mark genuinely different comparisons, so they still separate.
+  listings were live at the moment each hat was priced. Re-pricing is
+  sequential, paced and resumable, so hats priced against one line routinely
+  carry different counts — and one cluster therefore split into fragments that
+  each fell under the threshold and disappeared. Grouping now runs on a cleaned
+  key that neutralizes that one integer, and the sentence is still displayed
+  verbatim. Deliberately narrow: the size and condition qualifiers mark
+  genuinely different comparisons, so they still separate.
 - **A link in the report could point at the wrong hat.** Ids and shelf labels
   were two parallel arrays, and a hat with no case contributed an id but no
-  label — the normal state for a room-stored or freshly-added hat. Every later
-  label slid up one, so a row read as hat B's shelf id while linking to hat A.
-  Each hat now carries its own label on one object, so the two cannot drift.
-  It was invisible in tests because every fixture hat was caseless, leaving the
-  label array empty and the two trivially "aligned"; there is now a test with
-  both kinds in one group.
+  label, so every later label slid up one. Each hat now carries its own label on
+  one object. It was invisible in tests because every fixture hat was caseless;
+  there is now a test with both kinds in one group.
 - **The report went stale after the two mutations that change it.** Re-pricing
-  rewrites the exact (price, source) pairs it groups on, and releasing a
-  `manual` price makes those hats newly eligible for it — neither invalidated
-  `['admin','shared-prices']`, a sibling key not covered by the ones they did.
+  and releasing a manual price both make hats newly eligible for it, and neither
+  invalidated the report's sibling query key.
 
 ### Changed
 - **The missing-colorway hats are now reachable, not just counted.** They sort
-  to the front of each group, so the truncated sample names the rows worth
-  opening, and they link to the hat's **edit form** — where a colorway is
-  actually entered — rather than to its read-only page. Naming the fix without
-  offering it was half an answer.
+  to the front of each group, and they link to the hat's **edit form** — where a
+  colorway is actually entered — rather than to its read-only page.
 - `SHARED_THRESHOLD = 3` compared with `>` read as "three or more" and meant
   four or more; it is now `MAX_UNREMARKABLE`, named for what it bounds.
 - The service dataclass is `PriceCluster`, no longer a second, differently
-  shaped `SharedPriceGroup` beside the pydantic schema of that name.
-- The `/prices/shared` handler maps through `_shared_row()` beside the existing
-  `_row()`, instead of inlining the field list.
+  shaped type beside the schema of that name.
+- The `/prices/shared` handler maps through a row helper instead of inlining the
+  field list.
 
 ## [2.72.0] — 2026-08-29
 
@@ -1211,35 +899,29 @@ mislabeling bug, from different directions.
   said so**: each hat's page shows its own figure with its own source sentence,
   and only a query across the whole collection reveals that 54 of them share
   one. The card groups active hats by the price and source they carry, biggest
-  group first, and names how many of each group are missing a colorway — which
-  is the actionable half.
+  group first, and names how many of each group are missing a colorway.
 
-  **Measured, and why this is a report rather than a fix.**
-  2.71.0 made pricing prefer melin's own product, which splits a line into its
-  real goods — but only for hats whose product can be identified. Four ways to
-  identify the rest were tried and measured against the real collection:
+  **Measured, and why this is a report rather than a fix.** 2.71.0 made pricing
+  prefer melin's own product, which splits a line into its real goods — but only
+  for hats whose product can be identified. Four ways to identify the rest were
+  tried and measured against the real collection:
 
   * **Purchase history.** 152 of 153 existing colorways came from a matched
     purchase, but **59 of the 82** colorway-less hats have no eligible purchase
     at all.
-  * **The marketplace product list.** **47 of 76** have *no candidate product*
-    — their model is not currently listed on melinrecap, so there is nothing to
-    pick even by hand.
+  * **The marketplace product list.** **47 of 76** have *no candidate product* —
+    their model is not currently listed, so there is nothing to pick even by
+    hand.
   * **Inferring a colorway from the photo's extracted colors.** Validated
-    against the 153 hats whose colorway is known: **12% precision** (4 right,
-    28 wrong), 56% ambiguous. Guessing would confidently price 28 hats off
-    somebody else's product — strictly worse than leaving it blank.
-  * Which leaves the owner, who owns the hats. Entering a colorway on the Edit
-    Hat form already lets that hat be priced against its own product.
+    against the 153 hats whose colorway is known: **12% precision** (4 right, 28
+    wrong), 56% ambiguous. Guessing would confidently price 28 hats off somebody
+    else's product — strictly worse than leaving it blank.
+  * Which leaves the owner. Entering a colorway on the Edit Hat form already
+    lets that hat be priced against its own product.
 
-  So for a large minority a line median is genuinely the best available signal,
-  and the honest move is to say which numbers those are rather than invent
-  precision they do not have.
-
-  `manual` prices are excluded — a number the owner typed is theirs, and five
-  hats priced the same by hand are not a measurement error. Grouping is on
-  (price, source) together: two lines that happen to sit at the same median are
-  two facts, not one.
+  `manual` prices are excluded — a number the owner typed is theirs. Grouping is
+  on (price, source) together: two lines that happen to sit at the same median
+  are two facts, not one.
 
 ## [2.71.1] — 2026-08-29
 
@@ -1251,40 +933,36 @@ actively worse.
 - **The construction veto was inverted: it rejected a hat from its OWN
   product.** `Denim`, `Canvas`, `Suede`, `Linen` and `Corduroy` are
   constructions *and* common colorway words, and melin names products
-  `<Model> - <Colorway>`. Reading the whole string made `Trenches Icon Hydro -
-  Denim` look like a Denim product, so a HYDRO hat was vetoed from its own item
-  and fell back to the line median — meaning a **correctly recorded
-  construction made pricing worse than leaving it blank**. Only the model half
-  is read now, and the veto fires on contradiction rather than on absence.
-  CLAUDE.md already documented this exact `denim`-in-the-colorway-half trap for
-  `catalog_service`; the new code walked into it anyway.
+  `<Model> - <Colorway>` — so reading the whole string made a HYDRO hat look
+  like a Denim product and vetoed it from its own item, meaning a **correctly
+  recorded construction made pricing worse than leaving it blank**. Only the
+  model half is read now, and the veto fires on contradiction rather than on
+  absence.
 
 - **A canceled sweep reported itself as running forever.** 2.71.0 replaced
   `try/finally` with `try/except Exception`, and `CancelledError` is a
-  `BaseException`. "Re-price now" is a ~50s blocking POST, so a phone
-  disconnecting mid-sweep left `progress.running` true permanently with the
-  card polling a phantom sweep every 2s — the precise false signal the record
-  exists to remove, reintroduced by the release that added it.
+  `BaseException`. "Re-price now" is a long blocking POST, so a phone
+  disconnecting mid-sweep left the progress record permanently in flight with
+  the card polling a phantom sweep.
 
 - The source sentence named products that had not priced the hat: the product
-  set was computed *before* the condition/size narrowing, so a hat priced by
-  one listing could be labeled with three, including a Thermal.
+  set was computed *before* the condition/size narrowing.
 
 ### Changed
 - Removed `Listing.color`. It was captured, documented as "the important
-  addition", and read by nothing — the product name already ends in the
-  colorway on 990 of 995 listings.
+  addition", and read by nothing — the product name already ends in the colorway
+  on 990 of 995 listings.
 - Finished the `Listing` NamedTuple refactor; the ladder still indexed it
-  positionally (`f[0]`, `f[1]`, `f[2]`, `f[3]`).
+  positionally.
 
 ### Corrected
 - **2.71.0's release note overstated its own result.** It said "from 5 distinct
-  prices covering 168 of 235 hats to 33", which compares a coverage count with
-  a cardinality. Measured properly over the whole collection, the top five
-  prices covered **168 hats before and 135 after** — a real improvement, and a
-  smaller one than the note implied. The largest cluster, **54 hats at
-  $85.00, is unchanged**: those hats have no colorway recorded, so there is no
-  product to identify. Only 48 of 235 hats reach the product matcher at all.
+  prices covering 168 of 235 hats to 33", which compares a coverage count with a
+  cardinality. Measured properly over the whole collection, the top five prices
+  covered **168 hats before and 135 after** — a real improvement, and a smaller
+  one than the note implied. The largest cluster, **54 hats at $85.00, is
+  unchanged**: those hats have no colorway recorded, so there is no product to
+  identify. Only 48 of 235 hats reach the product matcher at all.
 
 ## [2.71.0] — 2026-08-29
 
@@ -1292,21 +970,19 @@ actively worse.
 - **Hats are priced against melin's own PRODUCT now, not the line they belong
   to.** 2.69.0 fixed the sample and the labeling but not the symptom: measured
   across the real collection afterwards, **168 of 235 hats still shared just
-  five prices** — 76 at $85.00, 34 at $79.00, 21 at $82.50. The scope read
-  `model`, but `Trenches Hydro` matches 76 different hats.
+  five prices**. The scope read `model`, but `Trenches Hydro` matches 76
+  different hats.
 
   The cause was that pricing token-matched the freeform listing `title` and
   ignored the structured product identity every listing already carries.
   Measured on the live marketplace: **986 of 986 listings publish
-  `shopifyProductName`** ("Trenches Icon Hydro - Prismatic") and
-  `selectedVariantOptions.color`, across **510 distinct products**.
+  `shopifyProductName`** and a structured variant color, across **510 distinct
+  products**.
 
-  melin names a product `<Model> - <Colorway>`, which is exactly the two
-  columns a hat already carries. Matching those first gives a hat the price of
-  *its own item*. On the real collection this takes the collection from 5
-  distinct prices for 168 hats to **33 distinct prices**, and moves 46 of them
-  — `Trenches Icon Hydro - Faded Black` to $67.50, `- Prismatic` to $99.50,
-  `- Black Camo` to $50.00, where all four previously read $85.00 or $82.50.
+  melin names a product `<Model> - <Colorway>`, which is exactly the two columns
+  a hat already carries. Matching those first gives a hat the price of *its own
+  item*: on the real collection this takes 5 distinct prices to **33**, and
+  moves 46 hats off the shared numbers.
 
   **A colorway is required.** Without one there is no product to identify, only
   a line — and calling that a product match is how "Odysea Hydro" came to match
@@ -1314,23 +990,21 @@ actively worse.
   likewise treated as a line, not an item.
 
   **No minimum sample for a product match.** On a fixed-price marketplace one
-  live listing of *this* product is a better answer than the median of a line
-  it merely belongs to, and `count` is published so a thin sample is visible
-  rather than disguised.
+  live listing of *this* product is a better answer than the median of a line it
+  merely belongs to, and `count` is published so a thin sample is visible rather
+  than disguised.
 
-  **A stated construction vetoes a rival product** — the same veto
-  `catalog_service._match_score` already applies, because melin sells
+  **A stated construction vetoes a rival product**, because melin sells
   `Trenches Icon Hydro` and `Trenches Icon Thermal` as different goods at
-  different prices. Without it a HYDRO hat matched a Thermal and moved $82.50
-  to $65.00 on one listing of the wrong item. A *blank* construction vetoes
-  nothing: it means nobody has looked, which rules nothing out.
+  different prices. A *blank* construction vetoes nothing: it means nobody has
+  looked.
 
   Sold history is not available — the API ignores `states=closed` and returns
   the same open listings — so live asks remain the only signal.
 
 ### Changed
-- `_listing_facts` returns a `Listing` NamedTuple rather than a bare 4-tuple.
-  It grew to six fields and every call site indexed it positionally.
+- `_listing_facts` returns a `Listing` NamedTuple rather than a bare 4-tuple. It
+  had grown to six fields and every call site indexed it positionally.
 
 ## [2.70.1] — 2026-08-29
 
@@ -1340,31 +1014,24 @@ prevent.
 
 ### Fixed
 - **A failed sweep could not report that it had failed.** `SweepProgress.error`
-  was never set by anything: both call sites were a bare
-  `finally: progress.finish()`, so a crashed re-pricing sweep or colorway
-  harvest reported `running: false, error: null` — byte-identical to a clean
-  one. The card's "Last run failed" branch was unreachable, and two frontend
-  tests passed by mocking a state the server could not emit. The harvest case
-  was the worse one: it runs behind a 202 with nobody watching, so a 429 from
-  the marketplace rendered as an idle card — precisely the "dead button" state
-  the feature exists to remove.
+  was never set by anything, so a crashed re-pricing sweep or colorway harvest
+  reported clean. The card's "Last run failed" branch was unreachable, and two
+  frontend tests passed by mocking a state the server could not emit. The
+  harvest case was the worse one: it runs behind a 202 with nobody watching, so
+  a marketplace rejection rendered as an idle card.
 
 - **"Re-price now" showed no progress bar at all.** The poll only started once
-  `running` was already true, but `reprice_once` does not call
-  `progress.begin()` until it has taken the sweep lock and run its query — so
-  the status fetch issued on click answered `running: false`, polling stopped,
-  and the bar never appeared for the entire blocking run. It now uses the same
-  grace window the colorway card already had, and a test drives the real
-  click → bar sequence rather than seeding `running: true`.
+  `running` was already true, but that flag is not set until the sweep has taken
+  its lock and run its query — so the status fetch issued on click answered
+  `running: false` and polling stopped. It now uses the same grace window the
+  colorway card already had, and a test drives the real click → bar sequence.
 
-- `['admin','analysis-job', id]` was not invalidated after a retry, so a run
-  log left open described a set the retry had just re-tagged. Sibling key —
-  the same class the diff's own comment fixed for the failures list.
+- `['admin','analysis-job', id]` was not invalidated after a retry, so a run log
+  left open described a set the retry had just re-tagged.
 
 ### Changed
 - The `SweepProgress` fixture is now shared from `src/test/fixtures.ts`. Two
-  byte-identical copies had appeared in two card tests, which is exactly what
-  that module exists to prevent.
+  byte-identical copies had appeared in two card tests.
 - Dropped `SweepProgress.name` and the `new()` helper that existed only to set
   it — the field appeared in neither the API payload nor any log.
 
@@ -1377,9 +1044,7 @@ prevent.
 
   The harvest was the worse of the two: it answers **202** and runs as a
   background task, so its only trace was a log line. From the Settings page a
-  working harvest and a button that did nothing looked identical — the card
-  could only offer *"reload in a minute or two"*, which is what having no
-  progress forces you to write.
+  working harvest and a button that did nothing looked identical.
 
   Both now report a live bar with counts **and what they are working on right
   now** — the hat being re-priced, the category being harvested. A count says
@@ -1387,101 +1052,85 @@ prevent.
 
   Also visible for the first time: the **scheduled** re-pricing sweep, which
   starts at boot and runs for minutes. The fields beside it describe the last
-  run that *finished*, so until now a sweep in flight was indistinguishable
-  from nothing happening.
+  run that *finished*, so until now a sweep in flight was indistinguishable from
+  nothing happening.
 
-  One `SweepProgress` type serves both, rather than two counters that drift.
-  The analysis queue is deliberately not folded in: its progress is derived
-  from `hats.analysis_job_id` and survives a restart, because that worker's
-  work outlives the request. These two sweeps run inside the process and die
-  with it, so they are process-local — the same reasoning `RepricingHealth`
-  documents.
+  One `SweepProgress` type serves both, rather than two counters that drift. The
+  analysis queue is deliberately not folded in: its progress is derived from a
+  hat column and survives a restart, because that worker's work outlives the
+  request. These two sweeps run inside the process and die with it, so they are
+  process-local.
 
   `pct` is computed server-side so the two cards cannot disagree about how it
-  rounds, `done` is capped at `total` (a bar reading 241/235 reads as a bug in
-  the thing being measured), and an error **outlives** `running` going false —
-  nobody is watching at the moment a background sweep fails, so a failure that
-  vanished with the run could never be read at all.
+  rounds, `done` is capped at `total`, and an error **outlives** `running` going
+  false — nobody is watching at the moment a background sweep fails.
 
-  Each sweep wraps its body in `try/finally`, because one that raises and
-  leaves `running` true reads as permanently in flight — the exact false
-  signal the record exists to remove.
+  Each sweep wraps its body in `try/finally`, because one that raises and leaves
+  `running` true reads as permanently in flight.
 
 ### Fixed
-- `RepricingCard`'s test fixture was cast with `as RepricingStatus`, so adding
-  a required field to that type left the fixture silently incomplete with
-  typecheck still green — the one failure the fixture exists to prevent. The
-  cast is gone and the object is complete.
+- `RepricingCard`'s test fixture was cast with `as RepricingStatus`, so adding a
+  required field to that type left the fixture silently incomplete with
+  typecheck still green. The cast is gone and the object is complete.
 
 ## [2.69.1] — 2026-08-28
 
 ### Fixed
 - **`httpx` was imported directly by three services and declared by none of
-  them.** `ebay_service`, `google_vision` and `melin_recap` all `import httpx`,
-  but it reached the environment only as a transitive dependency of
-  `anthropic`. That held by luck: attempting a routine `uv lock --upgrade`
-  resolves `anthropic` to 1.0.0, which no longer pulls httpx, and the lock
-  duly **removed it** — leaving three services that fail at import with
-  nothing in `pyproject.toml` to explain why. Now declared explicitly.
-
-  Found while handling Dependabot PR #118, not by it.
+  them.** `ebay_service`, `google_vision` and `melin_recap` all import it, but
+  it reached the environment only as a transitive dependency of `anthropic`.
+  That held by luck: a routine `uv lock --upgrade` resolves `anthropic` to a
+  version that no longer pulls httpx, and the lock duly removed it — leaving
+  three services that fail at import with nothing in `pyproject.toml` to explain
+  why. Now declared explicitly.
 
 ### Notes
-- **Dependabot #118 (`pydantic-core` 2.46.4 → 2.48.0) is correctly blocked and
-  was left alone.** It edits `requirements.txt` only, which is *derived* from
-  `uv.lock`, and `[tool.uv] exclude-newer = "7 days"` deliberately holds that
-  version back — so the PR asks the derived file to move ahead of its source.
-  `tests/test_requirements_export.py` catches exactly that, and the PR fails
-  CI on both `backend (pytest)` and `docker image builds`. The guard working
-  is not a bug to fix.
+- **A Dependabot PR bumping `pydantic-core` is correctly blocked and was left
+  alone.** It edits `requirements.txt` only, which is *derived* from `uv.lock`,
+  and `[tool.uv] exclude-newer = "7 days"` deliberately holds that version back
+  — so the PR asks the derived file to move ahead of its source.
+  `tests/test_requirements_export.py` catches exactly that. The guard working is
+  not a bug to fix.
 - **`anthropic` 1.0.0 is available and deliberately not taken here.** It is a
-  major version affecting the Vision tool-use call in `claude_analysis`, which
-  the test suite stubs — so a green suite would prove nothing about it. It
-  wants its own change with a real call verified against the API.
+  major version affecting the Vision tool-use call, which the test suite stubs —
+  so a green suite would prove nothing about it. It wants its own change with a
+  real call verified against the API.
 
 ## [2.69.0] — 2026-08-28
 
 ### Fixed
 - **Resale values were wrong across the collection — three separate defects,
   all of which made a hat look appraised when it had barely been looked at.**
-  Reported as "I don't know how you're checking resale but I'm pretty sure
-  they are all very wrong." They were.
 
-  **1. One page of the market was being read and called the market.** The
-  query sent a single request and took what came back. The `odysea` category
-  holds **436** listings; that read **100** of them — 23% — so every Odysea in
-  the collection was priced off whichever quarter the API happened to return
-  first. `meta.totalItems` was in every response and discarded. Correcting the
-  sample alone moves the Odysea median from **$100 to $79**.
+  **1. One page of the market was being read and called the market.** The query
+  sent a single request and took what came back. The `odysea` category holds
+  **436** listings; that read **100** of them, so every Odysea was priced off
+  whichever quarter the API happened to return first. The total was in every
+  response and discarded. Correcting the sample alone moves the Odysea median
+  from **$100 to $79**.
 
   **2. Punctuation made a model unmatchable.** Tokens were split on whitespace
-  only, so a hat named `Odysea Hydro "Have More Fun"` demanded the tokens
-  `"have` and `fun"` — strings that appear in no listing title that has ever
-  existed. The model tier matched nothing and the hat fell silently to a
-  category median.
+  only, so a hat named `Odysea Hydro "Have More Fun"` demanded tokens that
+  appear in no listing title. The model tier matched nothing and the hat fell
+  silently to a category median.
 
   **3. There was no rung between "this exact design" and "the entire
   category".** melin titles read `<line> <construction> - <colorway>` and
-  `model_name` comes from Claude reading a *photo*, so it lands on the line
-  plus whatever artwork was visible. When that exact string had no listings,
-  pricing jumped straight to the median of the whole category — which is how
-  **28 different hats all sat at exactly $115.00**, and 26 more at exactly
-  $85.00.
+  `model_name` comes from Claude reading a *photo*, so it lands on the line plus
+  whatever artwork was visible. When that exact string had no listings, pricing
+  jumped straight to the median of the whole category — which is how **28
+  different hats all sat at exactly $115.00**, and 26 more at exactly $85.00.
 
-  Model specificity is now surrendered one token at a time, and entirely,
-  before condition or size are given up at all: `Odysea Rope Hydro
-  (WATERCOLOR)` prices against every `Odysea Rope Hydro` — same product,
-  different colorway, a real comparable. Measured live on the real collection,
+  Model specificity is now surrendered one token at a time, and entirely, before
+  condition or size are given up at all. Measured live on the real collection,
   **11 of 14** previously category-priced hats now price against a named line.
 
   A prefix counts as a model match only if it matched the whole name **or
-  actually narrowed the field** — token count cannot decide it, because for an
-  `a_game` hat the prefix `a game` has two tokens and still selects the entire
-  aGame category.
+  actually narrowed the field** — token count cannot decide it.
 
   The source label now **names the line compared against** (`median of 18 live
-  classic new-with-tags Odysea Rope Hydro listings`) instead of saying "model
-  listings" and leaving which model unstated.
+  classic new-with-tags Odysea Rope Hydro listings`) instead of leaving which
+  model unstated.
 
 ## [2.68.0] — 2026-08-28
 
@@ -1502,20 +1151,17 @@ prevent.
   ```
 
   **iOS Safari queries the HTTPS record (type 65) before connecting**, so every
-  navigation to `https://headroom.local` paid that timeout — while `curl` and
-  `getaddrinfo`, which only ever ask for A and AAAA, measured 3ms and made it
-  look fixed. Verifying with curl is exactly why this was reported fixed twice
-  while the phone stayed broken.
+  navigation paid that timeout — while `curl` and `getaddrinfo`, which only ever
+  ask for A and AAAA, measured 3ms and made it look fixed.
 
   RFC 6762 §6.1 requires a responder that owns a name to answer an absent type
   with an **NSEC** record asserting which types do exist there. The app now
   sends one, from a small responder that binds 5353 alongside zeroconf
-  (`SO_REUSEPORT` — the same arrangement avahi and zeroconf already share) and
-  answers **only** for our own hostname, and **only** for types zeroconf has no
-  answer for. It can never contradict or race the real advertisement.
+  (`SO_REUSEPORT`) and answers **only** for our own hostname, and **only** for
+  types zeroconf has no answer for. It can never contradict or race the real
+  advertisement.
 
-  This fixes the whole class, not just type 65 — SRV was stalling identically,
-  and so would anything else a future client asks for.
+  This fixes the whole class, not just type 65 — SRV was stalling identically.
 
   Upstream is still unfixable from outside: zeroconf 0.150.0 is the current
   release, it builds its NSEC with the service-instance name instead of the
@@ -1526,27 +1172,24 @@ prevent.
 
 ### Added
 - **"Recent runs" entries are clickable, and open that run's log.** The card
-  listed five runs as bare text (`1d ago · 213/235`) with no way to find out
-  which hats a run covered or what the 22 failures actually said. Each row is
-  now a button that expands into the run's own log: every hat still attributed
-  to it, its analysis status, and its **verbatim, untruncated** error.
+  listed five runs as bare text with no way to find out which hats a run covered
+  or what its failures actually said. Each row is now a button that expands into
+  the run's own log: every hat still attributed to it, its analysis status, and
+  its **verbatim, untruncated** error.
 
   Verbatim on purpose. The "Why analysis is failing" card groups on a *cleaned*
   key so that one problem reads as one problem; a single hat's log is the
   opposite case, where the whole string is what you came for.
 
   Backed by `GET /api/admin/analysis/jobs/{job_id}`. There is no separate log
-  store and deliberately isn't one — a run's record *is* the hats it tagged,
-  the same reason `AnalysisJob` keeps no counters — so this reads them back.
-  Failures sort first, because a finished run gets opened to find out what
-  broke. The request only fires when a row is opened.
+  store and deliberately isn't one — a run's record *is* the hats it tagged — so
+  this reads them back. Failures sort first. The request only fires when a row
+  is opened.
 
 - **A run says when its hats have moved on, instead of looking empty.**
   `hats.analysis_job_id` is a single column that every later run overwrites, so
   an older run legitimately ends up with nothing attributed to it. The detail
-  publishes `still_tagged` alongside the run's original `total`, so that case
-  reads as *"every hat from this run has been re-analyzed since; it covered 235
-  at the time"* rather than as a run that did nothing. `still_tagged` and
+  publishes `still_tagged` alongside the run's original `total`. Both it and
   `failed_count` are SQL `COUNT`s, never `len()` of the capped list — and when
   the list is truncated the view says so.
 
@@ -1554,37 +1197,31 @@ prevent.
 
 ### Added
 - **Retry just the hats that failed, instead of re-analyzing all 234.** A
-  transient `529 Overloaded` from Anthropic takes out a scattering of hats
-  mid-run. Until now the only repair was "Re-analyze every hat", which spends a
-  Claude call on the 213 that were already correct in order to fix the 21 that
-  were not — so the cheap fix was priced like the expensive one and nobody
-  reached for it.
+  transient overload from Anthropic takes out a scattering of hats mid-run.
+  Until now the only repair was "Re-analyze every hat", which spends a Claude
+  call on the 213 that were already correct in order to fix the 21 that were
+  not.
 
-  `POST /api/admin/analysis/retry-failed` covers the failures only. The
-  "Why analysis is failing" card now carries a **Retry** button per failure
-  group, plus one "Retry all N failed hats" when there is more than one group.
+  `POST /api/admin/analysis/retry-failed` covers the failures only. The "Why
+  analysis is failing" card now carries a **Retry** button per failure group,
+  plus one "Retry all N failed hats" when there is more than one group.
 
   Per group rather than one button for the card, because the groups are not
   interchangeable: an overload wants retrying immediately, while a response the
-  parser choked on will choke again and is a bug report, not a retry. Matching
-  a group re-uses the same cleaned reason key the grouping does, so three
-  failures differing only in their `request_id` stay one problem on the way
-  back out as well as on the way in.
+  parser choked on will choke again and is a bug report. Matching a group
+  re-uses the same cleaned reason key the grouping does.
 
 - **The card now says how many of a group can actually be retried.** A hat can
-  carry a failure string and have no photo left to analyze (`"Photo missing
-  before analysis could run."`) — a real failure, worth seeing, and one no
-  retry can fix. `AnalysisFailureGroup.retryable_count` is derived from the
+  carry a failure string and have no photo left to analyze — a real failure,
+  worth seeing, and one no retry can fix. `retryable_count` is derived from the
   very query the retry route calls rather than restating its rule, so a button
-  labeled "Retry 21" queues 21 by construction. Where the two differ the card
-  says which hats it cannot help with.
+  labeled "Retry 21" queues 21 by construction.
 
 ### Fixed
-- **The failures list went stale after any re-analysis.** Both runs move hats
-  to `pending` and clear their failure text, but neither invalidated
-  `['admin','analysis-failures']` — so after "Re-analyze every hat" the card
-  went on listing failures the run had just wiped, for the full 30s
-  `staleTime`.
+- **The failures list went stale after any re-analysis.** Both runs move hats to
+  `pending` and clear their failure text, but neither invalidated the failures
+  key — so the card went on listing failures the run had just wiped, for the
+  full 30s `staleTime`.
 
 ### Changed
 - The failures list moved **above** the re-analyze-everything button in the
@@ -1597,12 +1234,11 @@ Everything here came out of an adversarial review of 2.61.0–2.64.0. Two of the
 findings were bugs that defeated the fixes they shipped inside.
 
 ### Fixed
-- **The off-site backup counters were still being wiped on every restart —
-  by the very release that claimed to fix it.** The persisted record was
-  restored only when something *read* it, but the write path never reads: the
-  scheduler and the upload hook both touch the record directly. So the first
+- **The off-site backup counters were still being wiped on every restart — by
+  the very release that claimed to fix it.** The persisted record was restored
+  only when something *read* it, but the write path never reads. So the first
   nightly upload after a reboot incremented an empty record and overwrote the
-  file with `1`, discarding the history.
+  file, discarding the history.
 
   Every test passed because each one happened to read before writing. The
   unattended sequence — boot, then upload, with nobody having opened the page —
@@ -1612,33 +1248,27 @@ findings were bugs that defeated the fixes they shipped inside.
 - **Re-pricing: pressing "Re-price now" could hide a dead scheduler.** A manual
   run cleared the error and zeroed the failure count, so a sweep that had been
   failing nightly for a month would read "swept just now, 0 failures" after one
-  click. A button press proves the code works; it proves nothing about the
-  background loop, and only a scheduled success now clears the alarm. A manual
-  run that *fails* is recorded too, instead of leaving the last success on
-  screen.
+  click. Only a scheduled success now clears the alarm, and a manual run that
+  *fails* is recorded too.
 
 - **Re-pricing could never get past hats it cannot price.** Hats with no
   listings — or a non-melin brand — kept an empty "last checked" timestamp, and
   since the sweep does the least-recently-checked first, those hats owned the
-  front of the queue permanently. A capped sweep re-visited the same rows
-  forever and never reached the rest. Every attempt is now timestamped, whether
-  or not it found a price.
+  front of the queue permanently. Every attempt is now timestamped, whether or
+  not it found a price.
 
 - **"Re-price now" no longer blocks for minutes.** It was an uncapped inline
   request — roughly four minutes for a full collection, which on a phone is a
-  dead spinner followed by a timeout, after which the result was thrown away.
-  It now sweeps a bounded batch, stalest first, and tells you how many remain
-  so you can press again.
+  dead spinner followed by a timeout. It now sweeps a bounded batch, stalest
+  first, and tells you how many remain so you can press again.
 
 - **Two sweeps can no longer run at once.** The scheduled loop and the button
   were separate doors into the same few hundred calls against a public API the
   code otherwise takes care to pace.
 
 - **The colorway picker still showed nothing for many hats.** The 25-item cap
-  was fixed in 2.62.0, but the lookup still demanded an exact model-name match.
-  A hat's model name comes from a photo, which cannot show the sub-line, so it
-  lands on the family (`odysea hydro`) while the catalog holds the product
-  (`Odysea Packable Hydro`) — and those hats saw *zero* colorways at any limit.
+  was fixed in 2.62.0, but the lookup still demanded an exact model-name match,
+  and a hat's model name comes from a photo that cannot show the sub-line.
   Matching already solved this for purchases; the picker now does the same.
 
 - British spellings of "catalog" in the changelog, docs and tests.
@@ -1648,19 +1278,19 @@ findings were bugs that defeated the fixes they shipped inside.
 ### Added
 - **Appraisals now refresh on their own.** They never did. A hat's resale value
   moved only when that hat was *analyzed*, and nothing re-checked prices on a
-  schedule — so every value sat frozen at the date of the last bulk
-  re-analysis, and the only way to move them was to re-analyze the entire
-  collection: a Claude vision call per hat, to fetch a marketplace median that
-  needs no Claude at all.
+  schedule — so every value sat frozen at the date of the last bulk re-analysis,
+  and the only way to move them was to re-analyze the entire collection: a
+  Claude vision call per hat, to fetch a marketplace median that needs no Claude
+  at all.
 
   That coupling chained two unrelated failures together. When the Anthropic
-  balance ran out, the analysis call raised, the pipeline fell back and
-  returned early, and the price refresh below it never ran. **Prices stopped
-  because identification stopped**, though pricing never depended on it.
+  balance ran out, the analysis call raised, the pipeline fell back and returned
+  early, and the price refresh below it never ran. **Prices stopped because
+  identification stopped**, though pricing never depended on it.
 
   Re-pricing is now its own scheduled sweep, independent of analysis: the
   marketplace lookup keys on details already stored on the hat, so it needs no
-  photo, no API key and no vision call. It keeps working when analysis can't.
+  photo, no API key and no vision call.
 
   - **Prices you entered yourself are never touched** — excluded from the query
     outright, so a protected hat doesn't even cost a lookup.
@@ -1669,9 +1299,8 @@ findings were bugs that defeated the fixes they shipped inside.
     the stalest prices rather than re-doing the freshest.
   - One unreachable listing doesn't stop the other 234.
   - A new **Re-pricing** card under Settings → Data shows when the last sweep
-    ran and how many prices actually *changed* — not how many hats were
-    visited, because a flat market is a working sweep and the visit count would
-    hide one that's silently writing nothing. It also has a "Re-price now"
+    ran and how many prices actually *changed* — not how many hats were visited,
+    because a flat market is a working sweep. It also has a "Re-price now"
     button, which works even with the schedule turned off.
 
   Tunable with `HEADROOM_REPRICING_ENABLED`, `_INTERVAL_HOURS` (default 24),
@@ -1682,14 +1311,14 @@ findings were bugs that defeated the fixes they shipped inside.
 
 ### Added
 - **Purchase History can now tell you how to get the JSON it wants.** The card
-  has always had an "Import JSON…" button and no answer to the obvious
-  question — where does that file come from? The data is sitting in your email,
-  and nothing in the app produced it.
+  has always had an "Import JSON…" button and no answer to the obvious question
+  — where does that file come from? The data is sitting in your email, and
+  nothing in the app produced it.
 
   There's now a collapsed "No JSON yet? Get one from your email" section with a
   ready-made prompt and a copy button. Paste it into Claude or ChatGPT with
-  access to your mail; it reads your melin receipts and returns exactly the
-  JSON this card imports.
+  access to your mail; it reads your melin receipts and returns exactly the JSON
+  this card imports.
 
   The prompt is a schema written in prose describing a Python parser, so a test
   parses the field list back out of it and fails if any name isn't one the
@@ -1701,19 +1330,15 @@ findings were bugs that defeated the fixes they shipped inside.
 
 ### Fixed
 - **The colorway picker showed 25 of 188 colorways.** The catalog was not
-  missing anything — 550 entries across 160 models, harvested the same day.
-  `GET /api/meta/colorways` called its helper without a limit and silently took
-  the default of 25. Typing couldn't reach the rest either: the edit page
-  fetches that feed without a query and filters client-side, so everything past
-  the cap was unreachable however specific you were.
+  missing anything — 550 entries across 160 models, harvested the same day. The
+  feed called its helper without a limit and silently took the default of 25.
+  Typing couldn't reach the rest either: the edit page fetches that feed without
+  a query and filters client-side.
 
-  This is the second time that same cap has been mistaken for a small
-  catalog — the first was the Settings card reading the feed's length, fixed
-  earlier by a dedicated status endpoint. **A truncated list is invisible: it
-  looks exactly like a short catalog.** The feed now takes an explicit limit
-  defaulting high enough to serve the whole catalog, and a test asserts the
-  *tail* is reachable, because the entries a cap removes are the ones nobody
-  notices are gone.
+  This is the second time that same cap has been mistaken for a small catalog.
+  **A truncated list is invisible: it looks exactly like a short catalog.** The
+  feed now takes an explicit limit defaulting high enough to serve the whole
+  catalog, and a test asserts the *tail* is reachable.
 
 - **Off-site backup reported "nothing has been uploaded yet this run" forever,
   on a box that was uploading successfully every night.** The upload record was
@@ -1722,11 +1347,9 @@ findings were bugs that defeated the fixes they shipped inside.
   restart there was a day-long window with no upload, and the card fell back to
   claiming nothing had ever left the machine.
 
-  The upload record is now persisted beside the backups, so it survives a
-  restart, and the card states **when** the last upload happened and **which
-  archive** it shipped. "It ran" was never an answer anyone could act on.
-  A failure is reported as a failure with its reason — a stale success is never
-  shown as if current — and "never" now means never.
+  The upload record is now persisted beside the backups, and the card states
+  **when** the last upload happened and **which archive** it shipped. A failure
+  is reported as a failure with its reason, and "never" now means never.
 
   Deliberately not stored in the database: the change-gate fingerprints the DB,
   so writing upload status there would make every cycle see a change and turn
@@ -1738,39 +1361,32 @@ findings were bugs that defeated the fixes they shipped inside.
 - **`https://headroom.local` took over a minute to load, and often never did.
   It was never the TLS handshake — that measured 46ms.** The entire delay was
   name resolution: every lookup of `headroom.local` stalled for the client's
-  full mDNS resolver timeout (5s on macOS; far worse on iOS, where Safari
-  fires many parallel requests and each one pays it).
+  full mDNS resolver timeout (5s on macOS; far worse on iOS, where Safari fires
+  many parallel requests and each one pays it).
 
   We advertised an IPv4 address and nothing else. A responder that owns a name
-  but has no AAAA is supposed to answer an AAAA question with an **NSEC**
-  record — a negative answer meaning "this name exists and has only these
-  types" (RFC 6762 §6.1) — which is what lets a client give up instantly.
-  python-zeroconf 0.150.0 builds that record with the wrong owner name: it
-  uses the service instance (`headroom._http._tcp.local.`) where it must use
-  the host (`headroom.local.`). An NSEC only asserts non-existence for the
+  but has no AAAA is supposed to answer an AAAA question with an **NSEC** record
+  (RFC 6762 §6.1), which is what lets a client give up instantly. python-zeroconf
+  0.150.0 builds that record with the wrong owner name — the service instance
+  where it must use the host — and an NSEC only asserts non-existence for the
   name it carries, so clients correctly ignored it and kept waiting. **A
-  mis-named NSEC and total silence look identical to the querier**, which is
-  why this presented as a dead server rather than an error anyone could see.
+  mis-named NSEC and total silence look identical to the querier.**
 
-  Confirmed from four independent angles: a `curl` timing split
-  (`dns=5.006s`, `tls=+0.046s`), `avahi-resolve -6` timing out **on the
-  server's own box** while `-4` answered instantly, a full mDNS packet dump
-  showing the mis-named record, and a local reproduction.
+  Confirmed from four independent angles: a `curl` timing split, `avahi-resolve
+  -6` timing out on the server's own box while `-4` answered instantly, a full
+  mDNS packet dump showing the mis-named record, and a local reproduction.
 
   Headroom now advertises every address family the host actually has. With
-  nothing missing there is no NSEC to get wrong, and IPv6 clients get a real
-  answer instead of a negative one. 0.150.0 is the current release, so there
-  was no upgrade to take, and the defect cannot be patched from outside —
-  zeroconf ships compiled Cython, so a `ServiceInfo` subclass overriding the
-  method is never consulted. Reported upstream.
+  nothing missing there is no NSEC to get wrong. 0.150.0 is the current release,
+  so there was no upgrade to take, and the defect cannot be patched from outside
+  — zeroconf ships compiled Cython. Reported upstream.
 
-  Hosts with no global IPv6 are unaffected by the change and still bind IPv4
-  only, rather than opening a v6 socket they can do nothing with.
+  Hosts with no global IPv6 are unaffected and still bind IPv4 only.
 
 ### Added
 - Settings → LAN Discovery now shows the advertised IPv6 address, or says
   plainly that the host has none — its absence is the diagnosis for a slow
-  `.local` name, and previously nothing on screen could tell you.
+  `.local` name.
 
 ## [2.60.0] — 2026-08-26
 
@@ -1783,11 +1399,10 @@ findings were bugs that defeated the fixes they shipped inside.
   **account ran out of credit**, all 235 hats read "add a Claude API key" on a
   key that was set, valid, and had been working minutes earlier. Three days.
 
-  Grouped, because 235 hats failing for one reason is **one** problem and a
-  flat list of 235 identical rows hides that. The `request_id` is stripped
-  before grouping or every call looks like its own unique fault. A
-  billing/quota refusal is flagged explicitly — it is the one failure that
-  masquerades as a missing key — and says to top up the account instead.
+  Grouped, because 235 hats failing for one reason is **one** problem. The
+  per-call request id is stripped before grouping or every call looks like its
+  own unique fault. A billing/quota refusal is flagged explicitly — it is the
+  one failure that masquerades as a missing key.
 
 
 ## [2.59.0] — 2026-08-26
@@ -1797,48 +1412,39 @@ matched, which is now the provable maximum** rather than whatever a heuristic
 happened to reach.
 
 ### Fixed
-- **A construction word in the colorway half no longer rules a hat out.**
-  melin model names read `<line> <construction>`, but a receipt is free to put
-  that word in either half of the title, and the gate only compares the model
-  half. Real miss: hat `Eagle Denim` against `Eagle Mill Union - Hickory
-  Denim` — `denim` sits in the *colorway* half, so containment failed and a hat
-  with the right line, series, size and **price to the cent** was discarded
-  before anything else was scored. The gate now retries with the construction
-  stripped from both sides. Narrower than widening it to the whole title, which
-  was tried and rejected for letting any Trenches hat claim any Trenches line.
+- **A construction word in the colorway half no longer rules a hat out.** melin
+  model names read `<line> <construction>`, but a receipt is free to put that
+  word in either half of the title, and the gate only compares the model half.
+  Real miss: hat `Eagle Denim` against `Eagle Mill Union - Hickory Denim`. The
+  gate now retries with the construction stripped from both sides. Narrower than
+  widening it to the whole title, which was tried and rejected.
 - **A construction that CONTRADICTS the title now vetoes**, which the above
   makes necessary: stripped, `A-Game Thermal` and `A-Game Hydro` both reduce to
-  `{a, game}`, so a Thermal hat could take a Hydro receipt's price.
+  the same tokens.
 - **A price typed off the receipt outweighs a colorway typo.** Two stated
   colorways that disagree normally rule a hat out. That is right when the
   colorway is all you have and wrong when the owner entered the purchase price
   from the same order confirmation — "Navy Denium" against "Hickory Denim" is
   someone's words for a color; **$200.00 against $200.00 is corroboration**.
-  `purchase_price` was not used by the matcher at all before this.
 - **The Claude fallback banner stopped telling you to add a key you already
-  have.** When the Anthropic account ran out of credit, every hat displayed
-  "Add a Claude API key in Settings" — the key was present, valid, and had been
-  working minutes earlier. The real reason sat in `analysis_error`, which only
-  the `error` status ever rendered. `fallback` now shows it too, and the
-  message builder picks its advice from the actual cause.
+  have.** When the account ran out of credit, every hat displayed "Add a Claude
+  API key in Settings". The real reason sat in `analysis_error`, which only the
+  `error` status ever rendered. `fallback` now shows it too.
 
 ### Changed
 - **Assignment is maximum bipartite matching, not greedy.** `assign_purchases`
   (Kuhn's augmenting paths) replaces "each purchase takes its best free hat,
   scarcest first". That heuristic was measured leaving **3 real matches
-  unclaimed** the moment scoring changed — the optimality it appeared to have
-  was luck, and `_by_scarcity` was the ordering trick that bought it. Augmenting
-  paths cannot have that failure: a later purchase displaces an earlier one and
-  sends it to another hat it also fits. Candidates are visited in descending
+  unclaimed** the moment scoring changed. Candidates are visited in descending
   score order, so among maximum-size assignments the better-evidenced pairings
-  win. Keyed on `id(hat)` rather than `hat.id` — the same transient-row trap
-  `_by_scarcity` already documents. Shared by the importer and `preview_import`.
+  win. Keyed on object identity rather than the primary key, since the preview
+  scores transient rows. Shared by the importer and the preview.
 
 ### Added
-- **Settings → Data → Frozen prices.** 2.58.0 shipped
-  `/api/admin/prices/frozen` and `/prices/release` with no UI, which meant the
-  only way to repair the affected hats was curl. Now a list with checkboxes,
-  flagging the ones carrying marketplace provenance under a manual stamp.
+- **Settings → Data → Frozen prices.** 2.58.0 shipped the endpoints with no UI,
+  which meant the only way to repair the affected hats was curl. Now a list with
+  checkboxes, flagging the ones carrying marketplace provenance under a manual
+  stamp.
 
 
 ## [2.58.0] — 2026-08-26
@@ -1851,160 +1457,130 @@ The six things 2.57.2 listed as "not fixed". They are fixed.
   swears it never crosses. Also olive→beige, tan→cream, gold→beige.
 
   The hue fallback exists because ΔE is dominated by lightness, so a DARKENED
-  color lands on a neutral name (the dark teal at L=21 that classifies as
-  charcoal). It only ever tested chroma and hue, so pale tints walked through
-  in the opposite direction. **Chroma is bounded by lightness**: at L=95 a low
-  chroma is the most a color can have, not evidence of desaturation, so the
-  chroma ratio against a mid-lightness target compares two different ceilings.
+  color lands on a neutral name. It only ever tested chroma and hue, so pale
+  tints walked through in the opposite direction. **Chroma is bounded by
+  lightness**: at L=95 a low chroma is the most a color can have, not evidence
+  of desaturation, so the chroma ratio against a mid-lightness target compares
+  two different ceilings.
 
   The fallback now applies only to swatches **darker than the target**. Not a
   fourth tuned constant — the three before it (30 → 22 → 26) are why. Measured
   over the full palette cross-product: **4 cross-family matches → 0**, the
   dark-teal case it exists for still works, all 6 darkened-swatch rescues kept,
-  0 regressions. `test_find_the_hat.py` now asserts zero cross-family matches
-  over **every ordered palette pair**, so it cannot regress quietly.
+  0 regressions. The test now asserts zero cross-family matches over **every
+  ordered palette pair**.
 
 - **An analysis job never closed if one of its hats was deleted mid-run.**
   `total` is frozen at creation while the counts are over surviving rows, so
   `done` stayed one short forever — the run reported itself in flight
-  permanently, across restarts, and a second `reanalyze-all` re-tagged
-  everything and stranded the first identically. Now gated on "nothing is left
-  PENDING", which is what the docstring always claimed.
+  permanently, across restarts. Now gated on "nothing is left PENDING", which is
+  what the docstring always claimed.
 
-- **An oversize chunked body returned 500, not 413** — and wrote a durable
-  `error.unhandled` row each time. The counted-bytes path returned an ASGI
-  disconnect, which Starlette turns into `ClientDisconnect` inside the route
-  where nothing catches it. On `/api/auth/login`, which is open, that made an
-  oversize body an unauthenticated way to write an audit row per request.
+- **An oversize chunked body returned 500, not 413** — and wrote a durable error
+  row each time. The counted-bytes path signalled a disconnect, which Starlette
+  turns into an exception inside the route where nothing catches it.
 
 ### Security
-- **Three unauthenticated ways to fill the disk or the heap, all closed.**
-  - Every rate-limited login **committed an audit row before raising**, so the
-    limiter changed *which* row was written, not whether one was. 90-day
-    retention, open endpoint. Now audited once per lockout window; the log line
-    still fires every attempt.
-  - `auth_service._prune` claimed to be an "unbounded-memory guard" and only
-    ever pruned the single key handed to it. Rotating the username — which is
-    what credential stuffing looks like — left one permanent entry per name
-    tried. Measured: 200 usernames, 200 live keys. Now swept periodically.
-  - The **passkey challenge store was uncapped**, fed by an open, bodyless,
-    unrate-limited endpoint, holding each entry 300s. Measured: 300 requests,
-    300 live entries. Now bounded at 512, evicting oldest-first so a flood
-    evicts its own entries rather than a real ceremony's.
+- Rate-limited logins are now audited once per lockout window rather than once
+  per attempt; the log line still fires every time.
+- The login rate limiter now sweeps its tracked keys periodically instead of
+  pruning only the key handed to it.
+- The passkey challenge store is now bounded, evicting oldest-first so a flood
+  evicts its own entries rather than a real ceremony's.
 
 ### Added
-- **`GET /api/admin/prices/frozen` and `POST /api/admin/prices/release`** —
-  the repair 2.57.0 needed and did not have. Its fix stopped the Edit form
-  freezing prices as `manual`; every hat already stamped stayed frozen forever,
-  and the release notes claimed the fix with no caveat.
+- **`GET /api/admin/prices/frozen` and `POST /api/admin/prices/release`** — the
+  repair 2.57.0 needed and did not have. Its fix stopped the Edit form freezing
+  prices as `manual`; every hat already stamped stayed frozen forever.
 
   Nothing records whether a `manual` stamp came from a person or from the form
-  resending a value it had seeded, and the numbers are identical either way —
-  so this reports and lets you choose, exactly like `construction_audit`, never
-  guessing in a backfill. `dry_run` defaults to **true**, releasing keeps the
-  price VALUE and clears only the scope, and `market_priced_only` narrows to
-  hats carrying a listing URL or checked-at timestamp — marketplace provenance
-  under a manual stamp being the bug's signature.
+  resending a value it had seeded, and the numbers are identical either way — so
+  this reports and lets you choose, never guessing in a backfill. `dry_run`
+  defaults to **true**, releasing keeps the price VALUE and clears only the
+  scope, and `market_priced_only` narrows to hats carrying marketplace
+  provenance.
 
 
 ## [2.57.2] — 2026-08-26
 
-A second whole-codebase review, run adversarially. Most of what it found was
-in **2.57.0 itself** — written and self-reviewed in one sitting, merged an hour
-later. That is the finding worth keeping: a release that fixes a lot, reviewed
-by one pass, is where the next batch of bugs comes from.
+A second whole-codebase review, run adversarially. Most of what it found was in
+**2.57.0 itself** — written and self-reviewed in one sitting, merged an hour
+later. That is the finding worth keeping.
 
 ### Fixed — regressions introduced by 2.57.0
 - **`aria-labelledby` had been renamed to `aria-labeledby`.** The
   American-spelling sweep used unanchored regex and ate the `l` in a W3C
   attribute name. React passes unknown `aria-*` through verbatim, so nothing
-  errored and no test failed — it printed a console warning on every test run
-  that nobody read, while the Settings tabpanel lost its accessible name.
-- **`resize: vertical` and `field-sizing: content` were shipped together and
-  are mutually destructive.** Dragging the grabber writes an inline `height`
-  that later changes do not reset (css-ui-4 §4.1), and a fixed height reimposes
-  a fixed size — so one drag permanently killed auto-growth. `field-sizing` now
-  applies only inside `@supports`, *instead* of the drag handle.
+  errored and no test failed, while the Settings tabpanel lost its accessible
+  name.
+- **`resize: vertical` and `field-sizing: content` were shipped together and are
+  mutually destructive.** Dragging the grabber writes an inline `height` that
+  later changes do not reset, so one drag permanently killed auto-growth.
+  `field-sizing` now applies only inside `@supports`, *instead* of the drag
+  handle.
 - **The textarea ceiling was smaller than its own floor on a phone.**
   `max-height: 40vh` is ~157px on an iPhone in landscape against a 146px
-  `min-height`, so the cap lost to the floor exactly where height is scarcest.
-  `vh` is also the *large* viewport and does not shrink for the soft keyboard —
-  the one moment the ceiling exists for. Now expressed in lines.
+  `min-height`, and `vh` is the *large* viewport and does not shrink for the
+  soft keyboard. Now expressed in lines.
 - **"Press ⌘/Ctrl + Enter" was shown on a phone.** Neither key is on an iOS
   soft keyboard. Hidden under `@media (pointer: coarse)`.
-- **The price guard could be defeated by a background refetch.** It compared
-  the box against the *live* row while seeding is frozen per hat, so with
-  `refetchOnWindowFocus` on: open a hat, tab away, let a fresher price land,
-  save anything — the stale value was written and stamped `manual` forever.
+- **The price guard could be defeated by a background refetch.** It compared the
+  box against the *live* row while seeding is frozen per hat, so a fresher price
+  landing between open and save wrote the stale value and stamped it `manual`.
   Now compared against the value as seeded.
 - **A price could be silently cleared by a typo.** `type="number"` reports
-  `value === ""` both when you clear it and when it rejects what you typed
-  ("1e"), and this form reads an empty box as "clear this price".
-  `validity.badInput` separates them.
-- **`HatNotesCard` leaked mutation state between hats** — the card is at a
-  fixed position, so one failed save left a red "Couldn't save" under the next
-  three hats' untouched boxes. Keyed on the hat id.
+  `value === ""` both when you clear it and when it rejects what you typed, and
+  this form reads an empty box as "clear this price". `validity.badInput`
+  separates them.
+- **`HatNotesCard` leaked mutation state between hats** — the card is at a fixed
+  position, so one failed save left a red "Couldn't save" under the next three
+  hats' untouched boxes. Keyed on the hat id.
 - **`undispose_hat` still un-roomed a hat**, and 2.57.0's beanie change made it
-  routine. `delete_case` was taught to keep hats in the room; the *other*
-  detach site was not, so restoring a hat into a full case dropped it out of
-  every room view. `Hat.detach_from_case()` is now the one definition, beside
-  `set_construction` for the same reason.
-- **`delete_case` filed DISPOSED hats into the room** (`Case.hats` is
-  unfiltered) and counted them in the audit line, which still read
-  "unassigned" — the outcome the same commit had just changed.
-- **`delete_case` wrote a room id it never validated** — the only such writer;
-  `create_case` and `update_case` both check. A case orphaned by an older
-  version handed every hat a dangling `direct_room_id`.
+  routine. `delete_case` was taught to keep hats in the room; the *other* detach
+  site was not. `Hat.detach_from_case()` is now the one definition.
+- **`delete_case` filed DISPOSED hats into the room** and counted them in the
+  audit line, which still read "unassigned".
+- **`delete_case` wrote a room id it never validated** — the only such writer.
 - **`uploads/cases` was still created** by `Dockerfile` and `setup.sh`, so
   2.57.0's "no longer created on every boot" was false on every build.
 
 ### Fixed — older bugs
 - **A re-analysis erased `estimated_new_price` for most of the collection.**
-  `resolve_retail` returned `(None, None)` when the table had no entry *and*
-  Claude declined, and `_apply_analysis` assigns unconditionally. That is 12 of
-  16 styles and 9 of 11 constructions, a blank construction is the normal state
-  (analysis is forbidden from guessing one), and `reanalyze-all` covers every
-  hat with a photo. It now keeps the stored value — the rule `_keep_on_null`
-  already applies to brand/model/series, 75 lines above.
+  The retail resolver returned nothing when the table had no entry *and* Claude
+  declined, and the apply step assigned unconditionally. That is 12 of 16 styles
+  and 9 of 11 constructions, and "re-analyze all" covers every hat with a photo.
+  It now keeps the stored value — the rule already applied to brand, model and
+  series 75 lines above.
 - **`POST /share` had no total-batch cap and ran on the event loop**, with a
-  fourth private copy of the chunk loop. 100 × 20 MB is 2 GB written to an SD
-  card in one request. It now uses the shared helper, off-thread, under the
-  same 750 MB ceiling `import_jobs` has always had.
+  fourth private copy of the chunk loop. It now uses the shared helper,
+  off-thread, under the same ceiling bulk import has always had.
 - **The "full" badge, the Settings census, and the CI probe** — see below.
 
 ### Fixed — tests that could not fail
-- **`test_multipart_is_exempt` asserted `x + 1 > x`** and then posted 4 KB
-  against an unpatched 2 MB cap. Deleting the multipart exemption breaks bulk
-  import in production and left this green. Now sabotage-verified.
-- **The path-traversal canary I added in 2.57.0 was itself wrong** — it probed
-  `/assets/ok.js`, served by a mount bound at `create_app()`, so it answered
-  even with the request-time global unpatched. Moved to a dist-root file that
-  goes through `_safe_spa_path`, and verified by reinstating the original bug.
-- **`POST /share`'s auth was untested** — a two-line special case in `auth.py`,
-  with both existing callers authenticated, so deleting it left the suite green
-  and the endpoint open.
-- **The Settings census counted a literal.** It asserted `toHaveLength(21)`
-  beside a roster of 21 while 22 cards were mounted, so `TrustCertCard` could
-  be deleted outright with every test passing. It now derives from the exported
-  `SECTIONS`, and the one conditionally-hidden card is declared rather than
-  omitted.
+- **`test_multipart_is_exempt` asserted a tautology** and then posted a payload
+  far below the cap it was checking. Now sabotage-verified.
+- **The path-traversal canary added in 2.57.0 was itself wrong** — it probed a
+  path served by a mount bound at app creation, so it answered even with the
+  request-time guard unpatched. Moved to a file that goes through the real
+  guard, and verified by reinstating the original bug.
+- **`POST /share`'s auth was untested** — a two-line special case with both
+  existing callers authenticated, so deleting it left the suite green.
+- **The Settings census counted a literal.** It asserted a length beside a
+  roster that had grown past it, so a card could be deleted outright with every
+  test passing. It now derives from the exported `SECTIONS`.
 - **`test_upload_caps` asserted a false statement** — added in 2.57.0, claiming
-  "one definition, used by all" while `share.py` was a third copy. It now
-  asserts the call sites and fails if any route grows a private chunk loop.
+  "one definition, used by all" while a third copy existed. It now asserts the
+  call sites and fails if any route grows a private chunk loop.
 
 ### Documentation
-- `CLAUDE.md` still said beanies pack "3-to-a-case instead of **8**" one line
+- Internal notes still said beanies pack "3-to-a-case instead of **8**" one line
   above the sentence 2.57.0 corrected to 6.
 - **"semgrep-enforced" is now accurate in both directions**: the rules are not
   in this repo *and* the check is **not required** — `main` has no branch
-  protection and no rulesets, so it reports and does not block. 2.57.0 replaced
-  a wrong claim with a differently wrong one, and contradicted itself inside a
-  single sentence.
-- The Dependabot note said "Two failure modes" above three, in the comment
-  added to describe the third.
-- 2.57.0's changelog said `routes/admin/` has "ten submodules"; it has nine.
-  And it said `delete_room` states the "opposite" principle — it states the
-  same one.
+  protection and no rulesets, so it reports and does not block.
+- The Dependabot note said "Two failure modes" above three.
+- 2.57.0's changelog miscounted the admin submodules and mis-stated what
+  `delete_room` says.
 - The CI container probe curled `/health` (a static 200) while production's
   healthcheck uses `/health/ready` (disk floor + worker liveness), so a
   readiness regression shipped green.
@@ -2022,20 +1598,19 @@ by one pass, is where the next batch of bugs comes from.
   proposing a transitive version that is *impossible*. Observed with
   `pydantic-core` 2.46.4 → 2.48.0 — `pydantic` 2.13.4 requires
   `pydantic-core==2.46.4` **exactly**, so the PR would have written into
-  `requirements.txt` a set no resolver can satisfy. That is why the Docker
-  build failed alongside `tests/test_requirements_export.py`, rather than the
-  export test alone.
+  `requirements.txt` a set no resolver can satisfy. That is why the Docker build
+  failed alongside the export test, rather than the export test alone.
 
-  `uv lock --upgrade` correctly declines to move it: `pydantic-core` can only
-  advance when `pydantic` does. The note in `.github/dependabot.yml` now says
-  so, and says not to "help" by editing the pin.
+  `uv lock --upgrade` correctly declines to move it. The note in
+  `.github/dependabot.yml` now says so, and says not to "help" by editing the
+  pin.
 
 ## [2.57.0] — 2026-08-26
 
-A whole-codebase two-axis review (`/code-review everything`, 12 agents across
-6 areas), plus two changes asked for directly. The review's headline finding is
-that the **code** is in good shape and the **documentation had drifted** — but
-it also turned up four real bugs, one of which was quietly rewriting prices.
+A whole-codebase two-axis review, plus two changes asked for directly. The
+headline finding is that the **code** is in good shape and the
+**documentation had drifted** — but it also turned up four real bugs, one of
+which was quietly rewriting prices.
 
 ### Changed
 - **A case now holds 6 beanies, not 8.** `MAX_BEANIE` is the owner's number for
@@ -2045,10 +1620,7 @@ it also turned up four real bugs, one of which was quietly rewriting prices.
   The figure has now moved twice (3 → 8 → 6), which is why **it is never
   restated by hand**. `services/capacity.py::MAX_BEANIE` is the value,
   `frontend/src/lib/capacity.ts` carries only the *default* for the create/edit
-  placeholder, and `tests/test_capacity_parity.py` fails if they drift. Four
-  in-code comments were still claiming 6 while the code said 8, and one of them
-  also promised beanies "one hat of overfill latitude" that
-  `BEANIE_OVERFILL_ALLOWANCE = 0` has never granted.
+  placeholder, and `tests/test_capacity_parity.py` fails if they drift.
 
   **A case already holding 7 or 8 beanies is not broken** — it reports
   `overfull` and refuses more, exactly as an over-crammed hat case does.
@@ -2056,102 +1628,82 @@ it also turned up four real bugs, one of which was quietly rewriting prices.
 - **The notes box is a designed field instead of a browser default.** There was
   no `textarea` rule in the stylesheet at all: every multi-line field borrowed
   `.form-control`, which is built for one line and got four things wrong the
-  moment there were two — `min-height: 44px` (a single touch target), no
-  `line-height` (so prose fell back to the browser's ~1.2, visibly tighter than
-  every paragraph beside it), `resize: both` (draggable sideways out of a card
-  whose `overflow: hidden` then clips it), and `vertical-align: baseline` (a
-  descender gap under the box, so it lined up with nothing).
+  moment there were two — a single-touch-target `min-height`, no `line-height`,
+  `resize: both` (draggable sideways out of a card whose `overflow: hidden` then
+  clips it), and a baseline alignment that left a descender gap.
 
   Fixed at the mechanism, so Design Notes and the disposal notes get it too.
   Your notes additionally get room to write in, an explicit *Unsaved changes*
   state, and ⌘/Ctrl+Enter to save — Enter inserts a newline in a textarea, so
   the usual submit gesture was unavailable on a field with its own Save button.
-  `<kbd>` is styled rather than left at its own default, for the same reason.
 
 ### Fixed
 - **Editing any field silently froze a hat's prices and relabeled them as
-  yours.** `EditHatPage` seeds both price boxes from the loaded hat and sent
-  them on *every* save; `hat_service.update_hat` reads a sent key as "a person
+  yours.** The Edit page seeds both price boxes from the loaded hat and sent
+  them on *every* save, and the update service reads a sent key as "a person
   typed this number" and stamps the price `manual`. So changing a colorway
-  turned a scraped melinrecap median into *"Price you entered — used as given"*
-  and made it permanent — `resolve_retail` returns it forever, and both
-  `refresh_melin_resale` and `_apply_resale_pointer` bail on it. Same number on
-  screen, different meaning, nothing to see. The keys are now sent only when
-  the value actually changed; clearing one still sends `null`, which is what
-  hands the hat back to the live market feed.
+  turned a scraped marketplace median into *"Price you entered — used as
+  given"* and made it permanent. Same number on screen, different meaning. The
+  keys are now sent only when the value actually changed; clearing one still
+  sends `null`, which hands the hat back to the live market feed.
 - **Deleting a case took its hats out of the room with it.** `delete_case`
-  cleared `case_id` but never set `direct_room_id`, so since 2.33 — when a hat
-  could first live in a room without a case — the hats became reachable from
-  nowhere but the Hats list and search. The shelf appeared to empty itself.
-  `room_service.delete_room` has stated the opposite principle for the
-  symmetric operation since that release.
+  cleared `case_id` but never set `direct_room_id`, so since 2.33 the hats
+  became reachable from nowhere but the Hats list and search. The shelf appeared
+  to empty itself.
 - **The "full" badge never appeared on a case holding regular hats.** Cases are
-  type-exclusive, so the unused type's `free_*` sits at its full nominal figure
-  forever: a full 3-hat case publishes `free_regular: 0, free_beanie: 6`, and
-  the grid tested `free_regular + free_beanie === 0`. Asked of the type the
+  type-exclusive, so the unused type's free count sits at its full nominal
+  figure forever, and the grid tested the sum of both. Asked of the type the
   case actually holds now.
-- **Container mutations left the views they changed stale for 30s.** Creating
-  or moving a case invalidated only `['cases']` — never the room's `case_count`
-  or its contents — and room rename/delete never touched `['hats']`, so hat
-  cards kept printing the old room name. All four now go through
-  `invalidateHatViews`, which is the same bug one level up from the one that
-  function was written for. The room-delete confirmation also names the loose
-  hats that move, not just the cases.
-- **First-run setup hashed argon2 on the event loop.** `create_user` was the
-  one remaining sync `hash_password` call — ~64 MiB and a few hundred
-  milliseconds of fully frozen process on a Pi, health check included.
-- **`GET /api/admin/backups` returned a naive timestamp** while
-  `newest_backup_at()` reads the same `st_mtime` as UTC, so the file list and
-  the health card disagreed by the host's offset.
-- **Search rendered full-resolution cutouts into 72px rows**, ignoring
-  `thumb_path` that `SearchResult` already projects — the one list in the app
-  still doing what `lib/photo.ts` exists to prevent.
+- **Container mutations left the views they changed stale for 30s.** Creating or
+  moving a case invalidated only `['cases']` — never the room's `case_count` or
+  its contents — and room rename/delete never touched `['hats']`, so hat cards
+  kept printing the old room name. All four now go through `invalidateHatViews`.
+  The room-delete confirmation also names the loose hats that move.
+- **First-run setup hashed argon2 on the event loop.** `create_user` was the one
+  remaining synchronous hash call — a few hundred milliseconds of fully frozen
+  process on a Pi, health check included.
+- **`GET /api/admin/backups` returned a naive timestamp** while the health
+  endpoint reads the same mtime as UTC, so the file list and the health card
+  disagreed by the host's offset.
+- **Search rendered full-resolution cutouts into 72px rows**, ignoring the
+  thumbnail path the projection already carries.
 
 ### Security
-- **The path-traversal regression test could not fail.** `_make_app_with_dist`
-  restored `FRONTEND_DIST` in a `finally` *before* returning the client, but
-  `app._safe_spa_path` reads that global per request — so every request was
-  served from the real `frontend/dist` and the planted secret was unreachable
-  whatever `safe_join` did. The stated anchor for the critical traversal
-  finding was pinning nothing. It now uses `monkeypatch`, asserts up front that
-  the app is really serving the temp bundle, and **fails when `safe_join`'s
-  containment check is removed** (verified by sabotage).
+- **The path-traversal regression test could not fail.** Its fixture restored a
+  module global before returning the client, and the guard reads that global per
+  request — so every request was served from the real bundle and the planted
+  file was unreachable whatever the guard did. It now uses `monkeypatch`,
+  asserts up front that the app is really serving the temp bundle, and **fails
+  when the containment check is removed** (verified by sabotage).
 
 ### Removed
 - **`read_capped` is gone**, replaced by `copy_upload_truncating`. It had *zero*
-  production callers: the import route carried a private `_spool` that streamed
-  to disk instead of buffering in memory — strictly better, so nothing ever
-  failed and only `utils/upload.py`'s "one definition, used by all four" was
-  wrong. Promoted the copy, deleted the original, and a test now pins that the
-  route uses the shared helper.
+  production callers: the import route carried a private spool that streamed to
+  disk instead of buffering in memory — strictly better, so nothing ever failed
+  and only the "one definition, used by all four" claim was wrong. Promoted the
+  copy, deleted the original, and a test now pins that the route uses the shared
+  helper.
 - **`uploads/cases` is no longer created on every boot** — a leftover from the
   removed case-photo feature, written to by nothing since.
 
 ### Documentation
-- **CLAUDE.md is the spec here, so its false claims were defects.** Corrected:
-  `['hats','disposed']` is **covered** by `['hats']` (TanStack matches array
-  keys element-wise by prefix — the doc asserted the opposite; the genuine
-  sibling traps are `['room']`/`['rooms']` and `recent-errors`/`-count`);
-  `read_capped` no longer guards bulk import; `ids_for_reanalysis` and
-  `pending_count` live in `hat_service`/`routes/admin/analysis`, not
-  `analysis_job_service`; `routes/admin/` has ten submodules, not seven;
-  `CONDITION_IN_SENTENCE` is module-private, not exported;
-  `frontend/src/lib/capacity.ts` exists and is reconciled by a parity test,
-  which the "ONE rule" entry had denied.
+- Internal notes corrected: `['hats','disposed']` is **covered** by `['hats']`
+  (TanStack matches array keys element-wise by prefix — the genuine sibling
+  traps are `['room']`/`['rooms']` and `recent-errors`/`-count`); `read_capped`
+  no longer guards bulk import; two symbols were documented in the wrong module;
+  the admin submodule count was wrong; `CONDITION_IN_SENTENCE` is module-private,
+  not exported; `frontend/src/lib/capacity.ts` exists and is reconciled by a
+  parity test, which the "ONE rule" entry had denied.
 - **Counts that had already gone stale are no longer quoted** — the Settings
-  card roster ("nineteen") and `.card`-on-an-anchor ("six places"), both of
-  which had drifted within two releases, exactly as the test counts did twice
-  before.
-- **"semgrep-enforced" now says where the rules are.** They are not in this
-  repo — `semgrep-cloud-platform/scan` is a required check supplied by the
-  Semgrep Cloud Platform app, so grepping for a config finds nothing and the
-  enforcement is real anyway.
-- **Two commands that could not work as written**: the CA-export `docker
-  compose cp` in README omitted the overlay that defines the `caddy` service,
-  and OPERATIONS named *Enable rsync service* for Synology where
-  `backup_service` correctly warns it must be **Enable network backup
-  service** — the other checkbox yields `@ERROR: Unknown module`, which reads
-  like a broken NAS.
+  card roster and the `.card`-on-an-anchor tally, both of which had drifted
+  within two releases.
+- **"semgrep-enforced" now says where the rules are.** They are not in this repo
+  — the scan is a check supplied by the Semgrep Cloud Platform app, so grepping
+  for a config finds nothing.
+- **Two commands that could not work as written**: the CA-export `docker compose
+  cp` in README omitted the overlay that defines the `caddy` service, and
+  OPERATIONS named the wrong DSM checkbox for Synology — the other one yields
+  `@ERROR: Unknown module`, which reads like a broken NAS.
 - American spelling swept across code, comments, tests, docs and UI (~48 sites
   in 39 files). `"Heather Grey"` is real melin catalog data and is untouched;
   `"cancelled"` as a persisted status value is data, not prose, and stays.
@@ -2173,27 +1725,25 @@ Five Dependabot PRs had piled up; three of them could never have gone green.
   that layer. Dependabot cannot see that it is derived from `uv.lock`, and
   treats it as a manifest in its own right. Two distinct failures resulted:
 
-  - One PR bumped **only** `requirements.txt` — `websockets`, a transitive
-    dependency that is not in `pyproject.toml` at all — so `uv.lock` never
-    moved and the two disagreed by construction.
+  - One PR bumped **only** `requirements.txt` — a transitive dependency that is
+    not in `pyproject.toml` at all — so `uv.lock` never moved and the two
+    disagreed by construction.
   - Another bumped **both, independently, to different resolutions**: its
-    `uv.lock` said `annotated-types 0.7.0` while its own `requirements.txt`
-    said `0.8.0`, and `cbor2` — a WebAuthn dependency — appeared in one and not
-    the other. The image would have installed a different dependency set than
-    the tests ran against.
+    `uv.lock` said `annotated-types 0.7.0` while its own `requirements.txt` said
+    `0.8.0`, and `cbor2` appeared in one and not the other. The image would have
+    installed a different dependency set than the tests ran against.
 
-  `tests/test_requirements_export.py` caught both, which is exactly what it was
-  added for in 2.52.0. Regenerating on the Dependabot branch is **not** the fix
-  for the second case: it silently discards half the update.
+  `tests/test_requirements_export.py` caught both. Regenerating on the
+  Dependabot branch is **not** the fix for the second case: it silently discards
+  half the update.
 
-- **`.github/dependabot.yml` and CLAUDE.md now say all of this at the point of
-  use**, including the one-command recipe, so the next person does not
-  rediscover it from a red CI run.
+- **`.github/dependabot.yml` now says all of this at the point of use**,
+  including the one-command recipe.
 
   There is deliberately **no workflow auto-regenerating the file** on those
-  branches. Doing so requires `pull_request_target` with a writable token plus
-  a checkout of the PR branch — the pwn-request pattern this repo's own semgrep
-  scan rejects. Suppressing that scan to save one command is a bad trade.
+  branches. Doing so requires `pull_request_target` with a writable token plus a
+  checkout of the PR branch — the pwn-request pattern this repo's own semgrep
+  scan rejects.
 
 **799 backend + 192 frontend tests pass.**
 
@@ -2203,15 +1753,15 @@ Found on the real deployment: certificates were being issued for **six days**
 against a configured 820, and the app's own warning pointed at the wrong fix.
 
 ### Fixed
-- **A leaf cut short by its issuer is now diagnosed as such.** Caddy was
-  logging `cert lifetime would exceed issuer NotAfter, clamping lifetime` —
-  820 days requested, ~6 granted — because the **intermediate** had seven days
-  left and a certificate cannot outlive what signs it.
+- **A leaf cut short by its issuer is now diagnosed as such.** Caddy was logging
+  `cert lifetime would exceed issuer NotAfter, clamping lifetime` — 820 days
+  requested, ~6 granted — because the **intermediate** had seven days left and a
+  certificate cannot outlive what signs it.
 
   The card correctly reported a certificate about to expire and then advised
   restarting Caddy, which reissues *another* six-day certificate. Same symptom
   on the certificate, opposite fix: renewal repairs an old leaf and can never
-  repair a clamped one, because every reissue lands on the same issuer ceiling.
+  repair a clamped one.
 
   `ca_vault.clamped_by_issuer()` tells them apart — Caddy mints leaf and issuer
   in one operation, so a clamped expiry matches the issuer's to the second —
@@ -2221,100 +1771,92 @@ against a configured 820, and the app's own warning pointed at the wrong fix.
   that **the root is untouched so no device has to be re-trusted**.
 
   The intermediate is read from the exported PKI rather than the served chain,
-  because `getpeercert` returns the leaf alone — the copy 2.54.0 started
-  publishing was already sitting there.
+  because the peer certificate is the leaf alone.
 
 - **The trap that caused it is documented.** Shipping `intermediate_lifetime
-  3000d` in 2.48.0 did **not** fix existing installs and failed silently:
-  Caddy loads the intermediate it already has and only regenerates one when it
-  is expiring, so any box that ran the LAN-HTTPS overlay before that release
-  kept a seven-day intermediate and quietly clamped every leaf. The runbook now
-  has the symptom, the cause and the repair — which must delete the issued
-  leaves along with the intermediate, since they are signed by it and replacing
-  the issuer alone leaves a chain that does not build.
+  3000d` in 2.48.0 did **not** fix existing installs and failed silently: Caddy
+  loads the intermediate it already has and only regenerates one when it is
+  expiring, so any box that ran the LAN-HTTPS overlay before that release kept a
+  seven-day intermediate and quietly clamped every leaf. The runbook now has the
+  symptom, the cause and the repair — which must delete the issued leaves along
+  with the intermediate, since they are signed by it.
 
 ### Added
 - **Denim is offered as a material.** Joins the curated `KNOWN_CONSTRUCTIONS`
   vocabulary, so it is suggested on an empty collection rather than only after
-  some hat already uses it, and a typed "denim" snaps to that spelling instead
-  of splitting the field in two. No frontend change — `GET /api/meta/constructions`
-  merges curated with in-use, which is what that design is for.
+  some hat already uses it, and a typed "denim" snaps to that spelling. No
+  frontend change — `GET /api/meta/constructions` merges curated with in-use.
 
 **799 backend + 192 frontend tests pass.**
 
 ## [2.54.0] — 2026-08-24
 
 Closes the gap 2.53.0 recorded and left open: Caddy's certificate authority —
-the artifact that actually died in the 37-day HTTPS outage — was in no backup,
-and nothing noticed when it was replaced.
+the artifact that actually died in the long HTTPS outage — was in no backup, and
+nothing noticed when it was replaced.
 
 ### Added
-- **Caddy's local CA is now part of the backup.** A leaf certificate expiring
-  is a non-event; Caddy issues another. The **root** is the expensive one:
-  every device that browses the site installed it by hand through iOS Settings
-  or macOS Keychain, and a root is self-signed, so nothing can vouch for a
+- **Caddy's local CA is now part of the backup.** A leaf certificate expiring is
+  a non-event; Caddy issues another. The **root** is the expensive one: every
+  device that browses the site installed it by hand through iOS Settings or
+  macOS Keychain, and a root is self-signed, so nothing can vouch for a
   replacement. Losing it means visiting every phone, tablet and laptop.
 
   It lived only inside Caddy's own volume — on the same SD card whose unclean
-  shutdown started the outage — and `_data_fingerprint_sync` measured only the
+  shutdown started the outage — and the backup fingerprint measured only the
   database and the uploads tree. The export sidecar now copies the whole
   authority to `/caddy-ca/pki` (**0700, uid 1000**, alongside the 0644
   `root.crt` the app already serves publicly — two destinations with
   deliberately different permissions), and backups carry it under
   `data/caddy-pki/`.
 
-  The file list is **explicit, never globbed**: these are private keys, so
-  what leaves the box is an inspected decision rather than whatever happens to
-  be in that directory. The CA also joins the backup change-gate, or a
-  regenerated authority would not itself trigger a backup and the archive
-  holding the *old* root would age out of the retention window while the new
-  one was never captured — losing both.
+  The file list is **explicit, never globbed**: these are private keys, so what
+  leaves the box is an inspected decision. The CA also joins the backup
+  change-gate, or a regenerated authority would not itself trigger a backup and
+  the archive holding the *old* root would age out while the new one was never
+  captured — losing both.
 
-  **The tradeoff is stated rather than assumed.** Anyone holding `root.key`
-  can mint a certificate for *any* hostname those devices trust, which is a
-  broader capability than anything else in the archive, and the post-backup
-  hook may be uploading it to a NAS or cloud. A `READ-ME-CA-KEYS.txt` travels
-  *inside* the archive saying so, because by the time it reaches a NAS nothing
-  else is around to mention it. `HEADROOM_BACKUP_INCLUDE_CA=false` opts out.
+  **The tradeoff is stated rather than assumed.** A trusted root's key can sign
+  for *any* hostname those devices trust, which is broader than anything else in
+  the archive, and the post-backup hook may be uploading it to a NAS or cloud. A
+  `READ-ME-CA-KEYS.txt` travels *inside* the archive saying so.
+  `HEADROOM_BACKUP_INCLUDE_CA=false` opts out.
 
-- **A replaced certificate authority is now reported.** Nothing noticed when
-  the served root changed, and it is close to invisible: Caddy names every root
+- **A replaced certificate authority is now reported.** Nothing noticed when the
+  served root changed, and it is close to invisible: Caddy names every root
   `Caddy Local Authority - <year> ECC Root`, so a regenerated CA has the same
-  name, the same issuer string and a completely different key. The first
-  symptom is a device reporting an invalid signature on a chain that verifies
-  perfectly at the server.
+  name, the same issuer string and a completely different key. The first symptom
+  is a device reporting an invalid signature on a chain that verifies perfectly
+  at the server.
 
   The fingerprint is recorded on first sight and compared on every reading;
   `GET /api/settings/tls` gained `ca_changed` and `ca_expected_sha256`, and
   Settings → Trust this device shows both fingerprints with the fix. It is
-  ranked **above** the expiry warning and worded differently on purpose: an
-  expired leaf is repaired by restarting Caddy, a replaced root cannot be
-  repaired that way at all. The check deliberately **never self-heals** — 
-  overwriting the stored fingerprint on a mismatch would silence the alarm on
-  the next poll while every device stayed broken.
+  ranked **above** the expiry warning and worded differently on purpose. The
+  check deliberately **never self-heals** — overwriting the stored fingerprint
+  on a mismatch would silence the alarm on the next poll while every device
+  stayed broken.
 
-  Restoring `caddy-pki/` from a backup taken before the change puts the
-  original authority back and saves re-trusting anything, which is the reason
-  the two halves of this release ship together.
+  Restoring `caddy-pki/` from a backup taken before the change puts the original
+  authority back, which is the reason the two halves of this release ship
+  together.
 
 ### Fixed
 - **Touch targets on small controls.** `.btn-sm`, `.form-select-sm` and
-  `.form-control-sm` were 36px against a documented 44px minimum — fine under
-  a mouse, and on a phone these are the destructive buttons ("Unlink all",
-  "Delete") sitting in a row beside their neighbors. Now 44px under
-  `@media (pointer: coarse)`, keyed on what is doing the pointing rather than a
-  width breakpoint: an iPad is a wide touch screen and a small laptop window is
-  a narrow mouse one. Padding is unchanged, so nothing reflows.
+  `.form-control-sm` were 36px against a documented 44px minimum — and on a
+  phone these are the destructive buttons sitting in a row beside their
+  neighbors. Now 44px under `@media (pointer: coarse)`, keyed on what is doing
+  the pointing rather than a width breakpoint. Padding is unchanged, so nothing
+  reflows.
 
-- **`PurchasesCard` reached past the API layer.** It held its own interfaces
-  and four `apiFetch` URL literals, against the convention that API functions
-  live in `frontend/src/api/` and types in `frontend/src/types/`. Now
-  `api/purchases.ts`, with the shapes in `types/index.ts` where every other
-  payload is defined.
+- **`PurchasesCard` reached past the API layer.** It held its own interfaces and
+  four URL literals, against the convention that API functions live in
+  `frontend/src/api/` and types in `frontend/src/types/`. Now
+  `api/purchases.ts`, with the shapes in `types/index.ts`.
 
 **Durability itself remains Caddy's.** It decides when to fsync its own files
 and this app cannot reach inside it, so a durable *copy* is the only mitigation
-available — which is why the backup half of this matters more than it looks.
+available.
 
 **793 backend + 191 frontend tests pass.**
 
@@ -2327,7 +1869,7 @@ than the button performed.
 ### Fixed
 - **The import preview under-reported what importing would do, by a factor of
   144.** Importing runs the matcher over **every** purchase with no hat linked,
-  not just the lines in the file being imported. `preview_import` only ever
+  not just the lines in the file being imported, and the preview only ever
   considered the file. Against the real collection the gap was not subtle:
 
   ```
@@ -2336,57 +1878,44 @@ than the button performed.
                              +144 hat prices written by that one click
   ```
 
-  That is precisely the "every price on the shelf is now slightly wrong" this
-  preview exists to prevent, and it contradicted the invariant the release
-  notes cited while shipping it. The preview now matches the file's lines
-  **together with the existing backlog**, in the same scarcity order the import
-  uses, and reports `would_match` (the file's own lines), `would_match_backlog`
-  (purchases already on record that the same click would also match) and
-  `would_match_total` separately. The backlog is called out in the UI in
-  **hats**, because hats are what changes. `test_the_preview_predicts_what_
-  importing_actually_does` pins it and fails if the backlog is dropped again.
+  The preview now matches the file's lines **together with the existing
+  backlog**, in the same order the import uses, and reports `would_match` (the
+  file's own lines), `would_match_backlog` and `would_match_total` separately.
+  The backlog is called out in the UI in **hats**, because hats are what
+  changes. A test pins it and fails if the backlog is dropped again.
 
-- **The purchase-import file picker had no `aria-label`.** The visible labels
-  in this app carry no `htmlFor`, so nothing else associates them — an
-  accessibility requirement first, and the reason `getByLabelText` works. Its
-  own test proved the cost by reaching past it with
-  `document.querySelector('input[type="file"]')`, the exact escape hatch the
-  rule exists to prevent; the test now selects by label.
+- **The purchase-import file picker had no `aria-label`.** The visible labels in
+  this app carry no `htmlFor`, so nothing else associates them — an
+  accessibility requirement first. Its own test proved the cost by reaching past
+  it with a raw DOM query; the test now selects by label.
 
 - **British spellings.** `initialised` in `OffsiteBackupCard`, `catalogued` in
-  the 2.52.0 notes, and two older ones in `background_removal` and
-  `schemas/hat` that predated the sweep.
+  the 2.52.0 notes, and two older ones that predated the sweep.
 
 ### Changed
-- **2.52.0 overstated the matching result, and the claim is now checkable.**
-  It said 144 matches was "the maximum possible… no further scoring or ordering
-  change can improve it", and that "the ceiling moves when more hats are
-  cataloged, not when the matcher is tuned". The first half was measured in a
-  throwaway script that was never committed — a number nobody can reproduce is
-  a rumor. The second half was false as written: the optimum is relative to
-  which pairs are *eligible*, and the gate is a deliberate choice (hats with no
-  `model_name` are unmatchable; the superset direction is refused so a generic
-  receipt line cannot claim a specific hat), not a law. Loosening either adds
-  edges and could raise the ceiling.
+- **2.52.0 overstated the matching result, and the claim is now checkable.** It
+  said 144 matches was "the maximum possible" and that "the ceiling moves when
+  more hats are cataloged, not when the matcher is tuned". The first half was
+  measured in a throwaway script that was never committed — a number nobody can
+  reproduce is a rumor. The second half was false as written: the optimum is
+  relative to which pairs are *eligible*, and the gate is a deliberate choice,
+  not a law.
 
-  `test_matching_achieves_the_maximum_possible` now computes a maximum
-  bipartite matching with a second, independent implementation (Kuhn's
-  algorithm) and fails if the matcher falls short. It is **sabotage-checked**:
-  with `_by_scarcity` replaced by file order it fails with *matched 1 of a
-  possible 2*. The 2.52.0 entry has been corrected in place, and states plainly
-  that the target was 90% and the delivered figure is 68%.
+  `test_matching_achieves_the_maximum_possible` now computes a maximum bipartite
+  matching with a second, independent implementation and fails if the matcher
+  falls short. It is **sabotage-checked**. The 2.52.0 entry has been corrected in
+  place, and states plainly that the target was 90% and the delivered figure is
+  68%.
 
 - `_matchable_hats()` is now the single query behind both the preview and the
-  import, and the score weights `STATED_FIELD` / `COLOR_WORD` are named
-  constants beside `MODEL_EXACT` / `MODEL_CONTAINED` — the 6-point gap that
-  keeps an exact model hit above a contained one carrying a series is
-  load-bearing and was previously two bare `score += n` literals.
+  import, and the score weights are named constants beside the model tiers — the
+  gap that keeps an exact model hit above a contained one is load-bearing and
+  was previously two bare literals.
 
 - `test_the_module_host_is_parsed_from_the_destination` exercised nothing: it
-  read `inspect.getsource` and grepped for `"rsync://"`, which passes just as
+  read the function's source text and grepped for a string, which passes just as
   happily when the string sits in a comment. It now runs the real call, asserts
-  the dialed URL is `rsync://10.0.111.10/` — user and module path stripped —
-  and that no credential appears in argv or the environment.
+  the dialed URL, and that no credential appears in argv or the environment.
 
 **777 backend + 189 frontend tests pass.**
 
@@ -2399,104 +1928,80 @@ than the button performed.
   WAL is synced at a checkpoint rather than at commit, so a committed
   transaction "might roll back following a power loss", and the default
   1000-page threshold means what is at risk is **every write since the last
-  checkpoint**, not the last one.
+  checkpoint**.
 
   This is not theoretical here. An unclean shutdown on the deployment destroyed
   Caddy's stored private key and a lock file on the same SD card — written,
-  never fsynced, gone — and broke HTTPS for 37 days. The database sits on that
+  never fsynced, gone — and broke HTTPS for weeks. The database sits on that
   card, under the same power, with durability switched off.
 
   Now `FULL`, which fsyncs the WAL on every commit. It costs one fsync per
   commit; for a personal inventory doing a handful of writes per interaction
   that is not a close call. `HEADROOM_SQLITE_SYNCHRONOUS` overrides it, and
-  anything outside the whitelist falls back to `FULL` rather than through —
-  the value is spliced into a PRAGMA, which cannot take a bound parameter, so
-  a typo must not quietly disable durability. `checkpoint_wal()` also truncates
-  the WAL on graceful shutdown, and runs **last**, because the workers above it
-  still commit as they stop.
+  anything outside the accepted set falls back to `FULL` rather than through —
+  the value is spliced into a PRAGMA, which cannot take a bound parameter, so a
+  typo must not quietly disable durability. `checkpoint_wal()` also truncates the
+  WAL on graceful shutdown, and runs **last**, because the workers above it still
+  commit as they stop.
 
 - **The off-site backup card showed the wrong provider's instructions.** The
-  dropdown was `useState('rclone')`, hardcoded and never synced to the saved
-  provider — so after configuring Synology, reopening Settings showed *rclone*
-  selected with *rclone's* setup steps. The Synology instructions were in the
-  payload but unreachable, which reads exactly like they had been removed.
+  dropdown was hardcoded to rclone and never synced to the saved provider — so
+  after configuring Synology, reopening Settings showed rclone selected with
+  rclone's setup steps. The Synology instructions were in the payload but
+  unreachable, which reads exactly like they had been removed.
 
-- **Purchase matching missed over half of what it could match.** Model names
-  had to be string-equal, and that fails structurally: a hat's `model_name`
-  comes from Claude Vision reading a **photo**, which cannot show the sub-line,
-  so it lands on the generic family (`odysea hydro`, `trenches thermal`,
-  `a-game hydro`). The order email states the full product (`Odysea Packable
-  Hydro`, `Trenches Icon Infinite Thermal`, `A-Game Icon Hydro`). None of those
-  meet under equality.
+- **Purchase matching missed over half of what it could match.** Model names had
+  to be string-equal, and that fails structurally: a hat's `model_name` comes
+  from Claude Vision reading a **photo**, which cannot show the sub-line, so it
+  lands on the generic family. The order email states the full product. None of
+  those meet under equality.
 
   A hat now also matches when its model tokens are a **subset** of the
-  purchase's — the photo saw less than the receipt knew, which is the expected
-  relationship. Scored well below an exact hit, so an exact candidate always
-  wins and this only picks up hats nothing better claimed. The direction is
-  deliberately asymmetric: a hat named *more* specifically than the receipt
-  does not match, because that would let one generic line claim any specific
-  hat in the family.
+  purchase's — the photo saw less than the receipt knew. Scored well below an
+  exact hit, and deliberately asymmetric: a hat named *more* specifically than
+  the receipt does not match, because that would let one generic line claim any
+  specific hat in the family.
 
-  Two further signals, both scored rather than gating. **Owner-stated fields**
-  — `artist_series` and `construction` are typed in by the person who owns the
-  hat, making them the most reliable columns on the record, and matching on
-  `model_name` alone threw them away. They are compared against the *whole*
-  title, because melin puts the series in either half (`Trenches Links Hydro`
-  but `Trenches Icon Hydro - Camo`). And the **colors the analyzer read off the
-  hat's own photo**, against the colorway the receipt names — every hat has
-  those, where only matched hats have a `colorway`, so it is the one tiebreaker
-  available on an unmatched shelf.
+  Two further signals, both scored rather than gating. **Owner-stated fields** —
+  `artist_series` and `construction` are typed in by the person who owns the
+  hat, and matching on `model_name` alone threw them away. They are compared
+  against the *whole* title, because melin puts the series in either half. And
+  the **colors the analyzer read off the hat's own photo**, against the colorway
+  the receipt names.
 
   Both are bonuses and never vetoes: 102 hats have no series recorded, and
   absence is not disagreement. Putting them in the *gate* was tried and was
-  measurably worse (143 → 105), because a hat whose series is `CAMO` meets a
-  receipt reading `Trenches Icon Hydro - Camo` with that word in the colorway
-  half, and containment threw the hat out.
+  measurably worse (143 → 105).
 
   **Assignment order turned out to matter more than any of the scoring.**
-  Matching is greedy — each purchase takes the best hat still free — so in file
-  order a line with fifty candidates can take the one hat that the next line's
-  only candidate was. Purchases are now served **most-constrained first**,
-  which is one extra scoring pass and changes nothing about what counts as a
-  match. `preview_import` shares that ordering, or the preview would
-  under-report the matches the import then makes.
+  Matching is greedy, so in file order a line with fifty candidates can take the
+  one hat that the next line's only candidate was. Purchases are now served
+  **most-constrained first**. The preview shares that ordering.
 
   Measured against a real 294-unit order history: **matched units went 41 → 144
-  (19% → 68% of hat units)**. That 144 is not a tuning result — it is the
-  **maximum achievable under the current eligibility rules**, and
-  `test_matching_achieves_the_maximum_possible` pins it: the test computes a
-  maximum bipartite matching with a second, independent implementation and
-  fails if the matcher falls short. So no further **scoring or ordering**
-  change can improve the result.
+  (19% → 68% of hat units)**, and `test_matching_achieves_the_maximum_possible`
+  pins it against a second, independent implementation.
 
-  Stated precisely, because the distinction matters: the optimum is relative to
-  which pairs are *eligible* at all. Most of the remaining gap is genuine
-  contention — 73 `Trenches Icon Hydro` purchases against 36 such hats, plus 78
-  travel-case lines that correctly never match a hat — and cataloging more hats
-  is what moves that. But the gate itself is a deliberate choice, not a law:
-  hats with no `model_name` are structurally unmatchable, and the superset
-  direction is refused so a generic receipt line cannot claim a specific hat.
-  Loosening either would add edges and could raise the ceiling, at the cost of
-  matches nobody can verify. **The target was 90%; this delivers 68%**, and the
-  shortfall is contention plus that deliberate strictness — not something a
+  Stated precisely: the optimum is relative to which pairs are *eligible* at
+  all. Most of the remaining gap is genuine contention — 73 `Trenches Icon
+  Hydro` purchases against 36 such hats, plus 78 travel-case lines that
+  correctly never match a hat. **The target was 90%; this delivers 68%**, and
+  the shortfall is contention plus deliberate strictness — not something a
   better algorithm reaches.
 
 ### Added
 - **Purchase history can be imported from Settings.** There was no UI path at
-  all — the endpoint existed and could only be reached with a hand-rolled HTTP
-  call, so an order history sat unusable unless someone opened a terminal.
-  Settings → Data → Purchase History now takes a JSON file, and **previews
-  before it writes**: how many lines are new, how many are already on record,
-  how many would match a hat, and how many are ambiguous. Nothing is written
-  until the preview is confirmed, because importing runs the matcher, which
-  writes colorways and cost bases onto hats. **Unlink all** is beside it, since
-  that is the only undo.
+  all — an order history sat unusable unless someone opened a terminal. Settings
+  → Data → Purchase History now takes a JSON file, and **previews before it
+  writes**: how many lines are new, how many are already on record, how many
+  would match a hat, and how many are ambiguous. Nothing is written until the
+  preview is confirmed. **Unlink all** is beside it, since that is the only
+  undo.
 
 - **The app enumerates rsync modules instead of telling you to.** An
   `@ERROR: Unknown module` failure now lists what the daemon actually offers,
   because DSM derives modules from your shared folders and the real list is
-  install-specific — it cannot be documented, only discovered. Anonymous, since
-  module listing precedes authentication.
+  install-specific.
 
 **775 backend + 187 frontend tests pass.**
 
@@ -2512,28 +2017,23 @@ were wrong, and the app relayed rsync's message without explaining it.
   defines no modules at all, and `NetBackup` only exists if you separately
   enable **network backup service** — a different checkbox on the same page.
 
-  Worse, the steps told you a module name instead of telling you to look one
-  up. DSM exposes your **shared folders** as modules, so a real install lists
-  things like `home`, `homes`, `photo`, `video`, `docker`. The name varies per
-  NAS and cannot be documented, only discovered. The steps now lead with
-  `rsync rsync://HOST/` to enumerate them.
+  Worse, the steps told you a module name instead of telling you to look one up.
+  DSM exposes your **shared folders** as modules, and the name varies per NAS.
+  The steps now lead with `rsync rsync://HOST/` to enumerate them.
 
-- **macOS can't run that check.** `rsync` on macOS 15+ is **openrsync**
-  (protocol 29, "rsync 2.6.9 compatible"), which does not parse
-  `user@host::module` and reports the whole string as an unresolvable hostname
-  — `could not resolve hostname backup@10.0.111.10`. That reads like a DNS or
-  NAS fault and is neither. The steps now say to use GNU rsync, and note the
-  container has 3.4.1.
+- **macOS can't run that check.** `rsync` on macOS 15+ is **openrsync**, which
+  does not parse `user@host::module` and reports the whole string as an
+  unresolvable hostname — which reads like a DNS or NAS fault and is neither.
+  The steps now say to use GNU rsync, and note the container has 3.4.1.
 
 ### Added
 - **Upload failures whose cause is somewhere else now explain themselves.**
   Relaying rsync's own words is correct but not always enough: an operator
-  reading *"Unknown module"* has no way to know DSM has two rsync checkboxes,
-  or that module names resolve **before** the password — so it is not a
-  credentials problem, however much it looks like one. `Test now` appends
-  guidance for unknown-module, auth-failed, connection-refused and
-  permission-denied, and passes anything unrecognized through untouched,
-  because no hint beats a wrong hint.
+  reading *"Unknown module"* has no way to know DSM has two rsync checkboxes, or
+  that module names resolve **before** the password. `Test now` appends guidance
+  for unknown-module, auth-failed, connection-refused and permission-denied, and
+  passes anything unrecognized through untouched, because no hint beats a wrong
+  hint.
 
 **748 backend + 180 frontend tests pass.**
 
@@ -2548,99 +2048,71 @@ features that reported themselves as working.
   passthrough for `HEADROOM_BACKUP_RSYNC_PASSWORD`, and Compose's `.env` file
   feeds variable **interpolation only**: it does not become the container's
   environment. So the documented instruction — "put it in `.env`" — was true of
-  the file and false of the process. Inside the container `upload_env()` read
-  nothing, returned no `RSYNC_PASSWORD`, and rsync did what rsync does with a
-  daemon that wants a password and no credential: it prompted. On a non-tty an
-  unattended prompt is a **hang, not an error**, so every scheduled upload sat
-  there until the upload timeout killed it — the same failure mode the SSH
-  provider's setup notes already warn about for host keys.
+  the file and false of the process. Inside the container rsync found no
+  credential and prompted; on a non-tty an unattended prompt is a **hang, not an
+  error**, so every scheduled upload sat there until the timeout killed it.
 
-  The tests could not have caught it. They `monkeypatch.setenv` in-process,
-  where there is no container boundary to cross, so the code was right and the
-  boundary it had to survive was never modeled. `docker-compose.yml` now
-  forwards `HEADROOM_BACKUP_RSYNC_PASSWORD: "${HEADROOM_BACKUP_RSYNC_PASSWORD:-}"`
-  explicitly; the empty default keeps it inert unless you set it, and
-  `upload_env()` already treats empty as "not configured". The variable is now
-  in the environment table in `docs/OPERATIONS.md` as well, which is the other
-  half of it being findable.
+  The tests could not have caught it. They set environment variables in-process,
+  where there is no container boundary to cross. `docker-compose.yml` now
+  forwards the variable explicitly with an empty default, and it is in the
+  environment table in `docs/OPERATIONS.md` as well.
 
-- **The certificate card called a valid certificate broken, on exactly the
-  setup 2.49 exists to enable.** `tls_health._covers()` consulted only
-  `DNSName` SANs. Serving on a bare address — the whole point of
-  `HEADROOM_SITE_ADDRESSES` — makes Caddy sign that address in as an
-  **`IPAddress`** SAN, so with `HEADROOM_ORIGIN=https://10.0.111.4` the lookup
-  found no matching DNS name and **Settings → Trust this device** announced
-  that the certificate does not cover the host and browsers will refuse it —
-  about the certificate the browser in front of it had just accepted. A false
-  alarm on the one card people read when TLS is already confusing them, and it
-  landed on anyone following 2.49's own instructions.
+- **The certificate card called a valid certificate broken, on exactly the setup
+  2.49 exists to enable.** The coverage check consulted only DNS SANs. Serving
+  on a bare address — the whole point of `HEADROOM_SITE_ADDRESSES` — makes Caddy
+  sign that address in as an **IP** SAN, so the card announced that the
+  certificate does not cover the host, about a certificate the browser in front
+  of it had just accepted.
 
   An IP host is now matched against IP SANs and a DNS host against DNS SANs,
   which is what browsers do. Both directions are tested, including a DNS-only
   certificate still failing an IP host, so the fix is not "always true".
 
 - **25 British spellings, reintroduced by the very range that swept them out.**
-  2.46 moved the repo to American spelling; 2.44–2.49 quietly put a fresh crop
-  back. Not all of them were comments — `"Authorise it on the destination: "`
-  is a **rendered numbered step** in the off-site backup card, so this was
-  visible in the product. Swept again across every form (`colour`, `authoris-`,
-  `honour`, `behaviour`, `normalis-`, `analyse`/`analysing`, `recognis-`,
-  `organis-`, `serialis-`). `"Heather Grey"` deliberately survives: it is a
-  melin colorway from catalog data, not prose, and correcting it would stop it
-  matching the orders it came from. Three over-corrections went back the other
-  way too — `analyses` is the plural of *analysis* in both dialects, and a
-  pattern matching `analyse` had turned it into `analyzes`.
+  Not all of them were comments — `"Authorise it on the destination: "` is a
+  **rendered numbered step** in the off-site backup card. Swept again across
+  every form. `"Heather Grey"` deliberately survives: it is a melin colorway
+  from catalog data, and correcting it would stop it matching the orders it came
+  from. Three over-corrections went back the other way too — `analyses` is the
+  plural of *analysis* in both dialects.
 
 - **The changelog's dates ran backwards.** 2.48.0 was dated 2026-08-24 sitting
-  above a 2.47.0 dated 2026-08-23. All three of 2.47–2.49 now read 2026-08-23,
-  which is when they shipped.
+  above a 2.47.0 dated 2026-08-23. All three of 2.47–2.49 now read 2026-08-23.
 
 - **The backup card's "the binary arrives by a bind mount" advice was true of
   one provider.** `rsync` and `openssh-client` have shipped **in the image**
-  since 2.46; only rclone is bind-mounted. A missing rsync therefore means the
-  image predates 2.46 and needs a rebuild — pointing that person at a compose
-  overlay sends them to fix something that was never wrong. The message now
-  names the right remedy per binary.
+  since 2.46; only rclone is bind-mounted. The message now names the right
+  remedy per binary.
 
 - **A redundant second clamp on the home carousel.** `visibleCount` is already
-  bounded by the number of hats with photos, so `Math.min(visibleCount,
-  hatsWithPhotos.length)` restated that rule in a second place — which is how
-  two copies of one rule start disagreeing.
+  bounded by the number of hats with photos, so the extra `Math.min` restated
+  that rule in a second place.
 
 ### Changed
-- **One definition of "is this binary present":** `backup_service.binary_available()`.
-  The upload-test endpoint re-derived it with its own `shutil.which(argv[0])`,
-  so two code paths could disagree about whether an upload could possibly run —
-  in a feature whose entire job is to answer that question honestly. The
-  duplicated "Unknown provider" rejection in `set_backup_upload` is gone for the
-  same reason: `validate_destination` already raises it, with the same message,
-  and stating it twice is two places for the wording *and* the provider list to
-  drift apart.
-- `['settings', 'tls']` added to the query-key list in `CLAUDE.md`, which
-  enumerates every `['settings', …]` key and had missed the one 2.46 added.
+- **One definition of "is this binary present":**
+  `backup_service.binary_available()`. The upload-test endpoint re-derived it
+  with its own lookup, so two code paths could disagree about whether an upload
+  could possibly run. The duplicated "Unknown provider" rejection is gone for
+  the same reason.
+- `['settings', 'tls']` added to the documented query-key list, which had missed
+  the one 2.46 added.
 
 ### Added
 - **A field-parity test between `TlsStatus` and `TlsStatusRead`.** The route
-  builds the response with `TlsStatusRead(**asdict(status))`, and pydantic's
-  default `extra='ignore'` drops unknown keys **silently** — add a field to the
-  dataclass, forget the schema, and the API just stops reporting it with no
-  error anywhere and nothing red in CI. Same class of failure the Hat-column
-  DDL test exists for, so it gets the same treatment.
-- **A tautological test replaced with one that measures something.**
-  `assert isinstance(p["binary_available"], bool)` proved only that pydantic
-  works: a hardcoded `True` would have passed it, and a card that reads
-  "configured" while every upload fails is precisely what that field exists to
-  prevent. It now drives the real lookup to both answers and checks each one
-  reaches the payload.
+  builds the response by splatting the dataclass, and pydantic's default
+  `extra='ignore'` drops unknown keys **silently** — add a field to the
+  dataclass, forget the schema, and the API just stops reporting it with nothing
+  red in CI.
+- **A tautological test replaced with one that measures something.** Asserting a
+  field is a `bool` proved only that pydantic works. It now drives the real
+  lookup to both answers and checks each one reaches the payload.
 
 ### Known
-- `tls_health.ca_fingerprint()` imports `CA_ROOT_PATH` from `routes/ca_cert` —
-  a service reaching into a route, which inverts the layering the rest of the
+- `tls_health.ca_fingerprint()` imports a constant from a route module — a
+  service reaching into a route, which inverts the layering the rest of the
   backend follows. Left alone deliberately: it is a judgment call rather than a
-  breach of a documented standard, this repo already uses deferred imports with
-  a `noqa` where a cycle demands one, and moving the constant touches 5 source
-  and 12 test sites. Recorded here so it stays a decision rather than an
-  oversight.
+  breach of a documented standard, and moving the constant touches 5 source and
+  12 test sites. Recorded here so it stays a decision rather than an oversight.
 
 ## [2.49.0] — 2026-08-23
 
@@ -2648,39 +2120,32 @@ The LAN HTTPS front door can answer on more than the `.local` name, so the app
 is reachable over a VPN instead of looking like it is down.
 
 ### Fixed
-- **Over Teleport the app was unreachable in a way that read as an outage, and
-  the server was fine the whole time.** Three separate causes stacked up, each
-  of which alone is enough to break it:
+- **Over a VPN the app was unreachable in a way that read as an outage, and the
+  server was fine the whole time.** Three separate causes stacked up, each of
+  which alone is enough to break it:
 
   1. **`headroom.local` is mDNS, and mDNS is link-local multicast.** It cannot
-     cross a VPN, a tunnel, or a routed subnet. Over Teleport the name simply
-     does not resolve, and there is nothing to fix in DNS because no DNS is
-     involved — no server holds that record, and no forwarder can be pointed at
-     one.
+     cross a VPN, a tunnel, or a routed subnet. The name simply does not
+     resolve, and there is nothing to fix in DNS because no DNS is involved.
   2. **Connecting by IP failed the TLS handshake outright.** Caddy rejects a
-     connection whose SNI matches no configured site, and only
-     `headroom.local` was configured. The measurement that separates the two:
-     `curl --resolve headroom.local:443:10.0.111.4 https://headroom.local/`
-     returns **HTTP 200**, while `curl https://10.0.111.4/` returns **HTTP
-     000** — no response at all — even with `-k`. The IP was always routable;
-     it just was not a site.
+     connection whose SNI matches no configured site, and only `headroom.local`
+     was configured. `curl --resolve headroom.local:443:<ip> https://headroom.local/`
+     returns **HTTP 200**, while `curl https://<ip>/` returns **HTTP 000** — no
+     response at all — even with `-k`.
   3. **Even had it matched, the certificate would not have.** It carries
-     `DNS:headroom.local` and no IP SAN, so the name check fails. `-k` hides
-     that one and nothing else.
+     `DNS:headroom.local` and no IP SAN.
 
   What turned this from "does not work" into "the server is down" is Caddy's
-  automatic HTTP→HTTPS redirect: `http://10.0.111.4/` answers with a **308 to
-  `https://10.0.111.4/`**, which is precisely the address that cannot complete
-  a handshake. The one URL a person tries when HTTPS is failing hands them back
-  the URL that fails.
+  automatic HTTP→HTTPS redirect: `http://<ip>/` answers with a **308 to
+  `https://<ip>/`**, which is precisely the address that cannot complete a
+  handshake.
 
-  The site address list is now **configurable** —
-  `HEADROOM_SITE_ADDRESSES`, comma-separated — and defaults to
-  `{HEADROOM_MDNS_HOSTNAME}.local`, so existing installs are byte-identical to
-  what they served before. Adding the LAN IP (or a Tailscale/WireGuard name)
-  makes Caddy serve it *and* puts it in the certificate as an IP SAN signed by
-  **the same root**, so devices that already trust the CA trust the new address
-  with no reinstall and no second profile:
+  The site address list is now **configurable** — `HEADROOM_SITE_ADDRESSES`,
+  comma-separated — and defaults to `{HEADROOM_MDNS_HOSTNAME}.local`, so
+  existing installs are byte-identical to what they served before. Adding the
+  LAN IP (or a Tailscale/WireGuard name) makes Caddy serve it *and* puts it in
+  the certificate as an IP SAN signed by **the same root**, so devices that
+  already trust the CA need no reinstall:
 
   ```bash
   HEADROOM_SITE_ADDRESSES="headroom.local, 10.0.111.4" \
@@ -2688,107 +2153,86 @@ is reachable over a VPN instead of looking like it is down.
   ```
 
   **Passkeys still only work on the origin in `HEADROOM_ORIGIN`.** WebAuthn
-  credentials are bound to an origin, so one registered at
-  `https://headroom.local` is not offered at `https://10.0.111.4`. That is
-  WebAuthn working correctly, not a misconfiguration, and it is not something
-  a certificate can fix. Password login works on both.
+  credentials are bound to an origin. That is WebAuthn working correctly, not a
+  misconfiguration, and it is not something a certificate can fix. Password
+  login works on both.
 
   **There is also a zero-config remote path that needed none of this:**
-  `http://<ip>:8000` reaches uvicorn directly, bypassing Caddy entirely — SPA,
-  assets and API all answer 200 over the VPN today. It is plain HTTP, so it is
-  not a secure context and passkeys are unavailable there either; it is the
-  fallback worth knowing about when the front door is the thing being
-  diagnosed.
+  `http://<ip>:8000` reaches uvicorn directly, bypassing Caddy entirely. It is
+  plain HTTP, so it is not a secure context and passkeys are unavailable there
+  either.
 
 ### Added
 - `HEADROOM_SITE_ADDRESSES` documented in the operations environment table and
   in the README's HTTPS section, with a troubleshooting entry for the exact
-  presentation — *works on the LAN, dead over the VPN* — since the symptom
-  points at the server and the cause is name resolution.
-- A test asserting the Caddyfile's site line is env-driven and still defaults
-  to a `.local` name. It sits beside the lifetime tests and reads the Caddyfile
-  for the same reason they do: a constant in this repo would agree with itself
-  while the deployed configuration said something else.
+  presentation — *works on the LAN, dead over the VPN*.
+- A test asserting the Caddyfile's site line is env-driven and still defaults to
+  a `.local` name. It reads the Caddyfile, because a constant in this repo would
+  agree with itself while the deployed configuration said something else.
 
 ## [2.48.0] — 2026-08-23
 
 The LAN HTTPS certificate now lasts 820 days instead of twelve hours.
 
 ### Fixed
-- **`https://headroom.local` served a certificate that had expired 37 days
+- **`https://headroom.local` served a certificate that had expired weeks
   earlier, and Caddy spent every one of those days trying to fix it.** Caddy's
   internal CA issues **twelve-hour** leaf certificates by default. Twelve hours
-  is a good default *if renewal always works* — a short-lived certificate
-  limits the blast radius of a stolen key and needs no attention. Here renewal
-  stopped: an unclean shutdown destroyed Caddy's stored leaf private key, and
-  with no key to sign against, the renewal it queued every ten minutes could
-  never complete. It re-queued that renewal for five weeks while continuing to
-  serve the dead certificate.
+  is a good default *if renewal always works*. Here renewal stopped: an unclean
+  shutdown destroyed Caddy's stored leaf private key, and with no key to sign
+  against, the renewal it queued every ten minutes could never complete.
 
-  Leaf certificates are now issued for **820 days**. A certificate that
-  outlives the gap between something breaking and somebody noticing is worth
-  more on a LAN than a short blast radius, and 2.46's `tls_health` check exists
-  precisely because nothing here notices quickly.
+  Leaf certificates are now issued for **820 days**. A certificate that outlives
+  the gap between something breaking and somebody noticing is worth more on a
+  LAN than a short blast radius, and 2.46's `tls_health` check exists precisely
+  because nothing here notices quickly.
 
-  **820 is a ceiling, not a preference.** Safari — and therefore every iPhone
-  in the house — rejects a TLS server certificate whose validity exceeds
-  **825 days**, even when it chains to a manually installed root. The
-  widely-quoted 398-day cap is a different rule that applies only to Apple's
-  *preinstalled* roots; user-added roots get 825, verified by binary search
-  (825 accepted, 826 rejected). Chrome and Firefox impose no limit here at all,
-  which is exactly the trap: "make it ten years" produces a setup that works on
-  the laptop you test it from and fails on every phone, with a certificate
-  error that reads like a broken trust store rather than a lifetime. 820 leaves
-  headroom for clock skew.
+  **820 is a ceiling, not a preference.** Safari — and therefore every iPhone in
+  the house — rejects a TLS server certificate whose validity exceeds **825
+  days**, even when it chains to a manually installed root. The widely-quoted
+  398-day cap is a different rule that applies only to Apple's *preinstalled*
+  roots; user-added roots get 825, verified by binary search. Chrome and Firefox
+  impose no limit here at all, which is exactly the trap: "make it ten years"
+  produces a setup that works on the laptop you test it from and fails on every
+  phone.
 
   **The root is untouched and still lasts ten years**, so nothing needs
   reinstalling. Raising `intermediate_lifetime` regenerates the *intermediate*,
   which is presented during the handshake; the root is the self-signed trust
-  anchor sitting in each device's keychain, and it is not reissued. Devices
-  that already trust this CA keep trusting it.
+  anchor sitting in each device's keychain.
 
   **This does not repair a device that currently refuses to trust the CA.**
-  That is a separate problem — the root was never installed, iOS's Certificate
-  Trust Settings toggle is off, or the device holds an *older* Caddy root
-  (they all carry the same name, which is why Settings → Trust this device
-  publishes the fingerprint). Deploying this release changes what is served,
-  not what is trusted.
+  Deploying this release changes what is served, not what is trusted.
 
 ### Changed
 - **The Caddy sidecar runs from a `Caddyfile` instead of `caddy
   reverse-proxy`.** The CLI form cannot express PKI options at all, so the
   twelve-hour default was not something the old configuration could have
-  overridden — the file is the only way to say it. New `./Caddyfile`, bind
-  mounted read-only, setting `pki { ca local { intermediate_lifetime 3000d } }`
-  and `tls { issuer internal { lifetime 820d } }`. Caddy requires the issued
-  lifetime to sit under `renewal_window_ratio` (default 1/3) × the
-  intermediate's, so an 820-day leaf needs an intermediate of at least ~2460
-  days; 3000d clears that and still sits below the 3600d root.
+  overridden. New `./Caddyfile`, bind mounted read-only, setting
+  `pki { ca local { intermediate_lifetime 3000d } }` and
+  `tls { issuer internal { lifetime 820d } }`. Caddy requires the issued
+  lifetime to sit under `renewal_window_ratio` × the intermediate's, so an
+  820-day leaf needs an intermediate of at least ~2460 days; 3000d clears that
+  and still sits below the 3600d root.
 
   `docker-compose.https.yml` — the internet-facing overlay — deliberately keeps
   the CLI form. Its certificates come from Let's Encrypt, which sets its own
-  90-day lifetime and renews over the public internet, so there is nothing for
-  this repo to choose there.
+  90-day lifetime.
 
 - **`tls_health.RENEWAL_GRACE_DAYS` 2 → 30.** Two days was generous against a
   twelve-hour certificate. Against an 820-day one it is a fire alarm that rings
-  as the roof falls in. Thirty days is enough notice to act without becoming
-  background noise, and a certificate inside thirty days of expiry still means
-  renewal has stopped rather than that expiry is merely approaching.
+  as the roof falls in.
 
 - The **Trust this device** card and the README's HTTPS troubleshooting both
   said the certificate "lives twelve hours", and the card's warning read
-  *expires within hours* — copy that was accurate at the old lifetime and off
-  by a month at the new one. The card now names the real number of days
-  remaining, and says *ran out* versus *runs out* correctly rather than using
-  the past tense for a certificate that has not expired yet.
+  *expires within hours*. The card now names the real number of days remaining,
+  and says *ran out* versus *runs out* correctly.
 
 ### Added
 - Two tests guarding the ceiling, because the failure mode is invisible on the
   machine you would test it from. One fails if the Caddyfile's leaf lifetime
-  reaches 825 days; the other checks Caddy's own constraint — issued lifetime
-  under 1/3 of the intermediate, intermediate under the 3600d root — which
-  otherwise surfaces as a sidecar that refuses to start after a deploy.
+  reaches 825 days; the other checks Caddy's own constraint, which otherwise
+  surfaces as a sidecar that refuses to start after a deploy.
 
 ## [2.47.0] — 2026-08-23
 
@@ -2798,29 +2242,26 @@ Build speed. Nothing about the running app changed.
 - **A release rebuild on the Pi took 873s, and 490s of it was reinstalling
   dependencies that had not changed.** Cutting a release edits the `version`
   field in `pyproject.toml` — and `pyproject.toml` was the file gating the
-  dependency layer. So `COPY pyproject.toml` busted on every release, `uv sync`
-  re-ran (237s), and the rembg model layer sitting downstream of it fell with
-  it (149s). The uv cache mount meant nothing was re-*downloaded*; uv still
-  unpacked and bytecode-compiled thousands of files onto an SD card, every
-  release, for a string that has nothing to do with dependencies.
+  dependency layer. So the copy busted on every release, `uv sync` re-ran
+  (237s), and the rembg model layer sitting downstream of it fell with it
+  (149s).
 
   Dependencies now install from `requirements.txt`, generated by
   `uv export --frozen --no-dev --no-emit-project --format requirements-txt`.
   `--no-emit-project` leaves the project — and therefore its version — out, so
   the file is byte-identical across a version bump and the layer survives one.
   `--require-hashes` keeps the supply-chain guarantee `--frozen` gave here:
-  every artifact must match the digest recorded in `uv.lock`, so a compromised
-  mirror cannot substitute one.
+  every artifact must match the digest recorded in `uv.lock`.
 
   The version-bearing `COPY pyproject.toml uv.lock*` moved to **after** the
   dependency install. It is still `uv sync --frozen` with no fallback, and it
-  still busts on every release — but installing the project alone against a
-  venv that already satisfies the lock costs 6.5s.
+  still busts on every release — but installing the project alone against a venv
+  that already satisfies the lock costs 6.5s.
 
-  `npm ci` also gained `--no-audit --no-fund`, two registry round trips whose
-  output nobody reads during a deploy. Deliberately **not** `--ignore-scripts`:
-  rolldown and esbuild fetch their platform binary in a postinstall, so
-  skipping scripts produces a build that fails later and further away.
+  `npm ci` also gained `--no-audit --no-fund`. Deliberately **not**
+  `--ignore-scripts`: rolldown and esbuild fetch their platform binary in a
+  postinstall, so skipping scripts produces a build that fails later and further
+  away.
 
   Measured A/B on the Pi this deploys to:
 
@@ -2833,21 +2274,18 @@ Build speed. Nothing about the running app changed.
   | **Total** | **873s** | **531s** |
 
   A 39% reduction, with cached steps going from 7 to 10. The export line is
-  unchanged because it is SD-card write throughput, not work this can remove.
+  unchanged because it is SD-card write throughput.
 
   **The first build after upgrading is slower — measured at 1106s.** The layer
-  shape changed, so its cache is cold and everything rebuilds once. Every
-  build after that is the 531s.
+  shape changed, so its cache is cold and everything rebuilds once.
 
 ### Added
 - `tests/test_requirements_export.py`, because the two ways this silently
-  reverts both leave a green build. The price of the speed is a second file
-  describing the same dependency set: a bump can land in `uv.lock` without
+  reverts both leave a green build: a bump can land in `uv.lock` without
   `requirements.txt` being regenerated, and the image then quietly installs the
   **old** set while every test passes against the new one. The other is anyone
-  moving `COPY pyproject.toml` back above the dependency install, which brings
-  the 490s straight back and says nothing. Four tests pin both, plus the
-  hash-pinning and the project's absence from the export.
+  moving `COPY pyproject.toml` back above the dependency install. Four tests pin
+  both, plus the hash-pinning and the project's absence from the export.
 
 ## [2.46.0] — 2026-08-23
 
@@ -2858,27 +2296,25 @@ Build speed. Nothing about the running app changed.
   name it is served under, and the SHA-256 of the CA this install hands out.
   Surfaced in **Settings → This device → Trust this device**.
 
-  Written because the real deployment served a certificate that had expired
-  **37 days earlier** and nothing noticed. Caddy's stored leaf key had vanished,
-  so its renewal queued every ten minutes and never completed. The container was
-  healthy, the app answered, backups ran — every signal was green, because
-  nothing here had ever looked at the certificate in front of it.
+  Written because the real deployment served a long-expired certificate and
+  nothing noticed. Caddy's stored leaf key had vanished, so its renewal queued
+  every ten minutes and never completed. The container was healthy, the app
+  answered, backups ran — every signal was green, because nothing here had ever
+  looked at the certificate in front of it.
 
   It measures the served chain rather than reading Caddy's storage, because
   those disagree: that failure had a valid certificate **on disk** and an
-  expired one in Caddy's memory, so a file check would have reported everything
-  fine while browsers refused the connection.
+  expired one in Caddy's memory.
 
   It is reported, never enforced. The certificate belongs to Caddy, so failing
   readiness on it would restart-loop the app without fixing anything.
 
-- **The CA fingerprint is published**, because a name is not an identity.
-  Caddy names every root `Caddy Local Authority - <year> ECC Root`, so two
-  installs produce two **different** roots with the **same** name. A browser
-  matching by name picks whichever it has and reports *"Peer's certificate has
-  an invalid signature"* on a chain that verifies perfectly at the server —
-  and nothing in the name, dates or issuer separates them. The card now shows
-  the fingerprint and the command to list what a Mac actually trusts.
+- **The CA fingerprint is published**, because a name is not an identity. Caddy
+  names every root `Caddy Local Authority - <year> ECC Root`, so two installs
+  produce two **different** roots with the **same** name, and a browser matching
+  by name reports an invalid signature on a chain that verifies perfectly at the
+  server. The card now shows the fingerprint and the command to list what a Mac
+  actually trusts.
 
 - **Off-site backups to rsync and Synology.** Three providers now, each a single
   frozen record driving the argv, the validation, the UI copy and the preflight
@@ -2893,22 +2329,18 @@ Build speed. Nothing about the running app changed.
 
   The two rsync destinations differ by **one colon, and that is the whole
   transport**: `host:/path` is rsync over SSH, `host::module/path` connects
-  straight to a daemon on port 873 and reads the first segment as a module
-  name. Validation is per provider so a typo cannot silently switch transport
-  and fail with credentials nobody configured, looking like a broken NAS.
+  straight to a daemon on port 873 and reads the first segment as a module name.
+  Validation is per provider so a typo cannot silently switch transport and fail
+  with credentials nobody configured, looking like a broken NAS.
 
   `rsync` and `openssh-client` now ship **in the image** (~3 MB). rclone is
-  ~50 MB and stays a bind mount. Requiring an overlay whose only job was to
-  supply a binary the image could have carried made the two most ordinary
-  destinations — another Linux box, a NAS — needlessly hard.
+  ~50 MB and stays a bind mount.
 
 - **The off-site backup card explains how to finish setting up.** Each provider
   carries its host-side steps, its destination shape, an example, and whether
   its binary is actually present in the container. "Configured" and "working"
-  are different states and everything between them is host-side work the card
-  previously could not name. **Test now** also says outright when the binary is
-  missing, instead of surfacing a subprocess's "No such file or directory" —
-  a true statement about `argv[0]` that reads as a problem with the destination.
+  are different states. **Test now** also says outright when the binary is
+  missing, instead of surfacing a subprocess's "No such file or directory".
 
 ### Fixed
 - **The macOS trust instructions**, which stopped at "double-click the file".
@@ -2917,69 +2349,54 @@ Build speed. Nothing about the running app changed.
   `Error: -26276`, which reads like a bad file rather than a wrong destination.
   Both the card and the README now lead with `security add-trusted-cert`, and
   note that a browser's own export button always hands you the leaf or the
-  intermediate and **never** the root — a root is self-signed and never sent
-  during a handshake, so it can only come from the server.
+  intermediate and **never** the root.
 
 ## [2.45.0] — 2026-08-23
 
 ### Fixed
-- **`GET /api/public/ca-certificate` returned 404 on every install that ever
-  ran the LAN-HTTPS overlay.** The endpoint exists so a phone can trust
-  `https://headroom.local` by opening a URL; instead it reported "No local CA
-  certificate on this install. It exists only when running
-  docker-compose.https-lan.yml" to operators who were looking directly at
-  Caddy serving certificates.
+- **`GET /api/public/ca-certificate` returned 404 on every install that ever ran
+  the LAN-HTTPS overlay.** The endpoint exists so a phone can trust
+  `https://headroom.local` by opening a URL; instead it reported that no local
+  CA exists, to operators who were looking directly at Caddy serving
+  certificates.
 
-  The route read Caddy's PKI in place. Caddy creates that tree `0700 root`,
-  and this app's container runs as a non-root user by policy, so the traversal
+  The route read Caddy's PKI in place. Caddy creates that tree `0700 root`, and
+  this app's container runs as a non-root user by policy, so the traversal
   failed — and `Path.is_file()` reports a permission failure as plain `False`,
   which made **"mounted but unreadable" indistinguishable from "not
-  installed"** and sent the endpoint's own error message to the wrong
-  conclusion. It had never worked, on any release, on any deployment.
+  installed"**. It had never worked, on any release, on any deployment.
 
   The overlay now runs a `caddy-ca-export` sidecar that copies the public root
   out to its own volume, world-readable, and the app mounts *that* instead of
-  the PKI. Copying one file rather than loosening permissions also means the
-  app container has no key material in view at all — a stronger guarantee than
-  the route's hardcoded filename, since there is now nothing else in the mount
-  to serve by mistake. It polls rather than copying once: Caddy mints the CA a
-  moment after startup on a first boot and rotates its intermediate
-  periodically after that.
+  the PKI. Copying one file rather than loosening permissions also means the app
+  container has no key material in view at all. It polls rather than copying
+  once, since Caddy mints the CA a moment after startup on a first boot and
+  rotates its intermediate periodically after that.
 
   `_unavailable_detail()` now tells the two failures apart, so a still-broken
-  install is told what is actually wrong instead of being sent to check an
-  overlay that is demonstrably already running.
+  install is told what is actually wrong.
 
   **Upgrading:** recreate the stack (`docker compose -f docker-compose.yml -f
   docker-compose.https-lan.yml up -d --build`) to pick up the new service.
-  Until you do, the endpoint keeps 404ing — with an accurate message now.
 
-- **README's macOS trust step.** It said to double-click the certificate,
-  which lands it in whichever keychain Keychain Access last had selected. The
-  **iCloud** keychain cannot hold certificates and refuses with
-  `Error: -26276` — an error that reads like a bad file rather than a wrong
-  destination. The step now leads with `security add-trusted-cert`, which
-  imports and trusts in one command and cannot guess wrong, and the
-  troubleshooting list covers both `-26276` and the 404 above.
+- **README's macOS trust step.** It said to double-click the certificate, which
+  lands it in whichever keychain Keychain Access last had selected; the
+  **iCloud** keychain cannot hold certificates and refuses with `Error: -26276`.
+  The step now leads with `security add-trusted-cert`.
 
 ### Changed
 - **The home carousel shows two hats side by side on a desktop**, one on a
-  phone. The breakpoint is 992px — the width this app already treats as
-  desktop, since it is where the top nav replaces the bottom nav — so it is
-  not a new number to keep in step.
+  phone. The breakpoint is 992px — the width this app already treats as desktop
+  — so it is not a new number to keep in step.
 
-  The count is decided in JavaScript (`lib/useMediaQuery.ts`) rather than by
-  hiding a second slide in CSS, so a phone never downloads a photo it will not
-  display. `useSyncExternalStore` rather than `useState` + an effect: the
-  effect version renders one frame at the wrong size and visibly pops from one
-  hat to two on every mount.
+  The count is decided in JavaScript rather than by hiding a second slide in
+  CSS, so a phone never downloads a photo it will not display.
+  `useSyncExternalStore` rather than `useState` + an effect: the effect version
+  renders one frame at the wrong size and visibly pops on every mount.
 
-  Two details that are easy to get wrong and are pinned by tests: the visible
-  count is clamped to the number of hats that actually have photos, because a
-  one-photo collection rendering the same hat in both panes reads as a bug
-  rather than a layout; and the arrows now hide when everything is already on
-  screen, since stepping by a screenful through a two-hat list lands back
-  where it started.
+  Two details are pinned by tests: the visible count is clamped to the number of
+  hats that actually have photos, and the arrows now hide when everything is
+  already on screen.
 
 ## [2.44.0] — 2026-08-23
 
@@ -2990,31 +2407,24 @@ Build speed. Nothing about the running app changed.
   is the wrong shape for the one thing standing between a dead SD card and
   losing the collection.
 
-  The card answers three questions: is a copy configured, did the last one
-  work, and does it work *right now* — the last via a **Test now** button that
-  performs the real upload against your newest backup. Same command, same
-  credentials. A dry run would only prove the form had been filled in.
+  The card answers three questions: is a copy configured, did the last one work,
+  and does it work *right now* — the last via a **Test now** button that
+  performs the real upload against your newest backup. A dry run would only
+  prove the form had been filled in.
 
-  **The form does not accept a command, deliberately.** The hook runs an argv
-  unattended, as the app user, after every backup, so a free-text command
-  field would turn a stolen session into command execution inside the
-  container. The browser sends a provider name and a destination; the argv is
-  assembled from a template the server owns, and the destination must match
-  `remote:path` — a leading `-` is rejected by name, because `--config=…` is
-  flag injection wearing an argument's clothes.
+  **The form does not accept a command, deliberately.** The browser sends a
+  provider name and a destination; the argv is assembled from a template the
+  server owns, and the destination must match `remote:path`.
 
-  `HEADROOM_BACKUP_UPLOAD_CMD` still works and now **wins** over anything set
-  in the UI, which is the opposite precedence to the API keys. That variable
-  is settable only with host access; letting a browser override a host-level
-  decision about what executes would erase the boundary that makes the raw
-  command form acceptable at all. When it is set, the card goes read-only and
+  `HEADROOM_BACKUP_UPLOAD_CMD` still works and now **wins** over anything set in
+  the UI, which is the opposite precedence to the API keys. That variable is
+  settable only with host access. When it is set, the card goes read-only and
   says so.
 
 - **Upload outcomes are recorded** — last attempt, whether it succeeded, the
   error, and running success/failure counts — separately from the backup's own
   health. The two fail independently: a local backup can succeed every night
-  while the off-box copy has been failing for a month, and only the second
-  means the archive exists nowhere but the card it is protecting against.
+  while the off-box copy has been failing for a month.
 
 ## [2.43.0] — 2026-08-23
 
@@ -3022,40 +2432,33 @@ A test-coverage audit, and the bug it found.
 
 ### Fixed
 - **Bulk import failed every single item.** `_process_item` reads
-  `item.filename` a few lines after calling `create_hat` — and `create_hat`
-  ends in `_reload_hat`, which calls `db.expire_all()`. That expires every
-  object in the session, the `ImportJobItem` included, so the next attribute
-  read triggered a lazy refresh through synchronous attribute access, which an
-  async session cannot service: `greenlet_spawn has not been called`. The
-  per-item handler caught it and recorded an error, so the feature failed
-  completely while presenting as a batch of bad files.
+  `item.filename` a few lines after calling `create_hat` — and `create_hat` ends
+  in a reload that calls `db.expire_all()`. That expires every object in the
+  session, the import item included, so the next attribute read triggered a lazy
+  refresh through synchronous attribute access, which an async session cannot
+  service. The per-item handler caught it and recorded an error, so the feature
+  failed completely while presenting as a batch of bad files.
 
   Found by writing the first test that ever ran the worker. It reads what it
-  needs into plain locals before `create_hat` now — the same discipline the
-  export service already uses for crossing a thread boundary.
+  needs into plain locals before `create_hat` now.
 
 ### Added
 - **Coverage measurement**, as `pytest --cov` with **branch** coverage. Branch
-  rather than statement because this codebase's risk lives in degradation
-  paths — Claude unconfigured, rembg failed, worker dead — which are branches,
-  and a statement-only number counts them covered the moment the happy path
-  runs once.
-- **58 new tests** against what the audit found was least covered, which was
-  not random: the modules with the strongest docstring promises had the
-  weakest coverage.
-  - `import_service` **46% → 87%** — the durability claims (`the loop survives
-    ANY per-item exception`, the boot sweep healing crash-stranded state, a
-    canceled job never being resurrected) were prose, not tests.
-  - `utils/upload` — the 413 cap, a security control whose own docstring says
-    an untestable limit "is how the last one went missing".
-  - `report_service` **53% → 97%** — the document that goes to an insurer, and
-    the only place the valuation rule renders server-side.
-  - `claude_analysis` **57% → 84%** — request shape (owner-stated construction
-    is sent as ground truth; dropping it is the bug that shipped in 2.17) and
-    failure translation.
-  - `ebay_service` **53% → 73%**, `melin_recap` **69% → 83%**,
-    `google_vision` **72% → 84%** — the degrade-don't-fail paths, which on a
-    Pi talking to four third parties are not edge cases.
+  rather than statement because this codebase's risk lives in degradation paths
+  — Claude unconfigured, rembg failed, worker dead — which are branches, and a
+  statement-only number counts them covered the moment the happy path runs once.
+- **58 new tests** against what the audit found was least covered, which was not
+  random: the modules with the strongest docstring promises had the weakest
+  coverage.
+  - `import_service` **46% → 87%** — the durability claims were prose, not
+    tests.
+  - `utils/upload` — the 413 cap, whose own docstring says an untestable limit
+    "is how the last one went missing".
+  - `report_service` **53% → 97%** — the document that goes to an insurer.
+  - `claude_analysis` **57% → 84%** — request shape and failure translation.
+  - `ebay_service` **53% → 73%**, `melin_recap` **69% → 83%**, `google_vision`
+    **72% → 84%** — the degrade-don't-fail paths, which on a Pi talking to four
+    third parties are not edge cases.
 
 ## [2.42.0] — 2026-08-23
 
@@ -3063,128 +2466,104 @@ The remainder of the archaeology report, plus build-time work.
 
 ### Added
 - **`GET /api/admin/config`** — what this deployment is *effectively* configured
-  to do. Every toggle is an env var read live, and `env_int` degrades a typo to
-  the default rather than crashing, so a misconfigured box looked identical to a
+  to do. Every toggle is an env var read live, and a typo degrades to the
+  default rather than crashing, so a misconfigured box looked identical to a
   correct one from outside. Reports worker expected-vs-alive, backup interval
-  and keep-count, **whether an off-box upload is configured at all**, the body
-  and disk limits, and free space. No secrets.
+  and keep-count, whether an off-box upload is configured at all, the body and
+  disk limits, and free space. No secrets.
 - **`analysis_stage_at`** — a stage alone can't distinguish a pipeline that is
   working from one that is wedged; both read "identifying". Stamped by the same
   `UPDATE` that sets the stage, so the two can never disagree.
-- **ruff**, inside the existing backend CI job rather than a new one — a
-  separate lint job would pay a fresh runner and a full `uv sync` to do a second
-  of work. It immediately found **16 dead imports** and a genuine forward
-  reference (`AnalysisJobRead` used 4 lines before it was defined, working only
-  because `from __future__ import annotations` defers resolution). 58 `noqa`
-  codes had been written to an authority that was never installed.
+- **ruff**, inside the existing backend CI job rather than a new one. It
+  immediately found **16 dead imports** and a genuine forward reference that
+  worked only because annotations are deferred. 58 `noqa` codes had been written
+  to an authority that was never installed.
 
 ### Fixed
 - **The Settings tabs fit a phone, on one line.** As a horizontal scroller the
   tabs past the fold were invisible — no scrollbar on touch, last pill flush
-  with the gutter — so nothing on screen said the last section existed. The
-  real constraint turned out to be the LABELS, not the layout: five names have
-  to share ~320px, which "Collection data" and "This device" never could. They
-  are **Data**, **Device** and **Upkeep** now, in five equal columns, one row,
-  no scrolling and no ellipsis. The 44px tap target is unchanged.
-- **Stats, Valuation and Home gate on `isError`.** `?? []` turned a failed
-  fetch into "$0 across 0 hats" — a confident wrong answer, and precisely what
-  `valueHat` returns `null` rather than 0 to avoid.
+  with the gutter. The real constraint turned out to be the LABELS, not the
+  layout: five names have to share ~320px. They are **Data**, **Device** and
+  **Upkeep** now, in five equal columns, one row, no scrolling and no ellipsis.
+- **Stats, Valuation and Home gate on `isError`.** `?? []` turned a failed fetch
+  into "$0 across 0 hats" — a confident wrong answer.
 - **The nav error badge is labeled.** A bare red dot is unreadable to a screen
-  reader and ambiguous to everyone else; it counts hats whose *analysis* failed,
-  not errors in general.
+  reader; it counts hats whose *analysis* failed, not errors in general.
 - **`melin_recap` logs.** A network service with a declared, never-used logger,
-  whose documented failure mode — Treet rotating the anonymous client id —
-  presents as the entire collection quietly losing its resale prices.
+  whose documented failure mode presents as the entire collection quietly losing
+  its resale prices.
 - **One correlation token.** `hat=%s` everywhere, so `grep 'hat=42'` is a
   complete trace of one run instead of five formats.
 - **The Claude prompt stopped teaching a discarded answer.** `construction` is
   owner-only, but the schema demanded it and spent ~200 tokens per analysis on
-  identification guidance that ended with a false claim ("your answer is used
-  when they left it blank" — it never is). Trimmed and dropped from `required`.
+  guidance that ended with a false claim. Trimmed and dropped from `required`.
   The **stitching falsifier stays**, reframed around what it actually protects:
   `model_name`, which *is* stored and *is* the name a person reads.
 
 ### Changed
-- **Docker builds cache their layers in CI.** The image job rebuilt apt, `uv
-  sync`, `npm ci` and a full SPA build from scratch on every run — nearly all
-  its wall time and none of its value on a branch that touched only Python.
+- **Docker builds cache their layers in CI.** The image job rebuilt apt,
+  `uv sync`, `npm ci` and a full SPA build from scratch on every run.
 - **`npm ci` caches on the Pi.** Cutting a release edits
   `frontend/package.json`, which busts that layer — so every upgrade
-  re-downloaded the entire dependency tree over the Pi's own network, the
-  slowest part of `docker compose up -d --build` there. A cache mount survives
-  the invalidation, and `--prefer-offline` stops it revalidating each tarball.
-- **A docs-only commit no longer re-runs CI on `main`.** A squash-merge fires a
-  second full run on the same tree the PR just passed; worth keeping for code,
-  pure waste for prose. Excluded on `push` only — `pull_request` still gates
-  every change.
+  re-downloaded the entire dependency tree over the Pi's own network. A cache
+  mount survives the invalidation, and `--prefer-offline` stops it revalidating
+  each tarball.
+- **A docs-only commit no longer re-runs CI on `main`.** Excluded on `push`
+  only — `pull_request` still gates every change.
 
 ## [2.41.0] — 2026-08-23
 
 ### Fixed
-- **Color search returned most of the collection whatever you asked for.**
-  It ranked hats by CIEDE2000 distance and kept everything under a cutoff of
-  26 — and ΔE 26 is an enormous distance. At that threshold **51 pairs of
-  curated palette colors matched each other**: black with navy, silver with
-  beige, white with cream, charcoal with dark brown. Three releases were spent
-  moving that number (30, then 22, then 26) and the file's own comment already
-  had the answer: a distance threshold cannot answer "is this hat purple?",
-  and tuning it will never make it.
+- **Color search returned most of the collection whatever you asked for.** It
+  ranked hats by CIEDE2000 distance and kept everything under a cutoff of 26 —
+  and ΔE 26 is an enormous distance. At that threshold **51 pairs of curated
+  palette colors matched each other**: black with navy, silver with beige, white
+  with cream. Three releases were spent moving that number (30, then 22, then
+  26) and the file's own comment already had the answer: a distance threshold
+  cannot answer "is this hat purple?"
 
-  The measurement that ends the argument: within-family distances run up to
-  **ΔE 55.8** (light blue to navy, both plainly blue) while cross-family ones
-  start at **15.4** (black to navy). The ranges do not overlap, they *invert*
-  — the pair that must match is three and a half times further apart than the
-  pair that must not, so no threshold exists that separates them.
+  The measurement that ends the argument: within-family distances run up to **ΔE
+  55.8** (light blue to navy, both plainly blue) while cross-family ones start at
+  **15.4** (black to navy). The ranges do not overlap, they *invert* — so no
+  threshold exists that separates them.
 
-  Membership is now categorical, decided on the curated palette names where
-  the question has an exact answer. Distance keeps the job it is good at:
-  ordering hats that are already the right color. Searching purple returns
-  purples and lavenders; searching pink returns pinks.
+  Membership is now categorical, decided on the curated palette names where the
+  question has an exact answer. Distance keeps the job it is good at: ordering
+  hats that are already the right color.
 
   Two refinements earn their place. A swatch too muted for its name to be
-  trustworthy is classified by **hue angle** instead — a dark teal sits
-  nearest *charcoal* by ΔE because it is dark, but its hue is 197°, the same
-  as a mid teal's — with the existing chroma-*ratio* guard separating the case
-  that must match (a dark teal holds 41% of teal's chroma) from the one that
-  must not (a blue-gray holds 20% of blue's), since their absolute chromas are
-  11.1 and 11.7 and nothing else tells them apart. And blue/purple can never
-  be bridged by hue at all, because CIELAB's hue angle is non-linear through
-  the blue region — a defect of the color space, not a judgment call.
+  trustworthy is classified by **hue angle** instead — a dark teal sits nearest
+  *charcoal* by ΔE because it is dark, but its hue is 197°, the same as a mid
+  teal's — with the existing chroma-*ratio* guard separating the case that must
+  match from the one that must not. And blue/purple can never be bridged by hue
+  at all, because CIELAB's hue angle is non-linear through the blue region.
 
-  A color chip now honors major colors the same way a typed color term has
-  since 2.39, with a per-rank distance budget so "the hat with the pink brim"
-  still works but a pinkish logo no longer counts as a pink hat.
+  A color chip now honors major colors the same way a typed color term has since
+  2.39, with a per-rank distance budget so "the hat with the pink brim" still
+  works but a pinkish logo no longer counts as a pink hat.
 
-- **The collection export took longer than a full backup and produced
-  nothing.** It generated every hat's 800px derivative inline, in the
-  card-rendering loop, **on the event loop** — a full-resolution decode and a
-  slow WebP encode each. A few hundred hats is minutes during which the app
-  answers no request at all, with a decoded full-res image resident alongside
-  rembg's 179 MB model in a 1 GB container.
+- **The collection export took longer than a full backup and produced nothing.**
+  It generated every hat's 800px derivative inline, in the card-rendering loop,
+  **on the event loop** — a full-resolution decode and a slow WebP encode each. A
+  few hundred hats is minutes during which the app answers no request at all.
 
-  Derivatives are now written when the photo is processed, swept in at boot
-  for hats that predate the change, and whatever is left resolves on a worker
-  thread with progress logging. The export is a zip of files that already
-  exist.
+  Derivatives are now written when the photo is processed, swept in at boot for
+  hats that predate the change, and whatever is left resolves on a worker thread
+  with progress logging.
 
 - **A legacy hydro/hydrolite flag was dropped when sent with another field.**
-  The `elif` handling pre-2.11 clients hung off the `artist_series` test
-  rather than the `construction` test, so a flag sent *alongside* an artist
-  series was silently ignored while one sent alone worked. Two unrelated
-  fields, one `elif`.
+  The branch handling pre-2.11 clients hung off the wrong test, so a flag sent
+  *alongside* an artist series was silently ignored while one sent alone worked.
 
-- **The purchase importer disagreed with its own preview.** `import_purchases`
-  adds a row per unit as it walks a batch, and the dedupe query autoflushed
-  those pending rows — so units the batch had just staged were counted as
-  already-existing *and* as staged, subtracting the line twice. `preview_import`
-  writes nothing, so it had nothing to flush and stayed correct. Equal
-  quantities clamp to the right answer by accident, which is why it went
-  unnoticed.
+- **The purchase importer disagreed with its own preview.** The importer adds a
+  row per unit as it walks a batch, and the dedupe query autoflushed those
+  pending rows — so units the batch had just staged were counted twice. The
+  preview writes nothing, so it had nothing to flush and stayed correct.
 
 - **The case forms advertised the wrong capacity, in both digits.** They read
   "Default: 4 regular / 6 beanies"; a default case is **3 regular (4 at a
   squeeze) / 8 beanies**. Now built from the constants and pinned by a parity
-  test, the mechanism this repo already had for exactly this.
+  test.
 
 ## [2.40.0] — 2026-08-23
 
@@ -3192,127 +2571,97 @@ The three failures this deployment was structurally unable to notice, plus
 backups that stop restating themselves.
 
 ### Changed
-- **Backups are written only when the data has changed**, and retention is now
-  a **count** (`HEADROOM_BACKUP_KEEP`, default 5) rather than an age. On an
+- **Backups are written only when the data has changed**, and retention is now a
+  **count** (`HEADROOM_BACKUP_KEEP`, default 5) rather than an age. On an
   untouched collection a daily tarball re-read every photo, wore the SD card,
-  and evicted a genuine historical snapshot from a fixed-size window to store
-  a restatement of the newest one.
+  and evicted a genuine historical snapshot to store a restatement of the newest
+  one.
 
-  The two changes are one change. Age-based pruning combined with
-  change-gating has a steady state of **zero backups** on an idle system: the
-  last one ages out and nothing is written to replace it. Counting cannot do
+  The two changes are one change. Age-based pruning combined with change-gating
+  has a steady state of **zero backups** on an idle system. Counting cannot do
   that. `HEADROOM_BACKUP_RETENTION_DAYS` is still read — as a count — so an
-  existing `.env` keeps meaning something instead of silently reverting.
+  existing `.env` keeps meaning something.
 
-  Change is judged from the size and mtime of the database, **its WAL
-  sidecar** (a commit in WAL mode can leave the main file untouched, so
-  watching it alone would call a day of edits "no changes"), and every file
-  under uploads. The marker recording the last backed-up state is a file in
-  `backups/` and deliberately not a row in the database — the database is part
-  of what it measures, so a marker stored there would invalidate itself every
-  time it was written.
+  Change is judged from the size and mtime of the database, **its WAL sidecar**
+  (a commit in WAL mode can leave the main file untouched), and every file under
+  uploads. The marker recording the last backed-up state is a file in `backups/`
+  and deliberately not a row in the database — the database is part of what it
+  measures.
 
 ### Added
 - **The app can see the disk filling up.** There was no free-space check
-  anywhere, and readiness proved the volume was writable by writing two bytes
-  — which succeeds with 8 KB free, while the next backup tarball fails, SQLite
-  starts raising `disk I/O error`, and photo uploads stop. Two thresholds,
-  because there are two things to say: a warning in the log below 15%, and
-  readiness failure below a hard floor of 500 MB. The floor is an absolute
-  size rather than a percentage because what matters is whether the next
-  backup fits.
-- **Readiness fails when a background worker has died.** The Docker
-  healthcheck is anonymous and worker liveness was authenticated-only detail,
-  so the container could not go unhealthy for a dead analysis or import worker
-  — leaving `restart: unless-stopped`, the only automated recovery here, blind
-  to the two failures most likely to develop over weeks. Gated on whether the
-  worker is *expected* to be running, so a deliberately disabled one is not
-  reported as a fault.
+  anywhere, and readiness proved the volume was writable by writing two bytes —
+  which succeeds with 8 KB free, while the next backup tarball fails. Two
+  thresholds: a warning in the log below 15%, and readiness failure below a hard
+  floor of 500 MB. The floor is an absolute size rather than a percentage
+  because what matters is whether the next backup fits.
+- **Readiness fails when a background worker has died.** The Docker healthcheck
+  is anonymous and worker liveness was authenticated-only detail, so the
+  container could not go unhealthy for a dead analysis or import worker. Gated
+  on whether the worker is *expected* to be running, so a deliberately disabled
+  one is not reported as a fault.
 - **The Backups card now says whether the scheduler is working.** The endpoint
   that answers this shipped in 2.26 and nothing ever rendered it. It
   distinguishes running-and-idle-because-nothing-changed from failing from not
-  running at all — a distinction that matters much more now that an old
-  newest-backup is a normal, correct state.
+  running at all.
 - **Unhandled errors become activity-log rows.** A 500 previously left exactly
-  one trace: a stack trace on stdout, inside a container, on a Pi. The one
-  in-app error surface queries hats whose analysis failed, so a route 500
-  appeared nowhere in the app at all. The traceback still reaches the log —
-  the row joins it rather than replacing it.
+  one trace: a stack trace on stdout, inside a container, on a Pi. The traceback
+  still reaches the log — the row joins it rather than replacing it.
 
 ### Fixed
 - **Security headers were missing from every 401.** `add_middleware` prepends,
-  so the last one added is outermost — and `SecurityHeadersMiddleware` was
-  added first, which put it behind the auth gate. The gate short-circuits an
-  unauthenticated `/api/*` request with its own 401, and that response never
-  reached the header middleware: no CSP, no `nosniff`, no `X-Frame-Options`,
-  on precisely the responses a stranger is most likely to receive. The test
-  named for this invariant asserted against `/health`, which the gate lets
-  through — the one path where it already held.
+  so the last one added is outermost — and the header middleware was added
+  first, which put it behind the auth gate. The test named for this invariant
+  asserted against `/health`, the one path where it already held.
 - **`last_success_at` no longer forgets on restart.** The health record is
   process-local, and on this deployment restarts are routine, so the endpoint
   named *health* was the one that forgot — and `null` reads as "never
-  succeeded". It falls back to the newest backup's mtime, flagged as derived,
-  because a file proves a backup was written and not that anything is still
-  scheduled to write the next one.
-- **A 20 MB JSON body no longer costs ~300 MB of RAM.** Every upload path was
-  careful; nothing else was, so the cheapest denial of service against a 1 GB
-  Pi was one unauthenticated curl at the login page. Non-multipart bodies over
-  2 MB are refused with 413 before the auth gate spends a database lookup on
-  them. Multipart is exempt — those routes stream to disk under their own,
-  much larger, deliberate caps.
-- **A rejected password is no longer echoed back in the 422.** Pydantic puts
-  the offending `input` into every validation error and FastAPI serializes the
-  list straight into the response body, so a password refused for being too
-  short came back in clear text — into the browser's network tab and any proxy
-  log on the way. The field and the reason stay; the value was the one part
-  the caller already had.
+  succeeded". It falls back to the newest backup's mtime, flagged as derived.
+- **Large non-multipart request bodies are refused early.** Every upload path
+  was careful; nothing else was. Bodies over 2 MB are now refused with 413
+  before the auth gate spends a database lookup on them. Multipart is exempt —
+  those routes stream to disk under their own, much larger, deliberate caps.
+- **A rejected password is no longer echoed back in the 422.** Pydantic puts the
+  offending `input` into every validation error and FastAPI serializes the list
+  straight into the response body. The field and the reason stay; the value was
+  the one part the caller already had.
 - **The Google Vision API key is no longer printed to the container log.** It
-  traveled as `?key=`, and httpx logs the full request URL at INFO on every
-  call. It goes in the `X-Goog-Api-Key` header now, which is what Google
+  traveled as a query parameter, and httpx logs the full request URL at INFO on
+  every call. It goes in the `X-Goog-Api-Key` header now, which is what Google
   documents it for.
 - **A bulk import with no worker running says so at ERROR**, and the check is
   now on the worker rather than on the queue object — a queue with nothing
-  draining it accepts work silently, so the old test caught the disabled case
-  and missed the crashed one. `stop_worker` clears the queue to match
+  draining it accepts work silently. `stop_worker` clears the queue to match
   `analysis_queue`. Scheduled-backup and upload-hook failures were promoted to
-  ERROR as well: nothing in 75 logging call sites was ever logged at ERROR, so
-  the disaster-recovery feature failing sat at the same severity as "mDNS: no
-  LAN address found".
+  ERROR as well: nothing in 75 logging call sites was ever logged at ERROR.
 
 ## [2.39.0] — 2026-08-22
 
 ### Fixed
 - **The guest grid's tiles were broken, and it was `.card` on an anchor.**
-  `.card` never declared a `display`, which was invisible while every card was
-  a `<div>` (already block). 2.37 made the guest tiles links, and an `<a>` is
-  `display: inline` — so `h-100` was ignored outright and the border broke
-  across line boxes. `.card` now says `display: block`; divs are unaffected and
-  `.d-flex` is `!important` so flex cards still win. This was latent in five
-  other places that already put `.card` on a `<Link>`.
+  `.card` never declared a `display`, which was invisible while every card was a
+  `<div>`. 2.37 made the guest tiles links, and an `<a>` is `display: inline` —
+  so `h-100` was ignored outright and the border broke across line boxes.
+  `.card` now says `display: block`. This was latent in five other places.
 
 - **A hat is not "pink" because its logo is.** Color terms matched ANY row in
   `hat_colors`, so searching "pink" returned every black cap with a pink
-  embroidered mark. On this collection that made color search close to
-  useless: a melin hat is a dark crown with a bright logo, and the accent
-  colors are exactly the ones that vary. Color terms now match **major
-  colors only** by default — dominance rank 1–2, which is the hat's own
-  color and its second, not its trim.
+  embroidered mark. On this collection that made color search close to useless:
+  a melin hat is a dark crown with a bright logo. Color terms now match **major
+  colors only** by default — dominance rank 1–2.
 
-- **The guest search didn't survive going to a hat and back.** The term lived
-  in component state, which a re-mount discards, so Back returned you to the
-  whole collection with an empty box. It lives in the URL now (`/guest?q=…`),
-  and the results are cached long enough that the page is its full height when
-  the browser restores your scroll position — without that, Back put you at the
-  top of a list that was still loading.
+- **The guest search didn't survive going to a hat and back.** The term lived in
+  component state, which a re-mount discards. It lives in the URL now
+  (`/guest?q=…`), and the results are cached long enough that the page is its
+  full height when the browser restores your scroll position.
 
 ### Added
-- **A color-match toggle: Main colors / Accents only / Any.** "Accents only"
-  is its own question rather than the leftovers of the default — *which of my
-  hats has pink on it somewhere* is how you look for a collab mark or a
-  contrast underbrim. On the Search page and the guest page; on the latter it
-  is in the URL too, so Back restores the whole search rather than half of it.
-  An unrecognized value falls back to the default, because it arrives from a
-  query string and the safe reading of a typo is not a wider search.
+- **A color-match toggle: Main colors / Accents only / Any.** "Accents only" is
+  its own question rather than the leftovers of the default — *which of my hats
+  has pink on it somewhere* is how you look for a collab mark or a contrast
+  underbrim. On the Search page and the guest page; on the latter it is in the
+  URL too. An unrecognized value falls back to the default, because it arrives
+  from a query string and the safe reading of a typo is not a wider search.
 
 ## [2.38.0] — 2026-08-22
 
@@ -3324,15 +2673,11 @@ backups that stop restating themselves.
   `docker compose cp` on the Pi and no AirDrop.
 
   Served as `application/x-x509-ca-cert`, because as `text/plain` a perfectly
-  good certificate is displayed rather than installed, which looks like it is
-  broken.
+  good certificate is displayed rather than installed.
 
-  **Only `root.crt` is served, and the filename is hardcoded.** The same
-  directory holds `root.key` and `intermediate.key`, so the handler takes no
-  path, no filename and no parameter of any kind — there is no input to
-  traverse with, which is a stronger guarantee than validating one. The
-  overlay mounts Caddy's volume `:ro` so a bug there still cannot write to the
-  PKI.
+  **Only `root.crt` is served, and the filename is hardcoded.** The handler
+  takes no path, no filename and no parameter of any kind. The overlay mounts
+  Caddy's volume read-only.
 
 ### Documentation
 - **The intermediate is the trap, and now the docs say so.** `root.crt` and
@@ -3340,81 +2685,65 @@ backups that stop restating themselves.
   root is self-signed and installed out of band, whereas an intermediate is
   presented by the server during the handshake and means nothing until its
   issuer is already trusted. Installing one therefore *appears to succeed and
-  changes nothing* — which is exactly what "the certificate won't install"
-  looks like from the outside. Called out in the README's step 2 and added to
-  its troubleshooting list.
+  changes nothing*. Called out in the README's step 2 and added to its
+  troubleshooting list.
 
 ## [2.37.0] — 2026-08-22
 
 ### Added
 - **Guests can open a hat.** Tiles in the guest view are now links to
-  `/guest/hat/:id`, showing the photo, name, style, colors and — given the
-  most room, because it is the question a guest actually has — **which room and
-  which case** it lives in. A caseless hat says so and still names its room.
+  `/guest/hat/:id`, showing the photo, name, style, colors and — given the most
+  room, because it is the question a guest actually has — **which room and which
+  case** it lives in. A caseless hat says so and still names its room.
 
-  A real endpoint rather than a detail rendered from the listing payload, so
-  the link survives being sent to somebody. It returns **exactly** the
-  `SharedHat` projection the grid already used: a per-hat endpoint is precisely
-  where someone reaches for "just one more field", and this is the surface
-  where that costs most, so a test pins the response's key set.
+  A real endpoint rather than a detail rendered from the listing payload, so the
+  link survives being sent to somebody. It returns **exactly** the `SharedHat`
+  projection the grid already used, and a test pins the response's key set.
 
 ### Fixed
 - **`shared_hat` required a photo**, because its only caller was the photo
   endpoint. A hat plainly listed on the page you clicked from would have 404ed
-  when you clicked it. It now answers "may an outsider see this hat", which is
-  a different question from "does it have a photo to serve" — both photo routes
-  check that themselves, and a test pins that share-link photos still 404
-  without one.
-- **`shared_hat` used `db.get`**, returning a bare instance. `room_name` walks
-  `hat.case.room`, a relationship hop that raises rather than lazy-loading
-  under asyncio. It now eager-loads what the projection reads.
+  when you clicked it. It now answers "may an outsider see this hat", which is a
+  different question from "does it have a photo to serve".
+- **`shared_hat` used `db.get`**, returning a bare instance, so the projection's
+  room lookup raised rather than lazy-loading under asyncio. It now eager-loads
+  what the projection reads.
 
 ## [2.36.2] — 2026-08-22
 
 Findings from a two-axis review of 2.34–2.36.1.
 
 ### Security
-- **Guest search could be used as an oracle for fields the projection
-  withholds.** `SharedHat` deliberately omits condition, size, collection and
-  construction — but guest search delegated to the owner's search, which
-  matches on all four. `?q=worn` returned exactly the worn hats, so a guest
-  could read every hat's condition by probing, and its size, collection and
-  construction the same way. Verified live during review.
-
+- **Guest search matched on fields the guest projection withholds.**
+  `SharedHat` deliberately omits condition, size, collection and construction,
+  but guest search delegated to the owner's search, which matches on all four.
   `search_hats(public_fields_only=True)` now drops those clauses **and the
-  hydro/hydrolite flags derived from construction** — closing the front door
-  and leaving that window open would have leaked the same fact. The owner's own
-  search is unchanged.
+  hydro/hydrolite flags derived from construction**. The owner's own search is
+  unchanged.
 
 - **`/api/auth/status` no longer tells anonymous callers that guest view
-  exists.** It returned `guest_view_enabled: false`, which is precisely the
-  fact the guest routes' 404-rather-than-403 was written to keep private. The
-  field is now absent when off.
+  exists.** It returned `guest_view_enabled: false`, which is precisely the fact
+  the guest routes' 404-rather-than-403 was written to keep private. The field
+  is now absent when off.
 
 ### Fixed
 - **Guest search reported a capped count.** The response's `hat_count` is its
   own length, and search was bounded to 50 — so a search matching 200 said "50
-  hats". The third instance of the same `len()`-of-a-capped-list mistake, after
-  the colorway catalog and the analysis queue. Guest search uses its own,
-  higher bound.
-- **The case-valuation rule was stated a third time**, inside
-  `report_service`, where `tests/test_valuation_parity.py` cannot see it — and
-  it had already drifted: a flat constant per row, where the browser sums each
-  case's served `retail_price`. Moved to `services/valuation.value_cases()`
-  beside the hat rule, with a parity test that fails if the renderer restates
-  it again.
-- **Home and Stats showed a Cases tile beside a hats-only total**, which
-  answers "what's it all worth" only if you do the addition yourself. Both now
+  hats". The third instance of the same `len()`-of-a-capped-list mistake. Guest
+  search uses its own, higher bound.
+- **The case-valuation rule was stated a third time**, inside `report_service`,
+  where the parity test cannot see it — and it had already drifted. Moved to
+  `services/valuation.value_cases()` beside the hat rule, with a parity test.
+- **Home and Stats showed a Cases tile beside a hats-only total.** Both now
   carry a combined figure, as the Valuation page and the report already did.
 
 ### Changed
 - One projection *mapper*, not just one projection type. The share-link and
-  guest routes each built `SharedHat` field by field; the type was shared, the
-  ten-field mapper was copied — so a field added to the projection would be
-  filled in at whichever site the author was looking at, and the copy that fell
-  behind would be the one exposed to strangers. `share_link_service.to_shared_hat()`.
-- Guest fetching moved into `frontend/src/api/guest.ts`, per the convention
-  that API functions live in `api/`.
+  guest routes each built `SharedHat` field by field, so a field added to the
+  projection would be filled in at whichever site the author was looking at, and
+  the copy that fell behind would be the one exposed to strangers.
+- Guest fetching moved into `frontend/src/api/guest.ts`, per the convention that
+  API functions live in `api/`.
 
 ## [2.36.1] — 2026-08-22
 
@@ -3423,30 +2752,24 @@ Findings from a two-axis review of 2.34–2.36.1.
   a real collection.
 
   A checkbox above the button read *"Leave hand-entered prices alone"* and was
-  **on by default**. It mapped to a server filter, `only_priced_by_claude`,
-  which restricted the run to hats whose price source was `Claude Vision`.
+  **on by default**. It mapped to a server filter restricting the run to hats
+  whose price source was Claude Vision.
 
-  Before 2.27 that was very nearly every hat, so the option looked harmless and
-  the label looked true. **2.27 moved the majority onto the retail table**
-  (`source = "melin retail"`), and the same filter then matched only the
-  remainder Claude still prices — Thermal, the Mill straw line, anything the
-  table can't name. Nothing announced the change in meaning; the button still
-  said "every hat".
+  Before 2.27 that was very nearly every hat. **2.27 moved the majority onto the
+  retail table**, and the same filter then matched only the remainder Claude
+  still prices. Nothing announced the change in meaning; the button still said
+  "every hat".
 
   The filter was **redundant from the start**. A Manual price is protected
-  unconditionally: `retail_pricing.resolve_retail` returns it untouched, and
-  the pipeline bails on `resale_price_scope == "manual"` in two places. So it
-  never spared anything that wasn't already safe — it only shrank the run.
+  unconditionally, so it never spared anything that wasn't already safe — it
+  only shrank the run.
 
   Removed. Re-analysis now covers **every hat with a photo**; disposed hats
-  remain the only exclusion, because re-pricing them spends Claude calls on
-  inventory you no longer own.
+  remain the only exclusion.
 
-- **The queue's "waiting" count was capped at 50.** `pending_count` was
-  `len(hats)` over a list deliberately bounded to 50 for display, so a deeper
-  backlog always reported 50 — a count read off a limited feed, the same
-  mistake as sizing the colorway catalog from its autocomplete endpoint. The
-  list stays bounded; the count is now a `COUNT`.
+- **The queue's "waiting" count was capped at 50.** `pending_count` was `len()`
+  over a list deliberately bounded to 50 for display, so a deeper backlog always
+  reported 50. The list stays bounded; the count is now a `COUNT`.
 
 ## [2.36.0] — 2026-08-22
 
@@ -3456,73 +2779,63 @@ Findings from a two-axis review of 2.34–2.36.1.
   search it without an account. Useful on a LAN when people in the house should
   be able to look but shouldn't have a login.
 
-  **Off by default.** Unauthenticated read access to somebody's whole
-  collection is not a thing anyone should acquire by upgrading — it is a switch
-  in **Settings → Sharing → Guest browsing**, and until it is thrown the
-  endpoints behave exactly as if they did not exist.
+  **Off by default.** Unauthenticated read access to somebody's whole collection
+  is not a thing anyone should acquire by upgrading — it is a switch in
+  **Settings → Sharing → Guest browsing**, and until it is thrown the endpoints
+  behave exactly as if they did not exist.
 
   **404, not 403, when off.** A 403 confirms the feature is there and merely
-  switched off, which is a fact about a private install a stranger has no
-  reason to learn. The login screen omits the link entirely rather than
-  disabling it, for the same reason.
+  switched off, which is a fact about a private install a stranger has no reason
+  to learn. The login screen omits the link entirely rather than disabling it.
 
   **No pricing, and not by hiding it.** Guests get the same `SharedHat`
   projection share links use: photos, brand, model, style, colors and where a
   hat lives. Prices, purchase history, disposition, wear counts, analysis state
   and owner notes are *never sent* — returning the full model and trusting the
   frontend not to render the rest is exactly how that leaks. Disposed hats are
-  excluded too: what something sold for is nobody else's business.
+  excluded too.
 
   Search is delegated to the real search service rather than reimplemented. A
-  guest-only copy would quietly stop matching what the owner's search matches,
-  and nobody would notice because nobody runs both. Only a submitted term hits
-  the server — a request per keystroke is a lot of load to hand an
-  unauthenticated caller.
+  guest-only copy would quietly stop matching what the owner's search matches.
+  Only a submitted term hits the server.
 
   Read-only by construction: there are no non-GET routes in the module, and a
   test fails if one is ever added. Turning guest view on does not weaken the
   gate on anything else, which is also tested.
 
-  Flipping the switch is written to the activity log both ways — "when did that
-  get turned on" is a question the log should be able to answer.
+  Flipping the switch is written to the activity log both ways.
 
 ## [2.35.0] — 2026-08-22
 
 ### Added
 - **Rooms are viewable, and loose hats come first.** There was no room view at
   all: `/rooms` listed names with rename and delete, and rooms weren't
-  clickable. So the room-stored hats added in 2.33 had **nowhere to be seen** —
-  the Cases tab reaches a hat through its case, and a hat on a shelf has no
-  case to be reached through.
+  clickable. So the room-stored hats added in 2.33 had **nowhere to be seen**.
 
   `/rooms/:id` shows what's actually in a room, with the loose hats **above**
   the cases. That ordering is the point: a cased hat is findable three other
   ways, a loose one is findable here and in search. It also matches a physical
   room — the things sitting out are what you see when you walk in.
 
-  The rooms list gains a loose count too, since a room holding three hats and
-  no cases previously read as empty.
+  The rooms list gains a loose count too, since a room holding three hats and no
+  cases previously read as empty.
 
   `GET /api/rooms/{id}` now returns `RoomDetail` (loose hats + cases); loose
-  hats are newest-first, because a hat set down loose is usually one you just
-  handled.
+  hats are newest-first.
 
 ### Fixed
 - **`invalidateHatViews` now covers `['room']`.** It is a *sibling* of
-  `['rooms']`, not a prefix match — TanStack matches by prefix and "rooms" is
-  not a prefix of "room". Without it, moving a hat into or out of a room left
-  the room view showing it where it used to be for the full 30s `staleTime`.
-  Exactly the shape of trap already documented for
-  `['admin','recent-errors']` vs `['admin','recent-errors-count']`.
+  `['rooms']`, not a prefix match — TanStack matches by prefix and "rooms" is not
+  a prefix of "room". Without it, moving a hat into or out of a room left the
+  room view showing it where it used to be for the full 30s `staleTime`.
 
 ## [2.34.0] — 2026-08-22
 
 ### Fixed
-- **The cases were in no total at all.** `CaseRead.retail_price` had been
-  served since 2.27 and was read by *nothing* — it existed only in the
-  TypeScript type. So "collection value" excluded dozens of $49 travel cases,
-  understating the thing it names by four figures, and silently: nothing on
-  screen hinted cases were left out rather than counted as worthless.
+- **The cases were in no total at all.** `CaseRead.retail_price` had been served
+  since 2.27 and was read by *nothing* — it existed only in the TypeScript type.
+  So "collection value" excluded dozens of $49 travel cases, understating the
+  thing it names by four figures, and silently.
 
   They now appear on the Home summary, the Stats "Money" card, the Valuation
   page and the printable inventory report — which matters most, since that is
@@ -3531,87 +2844,66 @@ Findings from a two-axis review of 2.34–2.36.1.
   **Reported on their own line, never folded into the hat figures.** Two
   reasons, and both would have been invisible if ignored:
 
-  - A case is not a hat. Quietly adding a couple of thousand to a number
-    labeled *market value* would make every comparison on the page — retail
-    retention, unrealised gain, cost per hat — wrong in a way nobody could see.
+  - A case is not a hat. Quietly adding a couple of thousand to a number labeled
+    *market value* would make every comparison on the page — retail retention,
+    unrealized gain, cost per hat — wrong in a way nobody could see.
   - The two are different *kinds* of number. Hats are valued from live
     comparable listings; cases have no resale market at all, so $49 is
-    replacement cost, not what one would fetch. The Valuation page adds a
-    "Everything, together" line so the combined figure is available without
-    either number pretending to be the other.
+    replacement cost. The Valuation page adds an "Everything, together" line.
 
   `valueCases()` sums each case's **served** `retail_price` rather than
-  multiplying by a constant declared in TypeScript — the price lives in
-  `services/retail_pricing.CASE_RETAIL`, and a second copy is one that can
-  drift.
+  multiplying by a constant declared in TypeScript.
 
 ## [2.33.0] — 2026-08-22
 
 ### Added
 - **A hat can live in a room with no case.** Rooms contain Cases contain Hats
-  was the whole model, so `Hat.room` walked `self.case.room` and a caseless hat
-  reported no room at all — it was *nowhere*. That is not how a collection
-  sits: Caddies and Aviators don't fit a three-hat travel case, special
-  editions get displayed rather than packed, and plenty of hats are simply out
-  on a shelf.
+  was the whole model, so a caseless hat reported no room at all — it was
+  *nowhere*. That is not how a collection sits: Caddies and Aviators don't fit a
+  three-hat travel case, special editions get displayed rather than packed, and
+  plenty of hats are simply out on a shelf.
 
   Any hat can be placed this way; nothing is restricted by style. A case and a
   direct room are **mutually exclusive** — `assign_hat` clears one when it sets
-  the other, because a cased hat's room *is* its case's room and a second
-  stored answer is one that can disagree. `room_id` still resolves either, so
-  nothing reading it had to change.
+  the other, because a cased hat's room *is* its case's room. `room_id` still
+  resolves either, so nothing reading it had to change.
 
   Deleting a room moves its caseless hats to the default room alongside its
-  cases. They aren't reachable through any case, so the existing sweep missed
-  them entirely — left behind they'd point at a room that no longer exists,
-  which reads as the hat vanishing from every room view while still existing.
+  cases. Left behind they'd point at a room that no longer exists.
 
 - **Limited edition** checkbox on the hat form. Nothing can derive this: a hat
-  is limited because the drop was, which no photo and no other field can tell
-  you.
+  is limited because the drop was.
 
 ### Changed
 - **Beanie case capacity is 8, up from 6**, and 8 is a *hard* ceiling. They have
   no brim and squash flat, so far more fit in the same shell than the three the
   case is named for. Beanies get **no overfill allowance**: the regular one
   exists because 3 is melin's *name* for the case and a fourth demonstrably
-  fits, so the number to be lenient about was never a measurement. 8 is the
-  opposite — it is what fits, counted by packing it — and slack on top would
-  assert a ninth fits, which nobody has claimed.
+  fits. 8 is the opposite — it is what fits, counted by packing it.
 
 ### Fixed
 - **Search by room could not see room-stored hats** — caught by review before
-  release, and the worst kind of bug: `Hat.case.has(Case.room_id == …)` is NULL
-  for a caseless hat, so the API filter excluded exactly the hats the feature
-  adds, while the Hats page (which filters client-side on the resolved
-  `room_id`) kept showing them. Two room filters, disagreeing about the same
-  collection. Searching a room by *name* had it too. `search_service._in_room()`
-  is now the one disjunction both call sites use — `Hat.room_id` is a Python
-  `@property` and cannot appear in a `WHERE`, so each caller would otherwise
-  write it out and one would forget half.
+  release. The API filter went through the case, which is NULL for a caseless
+  hat, while the Hats page filters client-side on the resolved room and kept
+  showing them. `search_service._in_room()` is now the one disjunction both call
+  sites use.
 - **Creating a hat in a nonexistent room was accepted.** `assign_hat` checked;
   `create_hat` didn't. The migration adds `direct_room_id` without a foreign key
-  (SQLite cannot add one to an existing table), so the bad id persisted and the
-  hat reported no room at all — looking like the placement simply hadn't taken.
-- **The case detail page showed the wrong capacity, twice.** It computed its
-  own `capacity ?? 4` / `?? 6` — a second copy of a rule `services/capacity.py`
-  owns. `4` is the *overfill limit* rather than nominal, so a full three-hat
-  case displayed **"3/4"** (the same bug fixed in the printed case labels in
-  2.28, still live here), and the hardcoded `6` would have silently become
-  wrong the moment beanie capacity moved. `CaseRead` now publishes
-  `nominal_regular` and `nominal_beanie` so no client restates either.
+  (SQLite cannot add one to an existing table), so the bad id persisted.
+- **The case detail page showed the wrong capacity, twice.** It computed its own
+  fallbacks — a second copy of a rule `services/capacity.py` owns. `4` is the
+  *overfill limit* rather than nominal, so a full three-hat case displayed
+  **"3/4"**. `CaseRead` now publishes `nominal_regular` and `nominal_beanie` so
+  no client restates either.
 
 ## [2.32.0] — 2026-08-22
 
 ### Breaking
 - **Analysis no longer decides construction. At all.** It never overwrote a
-  stated value, but it filled the field whenever it was *empty* — and
-  `_apply_construction`'s own docstring already explained why that was unsafe:
-  Claude reads HYDRO vs HYDROLite off a photo unreliably, because the tells are
-  bonded seams, a gel-welded logo and a sweatband, none of which survive a
-  front-on shot. It was established in 2.11 that letting it *correct* a value
-  replaced right answers with wrong ones; filling a blank is the same coin
-  toss, with nothing prior to notice being lost.
+  stated value, but it filled the field whenever it was *empty* — and the
+  function's own docstring already explained why that was unsafe: Claude reads
+  HYDRO vs HYDROLite off a photo unreliably, because the tells are bonded seams,
+  a gel-welded logo and a sweatband, none of which survive a front-on shot.
 
   Two later changes turned a cosmetic guess into an expensive one:
 
@@ -3623,42 +2915,34 @@ Findings from a two-axis review of 2.34–2.36.1.
   A blank construction is an honest *"nobody has looked yet"*. A guessed one is
   indistinguishable from one you typed. **Construction is now owner-only.**
 
-- **A model name may not assert a construction nobody stated.** melin names
-  read `<line> <construction>`, so "A-Game HYDROLite" carries the same guess in
-  the field a person actually reads and quotes — and
-  `_strip_contradicting_construction` returned early when no construction was
-  stated, so a blank protected nothing. With none stated, every construction is
-  now stripped from the name. Removed, not rewritten: "A-Game" is less specific
-  than "A-Game HYDROLite" and, unlike it, known to be true. State the
-  construction and re-analyze and the full name comes back.
+- **A model name may not assert a construction nobody stated.** melin names read
+  `<line> <construction>`, so "A-Game HYDROLite" carries the same guess in the
+  field a person actually reads — and the stripper returned early when no
+  construction was stated, so a blank protected nothing. With none stated, every
+  construction is now stripped from the name. Removed, not rewritten: "A-Game
+  Thermal" would be an invented product name, where "A-Game" is less specific
+  and true.
 
 ### Added
 - **Construction audit** (Settings → Construction audit), for undoing what
-  analysis already wrote. Nothing in the database records which values came
-  from a person, so this deliberately is *not* a startup backfill that decides
-  for you: it lists every construction on record with how many hats are priced
-  from it, previews exactly what clearing one would do, and acts only on an
-  explicit confirmation.
+  analysis already wrote. Nothing in the database records which values came from
+  a person, so this deliberately is *not* a startup backfill: it lists every
+  construction on record with how many hats are priced from it, previews exactly
+  what clearing one would do, and acts only on an explicit confirmation.
 
   Clearing a construction also clears what was derived from it — the
-  construction word in `model_name`, and a retail price that came from the
-  price table. Leaving that price behind would be a number with no derivation,
-  indistinguishable from one somebody checked. **A price you entered manually
-  is never touched**, the same protection it has everywhere else.
+  construction word in `model_name`, and a retail price that came from the price
+  table. **A price you entered manually is never touched.**
 
   It **reassigns** rather than only clearing: `to=HYDRO` writes the right
   answer, because the common case is not "I don't know" but "these are all
-  actually HYDRO", and clearing would discard a correction you already know how
-  to make. The price is then re-looked-up from the new value ($99 → $79) rather
-  than dropped.
+  actually HYDRO". The price is then re-looked-up from the new value.
 
-  And it **leaves your own values alone**. `hat_service` writes an audit row
-  naming the fields a client PUT changed, so a `hat.updated` row mentioning
-  `construction` is proof a person typed it; those hats are skipped and the
-  count is reported so you can see the protection working. This is a proof of
-  ownership, not a complete one — audit rows prune after 90 days and
-  creation-time values were never logged — so it can say "this one is
-  definitely yours", never "this one is definitely not. That asymmetry is the
+  And it **leaves your own values alone**: an audit row naming `construction`
+  among the fields a client PUT changed is proof a person typed it, so those
+  hats are skipped and the count is reported. This is a proof of ownership, not
+  a complete one — audit rows prune after 90 days — so it can say "this one is
+  definitely yours", never "this one is definitely not". That asymmetry is the
   right way round: it only ever protects more.
 
   `GET /api/admin/constructions/audit`, `POST /api/admin/constructions/clear`
@@ -3668,133 +2952,111 @@ Findings from a two-axis review of 2.34–2.36.1.
   HYDROLite seams are bonded and show no thread, so **visible stitching on the
   panel or crown seams rules HYDROLite out**. That is a falsifier rather than an
   identification, which is what makes it worth having: it can be checked against
-  what the photo actually shows, instead of inferred from an overall impression
-  — and "looks lightweight and technical" describes HYDRO just as well, which is
-  how HYDROLite became the default wrong answer. Stated as a hard exclusion in
-  both the system prompt and the tool schema.
+  what the photo actually shows. Stated as a hard exclusion in both the system
+  prompt and the tool schema.
 
 ### Changed
-- **Settings is five sections instead of nineteen cards in a row.** It had
-  grown by accretion, ordered by the sequence things were built in — API keys
-  next to LAN discovery next to the backup list — so finding anything meant
-  scrolling past everything, which on a phone is most of a minute.
+- **Settings is five sections instead of nineteen cards in a row.** It had grown
+  by accretion, ordered by the sequence things were built in, so finding
+  anything meant scrolling past everything — which on a phone is most of a
+  minute.
 
-  Grouped by **errand**, not by subsystem: *Analysis* (how a photo becomes an
-  identified hat) spans two API keys, a worker queue and an error list, and
-  that is fine because it is one thing you came to do. Then *Collection data*,
-  *Sharing*, *This device*, *Maintenance*.
+  Grouped by **errand**, not by subsystem: *Analysis* spans two API keys, a
+  worker queue and an error list, and that is fine because it is one thing you
+  came to do. Then *Collection data*, *Sharing*, *This device*, *Maintenance*.
 
-  The section lives in the URL (`/settings?tab=data`), like the Cases type
-  filter, so it survives a reload and can be linked to. The tab strip scrolls
-  horizontally rather than wrapping — three rows of small targets is worse on a
-  phone than one row you swipe.
+  The section lives in the URL (`/settings?tab=data`), so it survives a reload
+  and can be linked to. The tab strip scrolls horizontally rather than wrapping.
 
   Side effect worth having: only the open section is mounted, so opening
-  Settings no longer fires all nineteen cards' queries at once.
+  Settings no longer fires every card's queries at once.
 
 ## [2.31.1] — 2026-08-22
 
 ### Fixed
 - **Typing a known value showed the whole list instead of the match.** Typing
-  `Links` into Collection offered `'Ohana`, `23XI Racing`, `Adventure Club`,
-  `ALOHA 96761` — every option, alphabetically — which reads as the box being
-  ignored. The filter skipped itself whenever the typed text exactly matched an
-  option, on the theory that "value equals an option" meant "the user picked
-  it". It cannot: typing a known value out in full is the normal case. The
-  Combobox now tracks whether the value was **typed** or **picked**, which is
-  the distinction that check was reaching for. Affects both Construction and
-  Collection, which share the component.
+  `Links` into Collection offered every option, alphabetically, which reads as
+  the box being ignored. The filter skipped itself whenever the typed text
+  exactly matched an option, on the theory that "value equals an option" meant
+  "the user picked it". It cannot: typing a known value out in full is the
+  normal case. The Combobox now tracks whether the value was **typed** or
+  **picked**. Affects both Construction and Collection.
 
 - **Matches are ranked exact → prefix → substring.** The list is capped by
-  screen height on a phone and a plain filter is alphabetical, so typing
-  "Links" put "Cypress Links" above "Links" — the thing you typed, below a
-  longer name that merely contains it.
+  screen height on a phone and a plain filter is alphabetical, so typing "Links"
+  put "Cypress Links" above "Links".
 
-- **The list could not be reopened after picking.** Found while fixing the
-  above, not reported. Options call `preventDefault` on mousedown so the field
-  keeps focus through a pick; that leaves the input focused with the list
-  closed, and tapping it fires no focus event. There was no way back to the
-  list except focusing another control first. Fixed in **both** the Combobox
-  and the case picker, which had it too.
+- **The list could not be reopened after picking.** Options call
+  `preventDefault` on mousedown so the field keeps focus through a pick; that
+  leaves the input focused with the list closed, and tapping it fires no focus
+  event. Fixed in **both** the Combobox and the case picker.
 
 ## [2.31.0] — 2026-08-22
 
 ### Added
-- **melin's beanie shapes are now models, not one bucket.** Journey,
-  Destination and All Day are named and sold like any other melin model (see
-  melin's own "Beanie Shape Guide"), so they are `HatStyle` members.
-  `beanie` remains as **"Beanie (unspecified)"** — existing hats use it, and a
-  shape you haven't identified is a real state.
+- **melin's beanie shapes are now models, not one bucket.** Journey, Destination
+  and All Day are named and sold like any other melin model, so they are
+  `HatStyle` members. `beanie` remains as **"Beanie (unspecified)"** — existing
+  hats use it, and a shape you haven't identified is a real state.
 
-  Prices come from the order history: **Journey $79** (Dusty Sage #1715774,
-  Mustard #1792264) and **Destination $79** (Military #1789227).
+  Prices come from the order history: **Journey $79** and **Destination $79**.
 
   **All Day is deliberately unpriced.** It appears in the order history exactly
-  once, at **$0.00** — the "FREE All Day Pom Beanie With Purchase" promo — and
-  a giveaway is not a retail price. No melin email states its value, so it
-  falls through to Claude's estimate rather than inheriting the $79 that the
-  other two establish. Same call already made for Thermal and the Mill straw
-  line: `base_retail` returning None is a real answer.
+  once, at **$0.00** — a "free with purchase" promo — and a giveaway is not a
+  retail price. It falls through to Claude's estimate rather than inheriting the
+  $79 that the other two establish.
 
 ### Changed
 - **`is_beanie` now has exactly one definition.** It is a real column — search
-  filters query it and case capacity depends on it (6 beanies per case vs 3
-  regular hats) — but it is *derived* from style, and that derivation was
-  written out separately at each write site. `schemas/hat.BEANIE_STYLES` +
-  `is_beanie_style()` is now the single source, the same way
-  `Hat.set_construction` is the only writer of `hydro`/`hydrolite`.
+  filters query it and case capacity depends on it — but it is *derived* from
+  style, and that derivation was written out separately at each write site.
+  `schemas/hat.BEANIE_STYLES` + `is_beanie_style()` is now the single source.
 
   A beanie shape missing from that set would pack 3-to-a-case, disappear from
-  the Beanies filter, and make the case picker offer cases the save then
-  rejects with a 409 — none of which looks like a bug from the outside.
+  the Beanies filter, and make the case picker offer cases the save then rejects
+  with a 409 — none of which looks like a bug from the outside.
 
 - **`GET /api/meta/styles` publishes `is_beanie` per option.** The frontend used
-  `style === 'beanie'` to decide case availability; with several beanie shapes
-  that would have become a hardcoded TypeScript list, i.e. a second definition
-  of `BEANIE_STYLES` that eventually disagrees with the server. The flag is
-  served instead.
+  a literal style comparison to decide case availability; with several beanie
+  shapes that would have become a hardcoded TypeScript list. The flag is served
+  instead.
 
 ## [2.30.0] — 2026-08-22
 
 ### Added
 - **The analyzer now learns your series.** Entering a collaboration or artist
-  series taught the *typing* autocomplete (`GET /api/meta/collections` has
-  always returned every value in use, and the Add/Edit form offers it) — but it
-  never reached Claude. `analyze_hat_image` was given the owner's style and
-  construction and nothing else, so every analysis was asked to recall a collab
-  from a photo unaided.
+  series taught the *typing* autocomplete, but it never reached Claude — so
+  every analysis was asked to recall a collab from a photo unaided.
 
   That is the wrong thing to ask. A series is rarely legible in a photo — it is
   usually a small woven label or an embroidery style — so most were simply
   missed. The names already on record are now sent with the image, turning
   recall into recognition.
 
-  The framing is deliberately careful, because a candidate list invites a
-  forced choice and a wrong series looks exactly like a right one. It is stated
-  as a record of what the collection contains, **not** a list to choose from,
-  with an explicit instruction that `null` beats a wrong match. If the list is
-  ever long enough to be truncated the prompt says so, rather than presenting a
-  partial list as if it were everything.
+  The framing is deliberately careful, because a candidate list invites a forced
+  choice and a wrong series looks exactly like a right one. It is stated as a
+  record of what the collection contains, **not** a list to choose from, with an
+  explicit instruction that `null` beats a wrong match. If the list is ever long
+  enough to be truncated the prompt says so.
 
 ### Fixed
-- **Analysis-written free text was never canonicalised.** `vocabulary.canonicalize`
-  ran on the client write path (`hat_service`) but not the analysis path, so
-  Claude returning `skye walker` created a second entry beside your
-  `Skye Walker`. Nothing looked wrong afterwards — both hats had *a* series —
-  and the split surfaced only as two near-identical rows in the autocomplete,
-  the Stats collab chart, and (as of 2.29) the filters. Both paths canonicalise
-  now, covering `artist_series` and a construction Claude filled in on a hat
-  that had none. Construction goes through `set_construction` so the derived
-  `hydro`/`hydrolite` flags cannot drift.
+- **Analysis-written free text was never canonicalized.** `vocabulary.canonicalize`
+  ran on the client write path but not the analysis path, so Claude returning
+  `skye walker` created a second entry beside your `Skye Walker`. Nothing looked
+  wrong afterwards — both hats had *a* series — and the split surfaced only as
+  two near-identical rows in the autocomplete, the Stats collab chart, and the
+  filters. Both paths canonicalize now, covering `artist_series` and a
+  construction Claude filled in. Construction goes through `set_construction` so
+  the derived flags cannot drift.
 
-  This is what made the feature above safe to ship: feeding known names into
-  the prompt without it would have multiplied the very duplicates it exists to
+  This is what made the feature above safe to ship: feeding known names into the
+  prompt without it would have multiplied the very duplicates it exists to
   prevent.
 
 ### Note
 Existing hats are not retroactively re-identified — nothing in the database can
-invent a series that was never captured. **Settings → Analysis Queue → re-analyze**
-picks them up, and a re-analysis never erases a series you typed (`_keep_on_null`).
+invent a series that was never captured. **Settings → Analysis Queue →
+re-analyze** picks them up, and a re-analysis never erases a series you typed.
 
 ## [2.29.0] — 2026-08-22
 
@@ -3807,45 +3069,40 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
   (`/hats?construction=HYDROLite`).
 
   Matching is **full equality, never substring** — "hydro" is a literal
-  substring of "hydrolite", and those are different products at different
-  prices ($79 vs $99), so a `contains()` check would silently fold the two
-  together in every filtered view. Casing is ignored, only to tolerate rows
-  written before `vocabulary.canonicalize` began snapping values to one
-  spelling on write.
+  substring of "hydrolite", and those are different products at different prices
+  ($79 vs $99), so a `contains()` check would silently fold the two together in
+  every filtered view. Casing is ignored, only to tolerate rows written before
+  canonicalization began snapping values to one spelling on write.
 
-  There is also a **"Not recorded"** option. The field is nullable by design —
-  analysis never fills it in over a stated value, and clearing it is how you
-  ask for a re-identification — so "which hats still need this?" is a real
-  question that previously had no way to be asked.
+  There is also a **"Not recorded"** option. The field is nullable by design, so
+  "which hats still need this?" is a real question that previously had no way to
+  be asked.
 
 ### Fixed
 - `SearchResult` now carries `construction`. The Search page applies the shared
-  predicate client-side to whatever `/api/search` returns, so a field the
-  filter reads but the projection omitted would have rendered a fully populated
-  dropdown that silently matched nothing. Covered by
-  `test_search_results_carry_construction`.
+  predicate client-side to whatever the API returns, so a field the filter reads
+  but the projection omitted would have rendered a fully populated dropdown that
+  silently matched nothing.
 
 ## [2.28.0] — 2026-08-22
 
 ### Added
 - **QR stickers and NFC tags for hats and cases.** A tag carries one URL and
-  nothing else, so both formats are the same feature: print the QR, or write
-  the identical URL to an NFC sticker with any tag writer (NFC Tools on iOS,
-  NXP TagWriter on Android). No app support is needed beyond the URL — iOS
-  reads NFC URI records from the lock screen with nothing installed.
+  nothing else, so both formats are the same feature: print the QR, or write the
+  identical URL to an NFC sticker with any tag writer. No app support is needed
+  beyond the URL — iOS reads NFC URI records from the lock screen with nothing
+  installed.
 
   Tapping a **hat** tag opens a one-tap *"Wore it today"* screen: photo, name,
-  and a single oversized button. That is the whole point. Wear logging only
-  ever happens at one moment — hat in one hand, phone in the other — and the
-  full hat page puts its wear button a scroll below several cards.
+  and a single oversized button. That is the whole point. Wear logging only ever
+  happens at one moment — hat in one hand, phone in the other — and the full hat
+  page puts its wear button a scroll below several cards.
 
   Tapping a **case** tag opens that case's contents.
 
   New printable sheet at `GET /api/admin/hat-labels`, with `?case=AH-01` to
-  narrow it to one case — which is how you actually do this, a case's worth at
-  a time with that case open in front of you. Every label prints its URL as
-  text underneath, because writing an NFC tag means pasting that URL somewhere
-  and a QR you must scan to read back is a poor way to move text between apps.
+  narrow it to one case. Every label prints its URL as text underneath, because
+  writing an NFC tag means pasting that URL somewhere.
 
   Three decisions are load-bearing, all from one fact — **you cannot rewrite a
   sticker that is already on a hat**:
@@ -3855,53 +3112,47 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
     reshuffled, and is `None` for an unassigned hat — precisely the state a hat
     is in while you are tagging it. A sticker printed with one would keep
     scanning and silently resolve to a *different* hat. Cases are the opposite
-    and key on `display_id`: it is painted on the physical case and never
-    changes.
+    and key on `display_id`: it is painted on the physical case.
   - **Tags point at `/t/...`, not at the real page.** One level of indirection
-    that costs nothing now and cannot be added later; if the route table is
-    ever reorganized, the landing route absorbs it and the stickers keep
-    working.
+    that costs nothing now and cannot be added later.
   - **The host is configurable** (Settings → Tags & labels), defaulting to
     whatever you are browsing on. Browse to the Pi by IP once and every tag
-    written that afternoon names a DHCP lease; pinning
-    `http://headroom.local:8000` survives the Pi changing address. A base
-    without an `http(s)` scheme is rejected — an NDEF URI record needs one, and
-    a QR without one is read as plain text, so `headroom.local:8000` looks
-    obviously right and produces tags that do nothing.
+    written that afternoon names a DHCP lease. A base without an `http(s)`
+    scheme is rejected — an NDEF URI record needs one, and a QR without one is
+    read as plain text, so it looks obviously right and produces tags that do
+    nothing.
 
 - **Login returns you where you were** (`?next=`), which physical tags need:
-  tapping a tag with an expired session previously dropped you on the home
-  page, losing the one piece of information the tap carried. Only same-origin
-  paths are honored — an absolute URL there would make the login screen an
-  open redirect.
+  tapping a tag with an expired session previously dropped you on the home page,
+  losing the one piece of information the tap carried. Only same-origin paths
+  are honored.
 
 ### Fixed
-- **Case labels printed the wrong occupancy, onto adhesive.** The sheet
-  computed capacity itself as `c.capacity or (6 if beanie else 4)` — a third
-  copy of the rule `services/capacity.py` exists to centralise, and wrong two
-  ways. `4` is the *overfill limit*, not nominal capacity, so a full three-hat
-  case printed **"3/4"** — reading as room for one more. And `len(hats)`
-  counted **disposed** hats, which have already freed their slot. It now defers
-  to `capacity.evaluate`, like the picker and the write validator.
+- **Case labels printed the wrong occupancy, onto adhesive.** The sheet computed
+  capacity itself — a third copy of the rule `services/capacity.py` exists to
+  centralize, and wrong two ways. `4` is the *overfill limit*, not nominal
+  capacity, so a full three-hat case printed **"3/4"**. And the count included
+  **disposed** hats, which have already freed their slot. It now defers to
+  `capacity.evaluate`.
 
 ### Changed
 - The copy-to-clipboard control falls back to `execCommand` outside a secure
   context. `navigator.clipboard` is `undefined` on plain HTTP, which is exactly
-  how Headroom is served on a LAN (`docker-compose.http80.yml`) — so without
-  the fallback the button would appear to work and copy nothing.
-- Frontend tests share one `HatRead` fixture (`src/test/fixtures.ts`) instead
-  of each file writing out all ~50 fields, and `renderWithProviders` accepts an
+  how Headroom is served on a LAN by the port-80 overlay — so without the
+  fallback the button would appear to work and copy nothing.
+- Frontend tests share one `HatRead` fixture (`src/test/fixtures.ts`) instead of
+  each file writing out all ~50 fields, and `renderWithProviders` accepts an
   initial route for components that read `useParams` / `useSearchParams`.
 
 ## [2.27.0] — 2026-08-22
 
 ### Fixed
 - **Base retail prices were wrong for the entire collection, and a comment was
-  the cause.** `estimated_new_price` came entirely from Claude Vision, steered
-  by a block of price anchors in the analysis prompt. A photo cannot show a
-  price, so those anchors *were* the answer — and they read **"HYDRO caps —
-  $69 is the common price"** long after the band had moved. Every hat inherited
-  it, and so did valuation's retail-share fallback.
+  the cause.** `estimated_new_price` came entirely from Claude Vision, steered by
+  a block of price anchors in the analysis prompt. A photo cannot show a price,
+  so those anchors *were* the answer — and they read **"HYDRO caps — $69 is the
+  common price"** long after the band had moved. Every hat inherited it, and so
+  did valuation's retail-share fallback.
 
   melin prices are now **looked up**, from a table cross-checked against 223
   real order lines:
@@ -3919,28 +3170,24 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
   straw line runs $99–$180 — so those fall through to Claude's estimate, which
   is still labeled as a guess. And the table never pulls a *higher* estimate
   down: the base is what a plain example costs, and collabs, artist series and
-  premium colorways genuinely exceed it. That is the "some hats are $89" case.
+  premium colorways genuinely exceed it.
 
 - **An entered retail price is now permanent.** Typing one marks it `Manual`,
   and no analysis, re-analysis or backfill may overwrite it — the same
-  protection `resale_price` has had since 2.19. Previously the next analysis
-  silently replaced it, which looks like nothing happened.
+  protection `resale_price` has had since 2.19.
 
 - **Existing hats are re-priced once on upgrade** (`retail_prices_v2`). Fixing
   the code alone would have left a collection where a hat's price depended on
   *when* it happened to be photographed.
 
-- **A test was pinning the wrong price.** `test_pricing_prompt_keeps_its_anchors`
-  asserted `$69` stayed in the prompt — enshrining the stale anchor as a
-  requirement. It now asserts the prompt and the table *agree*, since a prompt
-  quoting $69 while the table says $79 just produces estimates the table
-  discards.
+- **A test was pinning the wrong price.** It asserted `$69` stayed in the prompt
+  — enshrining the stale anchor as a requirement. It now asserts the prompt and
+  the table *agree*.
 
 ### Changed
-- **The analysis prompt stops guessing melin prices** and is told the table
-  will override it. Its remaining job is the exceptions the table cannot see —
-  collabs, artist series, Mill straw, Thermal Aviators — where an estimate
-  *above* the base is real information.
+- **The analysis prompt stops guessing melin prices** and is told the table will
+  override it. Its remaining job is the exceptions the table cannot see —
+  collabs, artist series, Mill straw, Thermal Aviators.
 - **Cases publish their retail price** (`CaseRead.retail_price`). Not a column:
   every case is the same product at the same price, so a per-row copy would be
   forty duplicates of one number waiting to disagree.
@@ -3952,109 +3199,93 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
   case photo" had been true of exactly one of three surfaces. The grid got the
   collage; the **detail page**, the **edit form** and `POST /api/cases/{id}/photo`
   all kept the feature — so a case with three hats in it rendered a
-  screen-filling **"NO PHOTO"** placeholder above its own contents, with a
-  Capture/Upload button under it. All three removed; the detail page now shows
-  the same collage the grid does, and a test asserts the route returns 405 so it
-  cannot come back quietly. `Case.photo_path` and any files on disk are left
-  alone — dropping those is destructive and should be a decision.
+  screen-filling **"NO PHOTO"** placeholder above its own contents. All three
+  removed; the detail page now shows the same collage the grid does, and a test
+  asserts the route returns 405. `Case.photo_path` and any files on disk are
+  left alone — dropping those is destructive and should be a decision.
 
 - **The backup health endpoint was reporting success when the backup failed.**
   `write_scheduled_backup` catches its own exception and returns `None`, and the
   loop called `record_success()` without checking. A backup failing *every*
-  cycle reported `last_success_at = now` and `consecutive_failures = 0` — the
-  endpoint asserting good health while carrying precisely the blindness it was
-  built to remove. An existing test concealed it: its stub returned `None` on
-  its **success** path, harmless only because nothing read the return value.
+  cycle reported a fresh success and zero failures. An existing test concealed
+  it: its stub returned `None` on its **success** path.
 
 - **The Android share target was broken, not merely uncapped.** `POST /share`
-  read whole files into memory and passed `create_job` **bytes** — but that
-  function takes **paths** (`source.stat()`, `shutil.copy2(source, …)`), so
-  every share raised `AttributeError` on the first file. Nothing covered the
-  handler. It now spools to a temp dir in capped chunks and passes paths, like
-  the bulk-import route it was always meant to mirror.
+  read whole files into memory and passed the job creator **bytes** — but that
+  function takes **paths**, so every share raised `AttributeError` on the first
+  file. Nothing covered the handler. It now spools to a temp dir in capped
+  chunks and passes paths, like the bulk-import route it was always meant to
+  mirror.
 
-- **Tests could make real, billable API calls.** `conftest` neutralized
-  Sharetribe only. `config.py` reads `HEADROOM_ANTHROPIC_API_KEY` /
-  `HEADROOM_GOOGLE_VISION_API_KEY` at import and the key resolver falls back to
-  the environment, so anyone with those exported hit the live APIs. The claim
+- **Tests could make real, billable API calls.** `conftest` neutralized the
+  marketplace seam only, while `config.py` reads the Anthropic and Google Vision
+  keys at import and the key resolver falls back to the environment. The claim
   "tests never call the Anthropic, Google, eBay, or Sharetribe APIs" held only
   by accident of one machine's shell.
 
 ### Added
 - **Two hat styles: The Shore and Aviator.** Both confirmed against reality
-  rather than guessed — The Shore from 953 live marketplace listings
-  (`The Shore Islands Hydro`), Aviator from the order history
-  (`Aviator Scout Thermal — Heather Grey / Black`, order #1318309). Aviator is
-  seasonal, which is why the resale market carries none and no catalog sweep
-  would ever have found it. Neither is mapped into `STYLE_TO_CATEGORY`: the
-  marketplace has no such category, so mapping them would sweep an empty one and
-  return no comps, while leaving them out lets resale lookups fall through to
-  the keyword branch that does find them.
+  rather than guessed — The Shore from 953 live marketplace listings, Aviator
+  from the order history. Aviator is seasonal, which is why the resale market
+  carries none and no catalog sweep would ever have found it. Neither is mapped
+  into the category table: the marketplace has no such category, so mapping them
+  would sweep an empty one and return no comps.
 
 ### Changed
-- **CLAUDE.md audited end to end and 15 claims corrected.** The case-photo line
-  was not an isolated slip. Also wrong: the rank-penalty budgets (stale since
-  the color cutoff moved to 26), "three single-file photo routes" (two), the
-  path-traversal description (one shared helper now, not two copies), the
-  flicker animation (~5s, not 18s), `protected_namespaces`, `_RETENTION_DAYS`
-  (does not exist), the lifespan list (omitted the analysis worker), `auth.py`
-  (omitted `SecurityHeadersMiddleware`, which owns the CSP another section
-  blames), three undocumented services, the components tree, and the query-key
-  list.
+- **Internal documentation audited end to end and 15 claims corrected.** The
+  case-photo line was not an isolated slip. Also wrong: the rank-penalty
+  budgets, "three single-file photo routes" (two), the path-traversal
+  description (one shared helper now, not two copies), the flicker animation
+  (~5s, not 18s), `protected_namespaces`, a retention constant that does not
+  exist, the lifespan list (omitted the analysis worker), the middleware roster,
+  three undocumented services, the components tree, and the query-key list.
 
 ## [2.25.0] — 2026-08-19
 
 ### Fixed
-- **"25 models known" was never the catalog's size.** The Settings card read
-  `len(GET /api/meta/colorways)` — the *autocomplete* feed, which caps at its
-  own default `limit=25`. The figure would have said 25 with 1,000 models
-  harvested, which is indistinguishable from a harvest that found 25.
-  `GET /api/admin/colorways/status` now reports the real totals, and the card
-  shows models, colorways and listings.
+- **"25 models known" was never the catalog's size.** The Settings card read the
+  length of the *autocomplete* feed, which caps at its own default of 25. The
+  figure would have said 25 with 1,000 models harvested, which is
+  indistinguishable from a harvest that found 25.
+  `GET /api/admin/colorways/status` now reports the real totals.
 
-- **One transient marketplace error abandoned the whole colorway harvest.**
-  `query_listings` raises on any non-200 — a 429, a 502, a dropped connection —
-  and the only handler was at the very top. The sweep is sequential and commits
-  per page, and the endpoint had already returned `202 started`, so a single
-  blip left a silently partial catalog that looked exactly like a complete
-  one. Pages now retry with backoff, each category is isolated, and any that
-  still fails is reported in `failed_categories` instead of vanishing into a
-  log line. For scale: a full sweep is **988 listings across 146 models**.
+- **One transient marketplace error abandoned the whole colorway harvest.** The
+  listing query raises on any non-200 and the only handler was at the very top.
+  The sweep is sequential and commits per page, and the endpoint had already
+  returned `202 started`, so a single blip left a silently partial catalog that
+  looked exactly like a complete one. Pages now retry with backoff, each
+  category is isolated, and any that still fails is reported in
+  `failed_categories`. For scale: a full sweep is **988 listings across 146
+  models**.
 
 - **Replacing a hat's photo leaked its export image.** The cleanup loop deletes
-  everything named by a Hat column — `photo_path`, `original_path`,
-  `thumb_path` — but 2.24.0's export derivative is named after the canonical
-  photo's *filename* and lives under `uploads/hats/export/`, so it was
-  invisible to that loop. Every re-shot hat left one 800px WebP behind.
+  everything named by a Hat column, but 2.24.0's export derivative is named
+  after the canonical photo's *filename*, so it was invisible to that loop.
   `utils/photo.export_derivative_path` is now the single definition of where
   that file lives, so the code that writes it and the code that deletes it
   cannot drift apart.
 
 - **Two query invalidations bypassed `invalidateHatViews`.** Bulk import
-  refreshed only `['hats']` and `['cases']` despite creating hats *into* a
-  case, and deleting a case refreshed only `['cases']` despite unassigning
-  every hat in it. Both left the case's own contents and the per-room counts
-  stale for the 30s `staleTime`.
+  refreshed only `['hats']` and `['cases']` despite creating hats *into* a case,
+  and deleting a case refreshed only `['cases']` despite unassigning every hat
+  in it.
 
 ### Changed
 - **`hat.case.room` is no longer walked outside the model.** Five call sites
-  rebuilt what `Hat.room_name` / `Hat.case_display_id` / `Hat.display_id`
-  already provide.
+  rebuilt what `Hat.room_name` / `Hat.case_display_id` / `Hat.display_id` already
+  provide.
 - **Three unlabeled `<select>`s got their `aria-label`** — Case Type,
-  Disposition Type, and color Tier. The visible labels carry no `htmlFor`, so
-  nothing else associated them.
+  Disposition Type, and color Tier.
 - **The purchase-import dedupe is defined once.** Import and preview each had a
   byte-identical copy, so "the preview predicts the import exactly" was a claim
-  maintained by hand — in the one place it had already gone wrong once.
-- **`CONDITION_LABEL` is no longer declared three times.** Two of the copies
-  were identical and differed only by a trailing `s` in the name; the third is
+  maintained by hand.
+- **`CONDITION_LABEL` is no longer declared three times.** Two of the copies were
+  identical and differed only by a trailing `s` in the name; the third is
   genuinely different (lowercase, for use inside a sentence) and is now named
-  `CONDITION_IN_SENTENCE` so the distinction is deliberate.
-- **The payout constants have one home again.** `melin_recap.py` defined
-  `CASH_PAYOUT`/`CREDIT_PAYOUT` a third time, unused by anything and outside
-  the reach of `tests/test_valuation_parity.py`.
-- **README and USAGE now document the zip export and per-hat notes**, which
-  2.24.0 shipped into CLAUDE.md and the CHANGELOG only.
+  `CONDITION_IN_SENTENCE`.
+- **The payout constants have one home again.** `melin_recap.py` defined them a
+  third time, unused by anything and outside the reach of the parity test.
+- **README and USAGE now document the zip export and per-hat notes.**
 
 ## [2.24.0] — 2026-08-19 *(never tagged; shipped inside v2.25.0)*
 
@@ -4068,27 +3299,18 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
   Deliberately a **showcase**, not the inventory report: prices are opt-in and
   off by default, matching what share links already withhold.
 
-  This exists because share links, which are the better answer, only work if
-  the recipient can reach the app — and `headroom.local` resolves for nobody
-  off your LAN. That is why sharing never worked, and it was never a bug in
-  the share-link code.
+  This exists because share links, which are the better answer, only work if the
+  recipient can reach the app — and `headroom.local` resolves for nobody off
+  your LAN.
 
   Images are **re-encoded to 800px WebP** from the canonical photo rather than
   copied from the 320px grid thumbnail, which looked soft the moment anyone
-  opened the zip on a laptop. WebP, which is open and royalty-free rather
-  than proprietary, and has worked everywhere since Safari 14 in 2020. The
-  alternatives were measured, not assumed: lossless PNG is 137 KB an image
-  (40 MB for 300 hats), 256-color PNG is 26 KB but softens the cutout's
-  anti-aliased edge, and JPEG is 31 KB with **no alpha at all** — the hats
-  would stop floating. AVIF came in at 13.5 KB against WebP's 13.9 on
-  photographic content, a few percent rather than the ~30% it manages on flat
-  synthetic images, so it buys nothing worth a Safari 16.4 floor.
-  Derivatives are cached on disk and invalidated by modification time, so the
-  first export pays for the encoding and later ones don't, and a re-cut photo
-  regenerates without anything having to remember to clear a cache. The whole
-  zip build runs off the event loop, because re-encoding a few hundred
-  full-resolution photos is a minute of Pi CPU and the app has to stay
-  answerable while someone downloads.
+  opened the zip on a laptop. The alternatives were measured, not assumed:
+  lossless PNG is 137 KB an image, 256-color PNG is 26 KB but softens the
+  cutout's anti-aliased edge, and JPEG is 31 KB with **no alpha at all**. AVIF
+  came in at 13.5 KB against WebP's 13.9 on photographic content, so it buys
+  nothing worth a Safari 16.4 floor. Derivatives are cached on disk and
+  invalidated by modification time. The whole zip build runs off the event loop.
 
 - **Notes of your own, on every hat.** The only free-text field no automated
   path ever writes — not analysis, not a refresh, not a bulk re-analyze. Every
@@ -4100,25 +3322,22 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
 ### Fixed
 - **The case part of a hat's ID is now a link back to that case.** `A-029-01`
   reads as "hat 01 of case A-029" and sits at the very top of the page, so it
-  looks like a breadcrumb and gets tapped like one. It wasn't one. The
-  "View Case" button did already exist, but below the identification card, the
-  photo and the specs — a long scroll back to the page you just came from.
+  looks like a breadcrumb and gets tapped like one. It wasn't one. The "View
+  Case" button did already exist, but below the identification card, the photo
+  and the specs.
 
   Only the case portion links; the `-01` stays plain text, so which part is
   navigation is visible rather than guessed. A hat with no case still renders
-  `Hat #12` as plain text rather than dressing it up as something tappable.
+  `Hat #12` as plain text.
 
 ### Documentation
 - **A diagram of what happens when you add a hat.** The README now carries a
-  Mermaid flowchart of the upload → queue → cutout → Claude → price-lookup
-  path, including the branches that matter: the upload returning before any of
-  it runs, the inline fallback when no worker is draining the queue, and the
-  fact that **eBay and melinrecap only run after Claude succeeds** — both
-  fallback paths return early, because without a model name there is nothing
-  to look comparables up *for*.
-- **The color-search description was two releases stale**, still describing
-  plain "ΔE in LAB space" after 2.20 moved to CIEDE2000 and 2.22/2.23 added
-  dominance weighting and the hue guard.
+  Mermaid flowchart of the upload → queue → cutout → Claude → price-lookup path,
+  including the branches that matter: the upload returning before any of it
+  runs, the inline fallback when no worker is draining the queue, and the fact
+  that **eBay and melinrecap only run after Claude succeeds**.
+- **The color-search description was two releases stale**, still describing plain
+  "ΔE in LAB space" after 2.20 moved to CIEDE2000.
 
 ## [2.23.0] — 2026-08-18
 
@@ -4126,83 +3345,65 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
 - **Color search: a gray hat is no longer a purple hat.** Searching purple
   returned **22 of 22** hats, every one matched on a gray swatch at Δ13–19.
   2.22.0 did not fix this and neither would a third attempt at the same
-  approach, because the approach was wrong.
+  approach.
 
-  **A distance threshold cannot answer "is this hat purple?"** CIEDE2000
-  divides the chroma difference by `S_C = 1 + 0.045·C̄` — correct for the job
-  it was designed for, judging whether two nearly-identical samples of a dye
-  match, and wrong for this one. A mid gray and a saturated purple differ by
-  **55 units of chroma**; that divisor compresses the gap to ~22, and when
-  their lightness happens to agree the pair scores **~17**. Two genuinely
-  different purples score ~33. There is no cutoff that admits the second and
-  rejects the first, which is exactly why lowering it from 30 to 22 in 2.22.0
-  changed nothing that mattered.
+  **A distance threshold cannot answer "is this hat purple?"** CIEDE2000 divides
+  the chroma difference by a factor that is correct for judging whether two
+  nearly-identical samples of a dye match, and wrong for this. A mid gray and a
+  saturated purple differ by **55 units of chroma**; that divisor compresses the
+  gap to ~22, and when their lightness happens to agree the pair scores **~17**.
+  Two genuinely different purples score ~33.
 
   The hue question is now answered **before** distance, not with it. A swatch
-  with essentially no hue is never matched against a color with plenty of
-  one, at any distance.
+  with essentially no hue is never matched against a color with plenty of one,
+  at any distance.
 
-  Deliberately **not** a general penalty on the chroma gap — that was tried
-  first and it killed `navy`/`blue` (41 units apart) and `red`/`maroon` (36)
-  along with the bug. Those are the dark and bright versions of one hue and
-  must keep matching. What makes gray different isn't the size of the gap but
-  that it has no hue to be a darker version *of*.
+  Deliberately **not** a general penalty on the chroma gap — that was tried first
+  and it killed `navy`/`blue` and `red`/`maroon` along with the bug. Those are
+  the dark and bright versions of one hue and must keep matching. What makes
+  gray different isn't the size of the gap but that it has no hue to be a darker
+  version *of*.
 
-  The test is a **ratio** rather than an absolute chroma floor, because how
-  much color counts as *some* color depends on the color. Teal is itself
-  only C=27 where red is C=73, so a slate teal at C=10.5 holds **39%** of
-  teal's chroma and is a teal, while the blue-gray that must not match purple
-  holds **20%** of its C=59 and is a gray. An absolute floor cannot tell those
-  apart — set low enough to keep the teal findable it lets blue-gray match
-  purple, set high enough to stop that it discards every dark teal and forest
-  green in a collection full of them.
+  The test is a **ratio** rather than an absolute chroma floor, because how much
+  color counts as *some* color depends on the color. Teal is itself only C=27
+  where red is C=73, so a slate teal at C=10.5 holds **39%** of teal's chroma and
+  is a teal, while the blue-gray that must not match purple holds **20%** of its
+  C=59.
 
   Worth knowing: the guard is strong for emphatic targets like purple and
-  inherently weaker for muted ones. Tapping **teal** still returns some slate
-  and blue-gray hats — which is fair, because teal genuinely is a desaturated
-  blue-green and those are its neighbors. Tapping purple no longer does.
-
-  Purple now returns **3** hats instead of 22: the purple one, the navy one
-  and the pink one.
+  inherently weaker for muted ones. Purple now returns **3** hats instead of 22.
 
 ### Changed
-- **The cutoff relaxes back to 26**, because it no longer has a second job.
-  It had been tightened to 22 to suppress the neutral blowout, which cost
-  real matches — `navy`/`blue` (Δ23.3) and `charcoal`/`gray` (Δ25.3) were both
-  casualties. With the hue guard doing that work properly, 26 is the first
-  value that keeps all 17 same-family palette pairs; 28 would start admitting
-  `navy`/`maroon`. A charcoal hat is a dark gray hat again.
+- **The cutoff relaxes back to 26**, because it no longer has a second job. It
+  had been tightened to 22 to suppress the neutral blowout, which cost real
+  matches — `navy`/`blue` and `charcoal`/`gray` were both casualties. With the
+  hue guard doing that work properly, 26 is the first value that keeps all 17
+  same-family palette pairs; 28 would start admitting `navy`/`maroon`.
 
 ## [2.22.0] — 2026-08-18
 
 ### Fixed
-- **Color search stops returning the whole collection.** Searching a color
-  came back with everything, bunched at near-identical distances — four hats
-  all reading "Δ15", the top three matched on gray and the fourth, a green
-  hat, matched on its pink logo. Two causes, both mine:
+- **Color search stops returning the whole collection.** Searching a color came
+  back with everything, bunched at near-identical distances. Two causes:
 
-  **A hat was scored on the closest of ALL its swatches, with nothing
-  weighting them.** A logo counted exactly as much as the crown, and a hat
-  with four colors got four chances to match anything. Every melin hat is a
-  dark neutral crown with a bright accent, so searching pink ranked a green
-  hat with a pink logo **equal first** — 0.00, identical to a hat that is
-  actually pink — with nothing on screen explaining why.
+  **A hat was scored on the closest of ALL its swatches, with nothing weighting
+  them.** A logo counted exactly as much as the crown, and a hat with four
+  colors got four chances to match anything. Every melin hat is a dark neutral
+  crown with a bright accent, so searching pink ranked a green hat with a pink
+  logo **equal first** — identical to a hat that is actually pink.
 
   A hat now scores on `distance + penalty(dominance_rank)`: +0 for its main
   color, +8 for its secondary, +14 for anything deeper. Additive, because a
   multiplier leaves an exact accent match at 0.00 and breaks no tie. Accent
-  matches still surface — "find the hat with the pink brim" is the point of
-  the feature — but they never outrank a hat that IS the color, and the
-  penalty doubles as a budget: a secondary must land within 14 of the target,
-  an accent within 8.
+  matches still surface, but they never outrank a hat that IS the color, and the
+  penalty doubles as a budget.
 
   **The Δ30 cutoff was calibrated against the wrong distribution.** It was
-  measured on the 26-color palette, whose entries are deliberately spread
-  around the wheel. A hat collection is not: these are overwhelmingly black,
-  charcoal, navy and gray, and CIEDE2000 places a low-chroma neutral
-  moderately near *everything*. At 30, gray was a "match" for **17 of the
-  other 25 palette colors** — red, orange, purple and pink included. Every
-  hat owns a gray swatch, so every search returned every hat.
+  measured on the 26-color palette, whose entries are deliberately spread around
+  the wheel. A hat collection is not: these are overwhelmingly black, charcoal,
+  navy and gray, and CIEDE2000 places a low-chroma neutral moderately near
+  *everything*. At 30, gray was a "match" for **17 of the other 25 palette
+  colors**. Every hat owns a gray swatch, so every search returned every hat.
 
   Re-calibrated on the neutrals, where the problem lives, to **22**:
 
@@ -4213,16 +3414,15 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
   | pink     | 4         | 1         |
   | red      | 6         | 1         |
 
-  Saturated searches barely notice — they were never the complaint. Shades of
-  one color still match comfortably: a real gray crown is 8.0 from the gray
-  chip, well inside.
+  Saturated searches barely notice. Shades of one color still match comfortably:
+  a real gray crown is 8.0 from the gray chip.
 
 ### Added
 - **Results say which swatch they matched.** A hat matched on its accent is
   labeled as such, so a row reading "Δ0 · accent" sitting below a row reading
   "Δ5" is legible rather than looking broken. `ColorSearchResult` gains
-  `matched_rank`; `distance` keeps its meaning — the raw CIEDE2000 to the
-  matched swatch — and is deliberately **not** the sort key.
+  `matched_rank`; `distance` keeps its meaning and is deliberately **not** the
+  sort key.
 
 ## [2.21.0] — 2026-08-18
 
@@ -4232,21 +3432,18 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
   multiplier.
 
   The haircut was modeling a negotiation that doesn't happen. melinrecap is a
-  fixed-price Treet marketplace with automatic 10% drops — a buyer clicks buy
-  at the number shown — so **the listed price is the sale price**, and
-  discounting it was simply wrong.
+  fixed-price Treet marketplace with automatic drops — a buyer clicks buy at the
+  number shown — so **the listed price is the sale price**.
 
-  The multiplier was unnecessary. Every listing carries its own `condition`
-  and `size` in the feed, and the code ignored both: it took one median across
-  all conditions and multiplied by a guess. Measured against 706 live
+  The multiplier was unnecessary. Every listing carries its own `condition` and
+  `size` in the feed, and the code ignored both. Measured against 706 live
   listings those guesses were also wrong — new-without-tags sells at 95% of
   new-with-tags (not 92%), worn at 82% (not 78%).
 
   Comparability now comes from **filtering, not arithmetic**. A hat is priced
   against listings matching its own model, condition and size, widening only
   when the market has too few of the exact thing, and the source line says
-  which — "median of 11 live classic worn model listings" rather than "median
-  of 8 live listings".
+  which.
 
   Effect on a real hat, a Classic Trenches Icon Hydro, against live data:
   new-with-tags $59.50 → **$77.00**, new $54.74 → **$75.00**, worn $46.41 →
@@ -4264,49 +3461,39 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
 ## [2.20.0] — 2026-08-18
 
 ### Changed
-- **A case is full at 3 hats, not 4.** The physical article is a three-hat
-  case — melin's own order lines call it a "3 Hat Travel Case" — so 3 is now
-  what "full" means. A 4th still fits, so it is accepted and the case is
-  reported **overfull** rather than refused or passed off as normal. One over
-  is the whole allowance; the 5th is refused, and the 409 quotes the ceiling
-  actually enforced instead of the nominal you had already passed.
+- **A case is full at 3 hats, not 4.** The physical article is a three-hat case
+  — melin's own order lines call it a "3 Hat Travel Case". A 4th still fits, so
+  it is accepted and the case is reported **overfull** rather than refused or
+  passed off as normal. One over is the whole allowance; the 5th is refused, and
+  the 409 quotes the ceiling actually enforced.
 
   Cases hold their hats either way — nothing moves and nothing is rejected on
   upgrade. Any case you already have with 4 hats simply starts saying
-  *overfull*, in the Cases grid, the case picker and the Fullest-cases chart.
+  *overfull*.
 
   A per-case `capacity` you set yourself gets **no** overfill latitude. That
-  field exists for a case you don't want to cram, so quietly allowing one more
-  than the number you stated would defeat the only reason to set it.
+  field exists for a case you don't want to cram.
 
 - **Color search is much tighter.** Two separate problems:
 
-  *No cutoff.* Only the result limit bounded it, so every hat was ranked and
-  the nearest 30 came back however far away they were — searching a specific
-  teal in a collection of a hundred returned thirty hats, six teal and
-  twenty-four presented identically beside them. A list that always fills to
+  *No cutoff.* Only the result limit bounded it, so every hat was ranked and the
+  nearest 30 came back however far away they were. A list that always fills to
   the same length says nothing about whether anything matched. Now capped,
-  calibrated against the curated palette so shades of one color still find
-  each other while unrelated ones drop out. An empty result is now possible
-  and the page says "no hats are close to that color" rather than "no hats".
+  calibrated against the curated palette. An empty result is now possible and
+  the page says "no hats are close to that color".
 
-  *Crude metric.* Distance was ΔE\*76 — plain Euclidean in LAB, which is
-  least uniform among saturated blues, i.e. most of this collection. Two
-  navies you'd call the same shade scored further apart than a navy and a
-  slate. Now CIEDE2000, verified against all 34 published reference pairs.
+  *Crude metric.* Distance was plain Euclidean in LAB, which is least uniform
+  among saturated blues, i.e. most of this collection. Now CIEDE2000, verified
+  against all 34 published reference pairs.
 
-  Expect a light-blue search to stop returning navies. That is the fix: a
-  pale sky blue is 58 lightness points from a near-black navy, and hue family
-  alone was never a good reason to call them a match.
+  Expect a light-blue search to stop returning navies. That is the fix.
 
 ### Fixed
 - **The hat spec sheet showed the wrong things.** "Type" reported Beanie or
-  Regular, which is derived entirely from Style directly above it — a quarter
-  of the sheet printing one fact twice. Meanwhile **construction** appeared
-  only as a badge beside the title, and **colorway** appeared nowhere on the
-  hat page at all, despite a colorway catalog and a purchase matcher whose
-  job is filling it in. Specs now lists Style, Size, Construction, Colorway,
-  Collection and Last Worn — the fields that actually tell two hats apart.
+  Regular, which is derived entirely from Style directly above it. Meanwhile
+  **construction** appeared only as a badge beside the title, and **colorway**
+  appeared nowhere on the hat page at all. Specs now lists Style, Size,
+  Construction, Colorway, Collection and Last Worn.
 
 384 backend + 81 frontend tests.
 
@@ -4314,120 +3501,97 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
 
 ### Added
 - **Stats page (`/stats`).** Everything the collection is, as numbers and
-  charts: totals, condition/style/size/brand/construction/colorway splits,
-  color distribution, hats and value by room, case fill levels, acquisitions
-  and spend over time, and leaderboards for most valuable, most expensive,
-  most worn and best cost-per-wear. Reachable from the home page's stat rail
-  and from Valuation. Charts are hand-rolled SVG/CSS for the same reason this
-  app has no UI framework — a charting library brings its own opinions about
-  color and type to argue with.
+  charts: totals, condition/style/size/brand/construction/colorway splits, color
+  distribution, hats and value by room, case fill levels, acquisitions and spend
+  over time, and leaderboards for most valuable, most expensive, most worn and
+  best cost-per-wear. Charts are hand-rolled SVG/CSS for the same reason this
+  app has no UI framework.
 - **Price-paid tracking end to end.** `purchase_price` and `purchased_at` are
-  now settable when you *add* a hat, not only when editing one — the receipt
-  is in hand at that moment, and it was previously unreachable for anything
-  bought secondhand or in person. Valuation gained a "What you've paid" card
-  with totals, coverage, average, and a list of hats still missing a price.
+  now settable when you *add* a hat, not only when editing one — the receipt is
+  in hand at that moment. Valuation gained a "What you've paid" card with
+  totals, coverage, average, and a list of hats still missing a price.
 - **Home page counts are links.** Hats, Cases and Rooms go to their lists;
   Archive and Daily deep-link into the Cases page's own type filter. The Cases
-  type filter now lives in the URL (`/cases?type=archive`), the hat filters
-  seed from query params (`/hats?style=a_game`), and Search accepts `?q=` and
-  `?color=` — so the stats charts link straight into a filtered view.
+  type filter now lives in the URL, the hat filters seed from query params, and
+  Search accepts `?q=` and `?color=`.
 
 ### Changed
-- **The valuation maths, substantially — read this one.** Previous totals were
-  overstated. Both price feeds report *asking* prices — the eBay integration
-  reads currently-listed items and the melinrecap figure is a median of live
-  listings — and both were being summed at face value. Worse, whenever a
-  market price existed, condition was ignored entirely: every copy of a model
-  got the same number whether it was tagged or beaten. Market signals are now
-  discounted 15% for the gap between ask and sale and then adjusted for the
-  hat's actual condition, so headline figures will **drop**. They were wrong
-  before, not now.
-- **The home page caption said something the code no longer did.** It read
-  "Resale = manual override, else condition-based estimate (NWT 65% · New 45%
-  · Worn 30%)" long after `resale_price` had become an automatic feed, so
-  almost nothing was going through the multipliers it named. Valuation now
-  carries a "How the sale estimate is worked out" card that states the method
-  and shows how many hats rest on each kind of signal.
-- **One valuation rule instead of three.** It was implemented separately in
-  the home page, the valuation page and the server's inventory report, and had
+- **The valuation math, substantially — read this one.** Previous totals were
+  overstated. Both price feeds report *asking* prices and both were being summed
+  at face value. Worse, whenever a market price existed, condition was ignored
+  entirely: every copy of a model got the same number whether it was tagged or
+  beaten. Market signals are now discounted 15% for the gap between ask and sale
+  and then adjusted for the hat's actual condition, so headline figures will
+  **drop**. They were wrong before, not now.
+- **The home page caption said something the code no longer did.** It named
+  condition multipliers long after `resale_price` had become an automatic feed.
+  Valuation now carries a "How the sale estimate is worked out" card that states
+  the method and shows how many hats rest on each kind of signal.
+- **One valuation rule instead of three.** It was implemented separately in the
+  home page, the valuation page and the server's inventory report, and had
   drifted in all three. It now lives in `frontend/src/lib/valuation.ts`, with
   `src/headroom/services/valuation.py` mirroring it for the server-rendered
-  report and `tests/test_valuation_parity.py` failing the build if the two
-  ever disagree.
-- **Home page stats are one panel, not five buttons.** Each was a bordered
-  card with a gradient bar — the same recipe this stylesheet uses for a
-  primary button — so they read as buttons containing numbers, left "Rooms"
-  alone on a fifth row at phone width, and took nearly half the first screen.
-- **The home carousel no longer glows.** It carried a pink glow and a pink
-  radial behind the photo, the only lit element on the page; it now uses the
-  same border, surface and shadow as every other card.
-- **Hat page pricing tiles** are two-up rather than three-across (a four-digit
-  price and a source line don't fit in 110px), label the feeds as *asks*
-  rather than "Resale (manual)", show what you paid, and show the estimated
-  sale value with a plain-English note on how it was reached.
+  report and `tests/test_valuation_parity.py` failing the build if the two ever
+  disagree.
+- **Home page stats are one panel, not five buttons.** Each was a bordered card
+  with a gradient bar — the same recipe this stylesheet uses for a primary
+  button — so they read as buttons containing numbers and took nearly half the
+  first screen.
+- **The home carousel no longer glows.** It now uses the same border, surface
+  and shadow as every other card.
+- **Hat page pricing tiles** are two-up rather than three-across, label the feeds
+  as *asks*, show what you paid, and show the estimated sale value with a
+  plain-English note on how it was reached.
 
 ### Fixed
 - **The app's own CSP had been blocking its own fonts since 2.12.0.** The
   security headers set `style-src 'self'` and `font-src 'self'` while
-  `tokens.css` still pulled Audiowide, Orbitron, Inter and JetBrains Mono from
-  Google Fonts, so the entire type system was stripped and everything rendered
-  in system-ui. It stayed invisible because anyone who had used Headroom
-  before 2.12.0 had the fonts cached — only a new device saw it, and there is
-  no visible error, just text of the wrong shape. The fonts are now bundled
-  from `@fontsource*` packages, which also means the design no longer depends
-  on a Google CDN being reachable from your LAN.
+  `tokens.css` still pulled its four families from Google Fonts, so the entire
+  type system was stripped and everything rendered in system-ui. It stayed
+  invisible because anyone who had used Headroom before 2.12.0 had the fonts
+  cached. The fonts are now bundled from `@fontsource*` packages, which also
+  means the design no longer depends on a Google CDN being reachable.
 - **A hand-entered resale price no longer survives only by luck.** Every
   analysis of a Melin hat reset the price to null and relied on the live feed
-  putting a number back; when the marketplace API was unreachable it didn't,
-  and a price you had typed was gone with nothing to recover it from — on a
-  path that also runs unattended from the bulk re-analyze queue. Prices you
+  putting a number back; when the marketplace API was unreachable it didn't — on
+  a path that also runs unattended from the bulk re-analyze queue. Prices you
   enter are now marked as yours, used as given, and never overwritten.
 - **Cost per wear used the retail estimate** when no purchase price was
-  recorded, so a hat bought on sale showed a cost per wear it never had. It
-  now appears only when there is a real price to divide.
-- **Unpriced hats are excluded from totals rather than counted as $0**, and
-  the count of them is shown. "Retention %" is computed only across hats
-  present in both totals, instead of dividing two differently-sized
-  populations by each other.
+  recorded, so a hat bought on sale showed a cost per wear it never had.
+- **Unpriced hats are excluded from totals rather than counted as $0**, and the
+  count of them is shown. "Retention %" is computed only across hats present in
+  both totals.
 - The deprecated `apple-mobile-web-app-capable` meta tag warned on every page
   load; the standard `mobile-web-app-capable` now sits beside it.
 
 ### Added — purchase import
-- **Order-history import understands size.** Order emails have always carried
-  it ("Transit / Classic") and the importer dropped it, so matching went on
-  model name alone and bound a purchase to whichever hat came back from the
-  database first. Own the same model in two sizes and a Small could be handed
-  a Classic's price, with nothing downstream looking wrong because both hats
-  ended up with *a* cost basis. Matching now scores candidates — size
-  outranks colorway, a stated field that disagrees rules a hat out, and a
-  genuine tie is reported rather than resolved by coin flip.
+- **Order-history import understands size.** Order emails have always carried it
+  and the importer dropped it, so matching went on model name alone and bound a
+  purchase to whichever hat came back from the database first. Matching now
+  scores candidates — size outranks colorway, a stated field that disagrees
+  rules a hat out, and a genuine tie is reported rather than resolved by coin
+  flip.
 - **A multi-buy line now prices every hat it bought.** "× 2" is two hats and a
   purchase matches one hat, so one row per line meant the second hat of every
   multi-buy silently never got a cost basis — nearly 40% of lines in a real
-  order history. Import writes one row per unit, and dedupe counts rows
-  instead of testing existence, so re-importing an order still adds nothing.
+  order history. Import writes one row per unit, and dedupe counts rows instead
+  of testing existence.
 - **`?dry_run=true` on `/api/admin/purchases/{import,match}`** reports exactly
   what would be imported and which hat each purchase would attach to, writing
   nothing. Importing mutates hats and there is no undo for "every price on the
   shelf is now slightly wrong".
 - An explicit `colorway` in the payload now beats one parsed out of the title.
-  Plenty of titles have no `" - "` to split on — "Odysea Hydro Indigo Depth"
-  yields a model and no colorway, which can then disambiguate nothing.
-- **Matching can be undone.** `POST /api/admin/purchases/{id}/unmatch` breaks
-  one link and `POST /api/admin/purchases/unmatch-all` breaks every link,
-  returning those purchases to the matching pool. Previously there was no undo
-  of any kind: matching mutates hats, runs over years of order history in a
-  single call, and only ever reconsiders purchases with no hat — so a wrong
-  link was permanent *and* invisible, because the hat still came out with a
-  price and a colorway, just the wrong ones. Fixing it meant editing the
-  database by hand.
+- **Matching can be undone.** `POST /api/admin/purchases/{id}/unmatch` breaks one
+  link and `POST /api/admin/purchases/unmatch-all` breaks every link. Previously
+  there was no undo of any kind: matching mutates hats, runs over years of order
+  history in a single call, and only ever reconsiders purchases with no hat — so
+  a wrong link was permanent *and* invisible, because the hat still came out
+  with a price and a colorway, just the wrong ones.
 
   Reverting clears `purchase_price`, `purchased_at` and `colorway` only where
   they still hold the value that match wrote. Anything edited since belongs to
-  whoever edited it — a reversal that overwrote a hand-typed price would be a
-  worse bug than the mis-match it was undoing. The purchase rows themselves
-  survive `unmatch-all`: re-importing years of orders is the expensive part,
-  and what was wrong is the matching, not the orders. Both are audited.
+  whoever edited it. The purchase rows themselves survive `unmatch-all`:
+  re-importing years of orders is the expensive part. Both are audited.
 
 ### Added (schema)
 - `hats.resale_price_scope` — `manual` | `model` | `category`, recording what
@@ -4435,9 +3599,9 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
   whole style rather than a valuation of one hat, and valuation needs to tell
   those apart without parsing a display string.
 - `purchases.size` — the size on the order line, normalized to the app's
-  vocabulary. Also now part of the import dedupe key: one real order bought
-  the same model at the same price in Classic ×2 *and* Small ×1, and a key
-  without size collapsed the Small.
+  vocabulary. Also now part of the import dedupe key: one real order bought the
+  same model at the same price in Classic ×2 *and* Small ×1, and a key without
+  size collapsed the Small.
 
 340 backend + 81 frontend tests.
 
@@ -4448,15 +3612,13 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
   whether `npm install -g` exited cleanly, which it can do while changing
   nothing you will run — so a setup that printed no error still left npm 11
   building the SPA against an image pinned to 12. It now re-checks the version
-  afterwards and reports the mismatch immediately, rather than letting it
-  surface later as a build difference.
+  afterwards and reports the mismatch immediately.
 
-  On a Homebrew node it says so specifically: the formula owns the `npm`
-  symlink into its Cellar, so a global upgrade is undone by the next
-  `brew upgrade node` and cannot be made to stick. Telling someone to re-run
-  the command would send them round a loop with no exit. This is cosmetic for
-  Docker deploys — the image installs its own pinned npm in the build stage —
-  and only matters when building the SPA locally for a bare-metal deploy.
+  On a Homebrew node it says so specifically: the formula owns the `npm` symlink
+  into its Cellar, so a global upgrade is undone by the next `brew upgrade node`
+  and cannot be made to stick. This is cosmetic for Docker deploys — the image
+  installs its own pinned npm in the build stage — and only matters when
+  building the SPA locally for a bare-metal deploy.
 
 307 backend + 66 frontend tests.
 
@@ -4470,22 +3632,19 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
   accepted as a fallback.
 
 - **Docs: upgrading with an overlay.** `## Upgrades` said
-  `docker compose up --build -d`, which on a host running `http80` (or `mdns`,
-  or either HTTPS overlay) is not an upgrade — compose applies only the files
-  named, so the sidecar never starts and the app drops back to `:8000`. Now
-  states plainly that upgrades must repeat the same `-f` flags, with a worked
-  example.
+  `docker compose up --build -d`, which on a host running an overlay is not an
+  upgrade — compose applies only the files named, so the sidecar never starts and
+  the app drops back to `:8000`. Now states plainly that upgrades must repeat the
+  same `-f` flags, with a worked example.
 
 - **Docs: the build stamp was undocumented.** Neither README nor OPERATIONS
-  explained why the footer shows no build or how to make it — the one place it
-  appeared was a compose comment. OPERATIONS §5 now covers it, including that
-  a dirty tree is stamped `-dirty` and that no stamp is not an error.
+  explained why the footer shows no build or how to make it. OPERATIONS §5 now
+  covers it, including that a dirty tree is stamped `-dirty` and that no stamp is
+  not an error.
 
 ### Changed
-- `scripts/stamp-build.sh --install-hooks` installs the git hooks on its own,
-  so a running deployment can pick them up without re-running `setup.sh` —
-  which installs Docker, Node and the Python toolchain. `setup.sh` now
-  delegates to it rather than carrying a second copy.
+- `scripts/stamp-build.sh --install-hooks` installs the git hooks on its own, so
+  a running deployment can pick them up without re-running `setup.sh`.
 
 307 backend + 66 frontend tests.
 
@@ -4499,57 +3658,48 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
 
   Grouped on identity fields, never pixels: two shots of one hat look different
   enough to defeat image comparison, and two genuinely different hats in the
-  same colorway look nearly identical, so photos are the wrong signal in both
-  directions. `exact` means every identity field agrees; `likely` means same
-  model and size with the colorway missing on one side, which is the usual
-  shape of an unanalyzed twin.
+  same colorway look nearly identical. `exact` means every identity field
+  agrees; `likely` means same model and size with the colorway missing on one
+  side.
 
-  Colorways that actively **disagree** are never grouped — "Trenches Black"
-  and "Trenches Navy" are two hats somebody deliberately owns, and reporting
-  every normal shelf as a mistake is the fastest way to make a report like this
-  get ignored. Reports only: nothing is deleted or merged.
+  Colorways that actively **disagree** are never grouped — "Trenches Black" and
+  "Trenches Navy" are two hats somebody deliberately owns, and reporting every
+  normal shelf as a mistake is the fastest way to make a report like this get
+  ignored. Reports only: nothing is deleted or merged.
 
 - **The three most recently created cases are pinned to the top** of the case
   picker. A hat you're adding now usually belongs in a case you made minutes
-  ago, and hunting for it inside a room group is the long way round. Hidden
-  once you start typing — at that point you've said what you want, and a
-  pinned block is noise in front of the answer.
+  ago. Hidden once you start typing.
 
 - **Cases show a collage of the hats inside**, not a photo of the case. Every
-  case looks identical from the outside, so that picture carried no
-  information at the moment you were scanning for one. The layout follows the
-  count — one hat fills the tile, three put the first across the top — rather
+  case looks identical from the outside, so that picture carried no information
+  at the moment you were scanning for one. The layout follows the count rather
   than letterboxing a single hat into a quarter of a forced 2x2.
 
 ### Fixed
 - **Dropdown lists were being clipped by the card they sat in.** `.card` sets
-  `overflow: hidden`, so options past its edge were cut off mid-row and the
-  ones below unreachable — no z-index could fix that, because the pixels were
-  never drawn. The lists now render into `<body>` via the existing
-  `portalToBody`, whose own docstring names this trap, positioned against their
-  input. That also clears the two other ancestor traps: `.card-body`'s stacking
-  context and the card hover `transform`.
+  `overflow: hidden`, so options past its edge were cut off mid-row and the ones
+  below unreachable — no z-index could fix that, because the pixels were never
+  drawn. The lists now render into `<body>` via the existing portal helper,
+  positioned against their input. That also clears the two other ancestor traps.
 
 - **The bottom nav no longer jumps to the middle of the screen.** iOS positions
   `fixed` elements against the *visual* viewport, so the nav is lifted with the
   keyboard and lands on top of whatever you're typing into. 2.14.0 hid it while
   a combobox was open, which missed the actual cause: it happens for every
-  focused input, including plain dropdowns. Now tracked app-wide via
-  `visualViewport` — the only API that reports a keyboard, since no `window`
-  resize event fires for one.
+  focused input. Now tracked app-wide via `visualViewport` — the only API that
+  reports a keyboard.
 
 - **Picker lists no longer run off the bottom of the screen.** They were sized
   against the layout viewport; with the keyboard up that's roughly double the
-  visible area, so the last options were unreachable. Sized in `dvh` now.
+  visible area. Sized in `dvh` now.
 
 - **The footer shows the build again.** `.dockerignore` excludes `.git` and the
   frontend build stage only receives `frontend/`, so nothing inside the image
-  could ever learn the commit — and the compose build arg defaulted to empty,
-  so `docker compose up -d --build` always produced an unstamped image.
+  could ever learn the commit — and the compose build arg defaulted to empty.
   `scripts/stamp-build.sh` writes it to the `.env` compose already reads, and
-  `setup.sh` installs git hooks so a `git pull` keeps it current. A working
-  tree with uncommitted changes is marked `-dirty`, so a stamp can be trusted
-  to mean exactly that commit.
+  `setup.sh` installs git hooks so a `git pull` keeps it current. A working tree
+  with uncommitted changes is marked `-dirty`.
 
 - Search results now carry `thumb_path`, so the results grid loads thumbnails
   instead of full-size transparent PNGs.
@@ -4561,9 +3711,9 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
 ### Fixed
 - **Your construction is now sent to Claude as ground truth.** 2.12 stopped
   analysis *overwriting* a construction you had stated, but never told it what
-  you'd said — so a hat you recorded as Thermal still came back named
-  "A-Game HYDROLite". The construction field was right and the name you
-  actually read was wrong, which reads as the app overruling you.
+  you'd said — so a hat you recorded as Thermal still came back named "A-Game
+  HYDROLite". The construction field was right and the name you actually read
+  was wrong, which reads as the app overruling you.
 
   The prompt now states both the model line and the construction as facts from
   someone holding the hat, and binds `model_name` to agree with them. HYDRO vs
@@ -4572,11 +3722,9 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
   evidence against your direct observation.
 
 - **A full rescan repairs the hats that already got this wrong.** melin names
-  read "&lt;line&gt; &lt;construction&gt;", so a model name asserts a build by itself.
-  Any name that contradicts the hat's recorded construction now has the wrong
-  build removed on every analysis — so re-running analysis over the collection
-  fixes stored rows instead of preserving them, including when Claude returns
-  no model name of its own.
+  read "&lt;line&gt; &lt;construction&gt;", so a model name asserts a build by
+  itself. Any name that contradicts the hat's recorded construction now has the
+  wrong build removed on every analysis.
 
   Removed, not rewritten: "A-Game Thermal" would be inventing a product name,
   where "A-Game" is merely less specific and true.
@@ -4586,29 +3734,24 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
 ## [2.16.0] — 2026-08-17 — _one Piña_
 
 ### Changed
-- **Accents fold too.** 2.15.0 deliberately kept "Piña" and "Pina" apart, on
-  the theory that two names differing only by a diacritic might genuinely be
+- **Accents fold too.** 2.15.0 deliberately kept "Piña" and "Pina" apart, on the
+  theory that two names differing only by a diacritic might genuinely be
   different collections. In this collection they aren't — they are one drop
-  typed with and without a long-press on a phone keyboard, and the concrete
-  harm is three entries that never find each other in search. `Piña`, `Pina`
-  and `PINA` are now one collection.
+  typed with and without a long-press on a phone keyboard, and the concrete harm
+  is three entries that never find each other in search. `Piña`, `Pina` and
+  `PINA` are now one collection.
 
   When variants disagree the **accented** spelling wins: adding an accent is a
-  deliberate act, while dropping one is what happens when you type quickly, so
-  it is the better guess at the real name. Typing `Piña` where only `Pina` is
-  on record therefore keeps the accent, and the one-time merge pulls the older
-  rows across.
+  deliberate act, while dropping one is what happens when you type quickly.
 
   On write, the value already on record still wins a *tie* — otherwise typing
-  `NEON` once would rename a collection recorded as `Neon`. It only loses when
-  the typed value is strictly better informed.
+  `NEON` once would rename a collection recorded as `Neon`.
 
 ### Fixed
-- Matching moved from SQL to Python. It was a `WHERE lower(col) = lower(?)`,
-  and SQLite's `lower()` is ASCII-only: it cannot fold accents, so `Piña` and
-  `PIÑA` did not even match *each other*, let alone `Pina`. The candidate set
-  is the distinct values of one column on a personal collection — a few dozen
-  short strings — so comparing in Python costs nothing and is actually correct.
+- Matching moved from SQL to Python. It was a `WHERE lower(col) = lower(?)`, and
+  SQLite's `lower()` is ASCII-only: it cannot fold accents, so `Piña` and `PIÑA`
+  did not even match *each other*. The candidate set is a few dozen short
+  strings, so comparing in Python costs nothing and is actually correct.
 
 296 backend + 63 frontend tests.
 
@@ -4620,23 +3763,20 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
   melin names these for the partner or the drop, so any fixed list is wrong by
   the next release.
 
-- **Typing past a suggestion no longer creates a duplicate.** Autocomplete only
-  makes drift *less likely*; a value that case-insensitively matches something
-  already recorded is now stored with the existing spelling, so "Neon", "NEON"
-  and "neon" converge on one collection instead of three that never find each
-  other in search. Applies to `construction` too, where the curated list wins —
-  typing "hydrolite" stores "HYDROLite".
+- **Typing past a suggestion no longer creates a duplicate.** A value that
+  case-insensitively matches something already recorded is now stored with the
+  existing spelling, so "Neon", "NEON" and "neon" converge on one collection
+  instead of three that never find each other in search. Applies to
+  `construction` too, where the curated list wins.
 
   Case and whitespace only. "Piña" and "Pina" stay distinct: collapsing accents
-  would be guessing, and merging two collections that genuinely differ is worse
-  than keeping two spellings of one.
+  would be guessing.
 
 ### Added
-- **A one-time merge for variants that already exist.** Canonicalisation covers
-  writes, so anything recorded before it — or imported — keeps whatever was
-  typed. Runs once on boot behind `vocabulary_merged_v1`, keeping the curated
-  spelling where there is one and otherwise the most *common* variant, so a
-  single early typo can't rename the collection everything else uses.
+- **A one-time merge for variants that already exist.** Canonicalization covers
+  writes, so anything recorded before it keeps whatever was typed. Runs once on
+  boot behind `vocabulary_merged_v1`, keeping the curated spelling where there is
+  one and otherwise the most *common* variant.
 
 294 backend + 63 frontend tests.
 
@@ -4645,36 +3785,29 @@ picks them up, and a re-analysis never erases a series you typed (`_keep_on_null
 ### Changed
 - **The case selector is a searchable picker.** A native `<select>` is fine at
   six cases and unusable at sixty: iOS renders it as a picker wheel with no
-  search, so finding one case means spinning past the rest. Type to filter on
-  case id, room name or type; cases are grouped under their room with
-  occupancy shown.
+  search. Type to filter on case id, room name or type; cases are grouped under
+  their room with occupancy shown.
 
 - **It won't let you pick a case the save would reject.** Cases are
-  type-exclusive (beanies or regular hats, never both) and capacity-limited, so
-  the old dropdown happily offered a case that came back `409` — at six cases
-  you notice, at sixty you won't. Full and wrong-type cases now render dimmed
-  and unselectable with the reason ("full", "holds beanies"), rather than
-  hidden: a case you expected to see silently missing is its own puzzle, and
-  *"A-021 is full"* is the answer you actually wanted.
+  type-exclusive and capacity-limited, so the old dropdown happily offered a case
+  that came back `409`. Full and wrong-type cases now render dimmed and
+  unselectable with the reason ("full", "holds beanies"), rather than hidden: a
+  case you expected to see silently missing is its own puzzle.
 
   Availability is computed server-side in `services/capacity`, the same module
-  `_validate_capacity` now uses to enforce it, so the picker cannot disagree
-  with what a save will accept.
+  the write validator uses, so the picker cannot disagree with what a save will
+  accept.
 
 ### Fixed
-- **The bottom nav no longer covers an open picker.** It is `position: fixed`
-  at `z-index: 100`, above the list — and once the iOS keyboard opens, fixed
+- **The bottom nav no longer covers an open picker.** It is `position: fixed` at
+  `z-index: 100`, above the list — and once the iOS keyboard opens, fixed
   elements are positioned against the visual viewport, so the nav rode up to
-  mid-screen and covered the options wherever they were drawn. Raising the
-  list's z-index alone does not fix the second half; the nav is now hidden
-  while a picker is open, which is also what it should do when the keyboard is
-  up and it is unreachable anyway.
+  mid-screen. The nav is now hidden while a picker is open.
 
-- **Case occupancy counted disposed hats.** A disposed hat stays in the
-  database but frees its slot — `_validate_capacity` has always filtered them,
-  but the read model did not, so a case could display as fuller than the
-  validator considered it. With the picker now greying out full cases, that
-  discrepancy would have hidden a case you could actually use.
+- **Case occupancy counted disposed hats.** A disposed hat stays in the database
+  but frees its slot — the write validator has always filtered them, but the read
+  model did not, so a case could display as fuller than the validator considered
+  it.
 
 283 backend + 63 frontend tests.
 
@@ -4686,37 +3819,32 @@ plus the test gap that let the crash class stay invisible.
 ### Changed — the layering
 
 - **`share_links.py` has a service layer.** It was the only feature that lived
-  entirely in the transport layer — hand-rolled persistence, token-expiry
-  rules, and a second copy of the path-traversal check `app.py` already had.
-  That put the one surface reachable *without* a session in the hardest place
-  to test. Now `services/share_link_service.py` owns token validity and what a
-  token may see; the route is transport only.
-- **One definition of path containment.** `utils/paths.py::safe_join` is now
-  the single implementation, used by the SPA fallback and the share-photo
-  streamer. Both copies were correct — which is the problem: two correct copies
-  of a security check are two places that must both be fixed when it is wrong,
-  and one of them gets missed.
+  entirely in the transport layer — hand-rolled persistence, token-expiry rules,
+  and a second copy of the path containment check `app.py` already had. Now
+  `services/share_link_service.py` owns token validity and what a token may see;
+  the route is transport only.
+- **One definition of path containment.** `utils/paths.py::safe_join` is now the
+  single implementation, used by the SPA fallback and the share-photo streamer.
+  Both copies were correct — which is the problem: two correct copies of a
+  security check are two places that must both be fixed when it is wrong.
 - **No more hand-built dict responses.** `schemas/share.py`,
   `schemas/import_job.py` and `PurchaseRead` replace them, so the public share
   view and the purchase list have declared shapes and appear in the OpenAPI
   document. The shared-collection payload is deliberately a projection, not
   `HatRead` — prices, purchase history, disposition and analysis state are the
-  owner's business, and returning the full model while trusting the frontend
-  not to render the rest is exactly how that leaks.
-- **`schemas/auth.py`** holds the five models `routes/auth.py` declared inline
-  — the request bodies on the unauthenticated surface, whose validation rules
+  owner's business.
+- **`schemas/auth.py`** holds the five models `routes/auth.py` declared inline —
+  the request bodies on the unauthenticated surface, whose validation rules
   should be readable without opening the transport layer.
-- **Admin routes go through `hat_service`**, via `list_by_analysis_status`,
-  `count_by_analysis_status` and `ids_for_reanalysis`, rather than querying
-  `models.Hat` directly.
-- **`Purchase.hat` is a real relationship**, not a bare foreign key every
-  caller had to navigate by hand.
-- **The colorway harvest runs in the background** and returns `202`. It is up
-  to 9 categories × 50 pages of sequential external calls — minutes of work
-  inside a request, on an open connection, long enough for any reverse proxy
-  in front of it to time out first.
-- The three analysis/queue response types moved from `api/settings.ts` to
-  `types/index.ts` with every other API shape.
+- **Admin routes go through `hat_service`** rather than querying models
+  directly.
+- **`Purchase.hat` is a real relationship**, not a bare foreign key every caller
+  had to navigate by hand.
+- **The colorway harvest runs in the background** and returns `202`. It is up to
+  9 categories × 50 pages of sequential external calls — minutes of work inside a
+  request, long enough for any reverse proxy in front of it to time out first.
+- The three analysis/queue response types moved to `types/index.ts` with every
+  other API shape.
 
 ### Added — tests for what the stub was hiding
 
@@ -4724,33 +3852,29 @@ plus the test gap that let the crash class stay invisible.
 — rembg's model is 179MB — and that stub is why the crash class stayed
 invisible: every precondition sat in the code, green, for releases. The bounds
 are plain control flow, so they can be tested without the model. Removing the
-semaphore now fails with *"4 inferences ran at once; the bound is 1"*, which is
-precisely the pre-2.12 state.
+semaphore now fails with *"4 inferences ran at once; the bound is 1"*.
 
-Covers the inference bound and its env override, a bad config value falling
-back rather than deadlocking, all three photo routes rejecting oversize before
-Pillow decodes anything, a normal photo still working, and bulk import handing
-the worker paths rather than bytes.
+Covers the inference bound and its env override, a bad config value falling back
+rather than deadlocking, all photo routes rejecting oversize input before Pillow
+decodes anything, a normal photo still working, and bulk import handing the
+worker paths rather than bytes.
 
 ### Fixed
 
-- `copy_upload_capped` bound its limit at import (`cap: int = MAX_PHOTO_BYTES`),
-  so it could never be changed — and an untestable limit is how the last one
-  went missing.
-- **`docs/AUDIT-HISTORY.md`** records what `R8`, `S2/R9`, `S5/R10`, `S4/S10`,
-  `S9/R6` and `R11` actually said. Ten of twelve in-code citations pointed at
-  documents that were never committed; a permanent reference to something
-  nobody can open is worse than none, because it implies a rationale exists to
-  be checked.
+- `copy_upload_capped` bound its limit at import time, so it could never be
+  changed — and an untestable limit is how the last one went missing.
+- Ten of twelve in-code citations pointed at review documents that were never
+  committed; a permanent reference to something nobody can open is worse than
+  none, because it implies a rationale exists to be checked. Those citations are
+  gone.
 
 ### Fixed — the memory limit was being ignored on Pi
 
-Raspberry Pi OS ships with the memory cgroup disabled, so Docker printed
-*"Your kernel does not support memory limit capabilities ... Limitation
-discarded"* and dropped 2.12.0's `mem_limit` on the floor. The in-app bounds
-(upload caps, inference semaphore) were unaffected, but the container ceiling —
-the thing that turns a system-wide OOM kill into a diagnosable
-`OOMKilled=true` — was not actually in force.
+Raspberry Pi OS ships with the memory cgroup disabled, so Docker printed *"Your
+kernel does not support memory limit capabilities ... Limitation discarded"* and
+dropped 2.12.0's `mem_limit` on the floor. The in-app bounds were unaffected,
+but the container ceiling — the thing that turns a system-wide OOM kill into a
+diagnosable `OOMKilled=true` — was not actually in force.
 
 `docs/OPERATIONS.md` §7 now has the one-time fix (`cgroup_enable=memory
 cgroup_memory=1` in `cmdline.txt`, reboot), how to verify it took, and how to
@@ -4769,15 +3893,15 @@ the two things 2.11.0 got wrong in front of the owner.
 Three independent analyses converged on why the container died mid-upload, and
 every structural precondition was confirmed in code:
 
-- **The single-hat photo upload had no size cap at all** — bulk import caps at
-  20 MB/file, the route you actually use capped nothing, and Pillow decodes at
-  native resolution before the resize. Now capped, streaming, along with the
+- **The single-hat photo upload had no size cap at all** — bulk import caps
+  per file, the route you actually use capped nothing, and Pillow decodes at
+  native resolution before the resize. Now capped and streaming, along with the
   case-photo and logo routes. One definition in `utils/upload.py`, used by all
   four.
 - **No compose file set a memory limit**, so a spike competed for the whole Pi
-  and the kernel picked a victim — possibly sshd — with `SIGKILL`, which logs
-  nothing. `mem_limit`/`memswap_limit` default to 1g (`HEADROOM_MEM_LIMIT`), so
-  a recurrence is a scoped, diagnosable `OOMKilled=true` against this container.
+  and the kernel picked a victim with `SIGKILL`, which logs nothing.
+  `mem_limit`/`memswap_limit` default to 1g (`HEADROOM_MEM_LIMIT`), so a
+  recurrence is a scoped, diagnosable `OOMKilled=true` against this container.
 - **rembg ran unbounded across both workers.** The lock was removed for
   throughput; with only two single-consumer producers that bought a factor of
   two and cost double the peak memory, for the largest allocation the process
@@ -4794,60 +3918,52 @@ it — so one unwritable `/data` at boot, or a single transient
 `database is locked`, ended automated backups with no warning while the UI kept
 listing the last successful one. The loop now survives everything short of
 cancellation, and `GET /api/admin/backups/health` reports last attempt, last
-success, consecutive failures and whether the task is still alive — the file
-list cannot answer that, since a scheduler dead for weeks and one that ran
-minutes ago produce an identical inventory.
+success, consecutive failures and whether the task is still alive.
 
 A backup that fell back to the raw-file copy (possibly torn) was
 byte-indistinguishable from a clean snapshot; it now carries a
-`DEGRADED-BACKUP-README.txt` inside the archive, because a file travels with
-the backup and a log line does not.
+`DEGRADED-BACKUP-README.txt` inside the archive, because a file travels with the
+backup and a log line does not.
 
 ### Changed — analysis no longer overrides you
 
 **Claude only fills a construction that is empty.** 2.11.0 let a named fabric
 overwrite what was on record. In practice it reads HYDRO vs HYDROLite off one
-photo unreliably — the tells are bonded seams, a gel-welded logo and a
-sweatband, none of which survive a front-on shot — so "correcting" meant
-replacing a right answer from the person holding the hat with a wrong one from
-a picture. Clearing the field makes it eligible again.
+photo unreliably, so "correcting" meant replacing a right answer from the person
+holding the hat with a wrong one from a picture. Clearing the field makes it
+eligible again.
 
-`scripts/restore-construction.py` restores values from a backup for hats
-already overwritten. Hat edits now record their **previous values** in the
-activity log, so this class of change is reversible from history rather than
-only from a backup.
+`scripts/restore-construction.py` restores values from a backup for hats already
+overwritten. Hat edits now record their **previous values** in the activity log,
+so this class of change is reversible from history rather than only from a
+backup.
 
 ### Fixed — 2.11.0 regressions
 
-- **Construction is a real autocomplete**, not a bare `<datalist>` — iOS
-  renders those as a thin strip above the keyboard that is easy to miss, so ten
-  known values read as a blank text box. Known builds are now visible, tappable
-  rows that filter as you type, and anything typed is still accepted.
+- **Construction is a real autocomplete**, not a bare `<datalist>` — iOS renders
+  those as a thin strip above the keyboard that is easy to miss, so ten known
+  values read as a blank text box.
 - **The analysis badge shows the step name again**, alongside the counter:
   `2/4 · Identifying`, one word so it still fits a phone.
-- **Edit is in the top action row** on a hat, not only at the foot of the page
-  below the colors and disposition sections.
+- **Edit is in the top action row** on a hat, not only at the foot of the page.
 - A legacy client sending `hydro: false` no longer wipes a construction the
-  booleans cannot express (a "Waxed Canvas" hat has both flags false already).
+  booleans cannot express.
 
 ### Fixed — correctness
 
 - A photo replaced mid-analysis raised an uncaught `FileNotFoundError` past the
   pipeline's error handling; the queue then stamped the hat `error` and the
-  correctly-queued run for the NEW photo found a non-pending status and
-  silently did nothing. The correction was dropped permanently. Same shape in
-  `google_vision.py`.
+  correctly-queued run for the NEW photo found a non-pending status and silently
+  did nothing. Same shape in `google_vision.py`.
 - A per-case capacity of exactly `0` fell through to the type default via
   truthiness, letting four hats into a case set to hold none.
 - `undispose_hat` restored a hat into a case that may have been deleted.
 - `reattach_orphaned_cases` now calls `ensure_default_room` itself rather than
-  depending on boot ordering — with no default room its subquery returns NULL
-  and it would set every orphan's `room_id` to NULL, making permanent the exact
-  state it repairs.
+  depending on boot ordering — with no default room its subquery returns NULL and
+  it would make permanent the exact state it repairs.
 - The activity-log prune slept 24h **before** its first run, so a host that
   reboots daily never pruned at all. It now prunes first, and also sweeps
-  expired auth sessions — which were only ever collected lazily, when that
-  exact cookie was presented again, so abandoned ones accumulated forever.
+  expired auth sessions — which were only ever collected lazily.
 - `hat_service`'s six mutating functions committed twice with no shared
   transaction, so a lock timeout on the audit write turned an already-durable
   change into a 500 and invited a duplicate retry.
@@ -4860,21 +3976,20 @@ only from a backup.
   every response. No HSTS from the app deliberately: the primary deployment is
   `http://` on a LAN, and one HSTS response would pin that hostname to HTTPS in
   the browser and lock the owner out.
-- Unauthenticated API probes are logged (login was rate-limited and audited;
-  every other endpoint was silent). Never with the credential.
+- Unauthenticated API probes are logged. Never with the credential.
 - Case and room mutations are audited — previously only hats, auth, settings,
   backups and share links were.
 
 ### Fixed — documentation and naming
 
-- `HatAnalysis.construction` still described the pre-2.11 three-value enum,
-  100 lines below the schema that contradicts it.
+- `HatAnalysis.construction` still described the pre-2.11 three-value enum, 100
+  lines below the schema that contradicts it.
 - `package.json` declared `engines.node >=22.12`, the exact floor `setup.sh`'s
   own comments call insufficient; react-router 8 needs `>=22.22`.
-- `CLAUDE.md`'s search field list and `USAGE.md`'s status-pill table were both
+- The documented search field list and `USAGE.md`'s status-pill table were both
   behind the code.
-- `melin_recap`'s `_STYLE_TO_CATEGORY` / `_query_listings` are public — a
-  second module already depended on them, so the underscore was a lie.
+- `melin_recap`'s style map and listing query are public — a second module
+  already depended on them, so the underscore was a lie.
 - The two `apiFetch` calls bypassing `api/hats.ts` now go through it.
 - `uploads/branding/logo.png` was git-tracked inside an otherwise-ignored tree,
   byte-identical to `seed/branding/logo.png`.
@@ -4888,45 +4003,38 @@ only from a backup.
   booleans, HYDRO and HYDROLite, so a hat in any other fabric could not be
   recorded at all — melin ships specialty materials in seasonal and collab
   drops, and every one of them was unrecordable until somebody shipped a
-  migration. The field is now text with a datalist: the common builds are one
-  tap, anything else you type is stored verbatim, and
-  `GET /api/meta/constructions` merges the curated list with every value
-  already in use, so a fabric typed once becomes a suggestion after that.
+  migration. The field is now text with a datalist, and
+  `GET /api/meta/constructions` merges the curated list with every value already
+  in use.
 
   `hydro` and `hydrolite` survive as columns, because search filters query them
   and a `@property` cannot appear in a `WHERE` clause — but they are now
-  *derived*, with `Hat.set_construction()` the only writer of all three. That
-  is what stops a hat reading "Thermal" from still matching a HYDRO filter.
+  *derived*, with `Hat.set_construction()` the only writer of all three.
   Existing rows are backfilled from their flags on boot.
 
 - **Collection / collab can be set when adding a hat**, not only when editing
   one. It is printed on the box and the hang tag and is frequently invisible in
-  a photo of the hat, so the owner knows something the analyzer cannot see —
-  and withholding the field until the Edit form meant either a second trip or
-  hoping Claude guessed. Anything typed still survives a re-analysis.
+  a photo, so the owner knows something the analyzer cannot see.
 
 - Searching a fabric name finds it: `canvas` now returns a Waxed Canvas hat.
 
 ### Changed
 - **The analysis badge is a step counter (`2/4`), not a spinner.** It used to
-  spell the step out — "Removing background…" — which wrapped onto a second
-  line on a phone and pushed the badge row down into the photo, and because the
-  wording changed every few seconds the layout moved while you were reading it.
-  The counter is fixed-width and monotonic; the step name moved to the tooltip
-  and the accessible label. The ring it replaces was also missing
-  `flex-shrink: 0`, so a squeezed flex row rendered the 10px circle as an egg.
+  spell the step out, which wrapped onto a second line on a phone and pushed the
+  badge row down into the photo, and because the wording changed every few
+  seconds the layout moved while you were reading it. The counter is fixed-width
+  and monotonic; the step name moved to the tooltip and the accessible label.
 
 - **Claude may now correct a construction it can identify.** It was
-  additive-only, which was right when the field was two booleans and there was
-  no way to distinguish "this is not HYDROLite" from "I can't see whether it
-  is". Naming a fabric is a positive identification, so it wins; a null still
-  changes nothing, and the old enum's "standard" is treated as the non-answer
-  it was rather than written down as if it were a material.
+  additive-only, which was right when the field was two booleans and there was no
+  way to distinguish "this is not HYDROLite" from "I can't see whether it is".
+  Naming a fabric is a positive identification, so it wins; a null still changes
+  nothing.
 
 ### Fixed
-- A stale comment on `Hat.analysis_stage` claimed the column is "cleared when
-  the run finishes". It never was — `HatRead` masks it instead, deliberately,
-  so that eight terminal-status call sites can't each forget to.
+- A stale comment on `Hat.analysis_stage` claimed the column is "cleared when the
+  run finishes". It never was — `HatRead` masks it instead, deliberately, so
+  that eight terminal-status call sites can't each forget to.
 
 259 backend + 54 frontend tests.
 
@@ -4935,23 +4043,20 @@ only from a backup.
 ### Added
 - **Bulk re-analysis is now a tracked job.** Firing "Re-analyze every hat" used
   to leave you watching a backlog number tick down, with no record that a run
-  had happened at all. The Analysis Queue card now shows a progress bar with
-  **X of Y**, how long ago it started, a running failure count, and a short
-  history of recent runs — enough to answer "did the last one finish, and did
-  anything fail?"
+  had happened at all. The Analysis Queue card now shows a progress bar with **X
+  of Y**, how long ago it started, a running failure count, and a short history
+  of recent runs.
 
-  **Progress is derived, never accumulated.** The analysis worker drains hat
-  ids and knows nothing about jobs; making it bump a counter per hat would mean
-  two writes per item, and a crash between them would leave a progress bar
+  **Progress is derived, never accumulated.** The analysis worker drains hat ids
+  and knows nothing about jobs; making it bump a counter per hat would mean two
+  writes per item, and a crash between them would leave a progress bar
   permanently disagreeing with the hats it describes. So a job stores only what
   cannot be recomputed — its size and start time — and everything else is a
   COUNT over `hats.analysis_job_id`. That is right by construction, including
   after a restart mid-run.
 
   A job closes itself once nothing tagged with it is still pending, which is
-  computed when the card asks. That keeps the worker ignorant of jobs at the
-  cost of a finished job staying "running" until something looks at it — and
-  the only thing that reads it is the thing looking.
+  computed when the card asks.
 
 246 backend + 47 frontend tests.
 
@@ -4960,28 +4065,21 @@ only from a backup.
 ### Added
 - **Redo cutout.** The pre-cutout JPEG is now kept instead of being deleted the
   moment rembg succeeded, and the hat page grows a **✂ Redo cutout** button.
-  This was the gap behind "my existing hats still look wrong": the stored PNG
-  can never be re-segmented — running rembg on an already-transparent image
-  eats the alpha and trims the bill a little more each pass — so without the
-  original, a poor cutout could only be fixed by re-uploading the photo.
+  This was the gap behind "my existing hats still look wrong": the stored PNG can
+  never be re-segmented — running rembg on an already-transparent image eats the
+  alpha and trims the bill a little more each pass.
 
-  Implemented by pointing `photo_path` back at the original and queueing, so
-  the pipeline sees a `.jpg`, cuts it, and overwrites the old PNG in place. It
-  is the upload path run again, with nothing special-cased. Hats analyzed
-  before this release have no original; the button is hidden for them and the
-  endpoint says so rather than failing obscurely.
+  Hats analyzed before this release have no original; the button is hidden for
+  them and the endpoint says so rather than failing obscurely.
 - **Gallery thumbnails.** A 320px WebP derivative is generated alongside every
-  cutout, and the small-tile views (Hats grid and list, Valuation, case detail)
-  use it. Measured on a representative 1200px RGBA cutout: **1728 KB → 4.5 KB**,
-  so a fifty-hat gallery drops from ~84 MB to ~0.2 MB over the wire, with far
-  less decoded bitmap in phone memory. WebP specifically because these are
-  transparent — a flattened JPEG thumbnail would put a box behind every
-  floating hat.
+  cutout, and the small-tile views use it. Measured on a representative 1200px
+  RGBA cutout: **1728 KB → 4.5 KB**, so a fifty-hat gallery drops from ~84 MB to
+  ~0.2 MB over the wire. WebP specifically because these are transparent — a
+  flattened JPEG thumbnail would put a box behind every floating hat.
 
-  Existing hats are backfilled by a background task on startup, off the boot
-  path (it is image work over every photo, which would visibly delay the app
-  becoming reachable on a Pi) and idempotent, so a restart mid-run resumes.
-  Tiles fall back to the full photo until the backfill reaches them.
+  Existing hats are backfilled by a background task on startup, off the boot path
+  and idempotent, so a restart mid-run resumes. Tiles fall back to the full photo
+  until the backfill reaches them.
 
 ### Fixed
 - **Replacing a hat's photo left its derivatives behind.** Only the cutout was
@@ -4993,37 +4091,31 @@ only from a backup.
 ## [2.8.1] — 2026-08-16 — _say what it's doing_
 
 ### Fixed
-- **The 2.8.0 price anchors were incomplete, and one number was invented.**
-  They covered whatever products turned up in a search rather than the model
-  lines the app actually enumerates — Trenches, which is in the prompt's own
-  list, had no anchor at all — and the stated "$59–$99 band" had no data point
-  at $59 behind it.
+- **The 2.8.0 price anchors were incomplete, and one number was invented.** They
+  covered whatever products turned up in a search rather than the model lines
+  the app actually enumerates — Trenches, which is in the prompt's own list, had
+  no anchor at all — and the stated "$59–$99 band" had no data point at $59
+  behind it.
 
   Re-researched properly. The finding that matters: **construction drives the
   price, not the model line.** A-Game Hydro, Coronado Anchored Hydro and
-  Trenches Icon Hydro are all $69, which is why Trenches never needed its own
-  anchor — but **HYDROLite is the premium tier at $89–$99** and had no mention
-  at all, despite `hydrolite` being a flag the app already tracks. The prompt
-  now carries HYDRO ($69, up to $89), HYDROLite ($89–$99, explicitly priced
-  *above* HYDRO), Thermal ($79–$99) and beanies (~$79), tells Claude to read
-  the construction rather than the model line, and puts the floor at $60 where
-  the evidence actually is. A test pins the anchors so a future prompt edit
-  can't quietly drop them.
+  Trenches Icon Hydro are all $69 — but **HYDROLite is the premium tier at
+  $89–$99** and had no mention at all. The prompt now carries HYDRO, HYDROLite
+  (explicitly priced *above* HYDRO), Thermal and beanies, tells Claude to read
+  the construction rather than the model line, and puts the floor where the
+  evidence actually is. A test pins the anchors.
 
 ### Added
 - **The analyzing spinner now says which step is running** — "Removing
-  background…", "Identifying the hat…", "Checking prices…", "Checking resale…"
-  — instead of a bare "Analyzing…" for the whole multi-minute run. The queue
-  card shows it too, which is what separates the hat actually being worked on
-  from the ones queued behind it.
+  background…", "Identifying the hat…", "Checking prices…", "Checking resale…" —
+  instead of a bare "Analyzing…" for the whole multi-minute run. The queue card
+  shows it too.
 
   The stage is written from a **separate** short-lived session rather than by
-  committing the pipeline's own. That matters: the pipeline sets `photo_path`
-  early and commits only at the end precisely so the queue can throw the whole
-  run away if the photo was replaced mid-flight, and a mid-pipeline commit
-  would persist that stale path and defeat the guard. It is also not the
-  write-lock hazard `no_autoflush` protects against — this takes the lock and
-  gives it straight back, before the slow call starts.
+  committing the pipeline's own. That matters: the pipeline commits only at the
+  end precisely so the queue can throw the whole run away if the photo was
+  replaced mid-flight, and a mid-pipeline commit would persist a stale path and
+  defeat the guard.
 
   A stage is never shown on a finished analysis. That is derived in `HatRead`
   rather than cleared at each terminal transition: eight separate places set a
@@ -5039,32 +4131,24 @@ only from a backup.
   Claude to price hats "using your knowledge of the brand's typical pricing
   tiers" and gave it nothing to anchor on, which for melin meant guesses around
   $35 against real retail of $59–$99. The system prompt now carries verified
-  current prices — A-Game Hydro $69, Coronado Anchored Hydro $69, All Day
-  Beanie $79, Hydro Odysea Mac $89, Hydro Eagle $89 — plus rough tiers for the
-  other brands it knows, and an explicit note that sub-$50 for a melin is
-  almost certainly wrong.
-- **Rooms page cards jumped around.** "Make default" was *hidden* on the
-  default room while Delete was only *disabled*, so cards carried different
-  numbers of buttons; with `flex-wrap` some wrapped to a second line and others
-  didn't, giving the list ragged heights that re-flowed whenever the default
-  moved. Same three buttons on every card now, in a fixed two-row layout, with
-  the case count aligned right instead of stacked under the name.
+  current prices plus rough tiers for the other brands it knows, and an explicit
+  note that sub-$50 for a melin is almost certainly wrong.
+- **Rooms page cards jumped around.** "Make default" was *hidden* on the default
+  room while Delete was only *disabled*, so cards carried different numbers of
+  buttons; with `flex-wrap` some wrapped to a second line and others didn't.
+  Same three buttons on every card now, in a fixed two-row layout.
 
 ### Added
 - **Analysis Queue card in Settings.** The queue was invisible — a hat showed
   "Analyzing…" with no way to tell whether twenty were ahead of it or whether
   anything was draining the queue at all. Shows the backlog, whether the worker
-  is running, and the hats currently waiting (each linking to its page). Polls
-  only while there's something to watch. A backlog with a stopped worker is
-  called out explicitly, because that's the state where nothing will happen
-  until a restart.
+  is running, and the hats currently waiting. Polls only while there's something
+  to watch. A backlog with a stopped worker is called out explicitly.
 - **Re-analyze every hat**, from the same card. This is the retroactive half of
-  any change to identification or pricing: the anchors above only affect hats
-  analyzed after them, so without this a collection keeps whatever the old
-  prompt produced. Background removal is skipped for stored cutouts, so it's a
-  Claude call per hat rather than the full pipeline — and your cutouts are not
-  touched. Disposed hats are excluded, and "leave hand-entered prices alone"
-  (on by default) limits it to hats Claude priced.
+  any change to identification or pricing. Background removal is skipped for
+  stored cutouts, so it's a Claude call per hat rather than the full pipeline.
+  Disposed hats are excluded, and "leave hand-entered prices alone" (on by
+  default) limits it to hats Claude priced.
 - `GET /api/admin/analysis/queue` and `POST /api/admin/analysis/reanalyze-all`.
 
 235 backend + 44 frontend tests.
@@ -5078,18 +4162,16 @@ only from a backup.
   every pixel the model was less than ~50% confident about, which on a hat is
   precisely the thin bill. Measured against a synthetic brim: at confidence 128
   about 76% survives, at 120 that collapses to 6%, and by 40 the brim is gone
-  entirely. So a faint bill became no bill — the same symptom as the
-  low-capacity model we switched away from, arriving by a different route.
+  entirely.
 
   Replaced with an alpha *ramp* instead of a threshold: clearly-background
-  pixels still go to zero, but anything above that is scaled up to opaque
-  rather than judged against a cutoff. A brim the model saw at 39% opacity now
-  comes out at 73% — present and solid, instead of ghosted or deleted. Both the
-  fading and the missing bills are addressed by the same change.
+  pixels still go to zero, but anything above that is scaled up to opaque rather
+  than judged against a cutoff. A brim the model saw at 39% opacity now comes out
+  at 73%. Both the fading and the missing bills are addressed by the same
+  change.
 
   Verified against the mechanism (mask confidence in, alpha out) rather than a
-  photo, and mutation-checked against both failure modes: reverting to the
-  threshold and removing the hardening each fail the test.
+  photo, and mutation-checked against both failure modes.
 
   **This applies to photos processed from here on.** Existing cutouts are
   unchanged — the pre-cutout original is not retained, so there is nothing to
@@ -5100,74 +4182,60 @@ only from a backup.
 ## [2.7.0] — 2026-08-16 — _the code review release_
 
 A full two-axis review of the codebase (standards + spec) plus wiring, bug and
-optimization passes. Everything below was found by that review; nothing here
-was reported from use.
+optimization passes. Everything below was found by that review; nothing here was
+reported from use.
 
 ### Fixed — data loss and silent truncation
 
 - **Backups omitted the write-ahead log.** The DB runs in WAL mode, so commits
   live in `headroom.db-wal` until a checkpoint folds them into the main file —
   and the tarball contained only the main file. Every commit since the last
-  checkpoint was silently absent from the backup, and a checkpoint landing
-  during the tar read could produce a torn copy that restores as "database disk
-  image is malformed". Both are invisible until a restore. Backups now ask
-  SQLite for a proper snapshot (`VACUUM INTO`), which folds in the WAL and
-  writes one self-contained file without blocking writers; if that fails it
-  falls back to the raw file set *including* the `-wal`/`-shm` sidecars. The
-  regression test is stark — with a plain file copy the restored DB doesn't even
-  have the table.
+  checkpoint was silently absent from the backup, and a checkpoint landing during
+  the tar read could produce a torn copy that restores as "database disk image is
+  malformed". Both are invisible until a restore. Backups now ask SQLite for a
+  proper snapshot (`VACUUM INTO`); if that fails they fall back to the raw file
+  set *including* the `-wal`/`-shm` sidecars.
 - **The hat list stopped at 50.** `GET /api/hats` defaults to `limit=50` and the
   Hats grid, Home carousel and Valuation page all fetched with no limit. Past 50
   hats the grid silently hid them and **every valuation total was wrong**. Those
-  three views now request the whole collection explicitly (`listAllHats`), and
-  the API ceiling was raised to match.
+  three views now request the whole collection explicitly, and the API ceiling
+  was raised to match.
 - **Re-analysis could overwrite a photo you'd just replaced.** The worker held a
   hat for minutes, then wrote back a `photo_path` from before the replacement,
-  orphaning the new photo and leaving it unanalyzed. The result is now discarded
-  if the committed photo changed while the pipeline ran.
+  orphaning the new photo. The result is now discarded if the committed photo
+  changed while the pipeline ran.
 - **A hat could sit "Analyzing…" forever.** With the worker disabled there is no
-  boot sweep either, so an inline pipeline failure stranded `analysis_status`
-  on `pending` with no endpoint able to clear it. Both paths now stamp a
-  terminal status.
+  boot sweep either, so an inline pipeline failure stranded `analysis_status` on
+  `pending`. Both paths now stamp a terminal status.
 
 ### Fixed — behavior
 
 - **New cases ignored the default room, and could be orphaned outright.** The
-  frontend hardcoded `room_id: 1` regardless of what the picker showed,
-  bypassing the `is_default` flag entirely. Delete the room that happened to be
-  id 1 — which that flag exists to permit — and every case created afterwards
-  pointed at a room that wasn't there. The symptoms never named the cause: the
-  case reported its room as **"Unknown"**, and the room it should have been in
-  reported **zero cases**. Three fixes: the picker now defaults to whichever
-  room actually carries the flag; `POST /api/cases` rejects an unknown
-  `room_id`, as does `PUT /api/cases/{display_id}` — nothing below that
-  layer enforces it, there is no `PRAGMA foreign_keys`, and editing a case's
-  room is the path used to *repair* an orphan; and
-  **existing orphans are reattached to the default room on boot**, alongside
-  the `ensure_default_room` check that guarantees there is one.
+  frontend hardcoded a room id regardless of what the picker showed, bypassing
+  the `is_default` flag entirely. Delete the room that happened to be id 1 —
+  which that flag exists to permit — and every case created afterwards pointed at
+  a room that wasn't there. The symptoms never named the cause: the case reported
+  its room as **"Unknown"**, and the room it should have been in reported **zero
+  cases**. Three fixes: the picker defaults to whichever room actually carries
+  the flag; case create and update both reject an unknown `room_id`; and existing
+  orphans are reattached to the default room on boot.
 - **"Cancel" in the photo cropper uploaded the photo.** Cancel, ×, and a stray
-  tap on the backdrop were all wired to "use the original", so on the hat page a
-  mis-tap replaced the photo and re-ran the pipeline. Cancel now cancels;
+  tap on the backdrop were all wired to "use the original". Cancel now cancels;
   skipping the crop got its own **Use Original** button.
 - **Editing a hat discarded what you were typing.** The form re-seeded from the
-  server on every refetch, and since 2.6.0 the row changes *while you edit it* —
-  so a completing analysis reverted your fields mid-sentence. It now seeds once
-  per hat.
+  server on every refetch, and since 2.6.0 the row changes *while you edit it*.
+  It now seeds once per hat.
 - **The hex field couldn't be typed into.** It only accepted input that already
-  matched a complete 6-digit value, so every partial keystroke was rejected and
-  the box snapped back. You could paste; you could not type.
+  matched a complete 6-digit value, so every partial keystroke was rejected.
 - **The Home carousel could crash the page.** The active index was never clamped,
-  so a list that shrank under it (a hat disposed elsewhere, then a refetch) threw
-  and dropped the whole page to the error boundary. It also reshuffled on every
-  poll, making the visible hat jump at random.
+  so a list that shrank under it threw and dropped the whole page to the error
+  boundary. It also reshuffled on every poll.
 - **Case occupancy went stale.** Disposing, deleting, adding or re-assigning a
-  hat invalidated `['hats']` but not the case-shaped views, so the Cases page and
-  case detail kept showing the old contents. All hat mutations now go through one
-  `invalidateHatViews` helper.
+  hat invalidated `['hats']` but not the case-shaped views. All hat mutations now
+  go through one `invalidateHatViews` helper.
 - **Bulk Import dead-ended on a bad `?job=`.** The upload form is hidden whenever
   a job id is set, so a stale link showed a header and nothing else — while
-  polling the 404 every two seconds forever. The error is now shown with a way
-  out, and a canceled job gets an exit button like a finished one does.
+  polling the 404 every two seconds forever.
 - **`hydro` / `hydrolite` searches found nothing.** USAGE promised "`hydro` finds
   every Hydro", but 2.6.0 moved them from `style` values to boolean columns that
   no text match could reach. Both terms match their flag again, and search now
@@ -5181,12 +4249,11 @@ was reported from use.
 
 ### Performance
 
-- **`GET /api/rooms` loaded the entire collection to produce a case count.**
-  `selectinload(Room.cases)` cascades through mapper-level eager loads into
-  every hat, color and wear-log row — measured 30ms vs 0.3ms for the COUNT that
-  replaces it, on a machine several times faster than a Pi.
-- Color search converted the target color to LAB once per stored swatch
-  instead of once per search.
+- **`GET /api/rooms` loaded the entire collection to produce a case count.** The
+  eager load cascaded through mapper-level loads into every hat, color and
+  wear-log row — measured 30ms vs 0.3ms for the COUNT that replaces it.
+- Color search converted the target color to LAB once per stored swatch instead
+  of once per search.
 
 ### Changed
 
@@ -5195,16 +4262,14 @@ was reported from use.
 - Shutdown no longer aborts if a background task had already died holding an
   exception — the import and analysis workers were left running and mDNS never
   sent its goodbye packets.
-- `analysis_queue._queue_depth` / `_mark_failed` are now public
-  (`queue_depth` / `mark_failed`); `/health/ready` no longer reaches into a
-  private name.
+- `analysis_queue._queue_depth` / `_mark_failed` are now public; `/health/ready`
+  no longer reaches into a private name.
 - Removed dead code: the `custom_style_detail` column (unread since the initial
-  commit), and three uncalled functions. Existing databases keep the column;
-  it is simply no longer mapped.
+  commit), and three uncalled functions. Existing databases keep the column; it
+  is simply no longer mapped.
 - Docs no longer quote test counts. That claim has now gone stale twice, so the
   suite is the source of truth and the per-release number lives here.
-- `nanoid` bumped to 3.3.18 (GHSA-2v37-7h3g-55p8, build-time only via
-  vite → postcss).
+- `nanoid` bumped to 3.3.18 (build-time only via vite → postcss).
 
 229 backend + 44 frontend tests.
 
@@ -5213,32 +4278,24 @@ was reported from use.
 ### Fixed
 - **The Docker image was still being built with `u2netp`.** 2.6.0 changed the
   code default to `isnet-general-use` because `u2netp` trims hat bills, but
-  `docker-compose.yml` passed `REMBG_MODEL: ${REMBG_MODEL:-u2netp}` as a build
-  arg — which bakes the model into the image *and* sets
-  `ENV HEADROOM_REMBG_MODEL=u2netp`, beating the code default. So the
-  documented install path (`docker compose up -d --build`) never got the fix,
-  and the README table still advertised the old default. Compose now defaults
-  to `isnet-general-use`; `REMBG_MODEL=u2netp docker compose up -d --build`
-  remains the escape hatch, and README matches.
-- **Cutouts rendered faded / "ghosted".** Background removal took the model's
-  raw mask, so mid-confidence regions came through as semi-transparent alpha
-  and the hat looked washed out over the near-black canvas. `remove()` now runs
-  with `post_process_mask=True`, which opens the mask, blurs it and thresholds
-  at 127 — every pixel ends up fully opaque or fully clear. The blur runs
-  before the threshold, so the silhouette stays smooth instead of going jagged.
+  `docker-compose.yml` passed the old model as a build arg — which bakes it into
+  the image *and* sets the env var, beating the code default. So the documented
+  install path never got the fix, and the README table still advertised the old
+  default. Compose now defaults to `isnet-general-use`;
+  `REMBG_MODEL=u2netp docker compose up -d --build` remains the escape hatch.
+- **Cutouts rendered faded / "ghosted".** Background removal took the model's raw
+  mask, so mid-confidence regions came through as semi-transparent alpha.
+  `remove()` now runs with `post_process_mask=True`, which opens the mask, blurs
+  it and thresholds it — every pixel ends up fully opaque or fully clear.
 - **Re-analysis destroyed the cutout a little more each time.** A queued
-  Reanalyze called `finalize_hat_photo`, which always ran background removal —
-  and for a stored `hats/x.png` the output path resolves to the *input file*.
-  rembg re-segmented an already-transparent image and wrote it back over the
-  only copy, so every tap ate further into the alpha and trimmed more of the
-  bill. Background removal is now skipped when the input is already a cutout;
-  uploads are normalized to JPEG first, so a `.png` here can only mean
-  "already cut out". This is what made the fading progressive.
-- **Navigation kept the previous page's scroll position.** Saving a hat and
-  tapping through to add another dropped you at the bottom of an empty form.
-  A `<ScrollToTop />` in the app shell resets it on each navigation.
-  Back/Forward are deliberately exempt — returning to a list you were halfway
-  down should keep your place.
+  reanalyze always ran background removal — and for a stored PNG the output path
+  resolves to the *input file*. rembg re-segmented an already-transparent image
+  and wrote it back over the only copy, so every tap ate further into the alpha.
+  Background removal is now skipped when the input is already a cutout; uploads
+  are normalized to JPEG first, so a `.png` here can only mean "already cut out".
+- **Navigation kept the previous page's scroll position.** A `<ScrollToTop />`
+  in the app shell resets it on each navigation. Back/Forward are deliberately
+  exempt.
 
 ### Note
 Existing hats keep the cutouts they were already given; the improvements apply
@@ -5250,137 +4307,112 @@ is nothing to re-cut from.
 ### Added
 - **Artist / Collab is editable.** `artist_series` was readable on the hat page
   but there was no way to set or correct it — 2.6.0 shipped it as a Claude-only
-  field. It now has an input in the Edit Hat form's AI / Pricing Overrides card,
-  which is exactly where "override anything Claude got wrong" belongs. Special
-  editions are the hats Claude is least likely to name and the ones most worth
-  recording.
+  field. It now has an input in the Edit Hat form's AI / Pricing Overrides card.
+  Special editions are the hats Claude is least likely to name and the ones most
+  worth recording.
 
 ### Fixed
 - **A re-analysis no longer erases a brand, model or collab you typed.**
-  `_apply_analysis` assigned Claude's answer straight through, nulls included,
-  so tapping Reanalyze wiped any of those three fields Claude couldn't identify
-  — and the tool schema explicitly tells it to answer null rather than guess,
-  most forcefully for `artist_series` ("guessing here is worse than leaving it
-  empty"). Without this the new field would have been erased by the very
-  workflow it exists for. A real answer still wins, so Claude can still correct
-  an earlier identification; only erasure is blocked. `logo_detected` is
-  deliberately exempt — it records what is visible in *this* photo, so null
-  there is an answer, not a gap. Same rule the construction flags already
-  followed.
+  `_apply_analysis` assigned Claude's answer straight through, nulls included, so
+  tapping Reanalyze wiped any of those three fields Claude couldn't identify —
+  and the tool schema explicitly tells it to answer null rather than guess.
+  Without this the new field would have been erased by the very workflow it
+  exists for. A real answer still wins, so Claude can still correct an earlier
+  identification; only erasure is blocked. `logo_detected` is deliberately
+  exempt — it records what is visible in *this* photo, so null there is an
+  answer, not a gap.
 
 ## [2.6.0] — 2026-08-16 — _analysis gets out of your way_
 
 ### Added
-- **Photo analysis is queued instead of blocking the upload.** `POST /api/hats/
-  {id}/photo` now saves the photo, marks the hat `analysis_status='pending'` and
-  returns immediately; a background worker (`analysis_queue.py`) runs rembg →
-  Claude → eBay → Melin. You can keep adding hats while earlier ones analyze.
-  The hat page shows a spinning **Analyzing…** badge and polls until the status
-  is terminal. Previously the request stayed open for the whole pipeline —
-  Claude alone is a 30s timeout × the SDK's 3 attempts, after tens of seconds of
-  rembg — which read as a hang. `reanalyze` queues too when a Claude key is set.
-  Durability mirrors the bulk-import worker: the loop survives any per-hat
-  exception, a crash mid-analysis is re-queued on boot, and if no worker is
-  draining the queue the route runs the pipeline inline rather than dropping it.
+- **Photo analysis is queued instead of blocking the upload.**
+  `POST /api/hats/{id}/photo` now saves the photo, marks the hat
+  `analysis_status='pending'` and returns immediately; a background worker runs
+  rembg → Claude → eBay → Melin. You can keep adding hats while earlier ones
+  analyze. The hat page shows a spinning **Analyzing…** badge and polls until the
+  status is terminal. Previously the request stayed open for the whole pipeline,
+  which read as a hang. Durability mirrors the bulk-import worker: the loop
+  survives any per-hat exception, a crash mid-analysis is re-queued on boot, and
+  if no worker is draining the queue the route runs the pipeline inline rather
+  than dropping it.
 - **`logo_detected` field.** Claude Vision now records the mark it actually SAW
-  and the brand that owns it ("Melin — M monogram, front panel"), kept apart
-  from `brand`, which can be inferred from shape, colorway or a hang tag with
-  no logo in frame. The Google Vision fallback fills it too — LOGO_DETECTION
-  only fires on a visible mark, so that path is evidence by construction. Shown
-  under Identification on the hat page.
+  and the brand that owns it, kept apart from `brand`, which can be inferred from
+  shape, colorway or a hang tag with no logo in frame. The Google Vision fallback
+  fills it too — logo detection only fires on a visible mark, so that path is
+  evidence by construction.
 - **HYDRO + HYDROLite checkboxes, and Claude sets them.** melin lists HYDRO and
   HYDROLite as separate technologies offered across the model lines, so they are
-  two per-hat flags. Claude answers a single `construction` field
-  (standard/hydro/hydrolite), which is mapped to the flags — one exclusive value
-  rather than two booleans, so it cannot return a hat that is somehow both.
-  Applying it is **additive**: analysis turns a flag ON and never off, because
-  these are also checkboxes a human ticks and a re-analysis returning "standard"
-  (which happens whenever bonded seams or a gel-welded logo aren't legible)
-  must not silently un-tick them.
+  two per-hat flags. Claude answers a single `construction` field, which is
+  mapped to the flags — one exclusive value rather than two booleans, so it
+  cannot return a hat that is somehow both. Applying it is **additive**: analysis
+  turns a flag ON and never off, because these are also checkboxes a human ticks.
 - **`artist_series` field.** Claude names the collaborator on signature
-  collaborations / artist series ("Skye Walker", "melin x OluKai"), which the
-  `collab` STYLE could not — it only says *some* collab, not which one, and
-  which one is what drives collectability. Instructed to leave it null rather
-  than guess.
-- **HYDROLite checkbox on the hat form.** HYDROLite is melin CONSTRUCTION —
-  featherweight build, bonded seams, gel-welded logos, antimicrobial sweatband —
-  offered across A-Game, Coronado, Trenches and the rest, so any hat can be one.
-  It is a per-hat flag (`hydrolite`), deliberately NOT a `HatStyle` value: as a
-  style it would need a second entry per model and would split one model's hats
-  across two style buckets. Shown as a badge on the hat page.
+  collaborations / artist series, which the `collab` STYLE could not — it only
+  says *some* collab, not which one, and which one is what drives collectability.
+  Instructed to leave it null rather than guess.
+- **HYDROLite checkbox on the hat form.** HYDROLite is melin CONSTRUCTION
+  offered across the model lines, so any hat can be one. It is a per-hat flag,
+  deliberately NOT a `HatStyle` value: as a style it would need a second entry
+  per model and would split one model's hats across two style buckets.
 - **Clear All** on the hat's Color Palette card wipes the whole palette in one
   call, instead of removing swatches one modal at a time after a bad analysis.
 
 ### Changed
 - **Default background-removal model is now `isnet-general-use`** (was
   `u2netp`). u2netp is 4.7 MB and was picked for Pi speed, but its low capacity
-  loses thin protruding shapes — on a hat that is precisely the **bill**, so
-  cutouts came back as brimless crowns. The heavier model costs ~170 MB and
-  slower inference, which stopped mattering once analysis left the request path.
-  `HEADROOM_REMBG_MODEL=u2netp` restores the old behavior.
+  loses thin protruding shapes — on a hat that is precisely the **bill**. The
+  heavier model costs ~170 MB and slower inference, which stopped mattering once
+  analysis left the request path. `HEADROOM_REMBG_MODEL=u2netp` restores the old
+  behavior.
 
 ### Fixed
 - **The photo button never offered your library.** The file input carried
   `capture="environment"`, which does not *prefer* the camera — it forces it, so
-  iOS and Android skipped the picker and opened the rear camera, making an
-  existing photo impossible to choose. Removed, so the normal Photo Library /
-  Take Photo / Browse sheet appears.
-### Fixed
-- **Modals were painted over by the page behind them.** The photo cropper's zoom
-  slider and "Use This" button ended up underneath the Details card's
-  style/size/condition selects. `.modal` is `z-index: 1050`, but z-index only
-  ranks siblings *within a stacking context*, and `.card-body` is
-  `position: relative; z-index: 1` — so a modal rendered inside a card was
-  confined to that card's slot in the page order and any later card covered it.
-  All four modals now render through a `<body>` portal, which also immunises
-  them against the `overflow: hidden` and `transform` containing-block traps.
-- **Editing a mis-detected color silently reverted.** Typing "green" over a
-  color Claude had read as gray saved "gray": `PUT /api/hats/{id}/colors`
-  re-derived `general_color` from the stored hex whenever one was present, so
-  the correction was overwritten by the very value being corrected. An
-  explicitly-typed name now wins and is snapped to the palette's spelling (so
-  chip search still matches); the hex is consulted only when the field is blank.
-- **Color ranks are renumbered server-side.** `PUT /api/hats/{id}/colors`
-  stored the client's `dominance_rank` verbatim. The UI edits and removes a
-  color BY rank, so a duplicate made one tap hit two rows — and a gap invited
-  one, since the add path picks `colors.length + 1` (ranks `[1,3]` + length 2 →
-  3). Ranks now follow submitted position, so they are always dense and unique.
+  iOS and Android skipped the picker and opened the rear camera. Removed.
+- **Modals were painted over by the page behind them.** `.modal` is
+  `z-index: 1050`, but z-index only ranks siblings *within a stacking context*,
+  and `.card-body` is `position: relative; z-index: 1` — so a modal rendered
+  inside a card was confined to that card's slot in the page order. All four
+  modals now render through a `<body>` portal, which also immunizes them against
+  the `overflow: hidden` and `transform` containing-block traps.
+- **Editing a mis-detected color silently reverted.** Typing "green" over a color
+  Claude had read as gray saved "gray": the colors endpoint re-derived
+  `general_color` from the stored hex whenever one was present. An
+  explicitly-typed name now wins and is snapped to the palette's spelling; the
+  hex is consulted only when the field is blank.
+- **Color ranks are renumbered server-side.** The endpoint stored the client's
+  `dominance_rank` verbatim. The UI edits and removes a color BY rank, so a
+  duplicate made one tap hit two rows. Ranks now follow submitted position, so
+  they are always dense and unique.
 - **The SQLite write lock was held across the whole analysis.** Setting
   `photo_path` before the pipeline's first DB read let autoflush open a write
   transaction, which SQLite holds until commit — so the lock stayed held through
-  Claude, eBay and Melin. Any concurrent write then waited out `busy_timeout`
-  and failed with "database is locked", which the new queue would have made
-  routine (adding a hat while another analyzes). The network-bound section now
-  runs under `no_autoflush`.
+  Claude, eBay and Melin, and any concurrent write waited out `busy_timeout`. The
+  network-bound section now runs under `no_autoflush`.
 - `vite.config.ts` used `__dirname`, which only exists because Vite's current
-  config loader wraps the file in CJS shims. The config is ESM
-  (`"type": "module"`), and Vite's `configLoader: 'native'` — slated to become
-  the default — evaluates it without those shims, where `__dirname` is a
-  `ReferenceError` that would break every build. Now `import.meta.dirname`
-  (Node 20.11+; `engines` already floors at 22.22), which also silences the
-  deprecation warning printed on every build and test run.
+  config loader wraps the file in CJS shims. The config is ESM, and Vite's native
+  config loader — slated to become the default — evaluates it without those
+  shims, where `__dirname` is a `ReferenceError`. Now `import.meta.dirname`.
 
 ### Changed
-- CLAUDE.md documents the merge/tag procedure from a git worktree.
+- The merge/tag procedure from a git worktree is documented.
   `gh pr merge --delete-branch` merges on the server and *then* fails its local
-  cleanup with `fatal: 'main' is already used by worktree`, which reads as "the
-  merge failed" when it actually succeeded.
+  cleanup, which reads as "the merge failed" when it actually succeeded.
 
 ## [2.5.0] — 2026-08-16 — _current Claude models_
 
 ### Changed
 - **The Claude model list is current again.** The picker offered the 4.5–4.7
-  generation and defaulted to `claude-sonnet-4-6`, which Anthropic now
-  classifies as legacy. The default is now **`claude-sonnet-5`** — newer *and*
-  cheaper than the 4.6 it replaces ($2/$10 per MTok vs $3/$15). The Settings
-  picker lists the current lineup (Sonnet 5, Haiku 4.5, Opus 5, Fable 5) under
-  a **Current** group, with the superseded ids kept under **Legacy** so an
-  install that saved one stays on a named option instead of silently falling
-  through to "Other…". Any model id remains enterable by hand.
+  generation and defaulted to a model Anthropic now classifies as legacy. The
+  default is now **`claude-sonnet-5`** — newer *and* cheaper than the 4.6 it
+  replaces ($2/$10 per MTok vs $3/$15). The Settings picker lists the current
+  lineup (Sonnet 5, Haiku 4.5, Opus 5, Fable 5) under a **Current** group, with
+  the superseded ids kept under **Legacy** so an install that saved one stays on
+  a named option. Any model id remains enterable by hand.
 - **This only changes the default.** If you set a model in Settings, that choice
   is stored in the database and still wins — nothing is migrated or overwritten.
-  Installs on the default will start using Sonnet 5 after upgrading; use
-  **Test connection** on the Settings page to confirm the key reaches it.
+  Installs on the default will start using Sonnet 5 after upgrading; use **Test
+  connection** on the Settings page to confirm the key reaches it.
 
 ### Added
 - Consistency tests (`tests/test_docs_consistency.py`) asserting that the README
@@ -5391,8 +4423,7 @@ is nothing to re-cut from.
 
 ### Fixed
 - The Claude model `<select>` and its custom-id input had no accessible name —
-  the visible `<label>` carries no `htmlFor`, so screen readers announced them
-  unlabeled. Both now set `aria-label`.
+  the visible `<label>` carries no `htmlFor`. Both now set `aria-label`.
 
 ## [2.4.0] — 2026-08-16 — _any room can be the default_
 
@@ -5407,28 +4438,23 @@ is nothing to re-cut from.
 ### Changed
 - `RoomRead` gains `is_default`. `CaseCreate.room_id` is now optional — omitting
   it resolves to whichever room currently holds the flag instead of literally
-  room 1. Both changes are backward compatible: an omitted `room_id` still lands
-  in the default room.
+  room 1. Both changes are backward compatible.
 - **New-hat defaults live in one place.** `condition=new / size=classic /
   style=a_game` were independently hardcoded in the bulk-import endpoint, the
-  import worker's fallback, and the Android share target. Changing the default
-  meant finding all three, and they could silently disagree — photos shared from
-  a phone landing differently than the same photos bulk-imported. All three now
-  read `HAT_DEFAULTS` (`schemas/hat.py`), with a test that fails if any drifts.
-  The two frontend forms likewise share one `DEFAULT_HAT_BASICS` constant.
+  import worker's fallback, and the Android share target — so photos shared from
+  a phone could land differently than the same photos bulk-imported. All three
+  now read `HAT_DEFAULTS`, with a test that fails if any drifts. The two frontend
+  forms likewise share one `DEFAULT_HAT_BASICS` constant.
 
 ### Fixed
 - Deleting a room reassigns its cases to the room that currently holds the
-  default flag. It previously wrote `room_id=1` unconditionally, which would
-  have pointed at a missing row the moment room 1 became deletable.
+  default flag. It previously wrote `room_id=1` unconditionally.
 
 ### Migration
 - Adds `rooms.is_default` and backfills the **lowest room id** (not literally 1,
   so a database whose original room was re-keyed still ends up with a usable
   fallback). `ensure_default_room()` now repairs the "exactly one default"
-  invariant on every boot — creating a room if the table is empty, flagging the
-  lowest id if none is flagged, and clearing extras if several are. No action
-  needed on upgrade.
+  invariant on every boot. No action needed on upgrade.
 
 ## [2.3.1] — 2026-08-09 — _quiet the build_
 
@@ -5438,34 +4464,29 @@ failure scrolls past unnoticed.
 
 ### Changed
 - **npm pinned to 12.0.2 in the frontend build stage.** `node:26` bundles npm
-  11.x, which printed *"New major version of npm available! 11.19.0 → 12.0.2"*
-  on every image build. Now pinned explicitly (`ARG NPM_VERSION`), matching how
-  the uv toolchain is already pinned — bump it alongside the base image.
-  Verified npm 12 installs, typechecks, tests and builds this project before
-  pinning it.
+  11.x, which printed an upgrade notice on every image build. Now pinned
+  explicitly (`ARG NPM_VERSION`), matching how the uv toolchain is already
+  pinned. Verified npm 12 installs, typechecks, tests and builds this project
+  before pinning it.
 - `NPM_CONFIG_LOGLEVEL=warn` in that stage — npm 12 logs a notice per script it
-  runs. Warnings and errors still print; only the chatter is dropped.
+  runs. Warnings and errors still print.
 
 ### Fixed
 - **onnxruntime device-probe warnings during the image build.** It probes the
-  host for GPUs while `import onnxruntime` runs and logs a `[W:onnxruntime…]`
-  line per device it can't read — guaranteed noise in a container, which has
-  none. The messages come from C++ straight to fd 2 *during the import*, so
-  `set_default_logger_severity()` runs too late; the rembg pre-download now
-  redirects at the fd level across the import and restores it immediately.
-  Scoped to that build step: the **runtime keeps onnxruntime's default
-  logging**, so genuine problems still surface in container logs.
+  host for GPUs while `import onnxruntime` runs and logs a line per device it
+  can't read — guaranteed noise in a container. The messages come from C++
+  straight to fd 2 *during the import*, so the Python logging API runs too late;
+  the rembg pre-download now redirects at the fd level across the import and
+  restores it immediately. Scoped to that build step: the **runtime keeps
+  onnxruntime's default logging**.
 - **`StarletteDeprecationWarning` on every backend test run.** starlette's
-  `TestClient` deprecated `httpx` in favour of `httpx2`; added `httpx2` to the
-  dev group. Test-only — the app's own outbound calls (eBay, Google Vision,
-  melinrecap) still use `httpx`, which is current at 0.28.1 and not deprecated
-  in its own right.
+  `TestClient` deprecated `httpx` in favor of `httpx2`; added `httpx2` to the dev
+  group. Test-only — the app's own outbound calls still use `httpx`.
 
 - **`setup.sh` and CI now use the image's npm.** Pinning npm only in the
   Dockerfile created fresh drift — CI and bare metal stayed on npm 11 while the
   image built on 12, so the frontend CI job was green-lighting a toolchain that
-  never ships. `setup.sh` gained `ensure_npm` (a floor check, like `node_ok`),
-  and the CI frontend job pins the same version.
+  never ships.
 
 Net, measured in CI's own log: image build **9 noise lines → 0**, and
 `uv run pytest` from "190 passed, 1 warning" to "190 passed".
@@ -5477,30 +4498,28 @@ Net, measured in CI's own log: image build **9 noise lines → 0**, and
   declares `engines: node >=22.22.0`, which supersedes vite's `>=22.12.0` as the
   highest floor any dependency sets. Node 22.12–22.21 previously *passed* the
   setup check and then failed at `npm ci`; setup.sh now upgrades Node instead of
-  waving it through, so nothing breaks — it just does more on that path.
-  Docker (`node:26`) and CI (`node 26`) were already above the floor.
+  waving it through. Docker (`node:26`) and CI (`node 26`) were already above the
+  floor.
 - `package.json` now declares `react`/`react-dom` `^19.2.7` (was `^19.1.0`) to
   match react-router 8's peer range. The installed version already satisfied it.
 
 ### Security
-- **react-router 7.18.2 → 8.3.0**, clearing a HIGH advisory (*RSC Mode CSRF
-  Bypass Allows Action Execution Before 400 Response*, vulnerable
-  `>=7.12.0 <8.3.0`; 8.3.0 is the only patched release). Headroom is a
-  declarative-mode SPA with no RSC, loaders, actions or server rendering, so the
-  advisory was not exploitable here — but the version was flagged and the
-  upgrade is clean. No Dependabot alerts remain open.
+- **react-router 7.18.2 → 8.3.0**, clearing an advisory affecting a server-side
+  rendering mode this app does not use. Headroom is a declarative-mode SPA with
+  no RSC, loaders, actions or server rendering, so the advisory did not apply
+  here — but the version was flagged and the upgrade is clean. No Dependabot
+  alerts remain open.
 
 ### Added
 - **Frontend test suite** — Vitest 4 + Testing Library 16 (jsdom), **35 tests**,
   run in the existing CI frontend job (no new job, no new trigger). The repo had
   no frontend test harness at all. Covers the shared hat filter/form components,
-  the 15-card Settings composition, and the routing primitives the route table
-  depends on. `npm test` / `npm run test:watch`.
+  the Settings composition, and the routing primitives the route table depends
+  on. `npm test` / `npm run test:watch`.
 - `tests/test_hats.py::test_hat_read_exposes_every_derived_field` pins the Hat
-  read-model fields that come from relationships rather than columns
-  (`room_id`, `room_name`, `case_type`, `case_display_id`, `wear_count`) plus
-  the unassigned-hat null case. `room_id` had no coverage and is what the Hats
-  page filters on — a silent null there would have quietly matched nothing.
+  read-model fields that come from relationships rather than columns, plus the
+  unassigned-hat null case. `room_id` had no coverage and is what the Hats page
+  filters on — a silent null there would have quietly matched nothing.
 
 ### Changed
 - **Code-review cleanup — no behavior change.** Verified by generating the full
@@ -5517,23 +4536,21 @@ Net, measured in CI's own log: image build **9 noise lines → 0**, and
     are applied once, so a submodule cannot ship an unguarded route.
   - `SettingsPage.tsx` 1084 → 44 lines over 15 card modules; the shared hat
     filter and form components take the four hat pages from 1093 → 819 lines.
-  - Import-job counters no longer dispatch on a string (the counter was
-    `errors` while the item status was `error`); eBay's Browse request block was
-    duplicated three times and is now one helper.
-- `react-router-dom` is **removed in v8**; every import moves to `react-router`
-  (the app uses none of the `react-router/dom` APIs). Dropping the re-export
-  shim trimmed ~2 kB off the bundle.
+  - Import-job counters no longer dispatch on a string; eBay's Browse request
+    block was duplicated three times and is now one helper.
+- `react-router-dom` is **removed in v8**; every import moves to `react-router`.
+  Dropping the re-export shim trimmed ~2 kB off the bundle.
 - `rembg[cpu]` floor `>=2.0.50` → `>=2.0.77`.
 
 ### Fixed
-- **Form controls were not associated with their labels.** The `<label>`
-  elements carry no `htmlFor` and do not wrap their inputs, so assistive tech
-  announced every filter and hat-form select as unlabeled. All eleven controls
-  now carry an `aria-label`. Found by the new tests.
+- **Form controls were not associated with their labels.** The `<label>` elements
+  carry no `htmlFor` and do not wrap their inputs, so assistive tech announced
+  every filter and hat-form select as unlabeled. All eleven controls now carry an
+  `aria-label`. Found by the new tests.
 - **`HEADROOM_REMBG_MODEL` was documented as configurable but impossible to
   change.** `ARG` is stage-scoped, so the runtime stage discarded the build arg
-  and compose pinned the env var on top; following the docs baked a ~170 MB
-  model into the image that was never loaded.
+  and compose pinned the env var on top; following the docs baked a ~170 MB model
+  into the image that was never loaded.
 
 ## [2.2.2] — 2026-08-05 — _faster rebuilds, infra cleanup_
 
@@ -5561,52 +4578,49 @@ The automation added in 2.2.0 immediately earned its keep: enabling Dependabot
 alerts surfaced a **high**-severity advisory nothing had caught before.
 
 ### Security
-- **`cryptography` 49.0.0 → 50.0.0** — PKCS#7 `EnvelopedData` decryption exposed
-  a Bleichenbacher oracle (vulnerable `>=44.0.0,<50.0.0`). It reaches us through
-  `webauthn`, i.e. the passkey path. **`pyopenssl` 26.3.0 → 26.4.0** rides along
-  because 26.3 caps `cryptography<50` — upgrading cryptography alone was
-  impossible, the resolver just silently backtracked to the vulnerable version.
+- **`cryptography` 49.0.0 → 50.0.0**, clearing an advisory in PKCS#7
+  `EnvelopedData` decryption (vulnerable `>=44.0.0,<50.0.0`). It reaches us
+  through `webauthn`, i.e. the passkey path. **`pyopenssl` 26.3.0 → 26.4.0**
+  rides along because 26.3 caps `cryptography<50` — upgrading cryptography alone
+  was impossible, the resolver just silently backtracked.
 
 ### Changed
 - **`[tool.uv] exclude-newer-package = { cryptography = false, pyopenssl = false }`.**
   The 7-day cooldown exists to dodge freshly published *malicious* packages, but
   for the crypto stack a fresh release is usually the *security fix itself* —
   50.0.0 landed 4 days after the advisory and a plain `uv lock` kept silently
-  reverting to the vulnerable 49.0.0. These two are now exempt; everything else
-  still waits out the cooldown.
+  reverting. These two are now exempt; everything else still waits out the
+  cooldown.
 
 ## [2.2.0] — 2026-08-04 — _stop the drift: automated dependency updates + CI_
 
-Answering "why is so much always out of date?": **nothing was automated.** No CI,
-no Dependabot, no Renovate — no `.github/` directory at all. Every bump was
+Answering "why is so much always out of date?": **nothing was automated.** No
+CI, no Dependabot, no Renovate — no `.github/` directory at all. Every bump was
 manual and reactive, and `package-lock.json` pinned versions that nothing ever
-refreshed, so even in-range updates never landed.
+refreshed.
 
 ### Added
 - **`.github/dependabot.yml`** — weekly PRs for **npm**, **uv**, **Docker base
   images** (including the `COPY --from=` toolchain pin that sat at uv 0.5.4 from
   v0.2.0 to v2.0.6) and **GitHub Actions**. Minor/patch are grouped into one PR;
-  majors arrive individually so they get a real review. Each ecosystem carries a
-  7-day `cooldown`, mirroring `[tool.uv] exclude-newer`. Validated against the
-  official schema.
-- **`.github/workflows/ci.yml`** — pytest + typecheck + production build on
-  every PR, plus a **real Docker build and container health check**. That last
-  job is deliberate: the 2.0.6 breakage was config the *image's* toolchain
-  couldn't parse, which the test suite could never have caught.
+  majors arrive individually. Each ecosystem carries a 7-day `cooldown`,
+  mirroring `[tool.uv] exclude-newer`. Validated against the official schema.
+- **`.github/workflows/ci.yml`** — pytest + typecheck + production build on every
+  PR, plus a **real Docker build and container health check**. That last job is
+  deliberate: the 2.0.6 breakage was config the *image's* toolchain couldn't
+  parse, which the test suite could never have caught.
 - **Dependabot alerts and automated security fixes are now enabled** on the
-  repository (they were off, which is why the Snyk findings had to be found by
-  hand).
+  repository.
 
 ### Changed
-- **Frontend dependencies brought current.** In-range refresh (react, react-dom,
-  @tanstack/react-query, @types/*, react-router-dom) plus four majors:
+- **Frontend dependencies brought current.** In-range refresh plus four majors:
   **vite 6 → 8**, **TypeScript 5.8 → 7**, **@vitejs/plugin-react 4 → 6**,
   **react-easy-crop 5 → 6**. Typecheck and production build verified clean; the
   bundle got *smaller* (446 → 439 kB) and the build faster.
 - **Node floor raised to 22.12** in `scripts/setup.sh`, with a real minor-version
-  check. vite 8 and @vitejs/plugin-react require `^20.19 || >=22.12`, so a bare
-  major comparison would have waved through Node 22.0 and then failed at build
-  time — and the Node 20 line reached end-of-life 2026-04-30.
+  check. vite 8 and the React plugin require `^20.19 || >=22.12`, so a bare major
+  comparison would have waved through Node 22.0 and then failed at build time —
+  and the Node 20 line reached end-of-life 2026-04-30.
 
 ## [2.1.1] — 2026-08-04 — _bare metal catches up to the image_
 
@@ -5617,27 +4631,25 @@ behind, so `./scripts/setup.sh` still provisioned the old versions.
 - **`scripts/setup.sh` now installs what the image runs**: NodeSource
   `setup_22.x` → `setup_26.x`, and Python comes from a new committed
   `.python-version` pin (**3.14**) instead of whatever uv defaulted to. An
-  existing **Node 20+** is still accepted — that's the real floor our vite and
-  react-router require, so working setups aren't broken; only *fresh* installs
-  get 26.
+  existing **Node 20+** is still accepted; only *fresh* installs get 26.
 - **`.python-version` is now tracked in git.** It was in `.gitignore` under
-  "local-only files", which would have made the pin invisible to everyone else
-  — the interpreter version is a project decision, not a per-developer one.
+  "local-only files", which would have made the pin invisible to everyone else —
+  the interpreter version is a project decision, not a per-developer one.
 - Doc claims corrected where they'd gone stale: README bare-metal prereqs and
-  architecture line, CLAUDE.md setup/backend lines.
+  architecture line, and the project setup/backend notes.
 
 ### Note
 `pyproject.toml` keeps `requires-python = ">=3.12"` — verified the suite passes
-on **both** 3.12.12 and 3.14, so there's no reason to drop 3.12 for anyone
-bringing their own interpreter. There is no `requirements.txt` in this project;
-`uv.lock` is the dependency manifest and is updated with every dependency change.
+on **both** 3.12.12 and 3.14. There is no `requirements.txt` in this project;
+`uv.lock` is the dependency manifest and is updated with every dependency
+change.
 
 ## [2.1.0] — 2026-08-03 — _latest toolchain across the whole build_
 
 Every pinned tool in the image was audited, not just the one that broke in
 2.0.7. The `uv` pin had sat at 0.5.4 since v0.2.0 — through a "production
 hardening" pass that edited the same file — which is what let the 2.0.6
-cooldown regression happen in the first place.
+regression happen in the first place.
 
 ### Changed
 - **Node 22 → 26** (SPA build stage), **Python 3.12 → 3.14**, **Debian bookworm
@@ -5646,9 +4658,9 @@ cooldown regression happen in the first place.
 - Verified by **building and running the image**, not by checking versions
   locally — the exact gap that caused 2.0.7. Confirmed inside the container:
   Python 3.14.6 on Debian 13, `rembg`/`onnxruntime` load and produce a real
-  `U2netpSession`, and a full end-to-end run (owner setup → create hat → photo
-  upload → auth-gated photo fetch) returns a **transparent PNG**, which only
-  happens when background removal genuinely ran. Zero tracebacks in the log.
+  session, and a full end-to-end run (owner setup → create hat → photo upload →
+  auth-gated photo fetch) returns a **transparent PNG**, which only happens when
+  background removal genuinely ran. Zero tracebacks in the log.
 - Note `fastapi` resolves to 0.139.2 rather than 0.140.x — the 7-day
   `exclude-newer` cooldown from 2.0.6 holding back a just-published release,
   working as designed.
@@ -5662,61 +4674,50 @@ cooldown regression happen in the first place.
   relative durations didn't exist before that. The old uv warned and then
   **silently ignored the setting**, so the build still produced an image, but
   **without the supply-chain cooldown 2.0.6 advertised**. The pin is now
-  `uv 0.11.28`, which is also the version that writes `uv.lock` (revision 3) —
-  the old pin predated that lock format too. Verified by building the image and
-  running it: no parse error, `uv lock --check` clean *inside* the container,
-  and `/health`, `/health/ready`, the auth gate, and the SPA all respond.
+  `uv 0.11.28`, which is also the version that writes `uv.lock` (revision 3).
+  Verified by building the image and running it.
 
 ## [2.0.6] — 2026-07-27 — _dependency security updates_
 
 ### Security
-- **Cleared 74 Python advisories across 11 packages**, including three sitting
-  directly in the photo-upload path: **pillow-heif** 1.2.1 → 1.4.0 (CVSS 9.1),
-  **Pillow** 12.1.1 → 12.3.0 (8.7, 36 advisories), and **python-multipart**
-  0.0.22 → 0.0.32 (7.5, 12 advisories). Also **urllib3** → 2.7.0 (8.9),
-  **starlette** 0.52.1 → 1.3.1, **idna** → 3.18, **click** → 8.4.2,
+- **Cleared 74 Python advisories across 11 packages**, including three in the
+  photo-upload path: **pillow-heif** 1.2.1 → 1.4.0, **Pillow** 12.1.1 → 12.3.0
+  (36 advisories), and **python-multipart** 0.0.22 → 0.0.32. Also **urllib3** →
+  2.7.0, **starlette** 0.52.1 → 1.3.1, **idna** → 3.18, **click** → 8.4.2,
   **pydantic-settings** → 2.14.2, **python-dotenv** → 1.2.2, **pygments** →
   2.20.0, **pytest** → 9.1.1.
-- **Frontend: 11 Snyk issues → 1.** `react-router-dom` 7.13.0 → 7.18.1 clears
-  a Critical (untrusted deserialization), 6 High (XSS, two open redirects,
-  algorithmic-complexity and resource-exhaustion DoS) and the Medium/Low CSRF
-  and unsafe-reflection findings. `vite` 6.4.1 → 6.4.3 clears three High
-  dev-server issues (path traversal, arbitrary file read over the dev
-  WebSocket, `server.fs.deny` bypass); `npm audit fix` cleared the
+- **Frontend: 11 advisories → 1.** `react-router-dom` 7.13.0 → 7.18.1 and `vite`
+  6.4.1 → 6.4.3 clear the reported issues; `npm audit fix` cleared the
   postcss/picomatch/babel build-toolchain advisories.
-- **Known-accepted, not applicable:** one React Router advisory remains
-  (GHSA-qwww-vcr4-c8h2 / SNYK-JS-REACTROUTER-18313151, "RSC Mode CSRF Bypass",
-  fixed only in react-router 8.3.0). This app is a pure client-side
-  `BrowserRouter` SPA — no RSC mode, no loaders/actions, no `@react-router/*`
-  server packages, and zero RSC handlers in the built bundle — so the affected
-  code path cannot be reached. Deferred rather than take a major-version
-  migration for an unreachable path.
+- **Known-accepted, not applicable:** one React Router advisory remains, fixed
+  only in react-router 8.3.0. This app is a pure client-side SPA — no RSC mode,
+  no loaders/actions, no server packages — so the affected code path cannot be
+  reached. Deferred rather than take a major-version migration for an
+  unreachable path.
 
 ### Changed
 - `[tool.uv]` gains a **7-day dependency cooldown** (`exclude-newer`) so a
   compromised or broken package published minutes ago can't be pulled straight
   into a build, plus a `pymatting>=1.1.15` constraint — the resolver otherwise
-  picked 1.1.14, which pins `numba` 0.53.1 → `llvmlite` 0.36.0 and only builds
-  on Python <3.10, breaking `uv sync` and the Docker image on our 3.12 baseline.
+  picked 1.1.14, which drags in a numba/llvmlite pair that only builds on Python
+  <3.10, breaking `uv sync` and the Docker image on our 3.12 baseline.
 
 ## [2.0.5] — 2026-07-25 — _case-rack top-cap fix (v3.1)_
 
 ### Fixed
 - **Case-rack top cap didn't seat on the pegs** (`hardware/melin-rack-v3.zip`).
-  The v3 staggered legs are C2-*rotation* symmetric but **not mirror** symmetric,
-  and the cap installs **flipped** — which mirrors its plan pattern — so the
-  cap's bosses/pockets landed at the wrong positions. The cap is now modeled at
-  the x-mirrored leg positions (`cap_pos` in the `.scad`) so it seats exactly
-  after the flip. **Only the top cap changed**: `melin-rack-rack.stl` and
-  `melin-rack-fit_test.stl` are byte-identical to v3, so already-printed bays
-  and coupons stay good — reprint just the cap.
+  The v3 staggered legs are C2-*rotation* symmetric but **not mirror**
+  symmetric, and the cap installs **flipped** — which mirrors its plan pattern —
+  so the cap's bosses/pockets landed at the wrong positions. The cap is now
+  modeled at the x-mirrored leg positions so it seats exactly after the flip.
+  **Only the top cap changed**: the rack and fit-test STLs are byte-identical to
+  v3, so already-printed bays and coupons stay good — reprint just the cap.
 
 ### Removed
 - `melin-rack-top_cap.3mf` from the model archive. It was sliced from the
   pre-fix geometry, and shipping a ready-to-print project of a part that doesn't
-  fit is worse than shipping none — slice the corrected
-  `melin-rack-top_cap.stl` instead. The bay and fit-test `.3mf` projects are
-  unaffected and still included.
+  fit is worse than shipping none — slice the corrected STL instead. The bay and
+  fit-test `.3mf` projects are unaffected and still included.
 
 ## [2.0.4] — 2026-07-19 — _off-site backups_
 
@@ -5727,8 +4728,7 @@ cooldown regression happen in the first place.
   `HEADROOM_BACKUP_UPLOAD_TIMEOUT`, best-effort — a failed or missing uploader
   never breaks the local backup). New `docker-compose.backup-rclone.yml` overlay
   wires it to rclone (Box, S3, Backblaze B2, Google Drive, …); OPERATIONS.md §4
-  also documents a host-cron alternative. Box has no native Linux client, so
-  rclone's `box` backend is the supported path on a Pi.
+  also documents a host-cron alternative.
 
 ### Docs
 - **"Start fresh / reset the database" instructions** — how to wipe the
@@ -5741,14 +4741,13 @@ cooldown regression happen in the first place.
 ### Fixed
 - **`headroom.local` not resolving in the Docker host-net / sidecar deploys**
   (the raw IP worked, the name didn't). The mDNS responder ran in zeroconf's
-  default "all interfaces" mode, so in a host-net container it also bound
-  sockets on `docker0`/`veth` (always present once a second container like the
-  Caddy sidecar is up): a flaky bridge socket could make registration throw and
-  be swallowed (→ never advertises), and even on success the responder leaked
-  onto the bridge and multicast could egress the wrong NIC. It now binds the
-  **detected LAN interface only**. Escape hatch: `HEADROOM_MDNS_INTERFACE` — an
-  IP to pin, or the literal `all` to restore the previous all-interfaces mode.
-  `GET /api/settings/mdns` reports the advertised IP and any error.
+  default "all interfaces" mode, so in a host-net container it also bound sockets
+  on `docker0`/`veth`: a flaky bridge socket could make registration throw and be
+  swallowed, and even on success the responder leaked onto the bridge and
+  multicast could egress the wrong NIC. It now binds the **detected LAN interface
+  only**. Escape hatch: `HEADROOM_MDNS_INTERFACE` — an IP to pin, or the literal
+  `all` to restore the previous mode. `GET /api/settings/mdns` reports the
+  advertised IP and any error.
 
 ## [2.0.2] — 2026-07-17 — _case-rack v3_
 
@@ -5756,24 +4755,22 @@ cooldown regression happen in the first place.
 - **Case-rack model → v3** (`hardware/melin-rack-v3.zip`, replaces
   `melin-rack-v2.zip`). Legs are now **staggered** so adjacent stands interleave
   side by side at 235 mm center-to-center (C2 symmetric — orientation-free); the
-  side channel is 5 mm tighter for a snugger hold (0.5 mm/side, ~221 mm channel),
-  trimming the footprint to ~241 × 258 mm. Every printable part now ships a
-  ready-to-slice Bambu Studio `.3mf` (bay + top cap + fit test), not just the bay.
+  side channel is 5 mm tighter for a snugger hold, trimming the footprint to
+  ~241 × 258 mm. Every printable part now ships a ready-to-slice Bambu Studio
+  `.3mf` (bay + top cap + fit test).
 
 ## [2.0.1] — 2026-07-16 — _test hardening_
 
 ### Added
 - **Plain-HTTP-on-80 deploy overlay** (`docker-compose.http80.yml`) — a Caddy
-  sidecar serves `http://headroom.local` (and `http://<host-ip>`) on port 80
-  with no HTTPS and no certificate to trust. The app stays non-root on :8000;
-  Caddy owns the low port. Password login only (http isn't a secure context —
-  use `docker-compose.https-lan.yml` for passkeys/Face ID).
-- README "Run it" now opens with an overview table of every deploy mode
-  (default / LAN name / LAN port 80 / LAN HTTPS / internet / bare metal / dev)
-  with its command, URL, and passkey support.
+  sidecar serves `http://headroom.local` (and `http://<host-ip>`) on port 80 with
+  no HTTPS and no certificate to trust. The app stays non-root on :8000; Caddy
+  owns the low port. Password login only (http isn't a secure context — use
+  `docker-compose.https-lan.yml` for passkeys/Face ID).
+- README "Run it" now opens with an overview table of every deploy mode with its
+  command, URL, and passkey support.
 - **Browser-tab favicon is now the Headroom logo** (`favicon.ico` at 16/32/48 +
-  a 32px PNG, generated from the app icon), so tabs no longer fall back to the
-  browser default.
+  a 32px PNG, generated from the app icon).
 
 ### Changed
 - **Case-rack model → v2** (`hardware/melin-rack-v2.zip`, replaces
@@ -5785,88 +4782,87 @@ cooldown regression happen in the first place.
 - **Assertion-strength pass over the whole suite.** Refined tests whose name
   promised a behavior their assertions never verified — they stayed green even
   when that behavior broke. Replacing a photo now checks the old file actually
-  left disk (not just that the path string changed); image conversion decodes
-  the output bytes as JPEG/RGB rather than trusting the `.jpg` suffix; the
-  backup download is opened as a gzip tar and walked instead of measured by
-  length; the `hat.created` audit row is tied to the specific hat; and wear's
-  `date_last_worn` is asserted against today's date.
+  left disk; image conversion decodes the output bytes rather than trusting the
+  `.jpg` suffix; the backup download is opened as a gzip tar and walked instead
+  of measured by length; the `hat.created` audit row is tied to the specific hat;
+  and wear's `date_last_worn` is asserted against today's date.
 - **New coverage for previously-untested paths.** The token-gated share-photo
-  streamer's path-traversal guard, and the eBay comparable-listings service
-  (query hierarchy, degrade-to-link-only, and price aggregation with the
-  network seam stubbed — no live API, per house rule). A duplicate `/health`
-  test was removed.
-- Three of these guards are **mutation-verified**: breaking the code (removing
-  the photo `unlink`, swapping the JPEG encoder, dropping the traversal check)
-  makes the corresponding test fail, proving it catches the real regression.
+  streamer's path containment guard, and the eBay comparable-listings service
+  (query hierarchy, degrade-to-link-only, and price aggregation with the network
+  seam stubbed — no live API, per house rule). A duplicate `/health` test was
+  removed.
+- Three of these guards are **mutation-verified**: breaking the code makes the
+  corresponding test fail, proving it catches the real regression.
 
 ## [2.0.0] — 2026-07-16 — _production hardening_
 
-A forensic multi-agent review (code-archaeology) gated the v1.x line for
-production; this release fixes every finding and folds in the preceding
-cleanup pass. Databases upgrade in place — no schema-breaking changes — but
-two operational interfaces changed, hence the major bump.
+A forensic multi-agent review gated the v1.x line for production; this release
+fixes every finding and folds in the preceding cleanup pass. Databases upgrade
+in place — no schema-breaking changes — but two operational interfaces changed,
+hence the major bump.
 
 ### Breaking
 - **`BUILD_SHA` build arg renamed to `HEADROOM_BUILD_SHA`.** Stamp the footer
   with `HEADROOM_BUILD_SHA=$(git rev-parse --short HEAD) docker compose up
   --build`. The old `BUILD_SHA` name is no longer read.
 - **The Docker image install is now `uv sync --frozen` only** (no unpinned
-  fallback). A `uv.lock` / `pyproject.toml` mismatch fails the build instead
-  of silently resolving fresh versions — run `uv lock` and commit if it errors.
+  fallback). A `uv.lock` / `pyproject.toml` mismatch fails the build instead of
+  silently resolving fresh versions — run `uv lock` and commit if it errors.
 - **Changing your password now rotates the API bearer token** as well as
-  revoking other sessions. Cookie-less clients (the iOS Shortcut) must copy
-  the new token from Settings → Account after a password change.
+  revoking other sessions. Cookie-less clients (the iOS Shortcut) must copy the
+  new token from Settings → Account after a password change.
 
 ### Changed (cleanup pass)
 - mDNS advertising registers off the boot path (≈1.2 s faster startup) and
   withdraws with a single goodbye broadcast; the Settings LAN card derives its
-  state instead of caching it. Shared `env_flag()` replaces three copies of the
+  state instead of caching it. A shared `env_flag()` replaces three copies of the
   truthy-env idiom.
 - README gains a full step-by-step **HTTPS-on-the-LAN / Face ID** walkthrough.
 
 ### Fixed — reliability
 - **Bulk-import worker can no longer silently die.** The worker loop now
   survives any per-item exception (including a transient `database is locked`),
-  and a bug in its own error handler (`item.job_id` on a `None` item) is fixed.
+  and a bug in its own error handler is fixed.
 - **Crash recovery for imports.** On boot, items stranded in `processing` are
-  re-queued and jobs whose items are all terminal (e.g. every file oversize)
-  are closed — no more jobs that poll "running" forever.
+  re-queued and jobs whose items are all terminal are closed — no more jobs that
+  poll "running" forever.
 - **Backups no longer self-destruct under restart loops.** Retention is now
-  age-based (honoring `_RETENTION_DAYS`), the newest snapshot is never pruned,
-  and the startup backup is skipped when a recent one already exists.
+  age-based, the newest snapshot is never pruned, and the startup backup is
+  skipped when a recent one already exists.
 - **SQLite tuned** with WAL + `busy_timeout` + `synchronous=NORMAL`, shrinking
   the transient-lock error class.
 
 ### Fixed — correctness
-- **Undispose no longer collides slots.** Restoring a disposed hat reassigns
-  its `position_in_case`, so it can't share a slot / display ID / QR label with
-  a hat added while it was disposed.
+- **Undispose no longer collides slots.** Restoring a disposed hat reassigns its
+  `position_in_case`, so it can't share a slot / display ID / QR label with a hat
+  added while it was disposed.
 - **Manual color edits stay searchable.** `PUT /hats/{id}/colors` now normalizes
-  `general_color` onto the curated palette (as the analysis pipeline does).
+  `general_color` onto the curated palette, as the analysis pipeline does.
 - **One wear per hat per day** is enforced by a unique constraint, closing the
   double-tap race.
 - Case-photo upload no longer blocks the event loop (async image processing).
 
 ### Fixed — security / operability
 - **Auth telemetry.** Failed logins, lockouts, and successes are logged and
-  audited (IP + username); backup downloads, key/cred changes, and share-link
-  create/revoke now write `activity_log` rows.
+  audited; backup downloads, key/cred changes, and share-link create/revoke now
+  write `activity_log` rows.
 - **`/health/ready` redacts** filesystem paths, key source, and raw errors for
   anonymous callers; authenticated callers also get an import-worker liveness
   signal.
-- **Password change is a complete compromise response** — it now rotates the
-  API token alongside revoking other sessions.
+- **Password change is a complete compromise response** — it now rotates the API
+  token alongside revoking other sessions.
 - **First-run setup is serialized** against a concurrent second POST (no
   duplicate owners).
 - argon2 verify runs off the event loop under a concurrency bound; login
   rate-limiter entries are cleaned up; bulk-upload memory is bounded; the
-  Dockerfile install is `--frozen`-only (no silent unpinned fallback).
-- Single-process assumption is now warned about at startup when `WEB_CONCURRENCY`
-  > 1. Retired `HEADROOM_ADMIN_TOKEN` references removed from docs.
+  Dockerfile install is `--frozen`-only.
+- Single-process assumption is now warned about at startup when
+  `WEB_CONCURRENCY` > 1. Retired `HEADROOM_ADMIN_TOKEN` references removed from
+  docs.
 
 ### Added
-- **Public branding logo** (`GET /api/public/branding/logo`) — the login page
-  now shows the configured logo, not just the wordmark.
+- **Public branding logo** (`GET /api/public/branding/logo`) — the login page now
+  shows the configured logo, not just the wordmark.
 - Model↔migration consistency test so a new `Hat` column can never be forgotten
   in the DDL. 14 new hardening regression tests (170 total).
 
@@ -5876,127 +4872,112 @@ two operational interfaces changed, hence the major bump.
 - **mDNS LAN discovery.** The app advertises itself as **`headroom.local`**
   (python-zeroconf, best-effort, `HEADROOM_MDNS_ENABLED` / `_HOSTNAME` /
   `_PORT`). Multicast can't cross Docker's bridge network, so the new
-  `docker-compose.mdns.yml` overlay switches to host networking (Linux/Pi).
-  A read-only **LAN Discovery** card on Settings (`GET /api/settings/mdns`)
-  shows the advertised URL, LAN IP, or registration error.
+  `docker-compose.mdns.yml` overlay switches to host networking (Linux/Pi). A
+  read-only **LAN Discovery** card on Settings shows the advertised URL, LAN IP,
+  or registration error.
 - **LAN HTTPS overlay** (`docker-compose.https-lan.yml`) — Caddy with its
-  internal CA on 443 makes `https://headroom.local` a secure context, so
-  **Face ID / passkeys work on the LAN name** (Let's Encrypt can't issue
-  for `.local`). Trust the exported root cert once per device; passkey
-  identity and mDNS port are set automatically. Proxy-header trust scoped
-  to loopback since :8000 stays LAN-reachable.
+  internal CA on 443 makes `https://headroom.local` a secure context, so **Face
+  ID / passkeys work on the LAN name** (Let's Encrypt can't issue for `.local`).
+  Trust the exported root cert once per device; passkey identity and mDNS port
+  are set automatically. Proxy-header trust scoped to loopback since :8000 stays
+  LAN-reachable.
 - **3D-printable case rack** (`hardware/melin-stand-slim.zip`) — modular,
   stackable, supports-free slide-in rack for Melin 3-hat travel cases
-  (parametric OpenSCAD + STLs, filament-optimized skeleton floor). Print
-  notes recommend an H2D-class bed (~222 × 258 mm footprint). Linked from
-  the README and the app footer.
-- **Build stamp.** The footer shows the git short SHA next to the version:
-  baked at build time from `HEADROOM_BUILD_SHA` / local git, injectable in
-  Docker via the `BUILD_SHA` build arg.
-- README: **Updating** section (upgrade commands + automatic SQLite
-  migrations + backup-first advice) and a LAN discovery guide.
+  (parametric OpenSCAD + STLs, filament-optimized skeleton floor). Print notes
+  recommend an H2D-class bed (~222 × 258 mm footprint).
+- **Build stamp.** The footer shows the git short SHA next to the version: baked
+  at build time from `HEADROOM_BUILD_SHA` / local git, injectable in Docker via
+  the `BUILD_SHA` build arg.
+- README: **Updating** section (upgrade commands + automatic SQLite migrations +
+  backup-first advice) and a LAN discovery guide.
 - 7 new tests (154 total).
 
 ## [1.2.0] — 2026-07-12 — _wear tracking + QR case labels_
 
 ### Added
-- **Wear tracking.** "🧢 Wearing this today" button on the hat page appends
-  to a new `wear_log` table (idempotent per day, undo supported) and bumps
-  `date_last_worn`. Hat pages show wear count and **cost-per-wear**
-  (purchase price falling back to retail estimate ÷ wears). The Valuation
-  page gets a "Wear Rotation" card surfacing the five longest-unworn
+- **Wear tracking.** "🧢 Wearing this today" button on the hat page appends to a
+  new `wear_log` table (idempotent per day, undo supported) and bumps
+  `date_last_worn`. Hat pages show wear count and **cost-per-wear**. The
+  Valuation page gets a "Wear Rotation" card surfacing the five longest-unworn
   active hats. `POST /api/hats/{id}/wear`, `DELETE /api/hats/{id}/wear/latest`.
-- **QR case labels.** `GET /api/admin/case-labels` renders a printable
-  sheet — one label per case with an inline-SVG QR (deep link to the case
-  page), display id, room, and fill/capacity. "🏷 Labels" button on the
-  Cases page. Print, cut, stick; scanning opens the case in the app.
-  New dep: `qrcode` (pure Python, SVG output — no raster stack).
+- **QR case labels.** `GET /api/admin/case-labels` renders a printable sheet —
+  one label per case with an inline-SVG QR (deep link to the case page), display
+  id, room, and fill/capacity. "🏷 Labels" button on the Cases page. New dep:
+  `qrcode` (pure Python, SVG output — no raster stack).
 - 3 new tests (147 total).
 
 ## [1.1.0] — 2026-07-12 — _colorway catalog + purchase history_
 
 ### Added
-- **Colorway catalog.** `POST /api/admin/colorways/refresh` sweeps every
-  style category on the melinrecap marketplace API and parses listing
-  titles ("Model - Colorway") into a catalog table — live-verified: 987
-  listings → 501 unique entries, including years of sold-out drops absent
-  from melin.com. `GET /api/meta/colorways` powers native-datalist
-  autocomplete for model + colorway on the Edit Hat form; Settings gets a
-  refresh card. New `colorway` column on hats.
+- **Colorway catalog.** `POST /api/admin/colorways/refresh` sweeps every style
+  category on the melinrecap marketplace API and parses listing titles ("Model -
+  Colorway") into a catalog table — live-verified: 987 listings → 501 unique
+  entries, including years of sold-out drops absent from melin.com.
+  `GET /api/meta/colorways` powers autocomplete for model + colorway on the Edit
+  Hat form; Settings gets a refresh card. New `colorway` column on hats.
 - **Purchase history + cost basis.** `purchases` table with
-  `POST /api/admin/purchases/import` (structured line items from order
-  emails; deduped) and `POST /api/admin/purchases/match`, which links
-  purchases to hats by model (+colorway when both sides have one) and sets
-  `purchase_price` / `purchased_at` / `colorway` on the hat. Edit Hat form
-  exposes colorway + purchase price; Settings shows the purchase list.
-  Gmail extraction feeds this via the importer once the connector is
-  authorized.
+  `POST /api/admin/purchases/import` (structured line items from order emails;
+  deduped) and `POST /api/admin/purchases/match`, which links purchases to hats
+  by model (+colorway when both sides have one) and sets `purchase_price` /
+  `purchased_at` / `colorway` on the hat. Edit Hat form exposes colorway +
+  purchase price; Settings shows the purchase list.
 - 5 new tests (144 total).
 
 ## [1.0.0] — 2026-07-12 — _auth: accounts, passkeys, share links, HTTPS_
 
 Headroom is now safe to expose to the internet. **Breaking**: accounts are
-mandatory — on first boot the app walks you through creating the owner
-account; the iOS Shortcut import now needs an `Authorization: Bearer
-<api-token>` header (token in Settings → Account). `HEADROOM_ADMIN_TOKEN`
-is retired and ignored.
+mandatory — on first boot the app walks you through creating the owner account;
+the iOS Shortcut import now needs an `Authorization: Bearer <api-token>` header
+(token in Settings → Account). `HEADROOM_ADMIN_TOKEN` is retired and ignored.
 
 ### Added
-- **Accounts + sessions.** First-run owner setup, argon2id password
-  hashing, server-side revocable sessions (256-bit, 30-day, httpOnly +
-  SameSite=Lax cookies, `secure` auto-set over HTTPS), login rate limiting
-  (5 fails → 15-min lockout per IP+username), logout, change-password.
-- **Everything data-bearing is gated** — all of `/api/*` AND the
-  `/uploads/*` photo mount (previously world-readable). Open by design:
-  SPA shell/assets, manifest/icons, `/health*`, `/api/auth/*`,
-  `/api/public/*`. The Android share-target POST needs a session; the
-  public share page does not.
-- **Passkeys (WebAuthn).** Add from Settings → Account; sign in with Face
-  ID / Touch ID from the login page. py_webauthn on the backend, hand-rolled
-  base64url plumbing on the frontend (no new JS deps). `HEADROOM_RP_ID` /
-  `HEADROOM_ORIGIN` config; set automatically by the HTTPS overlay.
-- **API token per user** (shown/rotated in Settings → Account) for
-  cookie-less clients — the iOS Shortcut recipe card now includes the
-  header step.
-- **Read-only share links.** Settings → Share Links mints `/share/<token>`
-  URLs (256-bit, revocable, optional expiry): a public gallery view with
-  token-gated photo streaming — photos never leak through the protected
-  uploads mount.
-- **HTTPS overlay** (`docker-compose.https.yml`): Caddy sidecar with
-  automatic Let's Encrypt certs; port 8000 no longer exposed directly;
-  uvicorn honors X-Forwarded-Proto (`--proxy-headers`).
-- Login page (first-run setup + password + passkey), Account card,
-  Share Links card; 401s anywhere in the SPA bounce to /login.
-- 9 new auth tests (138 total); full lifecycle also smoke-tested live
-  (fresh DB → setup → gated uploads → share link → logout).
+- **Accounts + sessions.** First-run owner setup, argon2id password hashing,
+  server-side revocable sessions (256-bit, 30-day, httpOnly + SameSite=Lax
+  cookies, `secure` auto-set over HTTPS), login rate limiting, logout,
+  change-password.
+- **Everything data-bearing is gated** — all of `/api/*` AND the `/uploads/*`
+  photo mount (previously world-readable). Open by design: SPA shell/assets,
+  manifest/icons, `/health*`, `/api/auth/*`, `/api/public/*`. The Android
+  share-target POST needs a session; the public share page does not.
+- **Passkeys (WebAuthn).** Add from Settings → Account; sign in with Face ID /
+  Touch ID from the login page. py_webauthn on the backend, hand-rolled base64url
+  plumbing on the frontend (no new JS deps). `HEADROOM_RP_ID` / `HEADROOM_ORIGIN`
+  config; set automatically by the HTTPS overlay.
+- **API token per user** (shown/rotated in Settings → Account) for cookie-less
+  clients — the iOS Shortcut recipe card now includes the header step.
+- **Read-only share links.** Settings → Share Links mints `/share/<token>` URLs
+  (256-bit, revocable, optional expiry): a public gallery view with token-gated
+  photo streaming — photos never leak through the protected uploads mount.
+- **HTTPS overlay** (`docker-compose.https.yml`): Caddy sidecar with automatic
+  Let's Encrypt certs; port 8000 no longer exposed directly; uvicorn honors
+  X-Forwarded-Proto.
+- Login page (first-run setup + password + passkey), Account card, Share Links
+  card; 401s anywhere in the SPA bounce to /login.
+- 9 new auth tests (138 total); full lifecycle also smoke-tested live.
 - Deps: `argon2-cffi`, `webauthn`.
 
 ### Fixed
-- Password reset procedure documented for the no-email reality
-  (OPERATIONS §6): wipe `users` + `auth_sessions`, first-run setup returns.
+- Password reset procedure documented for the no-email reality (OPERATIONS §6).
 
 ## [0.9.0] — 2026-07-11 — _find-the-hat: color-similarity search + capacity_
 
 ### Added
-- **Search by color.** Tap a palette chip (or pick any color) and every
-  active hat is ranked by perceptual closeness — ΔE*76 in LAB space over
-  the *stored hex swatches*, so "light blue" finds sky/powder/baby blue
-  hats regardless of what the analyzer named them, and a hat whose
-  *secondary* color matches still surfaces (matched swatch + Δ shown).
-  `GET /api/search/color?hex=`, palette chips from `GET /api/meta/colors`.
-- **Normalized color vocabulary.** `general_color` now snaps to the
-  curated palette from the hex at analysis time, with a one-time startup
-  backfill for existing rows (guarded by an app-setting flag). Default
-  color search uses the normalized names; `exact_colors` still matches the
-  analyzer's original phrasing.
-- **Find-it result cards.** Search results now include brand + model name
-  and a location breadcrumb (Case display-id · Room); text search also
-  matches brand/model (`hydro` works now — the placeholder always claimed
-  brand search, the backend never did it). Disposed hats are excluded from
-  search — they're not findable on a shelf.
-- **Per-case capacity.** New nullable `capacity` column (inline DDL
-  migration) overrides the 4-regular/6-beanie defaults per case, editable
-  on the New/Edit Case forms — Melin cases realistically hold 3–4.
+- **Search by color.** Tap a palette chip (or pick any color) and every active
+  hat is ranked by perceptual closeness — ΔE*76 in LAB space over the *stored hex
+  swatches*, so "light blue" finds sky/powder/baby blue hats regardless of what
+  the analyzer named them, and a hat whose *secondary* color matches still
+  surfaces. `GET /api/search/color?hex=`, palette chips from
+  `GET /api/meta/colors`.
+- **Normalized color vocabulary.** `general_color` now snaps to the curated
+  palette from the hex at analysis time, with a one-time startup backfill for
+  existing rows. Default color search uses the normalized names; `exact_colors`
+  still matches the analyzer's original phrasing.
+- **Find-it result cards.** Search results now include brand + model name and a
+  location breadcrumb (Case display-id · Room); text search also matches
+  brand/model. Disposed hats are excluded from search — they're not findable on a
+  shelf.
+- **Per-case capacity.** New nullable `capacity` column (inline DDL migration)
+  overrides the type defaults per case, editable on the New/Edit Case forms.
 - 13 new tests (129 total).
 
 ## [0.8.0] — 2026-07-07 — _live Melin Recap resale prices_
@@ -6004,194 +4985,155 @@ is retired and ignored.
 ### Added
 - **Live median resale price from melinrecap.com.** The site is a Treet
   marketplace on Sharetribe Flex; its frontend queries the public Flex
-  Marketplace API with an anonymous public-read token whose client id is
-  embedded in their JS bundle. `melin_recap.py` now does the same — one
-  `listings/query` per analysis (style category, up to 100 listings),
-  narrowed to the specific model when ≥3 title matches exist. Median asking
-  price lands in `resale_price` with a transparent source label ("Melin
-  Recap · median of 83 live model listings"). No scraping, no headless
-  browser — Pi-friendly, and verified live (A-Game Hydro → $63.90 across
-  83 listings).
-- Runs in every analysis path: Claude success, reanalyze, and the v0.7.0
-  fallback when logo detection identifies a Melin (which now also gets the
-  deep-link pointer).
+  Marketplace API with an anonymous public-read token. `melin_recap.py` now does
+  the same — one `listings/query` per analysis, narrowed to the specific model
+  when enough title matches exist. Median asking price lands in `resale_price`
+  with a transparent source label. No scraping, no headless browser —
+  Pi-friendly, and verified live.
+- Runs in every analysis path: Claude success, reanalyze, and the v0.7.0 fallback
+  when logo detection identifies a Melin.
 - `HEADROOM_MELIN_CLIENT_ID` env override in case Treet rotates the id;
   anonymous token cached ~20 min with a retry-once-on-401.
-- Conftest guard: the Sharetribe seam is stubbed suite-wide so tests can
-  never hit the live marketplace; 7 new tests (116 total) cover median
-  math, model-vs-category sampling, persistence, and API-failure degrade
-  (which is byte-for-byte the old link-only behavior).
-- **Standalone guides**: `docs/OPERATIONS.md` (deployment, configuration,
-  health checks, backup/restore with the archive's actual `data/` layout,
-  upgrades, security posture, Pi notes, troubleshooting) and
-  `docs/USAGE.md` (first-run setup, rooms/cases/hats model, all three
-  import paths, analysis status pills, pricing signals, search,
-  disposition, reports, PWA install). Linked from the README header.
+- Conftest guard: the Sharetribe seam is stubbed suite-wide so tests can never
+  hit the live marketplace; 7 new tests (116 total) cover median math,
+  model-vs-category sampling, persistence, and API-failure degrade.
+- **Standalone guides**: `docs/OPERATIONS.md` (deployment, configuration, health
+  checks, backup/restore with the archive's actual `data/` layout, upgrades,
+  security posture, Pi notes, troubleshooting) and `docs/USAGE.md` (first-run
+  setup, rooms/cases/hats model, all three import paths, analysis status pills,
+  pricing signals, search, disposition, reports, PWA install).
 
 ## [0.7.0] — 2026-07-07 — _analysis fallback: mask colors + Google logo brand_
 
 ### Added
 - **No-Claude fallback analysis** (`analysis_status="fallback"`). When no
-  Anthropic key is configured — or a Claude call fails — hats no longer come
-  out blank:
-  - **Colors, zero keys required.** Dominant colors are extracted locally
-    from the rembg cutout's alpha mask (pixels with alpha ≥ 200 only), so
+  Anthropic key is configured — or a Claude call fails — hats no longer come out
+  blank:
+  - **Colors, zero keys required.** Dominant colors are extracted locally from
+    the rembg cutout's alpha mask (pixels with alpha ≥ 200 only), so
     **background colors are rejected by construction** — the mask *is* the
-    segmentation. Median-cut quantization + a curated ~25-name palette fills
-    `color_name`/`general_color`/`hex_value`/`tier` (searchable like the
-    Claude-derived colors). If bg-removal failed for a photo, no colors are
-    guessed from the contaminated frame.
-  - **Brand via Google Cloud Vision logo detection** (optional). New
-    Settings card + `GET/PUT/DELETE /api/settings/google-vision-key`
-    (masked reads, admin-guarded writes, DB > `HEADROOM_GOOGLE_VISION_API_KEY`
-    env — same pattern as the Anthropic key). REST + API key, no Google SDK
-    dependency. Logos below 0.6 confidence are ignored.
-  - Model name, price, and design notes stay empty — **Reanalyze** with a
-    Claude key upgrades a fallback hat to full identification. Reanalyze now
-    also *runs* the fallback when no Claude key is set (was a hard 400), and
-    Claude-error reanalyzes degrade to fallback data instead of error-only.
-  - UI: orange "Basic ID (fallback)" pill + info banner on the hat detail
-    page; eBay comps remain Claude-gated (no model name to search with).
-- 15 new tests (109 total): background rejection proven against synthetic
-  RGBA fixtures with poisoned transparent pixels, Vision JSON parsing, all
-  pipeline degradation paths, reanalyze fallback, key-route masking.
+    segmentation. Median-cut quantization + a curated ~25-name palette fills the
+    color fields. If bg-removal failed for a photo, no colors are guessed from
+    the contaminated frame.
+  - **Brand via Google Cloud Vision logo detection** (optional). New Settings
+    card + `GET/PUT/DELETE /api/settings/google-vision-key` (masked reads,
+    admin-guarded writes, DB > env — same pattern as the Anthropic key). REST +
+    API key, no Google SDK dependency. Logos below 0.6 confidence are ignored.
+  - Model name, price, and design notes stay empty — **Reanalyze** with a Claude
+    key upgrades a fallback hat to full identification. Reanalyze now also *runs*
+    the fallback when no Claude key is set, and Claude-error reanalyzes degrade
+    to fallback data instead of error-only.
+  - UI: orange "Basic ID (fallback)" pill + info banner on the hat detail page;
+    eBay comps remain Claude-gated.
+- 15 new tests (109 total): background rejection proven against synthetic RGBA
+  fixtures with poisoned transparent pixels, Vision JSON parsing, all pipeline
+  degradation paths, reanalyze fallback, key-route masking.
 
 ### Fixed
 - **Test suite no longer writes into the developer's real `uploads/`
   directory.** `settings.upload_dir` is a relative path and conftest never
-  redirected it, so every photo-upload test had been depositing tiny
-  synthetic images into `uploads/hats/` (177 files accumulated since
-  February). New autouse `isolated_upload_dir` fixture points each test at
-  a temp dir with the lifespan's directory tree pre-created. Stray
-  sub-10KB artifacts in a real uploads folder can be safely removed.
+  redirected it, so every photo-upload test had been depositing tiny synthetic
+  images into `uploads/hats/`. New autouse `isolated_upload_dir` fixture points
+  each test at a temp dir with the lifespan's directory tree pre-created.
 
 ## [0.6.4] — 2026-07-06 — _self-installing setup + fresh-install logo fix_
 
 ### Fixed
-- **Seeded logo now loads on the very first boot.** `create_app()` only
-  mounted `/uploads` if the uploads directory already existed at import
-  time — but the lifespan creates and seeds it *after* the factory runs.
-  On a fresh install (Docker bind mount, zip distribution, or a cwd
-  without `uploads/`) the logo 404'd — or worse, the SPA catch-all served
-  `index.html` with a 200 for it — until the server was restarted. The
-  mount is now unconditional (`check_dir=False`); the lifespan still owns
-  directory creation and runs before the first request. Regression test:
-  `test_uploads_mount_survives_missing_dir_at_import`.
+- **Seeded logo now loads on the very first boot.** `create_app()` only mounted
+  `/uploads` if the uploads directory already existed at import time — but the
+  lifespan creates and seeds it *after* the factory runs. On a fresh install the
+  logo 404'd — or worse, the SPA catch-all served `index.html` with a 200 for it
+  — until the server was restarted. The mount is now unconditional; the lifespan
+  still owns directory creation and runs before the first request. Regression
+  test: `test_uploads_mount_survives_missing_dir_at_import`.
 
 ### Changed
-- **`scripts/setup.sh` now installs its own prerequisites** instead of
-  erroring when they're missing. Installs (only what's absent, safe to
-  re-run): uv (brew / Astral installer), Node 20+ (brew / NodeSource on
-  apt & dnf), Python 3.12 (via uv itself), and — unless `--no-docker` —
-  a Docker engine **without Docker Desktop**: colima + docker CLI +
-  compose/buildx plugins via brew on macOS, native Docker Engine via
-  get.docker.com on Linux (incl. docker group setup + systemd enable).
-  Also builds the production SPA by default (`--skip-build` to opt out)
-  so `uv run uvicorn` serves the full app straight after setup. Remote
-  installers are downloaded to a temp file and executed — never piped
-  from curl into a shell. `--docker-only` installs/starts just the
-  Docker engine and exits — it's step 2 of the README's Docker quick
-  start, so `docker compose up --build` never assumes an engine that
-  isn't there.
-- **README restructured around "Run it".** Run instructions moved to the
-  top (they were buried under five versions of release notes — now a
-  short "What's new" that links to this file). First Docker run is shown
-  attached so build/boot progress is visible; `-d` is introduced second,
-  with a troubleshooting note for the `unknown shorthand flag: 'd'`
-  error (= missing Compose v2 plugin → run `./scripts/setup.sh`).
-  Placeholder `<repo-url>` replaced with the real clone URL, and the
-  Development section now uses the npm scripts that actually exist
-  (`npm run build`, `npm run typecheck`).
+- **`scripts/setup.sh` now installs its own prerequisites** instead of erroring
+  when they're missing. Installs (only what's absent, safe to re-run): uv, Node
+  20+, Python 3.12 (via uv itself), and — unless `--no-docker` — a Docker engine
+  **without Docker Desktop**: colima + docker CLI + compose/buildx plugins via
+  brew on macOS, native Docker Engine via get.docker.com on Linux. Also builds
+  the production SPA by default (`--skip-build` to opt out). Remote installers
+  are downloaded to a temp file and executed — never piped from curl into a
+  shell. `--docker-only` installs/starts just the Docker engine and exits.
+- **README restructured around "Run it".** Run instructions moved to the top
+  (they were buried under five versions of release notes — now a short "What's
+  new" that links to this file). First Docker run is shown attached so
+  build/boot progress is visible; `-d` is introduced second, with a
+  troubleshooting note for the `unknown shorthand flag: 'd'` error. Placeholder
+  `<repo-url>` replaced with the real clone URL, and the Development section now
+  uses the npm scripts that actually exist.
 
 ## [0.6.3] — 2026-05-04 — _eBay env detection + raw error surfacing_
 
 ### Added
 - **eBay env detection.** `/api/admin/ebay/creds` now returns
-  `detected_env: "production" | "sandbox" | "unknown"` by inspecting the
-  saved App ID for `-PRD-` or `-SBX-` (eBay's keyset format). Settings
-  page renders a colored chip next to the masked App ID — green for
-  production, red for sandbox, with an explicit warning banner when
-  sandbox keys are saved ("These are SANDBOX keys — they will fail with
-  401. Replace with a Production keyset").
-- **Defensive paste handling.** PUT /api/admin/ebay/creds now strips
-  surrounding quotes (`'`, `"`, `` ` ``) in addition to whitespace, in
-  case the user pastes from a code block / env-var docs that included
-  delimiters.
+  `detected_env: "production" | "sandbox" | "unknown"` by inspecting the saved
+  App ID for eBay's keyset format markers. Settings page renders a colored chip
+  next to the masked App ID, with an explicit warning banner when sandbox keys
+  are saved.
+- **Defensive paste handling.** The creds endpoint now strips surrounding quotes
+  in addition to whitespace, in case the value is pasted from a code block.
 
 ### Changed
-- **eBay OAuth errors now surface eBay's actual response.** Previously
-  any non-200 from the token endpoint just displayed my generic guess.
-  Now we parse eBay's structured `{error, error_description}` and lead
-  with that — e.g. `"eBay OAuth returned 401 (invalid_client) — client
-  authentication failed"`. The "probably sandbox" hint is appended only
-  for 401s, not as the only message.
-- Server-side: failed OAuth responses are now logged at WARNING with
-  the full status code, error code, description, and (truncated) raw
-  body so `docker logs headroom` is useful for debugging.
+- **eBay OAuth errors now surface eBay's actual response.** Previously any
+  non-200 from the token endpoint just displayed a generic guess. Now the
+  structured `{error, error_description}` is parsed and led with. The "probably
+  sandbox" hint is appended only for 401s.
+- Server-side: failed OAuth responses are now logged at WARNING with the full
+  status code, error code, description, and truncated raw body.
 
 ## [0.6.2] — 2026-05-04 — _eBay diagnostics_
 
 ### Added
-- **"Test connection" button** on the eBay Settings card. Probes OAuth +
-  a sample Browse search end-to-end and surfaces a structured
-  `{ok, stage, detail}` so the user knows whether OAuth succeeded, the
-  Browse query worked, or the creds aren't configured at all.
-  Backend: new `POST /api/admin/ebay/test` endpoint and
-  `ebay_service.verify_creds()` that runs the full probe and reports
-  which stage failed.
+- **"Test connection" button** on the eBay Settings card. Probes OAuth + a
+  sample Browse search end-to-end and surfaces a structured `{ok, stage, detail}`
+  so the user knows whether OAuth succeeded, the Browse query worked, or the
+  creds aren't configured at all. Backend: new `POST /api/admin/ebay/test` and
+  `ebay_service.verify_creds()`.
 
 ### Changed
-- **Specific error message for sandbox-vs-production keyset mismatch.**
-  When eBay returns 401 on the OAuth call (the most common failure mode —
-  user pastes Sandbox keys against the production endpoint), the error
-  now reads: "401 Unauthorized from eBay OAuth. Most likely your App ID
-  + Cert ID are for the sandbox keyset, but Headroom calls production.
-  Generate a PRODUCTION keyset at developer.ebay.com → My Account →
-  Application Keysets, then re-paste both values." Previously this
-  surfaced as an opaque `502 Bad Gateway`.
-- Settings card help text now explicitly calls out **Production**
-  (vs Sandbox) as the required keyset type.
+- **Specific error message for sandbox-vs-production keyset mismatch.** When
+  eBay returns 401 on the OAuth call — the most common failure mode — the error
+  now explains that the keyset is probably a sandbox one and names where to
+  generate a production keyset. Previously this surfaced as an opaque
+  `502 Bad Gateway`.
+- Settings card help text now explicitly calls out **Production** (vs Sandbox)
+  as the required keyset type.
 
 ## [0.6.1] — 2026-05-03 — _user style is ground truth + tap-to-edit colors_
 
 ### Changed
 - **Owner-selected style is now ground truth for Claude.** When a hat is
-  uploaded with `style=trenches`, the analysis prompt explicitly tells
-  Claude that line is authoritative — Claude identifies the specific
-  variant within the Trenches line (Hydro / Icon / Infinity / etc.) and
-  is told NOT to pick a model from a different line. If the photo seems
+  uploaded with `style=trenches`, the analysis prompt explicitly tells Claude
+  that line is authoritative — Claude identifies the specific variant within the
+  line and is told NOT to pick a model from a different line. If the photo seems
   inconsistent, Claude lowers `model_confidence` rather than overriding.
-  `analyze_hat_image()` gains a `selected_style` parameter; the upload
-  pipeline + reanalyze route both pass `hat.style`. Fixes the case where
-  a Trenches snapback was being labeled as an A-Game Hydro.
+  `analyze_hat_image()` gains a `selected_style` parameter; the upload pipeline
+  and reanalyze route both pass it.
 
 ### Added
-- **Tap-to-edit color rows** on the Hat detail page. Every color in the
-  palette is now a button that opens a modal with: a big color preview
-  that triggers the system color wheel (iOS Safari opens its native
-  picker), a hex text field, specific name + general (filter) name
-  fields, and a tier dropdown. Save / remove / cancel. New "+ Add Color"
-  button at the top of the palette card. Backed by the existing
-  `PUT /api/hats/{id}/colors` endpoint.
+- **Tap-to-edit color rows** on the Hat detail page. Every color in the palette
+  is now a button that opens a modal with: a big color preview that triggers the
+  system color wheel, a hex text field, specific name + general (filter) name
+  fields, and a tier dropdown. Save / remove / cancel. New "+ Add Color" button
+  at the top of the palette card.
 
 ## [0.6.0] — 2026-05-03 — _Share-to-Headroom + version display_
 
 ### Added
-- **Web Share Target API** in `manifest.json` — Android Chrome users who
-  install Headroom as a PWA get a "Share to Headroom" entry in the system
-  share sheet automatically. Selected photos route through the existing
-  bulk-import job worker. New backend endpoint `POST /share` accepts the
-  multipart payload, queues an import job, and 303-redirects into
-  `/hats/import?job=N` so the SPA renders progress.
-- **iOS Shortcut recipe** in Settings — step-by-step instructions for
-  building a one-time Shortcut that POSTs photos from the iOS Photos
-  share sheet to `/api/hats/import`. Auto-fills the URL with the running
-  origin so users can copy it as-is.
-- **App version in the footer.** `vite.config.ts` reads `package.json`
-  and bakes the version into the bundle as `__APP_VERSION__`. Footer
-  always shows the running build.
-- `BulkImportPage` now reads `?job=N` from the URL so the share-target
-  redirect lands on the active job.
+- **Web Share Target API** in `manifest.json` — Android Chrome users who install
+  Headroom as a PWA get a "Share to Headroom" entry in the system share sheet
+  automatically. Selected photos route through the existing bulk-import job
+  worker. New backend endpoint `POST /share` accepts the multipart payload,
+  queues an import job, and 303-redirects into `/hats/import?job=N`.
+- **iOS Shortcut recipe** in Settings — step-by-step instructions for building a
+  one-time Shortcut that POSTs photos from the iOS Photos share sheet to
+  `/api/hats/import`. Auto-fills the URL with the running origin.
+- **App version in the footer.** `vite.config.ts` reads `package.json` and bakes
+  the version into the bundle as `__APP_VERSION__`.
+- `BulkImportPage` now reads `?job=N` from the URL so the share-target redirect
+  lands on the active job.
 
 ### Bumped
 - Project version → `0.6.0` (synced across `pyproject.toml` and
@@ -6202,16 +5144,14 @@ is retired and ignored.
 PWA install + photo crop on upload. Pure UX wins, no data model touches.
 
 ### Added
-- **Installable PWA.** Proper `manifest.json` (192px + 512px + maskable
-  icons, standalone display, theme color, background color) and
-  `apple-touch-icon` link in `index.html`. Generated PNG icons from the
-  seed logo via Pillow on every build. iOS "Add to Home Screen" now
-  produces a fullscreen Headroom app with the brand icon.
-- **Photo edit on upload** via `react-easy-crop` (~30KB gzipped, no peer
-  deps). PhotoCapture flow now: pick → crop modal (free aspect, 90°
-  rotate, zoom slider) → upload. Cropping happens client-side via canvas;
-  backend pipeline is unchanged. Canceling the crop modal uploads the
-  original.
+- **Installable PWA.** Proper `manifest.json` (192px + 512px + maskable icons,
+  standalone display, theme color, background color) and `apple-touch-icon` link
+  in `index.html`. Generated PNG icons from the seed logo via Pillow on every
+  build. iOS "Add to Home Screen" now produces a fullscreen Headroom app.
+- **Photo edit on upload** via `react-easy-crop` (~30KB gzipped, no peer deps).
+  PhotoCapture flow now: pick → crop modal (free aspect, 90° rotate, zoom
+  slider) → upload. Cropping happens client-side via canvas; backend pipeline is
+  unchanged.
 
 ## [0.4.0] — 2026-05-03 — _Real Numbers_
 
@@ -6220,33 +5160,29 @@ Insurance-grade inventory report.
 
 ### Added
 - **eBay Browse-API integration.** `services/ebay_service.py` does OAuth
-  client-credentials → token cache → search by `brand + model + style`,
-  returns mean / median / count of currently-listed comparable prices.
-  Refreshes automatically when Claude finishes analysis (best-effort,
-  never fails the upload). Per-hat refresh button on the detail page.
-  New Hat columns: `ebay_avg_price`, `ebay_median_price`,
-  `ebay_listing_count`, `ebay_search_url`, `ebay_checked_at`.
+  client-credentials → token cache → search by `brand + model + style`, returns
+  mean / median / count of currently-listed comparable prices. Refreshes
+  automatically when Claude finishes analysis (best-effort, never fails the
+  upload). Per-hat refresh button on the detail page. New Hat columns:
+  `ebay_avg_price`, `ebay_median_price`, `ebay_listing_count`,
+  `ebay_search_url`, `ebay_checked_at`.
 - **Settings UI for eBay creds** — admin-gated `app_id` + `cert_id` +
-  `marketplace` (default `EBAY_US`), masked on read, env-var fallback
-  via `HEADROOM_EBAY_APP_ID` / `HEADROOM_EBAY_CERT_ID`.
-- **Inventory Report** — `GET /api/admin/inventory-report?include_disposed=&include_photos=`
-  returns a self-contained HTML page with a print stylesheet (A4,
-  page-break-inside avoid). Two-column totals tile + per-hat row with
-  thumbnail, brand/model, condition, location, original retail, and
-  best-available current value. Settings page button opens the report
-  in a new tab; user uses browser Print → Save as PDF. Zero new heavy
-  deps (vs. WeasyPrint's 200MB cairo / xhtml2pdf).
-- **Hat detail Valuation card** now shows three tiles side-by-side:
-  New Retail / eBay Median / Resale (manual), plus a refresh button
-  and deep-link buttons to both eBay search and the existing Melin
-  Recap link.
+  `marketplace` (default `EBAY_US`), masked on read, env-var fallback.
+- **Inventory Report** — `GET /api/admin/inventory-report` returns a
+  self-contained HTML page with a print stylesheet (A4, page-break-inside
+  avoid). Two-column totals tile + per-hat row with thumbnail, brand/model,
+  condition, location, original retail, and best-available current value.
+  Settings page button opens the report in a new tab; user uses browser Print →
+  Save as PDF. Zero new heavy deps.
+- **Hat detail Valuation card** now shows three tiles side-by-side: New Retail /
+  eBay Median / Resale (manual), plus a refresh button and deep-link buttons.
 
 ### Notes
-- The free Browse-API tier is 5,000 calls/day; with caching + the rare
-  brand/model identifier changes you'll be nowhere near it.
-- Browse API surfaces *currently listed* items, not sold prices —
-  asking prices skew higher than realized values. Marketplace Insights
-  (sold prices) requires partner approval; deferred.
+- The free Browse-API tier is 5,000 calls/day; with caching you'll be nowhere
+  near it.
+- Browse API surfaces *currently listed* items, not sold prices — asking prices
+  skew higher than realized values. Marketplace Insights requires partner
+  approval; deferred.
 
 ## [0.3.0] — 2026-05-03 — _Inventory Loop_
 
@@ -6254,151 +5190,139 @@ Hats in fast, hats tracked, hats out, all audited.
 
 ### Added
 - **Activity log** — append-only `activity_log` table with `kind /
-  entity_type / entity_id / summary / details(JSON)`. Hooks at every
-  hat-service write path emit rows automatically. `/api/admin/activity-log`
-  endpoint with filtering by `kind` and `entity_type`. Daily prune task
-  (configurable retention via `HEADROOM_ACTIVITY_LOG_RETENTION_DAYS=90`).
-  New "Recent Activity" card on the Settings page.
+  entity_type / entity_id / summary / details(JSON)`. Hooks at every hat-service
+  write path emit rows automatically. `/api/admin/activity-log` endpoint with
+  filtering by `kind` and `entity_type`. Daily prune task (configurable
+  retention via `HEADROOM_ACTIVITY_LOG_RETENTION_DAYS=90`). New "Recent Activity"
+  card on the Settings page.
 - **Sale / disposition tracking.** Five new Hat columns: `disposed_at`,
   `disposed_via` (sold/gifted/lost/trashed/trade), `disposed_price`,
   `disposed_to`, `disposed_notes`. Soft-delete only — undoable via
-  `DELETE /api/hats/{id}/dispose`. Disposed hats free their case slot
-  but remain in the DB (history preserved). `GET /api/hats?status=`
-  defaults to `active`; `disposed` and `all` available. Hat detail
-  page gets a Disposition card with a modal form for disposing +
-  an "Undo — restore" action. Valuation page surfaces realized values.
-- **Bulk photo import.** Multipart upload of up to 100 photos creates
-  an `import_jobs` row + `import_job_items` per file, queues a single
-  background asyncio worker that runs the existing pipeline one-at-a-time
-  (resize → bg-remove → Claude → DB). Per-file status, hat-id link
-  on completion, cancellation. Survives container restart (queued
-  items re-enqueue at boot). New `/hats/import` page with drag-drop
-  + per-file progress + defaults (style/size/condition/case) applied
-  to every hat.
+  `DELETE /api/hats/{id}/dispose`. Disposed hats free their case slot but remain
+  in the DB. `GET /api/hats?status=` defaults to `active`; `disposed` and `all`
+  available. Hat detail page gets a Disposition card with a modal form plus an
+  "Undo — restore" action. Valuation page surfaces realized values.
+- **Bulk photo import.** Multipart upload of up to 100 photos creates an
+  `import_jobs` row + `import_job_items` per file, queues a single background
+  asyncio worker that runs the existing pipeline one-at-a-time. Per-file status,
+  hat-id link on completion, cancellation. Survives container restart (queued
+  items re-enqueue at boot). New `/hats/import` page with drag-drop + per-file
+  progress + defaults applied to every hat.
 
 ### Changed
-- `_validate_capacity` skips disposed hats — sold/lost hats no longer
-  count against case capacity.
+- `_validate_capacity` skips disposed hats — sold/lost hats no longer count
+  against case capacity.
 - `_get_next_position` excludes disposed hats — the slot reopens.
 
 ### Tests: 81 → 93 (+12)
 - `tests/test_disposition.py` — dispose + undispose + status filter +
   capacity-respecting-disposed.
 - `tests/test_activity_log.py` — log emission, count endpoint, filters.
-- `tests/test_import.py` — job creation, item structure, content-type
-  rejection, cancellation. Worker disabled in conftest so jobs stay
-  queued for assertion.
+- `tests/test_import.py` — job creation, item structure, content-type rejection,
+  cancellation. Worker disabled in conftest so jobs stay queued for assertion.
 
 ---
 
 ## [0.2.2] — 2026-05-02 — _author-question follow-ups_
 
-Closes the action items from the 10 reviewer questions in the archaeology bundle's
-`00-READ-FIRST.md`. Six questions, six fixes.
+Closes the action items from the ten reviewer questions in the archaeology
+bundle. Six questions, six fixes.
 
 ### Added
 - **Configurable Claude model in Settings UI.** New `app_settings.anthropic_model`
   row, `GET/PUT/DELETE /api/settings/model`, datalist of known model ids on the
-  Settings page. Resolution: DB > env > built-in default. (`anthropic_model` is
-  passed all the way through `analyze_hat_image(model=…)`.)
+  Settings page. Resolution: DB > env > built-in default.
 - **In-app "Recent Analysis Errors" view** (`/api/admin/recent-errors`) listing
   the last 20 hats whose analysis failed, newest first, with thumbnail + error
   message + timestamp. Companion `/api/admin/recent-errors/count` powers a
   pulsing red badge on the Settings nav item — surfaces silent pipeline failures
   without anyone tailing `docker logs`.
-- **One-click backup download** (`GET /api/admin/backup`) — streams a gzipped
-  tar of `/data/{headroom.db, uploads/}` with an `attachment` content-disposition.
+- **One-click backup download** (`GET /api/admin/backup`) — streams a gzipped tar
+  of `/data/{headroom.db, uploads/}` with an `attachment`
+  content-disposition.
 - **Scheduled rolling backups.** Background asyncio task writes a timestamped
-  tar.gz to `/data/backups/` every 24 h (configurable: `HEADROOM_BACKUP_INTERVAL_HOURS`,
-  `HEADROOM_BACKUP_RETENTION_DAYS=7`, `HEADROOM_BACKUP_ENABLED`). Canceled
-  cleanly on lifespan exit. Initial snapshot at startup so a fresh deploy isn't
-  one bad sector away from total loss.
-- **"Unassigned / In a Case / All" quick-chips** on the Hats page (auto-shown
-  when there are unassigned hats), so case-orphaned hats are never invisible.
-- **`/api/admin/*` route group** behind `require_admin` — same Bearer-token gate
-  as the api-key endpoints.
+  tar.gz to `/data/backups/` every 24 h (configurable:
+  `HEADROOM_BACKUP_INTERVAL_HOURS`, `HEADROOM_BACKUP_RETENTION_DAYS=7`,
+  `HEADROOM_BACKUP_ENABLED`). Canceled cleanly on lifespan exit. Initial snapshot
+  at startup so a fresh deploy isn't one bad sector away from total loss.
+- **"Unassigned / In a Case / All" quick-chips** on the Hats page, so
+  case-orphaned hats are never invisible.
+- **`/api/admin/*` route group** behind `require_admin`.
 
 ### Changed
 - `verify_api_key` now takes a model parameter and reports it in the success
-  message (`"OK — model 'X' reachable."`) so the test button validates the
-  active model+key combo rather than just the key.
+  message, so the test button validates the active model+key combo rather than
+  just the key.
 - Bumped version to 0.2.2.
 
 ### Removed
-- Stray dev SQLite files (`headroom.db`, `frontend/headroom.db`) — both were
-  gitignored, just disk hygiene.
+- Stray dev SQLite files — both were gitignored, just disk hygiene.
 
 ### Tests: 72 → 81 (+9)
 - `tests/test_admin.py` — model setting CRUD + validation, recent-errors
-  endpoints, backup gzip download (verifies content-type + payload size +
-  attachment header), admin auth gate when token is set.
+  endpoints, backup gzip download, admin auth gate.
 
 ### Verified
-- Live container: `/api/settings/model` GET → default → PUT → database → DELETE → default.
-- Backup: GET returns valid gzip (~27 KB on a fresh DB), starts with the right
+- Live container: `/api/settings/model` GET → default → PUT → database → DELETE →
+  default.
+- Backup: GET returns valid gzip (~27 KB on a fresh DB), with the right
   Content-Disposition header, `file(1)` confirms gzip integrity.
-- Container logs show `basicConfig` working, scheduler started, initial snapshot
-  written, and the unset-token warning fires.
+- Container logs show logging configured, scheduler started, initial snapshot
+  written.
 
 ---
 
 ## [0.2.1] — 2026-05-02 — _post-archaeology hardening_
 
-A focused security + reliability pass driven by a full-repo `/code-archaeology`
-run. Closes the critical issues the audit surfaced and lifts the diagnosis
-from "ready with conditions" toward "ready."
+A focused security + reliability pass driven by a full-repo archaeology run.
+Closes the critical issues the audit surfaced and lifts the diagnosis from
+"ready with conditions" toward "ready."
 
 ### Security
-- **CRITICAL: Path traversal in SPA fallback handler closed.**
-  `app.py:_safe_spa_path` now resolves the requested path and verifies it's
-  inside `FRONTEND_DIST` before serving via `is_relative_to`. Previously
-  `GET /%2e%2e/data/headroom.db` would return the SQLite database (and the
-  Anthropic key inside it) to any caller. Verified against the live
-  container: traversal attempts now return the 662-byte `index.html`
-  fallback, not the 49KB DB. (`tests/test_security.py`)
-- **Optional admin-token guard** on `/api/settings/api-key` PUT/DELETE/test
-  via `HEADROOM_ADMIN_TOKEN`. Unset → endpoints stay open (single-user-LAN
-  default) with a startup warning. Set → `Authorization: Bearer <token>`
-  required, constant-time compare. (`src/headroom/auth.py`)
+- **Path traversal in the SPA fallback handler closed.** `app.py:_safe_spa_path`
+  now resolves the requested path and verifies it is inside `FRONTEND_DIST`
+  before serving. Verified against the live container: traversal attempts now
+  return the `index.html` fallback. (`tests/test_security.py`)
+- **Optional admin-token guard** on `/api/settings/api-key` PUT/DELETE/test via
+  `HEADROOM_ADMIN_TOKEN`. Unset → endpoints stay open (single-user-LAN default)
+  with a startup warning. Set → `Authorization: Bearer <token>` required,
+  constant-time compare.
 
 ### Reliability / performance
-- **Dropped the upload concurrency footgun.** `background_removal.py` no
-  longer wraps `asyncio.to_thread` in a process-global `asyncio.Lock`;
-  inference now runs on whatever worker threads asyncio's executor provides.
-  A small `_init_lock` still guards the one-shot ONNX session creation.
+- **Dropped the upload concurrency footgun.** `background_removal.py` no longer
+  wraps `asyncio.to_thread` in a process-global `asyncio.Lock`; inference now
+  runs on whatever worker threads asyncio's executor provides. A small init lock
+  still guards the one-shot ONNX session creation.
 - **Pillow no longer blocks the event loop.** `utils/photo.process_image_async`
-  wraps the existing sync function via `asyncio.to_thread`; the hat upload
-  route uses it. Concurrent uploads no longer wedge other requests.
-- **Real `/health/ready` endpoint** that probes the DB (`SELECT 1`),
-  upload-dir writability, and reports API-key configuration.
-  `docker-compose.yml` now points the container `HEALTHCHECK` at it.
-- **Default logging is now visible.** `app.py` calls `logging.basicConfig`
-  on startup if no root handlers are configured, so `logger.warning` calls
-  in `background_removal` and `hat_analysis_pipeline` actually reach
+  wraps the existing sync function via `asyncio.to_thread`; the hat upload route
+  uses it.
+- **Real `/health/ready` endpoint** that probes the DB (`SELECT 1`), upload-dir
+  writability, and reports API-key configuration. `docker-compose.yml` now points
+  the container `HEALTHCHECK` at it.
+- **Default logging is now visible.** `app.py` calls `logging.basicConfig` on
+  startup if no root handlers are configured, so warnings actually reach
   `docker logs`. Level via `HEADROOM_LOG_LEVEL`.
 - **Docker log rotation.** `docker-compose.yml` pins `max-size: 10m` and
   `max-file: 5` on the JSON log driver — no more silent SD-card fill from
   unbounded uvicorn access logs.
-- **Function-local imports in `reanalyze_hat` removed.** Routes now have
-  clean top-level imports for `analyze_hat_image`, `_apply_analysis`,
-  `settings_service`. (`routes/hats.py`)
+- **Function-local imports in `reanalyze_hat` removed.** Routes now have clean
+  top-level imports.
 
 ### Tests
 - **+8 tests** covering the gaps the archaeology surfaced (72 total, all green):
   - `tests/test_pipeline_e2e.py` — happy-path Claude analysis with
-    structured-response stub, reanalyze, and error-path coverage. The
-    test the v0.2.0 release was missing.
+    structured-response stub, reanalyze, and error-path coverage.
   - `tests/test_security.py` — path-traversal regression + admin-token
     enforcement.
   - `tests/test_health.py` — readiness probe.
 
 ### Cleanup
 - Removed unused `beautifulsoup4` dependency.
-- Removed dead duplicate-branch in `utils/photo.py:25-28`.
-- Removed vestigial `pending` from the `analysis_status` comment in `models/hat.py`
-  (no code path ever wrote it).
-- Clarified `anthropic_model` default with an inline comment + pointer to the
-  `/api/settings/api-key/test` verification endpoint.
+- Removed a dead duplicate branch in `utils/photo.py`.
+- Removed a vestigial value from the `analysis_status` comment in
+  `models/hat.py` (no code path ever wrote it).
+- Clarified the `anthropic_model` default with an inline comment + pointer to the
+  key-verification endpoint.
 
 ## [0.2.0] — 2026-05-02 — _"Outrun"_
 
@@ -6406,57 +5330,49 @@ The big one. Full UI rebuild + AI-powered hat identification.
 
 ### Added
 - **Claude Vision analysis** for every uploaded hat photo. Single tool-use call
-  to `claude-sonnet-4-6` returns brand, specific model name, model confidence
-  (`high` / `medium` / `low`), style descriptor, design notes, primary /
-  secondary / tertiary / accent colors with name + hex + tier, and an estimated
-  new retail price in USD. Prompt caching enabled on the system prompt.
-  (`src/headroom/services/claude_analysis.py`)
-- **Background removal** via [`rembg`](https://github.com/danielgatis/rembg)
-  with ONNX runtime. Hat photos save as transparent PNGs and float on the
-  synthwave canvas. Default model is `u2netp` (4.7 MB) for Pi-friendliness;
-  swap to `u2net` / `isnet-general-use` via `HEADROOM_REMBG_MODEL`.
-  (`src/headroom/services/background_removal.py`)
+  returns brand, specific model name, model confidence, style descriptor, design
+  notes, primary / secondary / tertiary / accent colors with name + hex + tier,
+  and an estimated new retail price in USD. Prompt caching enabled on the system
+  prompt.
+- **Background removal** via [`rembg`](https://github.com/danielgatis/rembg) with
+  ONNX runtime. Hat photos save as transparent PNGs and float on the synthwave
+  canvas. Default model is `u2netp` (4.7 MB) for Pi-friendliness; swap via
+  `HEADROOM_REMBG_MODEL`.
 - **Hat record** now stores: `brand`, `model_name`, `model_confidence`,
   `style_descriptor`, `design_notes`, `estimated_new_price`,
   `estimated_new_price_source`, `resale_price`, `resale_price_source`,
   `resale_price_url`, `resale_checked_at`, `analysis_status`, `analysis_error`,
   `analyzed_at`. `HatColor` gets a `tier` column.
-- **Melin Recap deep-linking**: hats Claude identifies as Melin get a link to
-  the matching filter page on melinrecap.com for live resale comparables.
-  (`src/headroom/services/melin_recap.py`)
+- **Melin Recap deep-linking**: hats Claude identifies as Melin get a link to the
+  matching filter page for live resale comparables.
 - **Settings page — Claude API key management.** Get / Set / Delete / Test
   connection endpoints; stored in DB (masked on read) with env-var fallback.
-  (`src/headroom/routes/settings.py`, `tests/test_settings_api.py`)
 - **`POST /api/hats/{id}/reanalyze`** — re-run Claude on an existing photo
   without re-uploading.
 - **AppSetting** key/value model + table for app-level configuration.
-  (`src/headroom/models/app_setting.py`)
 - **Dockerfile** (multi-stage, multi-arch amd64+arm64, runs as non-root
   `headroom` user, pre-caches rembg model) and **docker-compose.yml** for
   one-command Pi deployment.
 - **CHANGELOG.md** (this file) and a real **`.gitignore`**.
 
 ### Changed
-- **Total frontend rebuild** — dropped Bootstrap 5 entirely. Synthwave / retro-80s
-  design system: near-black canvas, neon hot-pink + cyan accents, sunset
-  gradients, perspective grid background (desktop), Audiowide / Orbitron /
+- **Total frontend rebuild** — dropped Bootstrap 5 entirely. Synthwave /
+  retro-80s design system: near-black canvas, neon hot-pink + cyan accents,
+  sunset gradients, perspective grid background (desktop), Audiowide / Orbitron /
   Inter / JetBrains Mono typography, glow effects on primary actions, animated
-  carousel with swipe gestures, glassmorphic modals + lightbox. CSS bundle
-  shrunk from ~250 KB (Bootstrap) to **29 KB**.
+  carousel with swipe gestures, glassmorphic modals + lightbox. CSS bundle shrunk
+  from ~250 KB (Bootstrap) to **29 KB**.
 - **Mobile / iPad first.** All layouts start single-column and progressively
   enhance. Tap targets ≥ 44 px. Bottom nav is the primary nav on portrait
   devices; top nav only renders at `lg+`. `viewport-fit=cover` and safe-area
   padding for notched devices.
 - **Photo upload pipeline** is now: upload → resize/HEIC convert → background
-  removal → Claude Vision → persist. Each step degrades gracefully. The
-  canonical photo is the transparent PNG when bg-removal succeeds, the JPEG
-  otherwise.
+  removal → Claude Vision → persist. Each step degrades gracefully. The canonical
+  photo is the transparent PNG when bg-removal succeeds, the JPEG otherwise.
 - **Search** now indexes brand alongside style/condition/size/colors/room.
 - **Hats listing + gallery cards** show brand + model when known.
-- **Hat detail page** redesigned with discrete sections: Identification (brand
-  / model / confidence / Claude's design notes), Photo + Reanalyze, Valuation
-  (new + resale tiles + Melin Recap CTA), Specs, Case, Color palette with
-  tiered breakdown.
+- **Hat detail page** redesigned with discrete sections: Identification, Photo +
+  Reanalyze, Valuation, Specs, Case, Color palette with tiered breakdown.
 - **Edit Hat page** lets you override every Claude-derived field manually.
 - **Database migrations** extended to add the new hat columns + `tier` on
   `hat_colors` + the new `app_settings` table. Existing DBs upgrade in place.
@@ -6467,20 +5383,19 @@ The big one. Full UI rebuild + AI-powered hat identification.
 - Bootstrap CSS + JS imports from the frontend.
 
 ### Security
-- Dockerfile runs as non-root user `headroom` (uid 1000) — addresses the
-  semgrep finding about implicit-root containers.
+- Dockerfile runs as non-root user `headroom` (uid 1000).
 - Inline-migration DDL is now fully static — no f-string interpolation into
   `text()` even for trusted column names.
-- API keys are masked on read; only the prefix and last four characters are
-  ever sent over the wire.
+- API keys are masked on read; only the prefix and last four characters are ever
+  sent over the wire.
 
 ### Notes / known limitations
 - The pipeline runs synchronously inside the upload request, so a hat upload
   with Claude + bg removal can take 5–15 s on a Pi. A future release may move
   this to a background queue.
 - Melin Recap doesn't expose a stable JSON API and the listing page is
-  client-rendered, so the resale_price field stays null and we surface a
-  browse link instead of fabricating a number.
+  client-rendered, so the resale_price field stays null and we surface a browse
+  link instead of fabricating a number.
 
 ---
 

@@ -73,3 +73,12 @@ skills-lock.json
 
 # Playwright MCP session logs (a review tool writes them into the cwd)
 .playwright-mcp/
+
+# Internal engineering notes and security-review records — deliberately LOCAL.
+# This repository is public. A detailed account of how each past weakness
+# worked, and of every guard and its edges, is a map for attacking a running
+# instance — and any deployment that lags a release is described by it exactly.
+# These files stay on disk for the maintainer and out of the published tree.
+CLAUDE.md
+docs/CODE-REVIEW-*.md
+docs/AUDIT-HISTORY.md
