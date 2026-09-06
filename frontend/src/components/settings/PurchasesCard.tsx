@@ -3,9 +3,11 @@ import { useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   importPurchases, listPurchases, previewImport, rematchPurchases, unmatchAllPurchases,
+  unmatchPurchase,
 } from '../../api/purchases';
 import type { ImportPreview } from '../../types';
 import { invalidateHatViews, invalidatePurchaseDerived } from '../../lib/invalidate';
+import { ErrorNote } from '../common/ErrorNote';
 
 /** Accepts either a bare array of line items or `{items: [...]}`. */
 function readItems(text: string): Record<string, unknown>[] {
@@ -147,6 +149,18 @@ export function PurchasesCard() {
       qc.invalidateQueries({ queryKey: ['admin', 'purchases'] });
       invalidatePurchaseDerived(qc);
       invalidateHatViews(qc);
+    },
+  });
+
+  // One row at a time — the undo a single wrong link needs. `unmatch-all`
+  // was the only undo the card offered, so fixing one row meant unlinking
+  // every purchase and re-running the matcher over the whole collection.
+  const unmatchOneMut = useMutation({
+    mutationFn: unmatchPurchase,
+    onSuccess: (_result, purchaseId) => {
+      qc.invalidateQueries({ queryKey: ['admin', 'purchases'] });
+      invalidatePurchaseDerived(qc);
+      invalidateHatViews(qc, rows.find(r => r.id === purchaseId)?.hat_id ?? undefined);
     },
   });
 
@@ -324,19 +338,31 @@ export function PurchasesCard() {
             ✓ unlinked {unmatchMut.data.unmatched}, cleared {unmatchMut.data.fields_cleared} fields
           </div>
         )}
-        {(previewMut.error || importMut.error) && (
-          <div className="alert alert-danger mt-3 mb-3 small">
-            {String(previewMut.error || importMut.error)}
-          </div>
-        )}
+        <ErrorNote
+          className="mt-3 mb-3"
+          of={[purchases, previewMut, importMut, rematchMut, unmatchMut, unmatchOneMut]}
+        />
 
         {rows.slice(0, 8).map(r => (
-          <div key={r.id} className="small d-flex justify-content-between gap-2 mb-1">
+          <div key={r.id} className="small d-flex justify-content-between align-items-center gap-2 mb-1">
             <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {r.hat_id != null ? '🔗 ' : '· '}{r.item_title}
             </span>
-            <span className="font-mono text-secondary">
-              {r.price != null ? `$${r.price.toFixed(2)}` : '—'}
+            <span className="d-flex align-items-center gap-2 flex-shrink-0">
+              <span className="font-mono text-secondary">
+                {r.price != null ? `$${r.price.toFixed(2)}` : '—'}
+              </span>
+              {r.hat_id != null && (
+                <button
+                  type="button"
+                  className="btn btn-outline-secondary btn-sm"
+                  aria-label={`Unlink ${r.item_title} from its hat`}
+                  disabled={unmatchOneMut.isPending}
+                  onClick={() => unmatchOneMut.mutate(r.id)}
+                >
+                  Unlink
+                </button>
+              )}
             </span>
           </div>
         ))}

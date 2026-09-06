@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
-import { caCertificateAvailable, getTlsStatus } from '../../api/settings';
+import { CA_CERTIFICATE_URL, caCertificateAvailable, getTlsStatus } from '../../api/settings';
+import { ErrorNote } from '../common/ErrorNote';
 
 /**
  * Install Caddy's root CA on the device you're reading this on.
@@ -29,7 +30,7 @@ export function TrustCertCard() {
   // What the front door is actually SERVING, which is a different question
   // from whether this device trusts the issuer — and the one that went
   // unanswered while an expired certificate was served for 37 days.
-  const { data: tls } = useQuery({
+  const tlsQuery = useQuery({
     queryKey: ['settings', 'tls'],
     queryFn: getTlsStatus,
     retry: false,
@@ -38,6 +39,7 @@ export function TrustCertCard() {
     // the one thing this card ever asks anybody to do.
     staleTime: 60_000,
   });
+  const tls = tlsQuery.data;
 
   if (!available) return null;
 
@@ -45,6 +47,7 @@ export function TrustCertCard() {
     <div className="card mb-3">
       <div className="card-body">
         <h5 className="card-title">Trust this device</h5>
+        <ErrorNote of={tlsQuery} what="Could not read the served certificate" className="mb-2" />
         <p className="text-secondary small">
           <code>headroom.local</code> uses a certificate this server issued
           itself, so each device has to trust it once. Until then Face ID and
@@ -137,7 +140,7 @@ export function TrustCertCard() {
         )}
 
         <a
-          href="/api/public/ca-certificate"
+          href={CA_CERTIFICATE_URL}
           className="btn btn-primary btn-sm"
           download="headroom-ca.crt"
         >Install the certificate</a>

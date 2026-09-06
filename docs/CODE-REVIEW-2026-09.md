@@ -143,7 +143,7 @@ to a read-through and to the line-coverage report, which sat at 88%.
 | C-18 | Test comments citing audit ids with no row (`S1`, `S3`, `S4` meaning something else). | `docs/AUDIT-HISTORY.md` gained the rows. |
 | C-19 | `[2.24.0]` and `[2.23.1]` never tagged. | Headings annotated. |
 | C-21 | Spellings across four docs. | Fixed; lines that quote a misspelling as their subject, and data values, left alone. |
-| rest | Duplicates of B-axis findings. | Covered above. |
+| rest | The remaining ~13 were duplicates of B-axis findings, fixed under those. | Covered above. |
 
 ---
 

@@ -123,6 +123,49 @@ def no_live_melin_marketplace(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_outbound_http(monkeypatch):
+    """No test reaches any host, whatever key it managed to store.
+
+    The Sharetribe fixture above blocks one seam, and popping the API keys
+    out of the environment blocks the others — until a test stores a key
+    through `PUT /api/settings/api-key` (which `test_settings_api.py` does)
+    and a later one uploads a photo without stubbing the analyzer. A review
+    agent did exactly that by accident and this suite made ONE real request
+    to `api.anthropic.com` with a bogus key. The SDK runs on `httpx2`, the
+    app's own clients on `httpx`; both transports are cut at the socket
+    here. Tests that need a wire shape hand the SDK a `MockTransport`, which
+    never reaches this method.
+    """
+    import httpx
+
+    def _refuse(self, request):
+        raise httpx.ConnectError(
+            f"outbound HTTP is disabled in tests (tried {request.url.host})", request=request
+        )
+
+    async def _refuse_async(self, request):
+        _refuse(self, request)
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", _refuse)
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", _refuse_async)
+    try:
+        import httpx2
+    except ImportError:  # pragma: no cover - the SDK's transport, if present
+        return
+
+    def _refuse2(self, request):
+        raise httpx2.ConnectError(
+            f"outbound HTTP is disabled in tests (tried {request.url.host})", request=request
+        )
+
+    async def _refuse2_async(self, request):
+        _refuse2(self, request)
+
+    monkeypatch.setattr(httpx2.HTTPTransport, "handle_request", _refuse2)
+    monkeypatch.setattr(httpx2.AsyncHTTPTransport, "handle_async_request", _refuse2_async)
+
+
+@pytest.fixture(autouse=True)
 def stub_background_removal(monkeypatch):
     """rembg is heavy and downloads model weights on first use — never run it in tests.
 
@@ -243,3 +286,79 @@ def anon_client(app):
     """Unauthenticated client for auth-flow tests (no seeded user)."""
     transport = ASGITransport(app=app)
     return AsyncClient(transport=transport, base_url="http://test")
+
+
+# ---- a FILE-backed database, for concurrency ------------------------------ #
+#
+# The in-memory engine above is a `StaticPool`: one connection shared by every
+# session. That is right for a request test holding one session and wrong for
+# anything that runs several at once — one session's `close()` issues ROLLBACK
+# on the shared connection and discards another's uncommitted write. A race
+# test needs each request on its own connection, as production has, so these
+# fixtures build the same app over a real SQLite file with the production
+# connect hook attached. `tests/test_lifespan_wiring.py` does the same for
+# boots; this is the request-level twin.
+
+
+@pytest.fixture
+async def file_engine(tmp_path):
+    from sqlalchemy import event
+
+    from headroom import database
+    from headroom.models.room import Room
+
+    url = f"sqlite+aiosqlite:///{tmp_path / 'race.db'}"
+    engine = create_async_engine(url, echo=False)
+    event.listen(engine.sync_engine, "connect", database._sqlite_pragmas)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(database.Base.metadata.create_all)
+    async with factory() as db:
+        db.add(Room(id=1, name="Default Room", is_default=True))
+        await db.commit()
+    yield engine, factory
+    await engine.dispose()
+
+
+@pytest.fixture
+def file_app(file_engine):
+    from headroom.app import create_app
+
+    engine, factory = file_engine
+    app = create_app()
+
+    async def override_get_db():
+        async with factory() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = override_get_db
+    app.state.session_factory = factory
+    app.state.engine = engine
+    return app
+
+
+@pytest.fixture
+async def file_client(file_app, file_engine):
+    """Authenticated client whose every request gets its own connection."""
+    from datetime import datetime, timedelta, timezone
+
+    from headroom.models.user import AuthSession, User
+    from headroom.services import auth_service
+
+    _, factory = file_engine
+    global _TEST_HASH
+    if "_TEST_HASH" not in globals():
+        _TEST_HASH = auth_service.hash_password(_TEST_PASSWORD)
+    async with factory() as db:
+        user = User(username="fileowner", password_hash=_TEST_HASH, api_token="hr_file-token")
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+        db.add(AuthSession(
+            id="file-session", user_id=user.id,
+            expires_at=datetime.now(timezone.utc) + timedelta(days=1),
+        ))
+        await db.commit()
+    c = AsyncClient(transport=ASGITransport(app=file_app), base_url="http://test")
+    c.cookies.set("headroom_session", "file-session")
+    return c

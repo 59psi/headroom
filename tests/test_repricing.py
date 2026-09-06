@@ -23,6 +23,8 @@ import contextlib
 
 import pytest
 
+from sqlalchemy import select
+
 from headroom.models.hat import Hat
 from headroom.services import repricing
 
@@ -205,6 +207,67 @@ async def test_one_unreachable_listing_does_not_stop_the_sweep(
     body = (await client.post("/api/admin/repricing/run")).json()
     assert body["considered"] == 2, body
     assert body["repriced"] == 1, body
+
+
+async def test_a_sweep_that_reaches_the_marketplace_for_no_hat_is_a_failure(
+    client, db_session, monkeypatch
+):
+    """Executed in the review with egress dead: 62 ERROR lines, every hat
+    stamped `resale_checked_at`, `last_success_at` set, `last_error` null and
+    the card reading "0 of 5 hats changed price." A dead marketplace and a
+    flat market were the same thing, and the stamps pushed the hats a dead
+    marketplace skipped to the back of the oldest-first queue.
+    """
+    from headroom.services import hat_analysis_pipeline
+
+    for i in range(3):
+        db_session.add(_hat(model_name=f"Hat{i}", resale_price=10.0))
+    await db_session.commit()
+
+    async def dead(hat):
+        return hat_analysis_pipeline.RESALE_UNREACHABLE
+
+    monkeypatch.setattr(hat_analysis_pipeline, "refresh_melin_resale", dead)
+
+    resp = await client.post("/api/admin/repricing/run")
+
+    assert resp.status_code == 503, resp.text
+    assert "unreachable for all 3" in resp.json()["detail"]
+    after = (await client.get("/api/admin/repricing")).json()
+    assert after["last_success_at"] is None
+    assert after["consecutive_failures"] == 1
+    assert "unreachable" in after["last_error"]
+    assert after["last_unreachable"] == 3
+    # Nothing was checked, so nothing is stamped: the next sweep starts here.
+    db_session.expire_all()
+    hats = (await db_session.execute(select(Hat))).scalars().all()
+    assert all(h.resale_checked_at is None for h in hats)
+
+
+async def test_a_partial_outage_is_visible_beside_a_success(client, db_session, monkeypatch):
+    from headroom.services import hat_analysis_pipeline
+
+    db_session.add(_hat(model_name="Reached", resale_price=10.0))
+    db_session.add(_hat(model_name="Missed", resale_price=10.0))
+    await db_session.commit()
+
+    async def flaky(hat):
+        if hat.model_name == "Missed":
+            return hat_analysis_pipeline.RESALE_UNREACHABLE
+        hat.resale_price = 42.0
+        return hat_analysis_pipeline.RESALE_PRICED
+
+    monkeypatch.setattr(hat_analysis_pipeline, "refresh_melin_resale", flaky)
+
+    body = (await client.post("/api/admin/repricing/run")).json()
+    assert body["repriced"] == 1
+    after = (await client.get("/api/admin/repricing")).json()
+    assert after["last_unreachable"] == 1
+    assert after["last_error"] is None
+    db_session.expire_all()
+    by_name = {h.model_name: h for h in (await db_session.execute(select(Hat))).scalars().all()}
+    assert by_name["Reached"].resale_checked_at is not None
+    assert by_name["Missed"].resale_checked_at is None, "an unreached hat is not stamped"
 
 
 async def test_status_reports_the_last_sweep(client, db_session, monkeypatch):

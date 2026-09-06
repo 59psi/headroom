@@ -1,0 +1,14 @@
+# The internet-facing front door (docker-compose.https.yml). Let's Encrypt
+# issues the certificate and sets its lifetime; this file adds what the
+# `caddy reverse-proxy` CLI form could not: HSTS, compression, and the
+# upstream by service name.
+#
+# `encode`: the 550 KB SPA bundle went over the wire uncompressed (gzip is
+# 3.6× smaller). Caddy forwards Accept-Encoding upstream, so the app's own
+# GZip middleware would also answer; Caddy doing it keeps the Pi's CPU out
+# of it and handles zstd.
+{$HEADROOM_DOMAIN} {
+	encode zstd gzip
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	reverse_proxy headroom:8000
+}

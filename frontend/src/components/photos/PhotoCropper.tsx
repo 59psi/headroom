@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 import Cropper, { type Area } from 'react-easy-crop';
-import { portalToBody } from '../common/ModalPortal';
+import { Modal } from '../common/Modal';
+import { ErrorNote } from '../common/ErrorNote';
 
 interface Props {
   imageUrl: string;
@@ -80,6 +81,7 @@ export function PhotoCropper({ imageUrl, filename, onCancel, onUseOriginal, onCr
   const [rotation, setRotation] = useState(0);
   const [croppedArea, setCroppedArea] = useState<Area | null>(null);
   const [working, setWorking] = useState(false);
+  const [cropError, setCropError] = useState<unknown>(null);
 
   const onCropComplete = useCallback((_pct: Area, pixels: Area) => {
     setCroppedArea(pixels);
@@ -88,88 +90,92 @@ export function PhotoCropper({ imageUrl, filename, onCancel, onUseOriginal, onCr
   async function applyCrop() {
     if (!croppedArea) return;
     setWorking(true);
+    setCropError(null);
     try {
       const file = await getCroppedJpeg(imageUrl, croppedArea, rotation, filename);
       onCropped(file);
+    } catch (err) {
+      // `try/finally` alone left this an unhandled rejection: the modal
+      // stayed open with the button re-enabled and no word about why.
+      setCropError(err);
     } finally {
       setWorking(false);
     }
   }
 
-  return portalToBody(
-    <div className="modal" onClick={(e) => { if (e.target === e.currentTarget) onCancel(); }}>
-      <div className="modal-dialog" style={{ maxWidth: 600 }} onClick={e => e.stopPropagation()}>
-        <div className="modal-content">
-          <div className="modal-header">
-            <h5 className="modal-title">Crop Photo</h5>
-            <button type="button" className="btn-close" onClick={onCancel} aria-label="Close" />
-          </div>
-          <div className="modal-body" style={{ padding: 0 }}>
-            <div style={{ position: 'relative', width: '100%', height: 360, background: '#000' }}>
-              <Cropper
-                image={imageUrl}
-                crop={crop}
-                zoom={zoom}
-                rotation={rotation}
-                aspect={undefined /* free aspect */}
-                showGrid
-                onCropChange={setCrop}
-                onZoomChange={setZoom}
-                onRotationChange={setRotation}
-                onCropComplete={onCropComplete}
-              />
-            </div>
-            <div style={{ padding: '1rem 1.25rem' }}>
-              <label className="form-label" htmlFor="crop-zoom">Zoom</label>
-              <input
-                id="crop-zoom"
-                type="range"
-                min={1}
-                max={3}
-                step={0.05}
-                value={zoom}
-                onChange={e => setZoom(Number(e.target.value))}
-                style={{ width: '100%' }}
-              />
-              <div className="d-flex gap-2 mt-2 flex-wrap">
-                <button
-                  type="button"
-                  className="btn btn-outline-secondary btn-sm"
-                  onClick={() => setRotation(r => (r + 270) % 360)}
-                >↶ 90°</button>
-                <button
-                  type="button"
-                  className="btn btn-outline-secondary btn-sm"
-                  onClick={() => setRotation(r => (r + 90) % 360)}
-                >↷ 90°</button>
-                <button
-                  type="button"
-                  className="btn btn-outline-secondary btn-sm"
-                  onClick={() => { setCrop({ x: 0, y: 0 }); setZoom(1); setRotation(0); }}
-                >Reset</button>
-              </div>
-            </div>
-          </div>
-          <div className="modal-footer">
-            {/* Three distinct intents, three buttons. "Use Original" used to be
-                wired to Cancel, so dismissing the cropper — including a stray
-                tap on the backdrop — uploaded the photo anyway. On the hat page
-                that replaced the picture and re-ran the whole pipeline. */}
-            <button type="button" className="btn btn-outline-secondary" onClick={onCancel}>Cancel</button>
-            <button type="button" className="btn btn-outline-secondary" onClick={onUseOriginal}>
-              Use Original
-            </button>
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={applyCrop}
-              disabled={!croppedArea || working}
-            >
-              {working ? 'Cropping…' : 'Use This'}
-            </button>
-          </div>
+  return (
+    <Modal title="Crop Photo" onClose={onCancel} maxWidth={600} bodyStyle={{ padding: 0 }}
+      footer={(
+        <>
+          {/* Three distinct intents, three buttons. "Use Original" used to be
+              wired to Cancel, so dismissing the cropper — including a stray
+              tap on the backdrop — uploaded the photo anyway. On the hat page
+              that replaced the picture and re-ran the whole pipeline. */}
+          <button type="button" className="btn btn-outline-secondary" onClick={onCancel}>Cancel</button>
+          <button type="button" className="btn btn-outline-secondary" onClick={onUseOriginal}>
+            Use Original
+          </button>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={applyCrop}
+            disabled={!croppedArea || working}
+          >
+            {working ? 'Cropping…' : 'Use This'}
+          </button>
+          <ErrorNote
+            of={{ isError: cropError != null, error: cropError }}
+            what="Could not crop"
+            className="w-100 mt-2"
+          />
+        </>
+      )}
+    >
+
+      <div style={{ position: 'relative', width: '100%', height: 360, background: '#000' }}>
+        <Cropper
+          image={imageUrl}
+          crop={crop}
+          zoom={zoom}
+          rotation={rotation}
+          aspect={undefined /* free aspect */}
+          showGrid
+          onCropChange={setCrop}
+          onZoomChange={setZoom}
+          onRotationChange={setRotation}
+          onCropComplete={onCropComplete}
+        />
+      </div>
+      <div style={{ padding: '1rem 1.25rem' }}>
+        <label className="form-label" htmlFor="crop-zoom">Zoom</label>
+        <input
+          id="crop-zoom"
+          type="range"
+          min={1}
+          max={3}
+          step={0.05}
+          value={zoom}
+          onChange={e => setZoom(Number(e.target.value))}
+          style={{ width: '100%' }}
+        />
+        <div className="d-flex gap-2 mt-2 flex-wrap">
+          <button
+            type="button"
+            className="btn btn-outline-secondary btn-sm"
+            onClick={() => setRotation(r => (r + 270) % 360)}
+          >↶ 90°</button>
+          <button
+            type="button"
+            className="btn btn-outline-secondary btn-sm"
+            onClick={() => setRotation(r => (r + 90) % 360)}
+          >↷ 90°</button>
+          <button
+            type="button"
+            className="btn btn-outline-secondary btn-sm"
+            onClick={() => { setCrop({ x: 0, y: 0 }); setZoom(1); setRotation(0); }}
+          >Reset</button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

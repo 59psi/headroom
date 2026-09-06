@@ -368,14 +368,51 @@ async def test_hat_detail_carries_no_more_than_the_listing(client, anon_client):
 
     body = (await anon_client.get(f"/api/public/guest/hat/{hat['id']}")).json()
 
+    # `thumb_url` joined in 2.79: the same photo at grid size on the same
+    # public route, nothing an outsider could not already fetch.
     assert set(body) == {
         "id", "display_id", "brand", "model_name", "style",
-        "photo_url", "colors", "case", "room",
+        "photo_url", "thumb_url", "colors", "case", "room",
     }
     for leak in ("purchase_price", "owner_notes", "secret", "89"):
         assert leak not in (await anon_client.get(
             f"/api/public/guest/hat/{hat['id']}"
         )).text
+
+
+async def test_the_grid_gets_the_thumbnail_and_the_page_gets_the_photo(
+    client, anon_client, isolated_upload_dir
+):
+    """The shared and guest grids served the full 1200 px cutout per tile —
+    ~170 KB each, ~40 MB per open of a link to the real collection — while
+    every signed-in grid rendered the 320 px WebP. Same route, `?variant=
+    thumb`, and the projection says which is which."""
+    from sqlalchemy import update as sa_update
+
+    from headroom.config import settings
+    from headroom.models.hat import Hat
+
+    hat = await _hat(client, model_name="Thumbed")
+    (settings.upload_dir / "hats" / "thumbs").mkdir(parents=True, exist_ok=True)
+    (settings.upload_dir / "hats" / "full.png").write_bytes(b"\x89PNG full")
+    (settings.upload_dir / "hats" / "thumbs" / "full.webp").write_bytes(b"RIFF small")
+    from tests.conftest import test_session_factory
+
+    async with test_session_factory() as db:
+        await db.execute(sa_update(Hat).where(Hat.id == hat["id"]).values(
+            photo_path="hats/full.png", thumb_path="hats/thumbs/full.webp",
+        ))
+        await db.commit()
+    await _enable(client)
+
+    listing = (await anon_client.get("/api/public/guest/collection")).json()
+    row = next(h for h in listing["hats"] if h["id"] == hat["id"])
+    assert row["photo_url"] == f"/api/public/guest/photo/{hat['id']}"
+    assert row["thumb_url"] == f"/api/public/guest/photo/{hat['id']}?variant=thumb"
+    assert (await anon_client.get(row["thumb_url"])).content == b"RIFF small"
+    assert (await anon_client.get(row["photo_url"])).content == b"\x89PNG full"
+    # An unknown variant is the full photo, never an error.
+    assert (await anon_client.get(row["photo_url"] + "?variant=huge")).content == b"\x89PNG full"
 
 
 async def test_a_photoless_hat_still_has_a_detail_page(client, anon_client):

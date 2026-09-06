@@ -150,20 +150,44 @@ _SECURITY_HEADERS = {
 }
 
 
+#: What a browser may keep, by what it is. Nothing set any of these:
+#: `/assets/*` (content-hashed, immortal) got heuristic caching and a 304
+#: round trip per file per visit; `/uploads/*` (gated photos) got heuristic
+#: caching too, so after Sign out a plain fetch of a hat photo still answered
+#: 200 from the cache on a shared device; `/api/*` JSON had no policy at all.
+#: `no-cache` on uploads means "revalidate every time": the ETag makes that a
+#: cheap 304 while signed in, and a 401 once signed out — the photo is never
+#: served from cache without the server's say-so.
+_CACHE_POLICY = (
+    ("/assets/", "public, max-age=31536000, immutable"),
+    ("/uploads/", "private, no-cache"),
+    ("/api/", "no-store"),
+)
+
+
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    """Attach standard hardening headers to every response.
+    """Attach standard hardening headers — and the caching policy — to every response.
 
     Deliberately does NOT set HSTS. The primary deployment is `http://` on a
     LAN, and an HSTS header served once would pin that hostname to HTTPS in the
     browser for its max-age — locking the owner out of their own app on a
     hostname they cannot easily un-pin. Caddy adds HSTS on the genuinely
     internet-facing overlay, which is where it belongs.
+
+    `setdefault` throughout: a route that names its own policy (the public
+    logo's five-minute `max-age`, the SPA shell's `no-cache, must-revalidate`)
+    keeps it.
     """
 
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
         for header, value in _SECURITY_HEADERS.items():
             response.headers.setdefault(header, value)
+        path = request.url.path
+        for prefix, policy in _CACHE_POLICY:
+            if path.startswith(prefix):
+                response.headers.setdefault("Cache-Control", policy)
+                break
         return response
 
 

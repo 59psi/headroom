@@ -123,7 +123,7 @@ def _harden_alpha(cut):
 
 
 def _remove_sync(input_path: Path, output_path: Path) -> Path:
-    from rembg import remove  # noqa: PLC0415
+    from rembg import remove  # noqa: PLC0415 — deferred heavy import, same reason as `new_session` above
 
     session = _get_session()
     with Image.open(input_path) as src:

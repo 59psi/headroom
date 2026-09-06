@@ -5,6 +5,7 @@ import {
   passkeyRegisterOptions, passkeyRegisterVerify, revealApiToken, rotateApiToken,
 } from '../../api/auth';
 import { createPasskey, passkeysSupported } from '../../lib/webauthn';
+import { ErrorNote } from '../common/ErrorNote';
 
 export function AccountCard() {
   const qc = useQueryClient();
@@ -66,10 +67,12 @@ export function AccountCard() {
     }
   }
 
-  async function signOut() {
-    await logout();
-    window.location.assign('/login');
-  }
+  const signOutMut = useMutation({
+    mutationFn: logout,
+    // Only leave once the server has actually dropped the session; a bare
+    // `await logout()` that rejected left the page in place with no message.
+    onSuccess: () => window.location.assign('/login'),
+  });
 
   return (
     <div className="card mb-3">
@@ -186,9 +189,15 @@ export function AccountCard() {
           {pwMsg && <div className="small mt-1 text-secondary">{pwMsg}</div>}
         </div>
 
-        <button type="button" className="btn btn-outline-danger" onClick={signOut}>
+        <button
+          type="button"
+          className="btn btn-outline-danger"
+          onClick={() => signOutMut.mutate()}
+          disabled={signOutMut.isPending}
+        >
           Sign out
         </button>
+        <ErrorNote of={[me, passkeys, signOutMut]} className="mt-3" />
       </div>
     </div>
   );

@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { ErrorNote } from '../common/ErrorNote';
 import { Link } from 'react-router';
 import { auditSharedPrices, getUnclaimedFromPurchases } from '../../api/settings';
 import { rematchPurchases } from '../../api/purchases';
@@ -25,10 +26,11 @@ const SAMPLE_LIMIT = 8;
 
 export function SharedPricesCard() {
   const qc = useQueryClient();
-  const { data, isLoading } = useQuery({
+  const audit = useQuery({
     queryKey: ['admin', 'shared-prices'],
     queryFn: auditSharedPrices,
   });
+  const { data, isLoading } = audit;
 
   // Matching runs at the end of an IMPORT and nowhere else, so a better
   // matcher — or a re-analysis that finally gives a hat a model_name — leaves
@@ -104,15 +106,12 @@ export function SharedPricesCard() {
                 ? 'Matching…'
                 : `Fill ${unclaimed.data!.colorways} from purchase history`}
             </button>
-            {fill.isError && (
-              <div className="text-danger small mt-2">
-                Matching failed. Nothing was changed.
-              </div>
-            )}
+            <ErrorNote of={fill} what="Matching failed — nothing was changed" />
           </div>
         )}
 
-        {!isLoading && groups.length === 0 && (
+        <ErrorNote of={[audit, unclaimed]} className="mb-2" />
+        {audit.isSuccess && groups.length === 0 && (
           <div className="text-secondary small">
             Nothing shared by more than a few hats — every price is describing
             its own hat.

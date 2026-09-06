@@ -61,9 +61,16 @@ def _fields_the_prompt_promises(prompt: str) -> set[str]:
 
 
 def _fields_the_importer_reads() -> set[str]:
-    """Every key `catalog_service` pulls off an incoming line item."""
-    source = SERVICE.read_text()
-    return set(re.findall(r"""item\.get\(\s*["']([a-z_]+)["']""", source))
+    """Every field of the line schema — the one definition of what a line is.
+
+    This used to grep `item.get("...")` calls out of the service; lines are
+    now validated into `PurchaseLine`, so the schema's fields ARE the set the
+    importer can read, and a field the prompt names that the schema lacks is
+    silently ignored (`extra="ignore"`) — exactly the failure this guards.
+    """
+    from headroom.schemas.admin import PurchaseLine
+
+    return set(PurchaseLine.model_fields)
 
 
 async def test_every_promised_field_is_one_the_importer_reads():

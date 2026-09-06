@@ -190,6 +190,50 @@ async def test_existing_variants_are_merged_once(client, db_session):
         assert (await client.get(f"/api/hats/{untouched['id']}")).json()["artist_series"] == "Neon"
 
 
+async def test_the_write_path_keeps_the_most_common_spelling_too(client, db_session):
+    """The merge counted rows; the write path counted DISTINCT spellings.
+
+    So with three hats recorded as `Neon` and one as `NEON`, a typed `neon`
+    was stored as `NEON`: every spelling arrived with a count of one and the
+    decision fell through to ASCII order, which ranks capitals first. Same
+    tiebreak, both paths, on the real counts.
+    """
+    from sqlalchemy import update as sa_update
+
+    from headroom.models.hat import Hat
+
+    # `Deep Sea` ×3 against `Deep sea` ×1: the minority spelling is the one
+    # the shouting tiebreak would prefer, so only the COUNT can carry this.
+    hats = [await _add(client, artist_series="Deep Sea") for _ in range(4)]
+    await db_session.execute(
+        sa_update(Hat).where(Hat.id == hats[0]["id"]).values(artist_series="Deep sea")
+    )
+    await db_session.commit()
+
+    typed = await _add(client, artist_series="deep sea")
+
+    assert typed["artist_series"] == "Deep Sea"
+
+
+async def test_a_dead_heat_goes_to_the_spelling_that_is_not_shouting(client, db_session):
+    """One row each of `NEON` and `Neon` and nothing else to choose by: the
+    old last resort was plain string order, which puts `NEON` first."""
+    from sqlalchemy import update as sa_update
+
+    from headroom.models.hat import Hat
+    from headroom.services import vocabulary
+
+    assert vocabulary._preferred(["NEON", "Neon"]) == "Neon"
+    assert vocabulary._preferred(["Neon", "NEON"]) == "Neon"
+    hats = [await _add(client, artist_series="Neon") for _ in range(2)]
+    await db_session.execute(
+        sa_update(Hat).where(Hat.id == hats[0]["id"]).values(artist_series="NEON")
+    )
+    await db_session.commit()
+
+    assert (await _add(client, artist_series="neon"))["artist_series"] == "Neon"
+
+
 async def test_the_merge_keeps_the_most_common_spelling(client, db_session):
     """A single early typo must not rename what everything else uses."""
     from sqlalchemy import update as sa_update

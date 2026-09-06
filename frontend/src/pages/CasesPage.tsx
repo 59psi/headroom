@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router';
 import { listCases } from '../api/cases';
 import { getRoomOptions } from '../api/rooms';
+import { caseLabelsUrl } from '../api/settings';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { CaseTile } from '../components/cases/CaseTile';
 
@@ -53,7 +54,7 @@ export function CasesPage() {
       <div className="d-flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
         <h1>Cases</h1>
         <div className="d-flex gap-2">
-          <a href="/api/admin/case-labels" target="_blank" rel="noopener noreferrer" className="btn btn-outline-secondary btn-sm" title="Printable QR labels for every case">🏷 Labels</a>
+          <a href={caseLabelsUrl()} target="_blank" rel="noopener noreferrer" className="btn btn-outline-secondary btn-sm" title="Printable QR labels for every case">🏷 Labels</a>
           <Link to="/cases/new" className="btn btn-primary btn-sm">+ New</Link>
         </div>
       </div>

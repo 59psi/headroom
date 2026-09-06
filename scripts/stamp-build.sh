@@ -21,7 +21,15 @@ cd "$(dirname "$0")/.."
 # Lives here rather than in setup.sh so a running deployment can get it without
 # re-running a script that installs Docker, Node and the Python toolchain.
 if [ "${1:-}" = "--install-hooks" ]; then
-  hooks="$(git rev-parse --git-path hooks 2>/dev/null || echo .git/hooks)"
+  # Outside a git checkout there is nothing to hook. Without this guard the
+  # `|| echo .git/hooks` fallback created a `.git/hooks` in a plain directory,
+  # wrote three hooks into it, and reported success — then said "not a git
+  # checkout" two lines later.
+  if ! git rev-parse --git-dir >/dev/null 2>&1; then
+    echo "stamp-build: not a git checkout — no hooks to install" >&2
+    exit 0
+  fi
+  hooks="$(git rev-parse --git-path hooks)"
   mkdir -p "$hooks"
   for hook in post-merge post-checkout post-rewrite; do
     if [ -e "$hooks/$hook" ] && ! grep -q 'stamp-build.sh' "$hooks/$hook" 2>/dev/null; then
@@ -48,10 +56,13 @@ fi
 touch .env
 # Rewrite in place, preserving every other variable — this file is also where
 # a person keeps their API keys, and clobbering it to set one value would be a
-# genuinely bad day.
+# genuinely bad day. Written to a temp file and copied back over the SAME
+# inode (`cat >`, not `mv`), so a symlinked `.env` stays a symlink and its
+# permissions are kept rather than replaced with a fresh 0600 regular file.
 tmp=$(mktemp)
 grep -v '^HEADROOM_BUILD_SHA=' .env > "$tmp" || true
 printf 'HEADROOM_BUILD_SHA=%s\n' "$sha" >> "$tmp"
-mv "$tmp" .env
+cat "$tmp" > .env
+rm -f "$tmp"
 
 echo "stamp-build: HEADROOM_BUILD_SHA=$sha"

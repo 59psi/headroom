@@ -96,7 +96,7 @@ async def render_report(
 def _version_label() -> str:
     try:
         return f"Headroom v{version('headroom')}"
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 — a photo that will not open is a missing picture in a report, not a failed report
         return "Headroom"
 
 

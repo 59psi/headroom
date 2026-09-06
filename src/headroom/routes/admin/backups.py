@@ -271,14 +271,22 @@ async def test_backup_upload(db: AsyncSession = Depends(get_db)):
 #: Failures whose message is accurate but whose CAUSE is somewhere else, mapped
 #: to the thing to actually go and do. Relaying rsync's own words is correct but
 #: not always enough — an operator reading "Unknown module" has no way to know
-#: that DSM has two rsync checkboxes and only one of them defines modules.
+#: that on a Synology the module names are the shared-folder names.
+#:
+#: This hint used to say the opposite of OPERATIONS §4: tick "Enable network
+#: backup service", NOT "Enable rsync service". Confirmed against a real NAS
+#: (CHANGELOG 2.74.1): "Enable rsync service" IS the daemon, and it exposes
+#: every shared folder as a module; the neighboring checkbox merely adds one
+#: more module named `NetBackup`. The hint is what the operator reads at the
+#: exact moment the doc corrects, so it has to agree with the doc.
 _FAILURE_HINTS: tuple[tuple[str, str], ...] = (
     (
         "unknown module",
-        "The daemon answered but has no module by that name. On a Synology, tick "
-        "Control Panel → File Services → rsync → **Enable network backup "
-        "service** — NOT 'Enable rsync service', which is rsync over SSH and "
-        "defines no modules. Run `rsync USER@HOST::` to list what it does offer. "
+        "The daemon answered but has no module by that name. On a Synology "
+        "(Control Panel → File Services → rsync → Enable rsync service) every "
+        "shared folder is a module, so the name is install-specific — `home`, "
+        "`photo`, `docker`. Run `rsync rsync://HOST/` to list what it offers; "
+        "the NetBackup module from 'Enable network backup service' is optional. "
         "Module names resolve BEFORE the password, so this is not a credentials "
         "problem.",
     ),

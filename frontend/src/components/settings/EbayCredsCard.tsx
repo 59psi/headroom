@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getEbayCreds, setEbayCreds, deleteEbayCreds, testEbayCreds } from '../../api/settings';
+import { ErrorNote } from '../common/ErrorNote';
 
 export function EbayCredsCard() {
   const qc = useQueryClient();
@@ -100,11 +101,12 @@ export function EbayCredsCard() {
               </div>
             )}
           </div>
-        ) : (
+        ) : ebay.isSuccess ? (
           <p className="text-muted small mb-3">
             Not configured — eBay tile shows the search deep-link only, no live prices.
           </p>
-        )}
+        ) : null}
+        <ErrorNote of={[ebay, deleteEbayMut, testEbayMut]} className="mb-3" />
         <label className="form-label" htmlFor="ebay-app-id">App ID (Client ID)</label>
         <input
           id="ebay-app-id"
@@ -131,9 +133,7 @@ export function EbayCredsCard() {
         >
           {saveEbayMut.isPending ? 'Saving…' : 'Save'}
         </button>
-        {saveEbayMut.error && (
-          <div className="alert alert-danger mt-3 mb-0 small">{String(saveEbayMut.error)}</div>
-        )}
+        <ErrorNote of={saveEbayMut} className="mt-3" />
       </div>
     </div>
   );

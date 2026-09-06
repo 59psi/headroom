@@ -260,6 +260,43 @@ async def test_editing_resale_price_marks_it_manual(client):
     assert cleared.json()["resale_price_scope"] is None
 
 
+async def test_restating_the_stored_price_does_not_make_it_manual(client, db_session):
+    """The SPA sends only what changed; every OTHER client is covered here.
+
+    A client that echoes the whole hat back — the 2.57 shape — used to turn
+    a scraped `model`-scoped median into a `manual` price by saving a note.
+    Same number in, same provenance out. A different number is the person.
+    """
+    from sqlalchemy import update as sa_update
+
+    from headroom.models.hat import Hat
+
+    created = await client.post("/api/hats", json={
+        "condition": "new", "size": "classic", "style": "a_game",
+    })
+    hat_id = created.json()["id"]
+    await db_session.execute(sa_update(Hat).where(Hat.id == hat_id).values(
+        resale_price=85.0, resale_price_scope="model",
+        resale_price_source="median of 18 live listings",
+        estimated_new_price=79.0, estimated_new_price_source="melin retail",
+    ))
+    await db_session.commit()
+
+    echoed = await client.put(f"/api/hats/{hat_id}", json={
+        "resale_price": 85.0, "estimated_new_price": 79.0, "owner_notes": "still mine",
+    })
+    assert echoed.status_code == 200, echoed.text
+    body = echoed.json()
+    assert body["resale_price_scope"] == "model"
+    assert body["resale_price_source"] == "median of 18 live listings"
+    assert body["estimated_new_price_source"] == "melin retail"
+    assert body["owner_notes"] == "still mine"
+
+    changed = (await client.put(f"/api/hats/{hat_id}", json={"resale_price": 90.0})).json()
+    assert changed["resale_price_scope"] == "manual"
+    assert changed["resale_price_source"] == "Entered manually"
+
+
 # ------------- condition- and size-matched comparables (v2.21) --------- #
 #
 # The listed price IS the sale price here: fixed-price marketplace, automatic

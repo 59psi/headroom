@@ -34,7 +34,9 @@
   /* === Text ======================================================== */
   --text: #f5e9ff;
   --text-secondary: #b6a3d6;
-  --text-muted: #7c6aa3;
+  /* AA-compliant for small text on the near-black grounds (was #7c6aa3 at
+     4.38:1, below 4.5:1, and used at 0.65-0.8 rem). ~5.0:1 on --bg-deep. */
+  --text-muted: #9a86c4;
   --text-on-neon: #06010f;
 
   /* === Neon palette =============================================== */

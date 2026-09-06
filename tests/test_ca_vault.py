@@ -118,6 +118,18 @@ async def test_the_archive_says_it_holds_private_keys(tmp_path, monkeypatch):
     assert "HEADROOM_BACKUP_INCLUDE_CA=false" in note
     # Without this the reader has the key material and no idea what to do.
     assert "Restoring" in note
+    # The recipe inside the archive must name the directory the archive
+    # actually unpacks to. It said `"$PWD/caddy-pki"` while the files sit
+    # under `data/caddy-pki/`; followed from a NAS, Docker mounted an empty
+    # directory and `cp` copied nothing — the one copy of the recipe that
+    # travels with the keys was the wrong one. Only the key/cert files are
+    # copied, so this README does not land in the PKI directory.
+    with tarfile.open(fileobj=io.BytesIO(buf.getvalue()), mode="r:gz") as tar:
+        archive_dir = {n.rsplit("/", 1)[0] for n in tar.getnames() if "/" in n}
+    assert archive_dir == {"data/caddy-pki"}
+    assert '"$PWD/data/caddy-pki":/restore' in note
+    assert "cp /restore/root.* /restore/intermediate.*" in note
+    assert "cp /restore/* " not in note
 
 
 async def test_opting_out_leaves_the_keys_behind(tmp_path, monkeypatch):
@@ -206,6 +218,31 @@ async def test_the_alarm_does_not_reset_itself(db_session):
 
     assert changed is True
     assert expected == "AA:BB"
+
+
+async def test_rewriting_the_same_ca_bytes_is_not_a_change(tmp_path, monkeypatch):
+    """The export sidecar re-copies the four files every 60 s. Keyed on
+    mtime, the fingerprint saw a change every minute and the backup
+    change-gate was defeated on the LAN-HTTPS overlay — a full tarball every
+    cycle (measured: five in five minutes, against one for a control with no
+    CA mounted). Same bytes, same fingerprint; different bytes, different."""
+    import os
+    import time
+
+    pki = _fake_pki(tmp_path, monkeypatch)
+    before = ca_vault.fingerprint_parts()
+
+    # What `install` does: identical content, fresh mtime.
+    for name in ca_vault.PKI_FILES:
+        path = pki / name
+        content = path.read_bytes()
+        path.write_bytes(content)
+        later = time.time() + 120
+        os.utime(path, (later, later))
+    assert ca_vault.fingerprint_parts() == before
+
+    (pki / "root.key").write_text("-----BEGIN a regenerated key-----\n")
+    assert ca_vault.fingerprint_parts() != before
 
 
 async def test_no_certificate_at_all_is_not_a_change(db_session):

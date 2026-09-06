@@ -50,17 +50,25 @@ def _derive_flags(value: str | None) -> tuple[bool, bool]:
 
 
 def _extract_db(archive: Path, into: Path) -> Path:
-    """Pull the .db out of a backup tarball."""
+    """Pull the .db (and its WAL sidecar, if any) out of a backup tarball."""
     with tarfile.open(archive, "r:gz") as tar:
-        member = next(
-            (m for m in tar.getmembers() if m.name.endswith(".db") and m.isfile()), None
-        )
+        members = tar.getmembers()
+        member = next((m for m in members if m.name.endswith(".db") and m.isfile()), None)
         if member is None:
             sys.exit(f"No .db file found inside {archive}")
-        if "DEGRADED-BACKUP-README.txt" in tar.getnames():
+        # `endswith`, not `== "DEGRADED-BACKUP-README.txt"`: the archive stores
+        # it as `data/DEGRADED-BACKUP-README.txt`, so the equality check never
+        # matched and the torn-backup warning never fired.
+        if any(m.name.endswith("DEGRADED-BACKUP-README.txt") for m in members):
             print("!! This backup was taken with the raw-file fallback and may be torn.")
             print("!! Verify it before trusting the values below.\n")
         tar.extract(member, path=into, filter="data")
+        # The WAL fallback archives the -wal beside the .db; without it SQLite
+        # opens the main file and misses every transaction still in the log.
+        for sidecar in members:
+            if sidecar.isfile() and sidecar.name.endswith((".db-wal", ".db-shm")) \
+                    and sidecar.name.startswith(member.name[: -len(".db")]):
+                tar.extract(sidecar, path=into, filter="data")
     return into / member.name
 
 

@@ -9,13 +9,21 @@ import type {
   SharedPriceGroup, SharedPriceHat, UnclaimedFromPurchases,
 } from '../../types';
 
-vi.mock('../../api/settings', () => ({
-  auditSharedPrices: vi.fn(),
-  getUnclaimedFromPurchases: vi.fn(),
-}));
-vi.mock('../../api/purchases', () => ({
-  rematchPurchases: vi.fn(),
-}));
+vi.mock('../../api/settings', async (importOriginal) => {
+  const { stubAll } = await import('../../test/stubModule');
+  return {
+    ...stubAll(await importOriginal<object>()),
+    auditSharedPrices: vi.fn(),
+    getUnclaimedFromPurchases: vi.fn(),
+  };
+});
+vi.mock('../../api/purchases', async (importOriginal) => {
+  const { stubAll } = await import('../../test/stubModule');
+  return {
+    ...stubAll(await importOriginal<object>()),
+    rematchPurchases: vi.fn(),
+  };
+});
 
 const mocked = vi.mocked(api);
 const purchases = vi.mocked(purchaseApi);

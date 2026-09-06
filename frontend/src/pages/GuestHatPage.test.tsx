@@ -13,14 +13,20 @@ import { GuestHatPage } from './GuestHatPage';
 import * as guestApi from '../api/guest';
 import type { SharedHat } from '../types';
 
-vi.mock('../api/guest', () => ({ getGuestHat: vi.fn() }));
+vi.mock('../api/guest', async (importOriginal) => {
+  const { stubAll } = await import('../test/stubModule');
+  return {
+    ...stubAll(await importOriginal<object>()),
+    getGuestHat: vi.fn()
+  };
+});
 
 const mocked = vi.mocked(guestApi);
 
 function hat(over: Partial<SharedHat> = {}): SharedHat {
   return {
     id: 7, display_id: 'A-001-01', brand: 'Melin', model_name: 'Coronado',
-    style: 'a_game', photo_url: null, colors: [], case: 'A-001', room: 'Study',
+    style: 'a_game', photo_url: null, thumb_url: null, colors: [], case: 'A-001', room: 'Study',
     ...over,
   };
 }

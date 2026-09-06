@@ -8,10 +8,10 @@ hats a real cost basis.
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Float, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from headroom.database import Base
+from headroom.database import Base, UtcDateTime
 
 
 class ColorwayEntry(Base):
@@ -23,8 +23,8 @@ class ColorwayEntry(Base):
     colorway: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
     category: Mapped[str | None] = mapped_column(String(30), nullable=True)
     listing_count: Mapped[int] = mapped_column(Integer, default=1)
-    first_seen: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    last_seen: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    first_seen: Mapped[datetime] = mapped_column(UtcDateTime, server_default=func.now())
+    last_seen: Mapped[datetime] = mapped_column(UtcDateTime, server_default=func.now())
 
 
 class Purchase(Base):
@@ -33,7 +33,7 @@ class Purchase(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     source: Mapped[str] = mapped_column(String(20), default="email")  # email | manual
     order_ref: Mapped[str | None] = mapped_column(String(80), nullable=True)
-    order_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    order_date: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
     item_title: Mapped[str] = mapped_column(String(200))
     model_name: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
     colorway: Mapped[str | None] = mapped_column(String(120), nullable=True)
@@ -62,4 +62,4 @@ class Purchase(Base):
     # rules: a lazy="select" access on an AsyncSession raises rather than
     # emitting a query, so a plain attribute read would be a runtime error.
     hat: Mapped["Hat | None"] = relationship(lazy="selectin")  # noqa: F821
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, server_default=func.now())

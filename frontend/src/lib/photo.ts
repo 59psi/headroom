@@ -12,5 +12,14 @@
  * one. Full-size views (the hat page lightbox) deliberately do NOT use this.
  */
 export function tileSrc(hat: { thumb_path: string | null; photo_path: string | null }): string {
-  return `/uploads/${hat.thumb_path ?? hat.photo_path}`;
+  return uploadUrl(hat.thumb_path ?? hat.photo_path);
+}
+
+/**
+ * Where a stored file is served from. One definition: `/uploads/${…}` was
+ * assembled inline in nine components, which is nine places for the mount
+ * to drift away from `app.py`.
+ */
+export function uploadUrl(path: string | null | undefined): string {
+  return `/uploads/${path ?? ''}`;
 }

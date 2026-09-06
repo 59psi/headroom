@@ -72,7 +72,24 @@ def _preferred(variants: list[str], known: tuple[str, ...] = ()) -> str:
     counts: dict[str, int] = {}
     for v in variants:
         counts[v] = counts.get(v, 0) + 1
-    return sorted(counts, key=lambda v: (-_accent_count(v), -counts[v], v))[0]
+    # The last resort is spelled out rather than left to plain string order:
+    # ASCII sorts `NEON` before `Neon`, so a dead heat went to the shouting
+    # one. Fewest capitals after the first letter wins the heat, then the
+    # case-insensitive order keeps the result independent of row order.
+    return sorted(
+        counts,
+        key=lambda v: (-_accent_count(v), -counts[v], _shouting(v), v.casefold(), v),
+    )[0]
+
+
+def _shouting(value: str) -> int:
+    """Words written in ALL CAPS — `NEON` 1, `Neon` 0, `Skye Walker` 0.
+
+    Whole words, not capital letters: Title Case is how a collection is
+    named and must not lose to the lowercase spelling a phone keyboard
+    produces.
+    """
+    return sum(1 for word in value.split() if len(word) > 1 and word.isupper())
 
 
 async def distinct_values(
@@ -131,9 +148,19 @@ async def canonicalize(
         if fold(candidate) == key:
             return candidate
 
-    rows = (
-        await db.execute(select(column).where(column.is_not(None)).distinct())
-    ).scalars().all()
+    # ALL rows, not `DISTINCT`: `_preferred` decides ties by how common a
+    # spelling is, and a distinct list hands it every spelling with a count
+    # of one. With three hats recorded as `Neon` and one as `NEON`, a typed
+    # `neon` was stored as `NEON` — the tiebreak fell through to ASCII order,
+    # which ranks capitals first. The merge path already read every row; the
+    # write path was the one deciding on a fiction.
+    # `no_autoflush`: the analysis path assigns the value to the hat BEFORE
+    # canonicalizing it, and an autoflush would push that dirty spelling into
+    # the rows being counted — the value under judgement voting for itself.
+    with db.no_autoflush:
+        rows = (
+            await db.execute(select(column).where(column.is_not(None)))
+        ).scalars().all()
     matches = [" ".join(r.split()) for r in rows if r and r.strip() and fold(r) == key]
     if not matches:
         return cleaned

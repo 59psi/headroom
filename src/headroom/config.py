@@ -1,3 +1,4 @@
+import math
 import os
 from pathlib import Path
 
@@ -29,9 +30,18 @@ def env_float(name: str, default: float) -> float:
     one knob back to its default instead of failing app startup.
     """
     try:
-        return float(os.environ.get(name, default))
+        value = float(os.environ.get(name, default))
     except (TypeError, ValueError):
         return default
+    # `float("nan")` and `float("inf")` parse. `HEADROOM_REPRICING_INTERVAL_
+    # HOURS=nan` reached `asyncio.sleep(nan)` — "Invalid delay: NaN", raised
+    # outside the loop's try, and the scheduler task was dead for the life of
+    # the process with one failure recorded; `inf` did the same one
+    # OverflowError later. A knob that is not a number is a typo, and a typo
+    # turns the knob back to its default like every other unparseable value.
+    if not math.isfinite(value):
+        return default
+    return value
 
 
 def env_int(name: str, default: int) -> int:

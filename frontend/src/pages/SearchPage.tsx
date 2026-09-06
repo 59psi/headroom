@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { ErrorNote } from '../components/common/ErrorNote';
 import { Link, useSearchParams } from 'react-router';
 import { getColorPalette, searchHats, searchHatsByColor } from '../api/search';
 import { ColorScopePicker } from '../components/common/ColorScopePicker';
@@ -182,7 +183,8 @@ export function SearchPage() {
       )}
 
       {isLoading && <LoadingSpinner label="Searching" />}
-      {error && <div className="alert alert-danger">{String(error)}</div>}
+      <ErrorNote of={{ isError: !!error, error }} what="Search failed" />
+      <ErrorNote of={paletteQ} what="Could not load the color palette" />
 
       {data && hasQuery && (
         <>
@@ -201,7 +203,7 @@ export function SearchPage() {
                 <>for "{searchTerm}"</>
               )}
             </div>
-            {data.length > 0 && (
+            {(data.length > 0 || activeFilterCount > 0) && (
               <FilterToggleButton
                 activeCount={activeFilterCount}
                 isOpen={filtersOpen}
@@ -210,7 +212,7 @@ export function SearchPage() {
             )}
           </div>
 
-          {filtersOpen && data.length > 0 && (
+          {filtersOpen && (data.length > 0 || activeFilterCount > 0) && (
             <HatFilterBar state={hatFilters} colors={availableColors} />
           )}
 

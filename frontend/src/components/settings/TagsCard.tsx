@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getTagBase, setTagBase, clearTagBase } from '../../api/settings';
+import { caseLabelsUrl, clearTagBase, getTagBase, hatLabelsUrl, setTagBase } from '../../api/settings';
+import { ErrorNote } from '../common/ErrorNote';
 
 /**
  * QR stickers and NFC tags for the physical objects.
@@ -13,7 +14,8 @@ import { getTagBase, setTagBase, clearTagBase } from '../../api/settings';
  */
 export function TagsCard() {
   const qc = useQueryClient();
-  const { data } = useQuery({ queryKey: ['settings', 'tags'], queryFn: getTagBase });
+  const tags = useQuery({ queryKey: ['settings', 'tags'], queryFn: getTagBase });
+  const data = tags.data;
   const [draft, setDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
 
@@ -73,18 +75,19 @@ export function TagsCard() {
                 when the Pi's IP changes.</>}
         </p>
         {error && <p className="text-danger small">{error}</p>}
+        <ErrorNote of={[tags, reset]} className="mb-2" />
 
         <hr />
 
         <div className="d-flex gap-2 flex-wrap">
           <a
-            href="/api/admin/hat-labels"
+            href={hatLabelsUrl()}
             target="_blank"
             rel="noopener noreferrer"
             className="btn btn-outline-primary btn-sm"
           >🏷 Hat labels</a>
           <a
-            href="/api/admin/case-labels"
+            href={caseLabelsUrl()}
             target="_blank"
             rel="noopener noreferrer"
             className="btn btn-outline-primary btn-sm"

@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getGuestView, setGuestView } from '../../api/settings';
+import { ErrorNote } from '../common/ErrorNote';
 
 /**
  * The switch that decides whether the collection is readable without an
@@ -11,10 +12,11 @@ import { getGuestView, setGuestView } from '../../api/settings';
  */
 export function GuestViewCard() {
   const qc = useQueryClient();
-  const { data } = useQuery({
+  const status = useQuery({
     queryKey: ['settings', 'guest-view'],
     queryFn: getGuestView,
   });
+  const data = status.data;
   const toggle = useMutation({
     mutationFn: (enabled: boolean) => setGuestView(enabled),
     onSuccess: () => {
@@ -23,6 +25,11 @@ export function GuestViewCard() {
     },
   });
 
+  // Unknown is not "off". While the fetch is in flight or has failed, the
+  // switch is disabled rather than drawn unchecked: a security setting that
+  // reads "Off — sign-in required" because the request 500'd is asserting
+  // the opposite of what may be true.
+  const known = data !== undefined;
   const enabled = data?.enabled ?? false;
 
   return (
@@ -43,13 +50,16 @@ export function GuestViewCard() {
             type="checkbox"
             role="switch"
             checked={enabled}
-            disabled={toggle.isPending}
+            disabled={!known || toggle.isPending}
             onChange={e => toggle.mutate(e.target.checked)}
           />
           <label className="form-check-label" htmlFor="guest-view-toggle">
-            {enabled ? 'Guests can browse' : 'Off — sign-in required'}
+            {!known
+              ? (status.isError ? 'Unknown — could not load this setting' : 'Loading…')
+              : enabled ? 'Guests can browse' : 'Off — sign-in required'}
           </label>
         </div>
+        <ErrorNote of={[status, toggle]} className="mb-2" />
 
         <p className="text-secondary small mb-0">
           Guests see photos, brand, model, style, colors and where a hat lives.

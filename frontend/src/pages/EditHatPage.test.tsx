@@ -22,20 +22,30 @@ const HAT: HatRead = hatFixture({
   created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z',
 });
 
-vi.mock('../api/hats', () => ({
-  getHat: vi.fn(async () => HAT),
-  updateHat: vi.fn(async () => HAT),
-  uploadHatPhoto: vi.fn(),
-  assignHat: vi.fn(),
-  updateHatColors: vi.fn(async () => HAT),
-  getStyles: vi.fn(async () => [{ value: 'collab', label: 'Collab' }]),
-  getSizes: vi.fn(async () => [{ value: 'classic', label: 'Classic' }]),
-  getConditions: vi.fn(async () => [{ value: 'new', label: 'New' }]),
-  getConstructions: vi.fn(async () => ['HYDRO', 'HYDROLite', 'Thermal']),
-  getCollections: vi.fn(async () => ['Piña', 'Skye Walker']),
-  getColorwayOptions: vi.fn(async () => []),
-}));
-vi.mock('../api/cases', () => ({ listCases: vi.fn(async () => []) }));
+vi.mock('../api/hats', async (importOriginal) => {
+  const { stubAll } = await import('../test/stubModule');
+  return {
+    ...stubAll(await importOriginal<object>()),
+    getHat: vi.fn(async () => HAT),
+    updateHat: vi.fn(async () => HAT),
+    uploadHatPhoto: vi.fn(),
+    assignHat: vi.fn(),
+    updateHatColors: vi.fn(async () => HAT),
+    getStyles: vi.fn(async () => [{ value: 'collab', label: 'Collab' }]),
+    getSizes: vi.fn(async () => [{ value: 'classic', label: 'Classic' }]),
+    getConditions: vi.fn(async () => [{ value: 'new', label: 'New' }]),
+    getConstructions: vi.fn(async () => ['HYDRO', 'HYDROLite', 'Thermal']),
+    getCollections: vi.fn(async () => ['Piña', 'Skye Walker']),
+    getColorwayOptions: vi.fn(async () => []),
+  };
+});
+vi.mock('../api/cases', async (importOriginal) => {
+  const { stubAll } = await import('../test/stubModule');
+  return {
+    ...stubAll(await importOriginal<object>()),
+    listCases: vi.fn(async () => [])
+  };
+});
 vi.mock('react-router', async (importOriginal) => ({
   ...(await importOriginal<typeof import('react-router')>()),
   useParams: () => ({ hatId: '7' }),

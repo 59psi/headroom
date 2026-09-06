@@ -35,7 +35,26 @@ describe('safeNext', () => {
     '/\\evil.example',
     '\\\\evil.example',
     '/\\/evil.example',
+    // Whitespace variants. The WHATWG URL parser strips ASCII tab, LF and CR
+    // BEFORE it parses, so `/<TAB>/evil.example` passes every check written
+    // against the literal characters and the browser navigates to
+    // `https://evil.example/`. `params.get('next')` has already decoded
+    // `%09`/`%0A`/`%0D` into these by the time the guard sees them.
+    '/\t/evil.example',
+    '/\n/evil.example',
+    '/\r/evil.example',
+    '/\t\\evil.example',
+    '\t//evil.example',
+    '/\t/\t/evil.example',
   ])('refuses to send you off-site: %s', bad => {
     expect(safeNext(bad)).toBe('/');
+  });
+
+  it('returns what the browser will actually parse, not the raw string', () => {
+    // A same-origin path with a stray tab is not an attack, but it must come
+    // back as the browser will read it — with the tab gone — so the check and
+    // the navigation cannot disagree about where it leads.
+    expect(safeNext('/hats\t/1')).toBe('/hats/1');
+    expect(safeNext('/hats?style=a_game#top')).toBe('/hats?style=a_game#top');
   });
 });

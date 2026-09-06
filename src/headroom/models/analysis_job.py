@@ -1,9 +1,9 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Integer, String, func
+from sqlalchemy import Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
-from headroom.database import Base
+from headroom.database import Base, UtcDateTime
 
 
 class AnalysisJob(Base):
@@ -23,8 +23,8 @@ class AnalysisJob(Base):
     __tablename__ = "analysis_jobs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    started_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(UtcDateTime, server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
     total: Mapped[int] = mapped_column(Integer, default=0)
     # 'running' until every tagged hat reaches a terminal analysis_status.
     status: Mapped[str] = mapped_column(String(20), default="running")

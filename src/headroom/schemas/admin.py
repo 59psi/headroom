@@ -154,8 +154,52 @@ class EbayCredsUpdate(BaseModel):
     marketplace: str = "EBAY_US"
 
 
+#: One order line may stand for this many units. A hat is one unit and the
+#: importer writes one row per unit, so the cap is really a cap on how many
+#: rows one line can create — and a preview builds a transient row per unit
+#: too. The body used to be `list[dict]`, unvalidated: `quantity: 1e9` on a
+#: DRY RUN allocated 15 GB before it was killed, `quantity: 100000` wrote
+#: 100,000 rows, and one hallucinated digit in the assistant-produced JSON the
+#: card asks the owner to paste was enough. Nobody buys twenty of one hat on
+#: one line; twenty is generous.
+MAX_UNITS_PER_LINE = 20
+
+#: Lines per import. Years of order history came to 294 lines on the real
+#: collection; the matcher is quadratic in purchases × hats.
+MAX_IMPORT_LINES = 500
+
+
+class PurchaseLine(BaseModel):
+    """One order line, as the email-import prompt promises it.
+
+    Every field here is one the importer reads — `tests/test_purchase_prompt_
+    parity.py` checks the prompt against THIS model. Unknown keys are ignored
+    rather than refused, because the assistant producing the JSON is allowed
+    to be chatty; what it must not be is wrong about a field it does name.
+
+    `price` used to be stored verbatim: `"abc"` passed the preview (which
+    counted it as importable) and 500'd the real import at commit with the
+    whole batch rolled back, and a negative price wrote a negative cost basis
+    onto the matched hat — `PAID $-5`, `$-5.00/wear`. `order_date` used to be
+    silently dropped to NULL when unparseable; a bad date is now the caller's
+    422, naming the line.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    item_title: str = Field("", max_length=300)
+    colorway: str | None = Field(None, max_length=120)
+    size: str | None = Field(None, max_length=40)
+    quantity: int = Field(1, ge=1, le=MAX_UNITS_PER_LINE)
+    price: float | None = Field(None, ge=0, allow_inf_nan=False)
+    order_ref: str | None = Field(None, max_length=120)
+    order_date: datetime | None = None
+    source: str | None = Field(None, max_length=40)
+    raw: str | None = Field(None, max_length=4000)
+
+
 class PurchaseImport(BaseModel):
-    items: list[dict]
+    items: list[PurchaseLine] = Field(max_length=MAX_IMPORT_LINES)
 
 
 class PendingHat(BaseModel):
@@ -303,6 +347,10 @@ class CatalogStatus(BaseModel):
     #: card watching only progress re-enables the button during the gap and
     #: the next press is refused for reasons it never showed.
     in_flight: bool = False
+    #: Categories the last harvest could not read. Empty is good news only
+    #: when `entries` is not zero; a harvest that lost every category used
+    #: to report success with nothing to show for it.
+    failed_categories: list[str] = []
 
 
 class CatalogRefreshStarted(BaseModel):
@@ -411,6 +459,10 @@ class RepricingStatus(BaseModel):
     last_success_at: datetime | None = None
     last_error: str | None = None
     consecutive_failures: int = 0
+    #: Hats the last sweep could not consult the marketplace about — the
+    #: difference between a flat market and a dead one. Non-zero alongside a
+    #: success is a partial outage.
+    last_unreachable: int = 0
     #: Hats whose price actually CHANGED, not hats visited — a sweep that
     #: checks 234 and moves none is a working sweep, and reporting 234 would
     #: make a dead market look like busy work.
@@ -597,18 +649,18 @@ class EbayComps(BaseModel):
 class MatchProposal(BaseModel):
     """One proposed purchase → hat link.
 
-    The matcher's proposals name the purchase row (`purchase_id`) and whether
-    the link would set a colorway; the import PREVIEW scores transient rows
-    that have no id yet, so it carries `size` and `already_on_record` instead.
-    One schema, with the fields that differ optional, rather than two that
-    would drift — the preview exists to predict the import exactly.
+    Both the matcher and the import PREVIEW build this through the one
+    `catalog_service._proposal`, so every row carries `size` and
+    `sets_colorway`. What still differs is provenance: the matcher names the
+    purchase row (`purchase_id`), the preview scores transient rows with no id
+    and says which half of the click each row is (`already_on_record`).
     """
 
     purchase_id: int | None = None
     item_title: str
     order_ref: str | None
     price: float | None
-    size: str | None = None
+    size: str | None
     hat_id: int
     hat_display_id: str | None
     score: int
@@ -616,7 +668,7 @@ class MatchProposal(BaseModel):
     ambiguous: bool
     tied_hat_ids: list[int]
     sets_price: bool
-    sets_colorway: bool | None = None
+    sets_colorway: bool
     already_on_record: bool | None = None
 
 

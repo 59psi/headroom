@@ -25,12 +25,12 @@ Then configure the integrations in **Settings**:
    colorway, colors and design notes. (Retail price comes from a lookup
    table of melin's real list prices first; Claude's estimate fills in only
    where the table has no row.)
-2. **Google Vision Key (optional)** — fallback brand detection for whenever
+2. **Google Vision Key (fallback)** — fallback brand detection for whenever
    Claude is unavailable. Colors fall back automatically without any key.
-3. **eBay credentials (optional)** — a Production App ID + Cert ID enables
+3. **eBay Comparable Listings (optional)** — a Production App ID + Cert ID enables
    the *eBay ask* tile: the median of live asking prices for comparable
    listings (eBay publishes no sold history to this API).
-4. **Logo (optional)** — upload your own; it replaces the default in the
+4. **Site Logo** — upload your own; it replaces the default in the
    header and home page.
 
 Settings is five tabs, grouped by errand rather than by subsystem —
@@ -118,8 +118,8 @@ files.
 
 ## 4½. Names & colorways
 
-Melin retires colorways constantly, so **Settings → Colorway Catalog →
-Refresh** harvests every model + colorway name currently circulating on the
+Melin retires colorways constantly, so **Settings → Colorway Catalog → Refresh from Melin
+Recap** harvests every model + colorway name currently circulating on the
 melinrecap resale market (hundreds of entries, including long-sold-out
 drops). After that, the Edit Hat form autocompletes both the model name and
 the colorway ("Heather Ocean", "Sand Camo", …).
@@ -265,7 +265,7 @@ model when known), and **where it lives** ("📍 Case A-012 · Office"):
   HYDRO — and HYDROLite, which is a HYDRO-family build — while `hydrolite`
   stays precise and returns only those, and `canvas` finds a hat you recorded
   as Waxed Canvas; `skye walker` finds that signature series). Color terms match the normalized
-  palette vocabulary by default; toggle *exact colors* to match the
+  palette vocabulary by default; toggle *Match exact color names* to match the
   analyzer's original phrasing. Disposed hats never appear — they're not
   findable on a shelf.
 - **Find duplicates** — the button beside the Search heading (or `/duplicates`).
@@ -290,9 +290,11 @@ model when known), and **where it lives** ("📍 Case A-012 · Office"):
 *Dispose* on a hat page records sold / gifted / traded / lost / trashed,
 with price + buyer note for sales. Disposal is a **soft delete**: the hat
 keeps its history, frees its case slot, and disappears from default lists
-(`?status=disposed` / *all* views exist). Sold prices feed the Valuation
-page's realized totals. Undo restores the hat — back into its case if
-there's still room, unassigned otherwise.
+(disposed hats are reachable through a hat's own page, a tag, or the
+`?status=disposed`/`all` API parameter — there is no disposed-hats list in
+the UI). Sold prices feed the Valuation page's realized totals. The hat page's
+**Undo — restore to active** puts it back — into its case if there's still
+room, unassigned otherwise.
 
 ## 9. Reports & backups
 
@@ -318,7 +320,7 @@ Headroom is a PWA designed mobile-first:
 
 Tap **🧢 Wearing this today** on a hat's page — that's the whole workflow.
 Wear count, last-worn date, and **cost-per-wear** (what you paid ÷ wears)
-show under the photo; the Valuation page's *Wear Rotation* card lists the
+show under the photo; the Valuation page's *Wear rotation* card lists the
 five hats that have gone longest without sun. Mis-taps: hit *undo*.
 
 ### Tags: QR stickers and NFC

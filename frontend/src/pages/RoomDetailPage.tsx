@@ -1,4 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
+import { isNotFound } from '../api/client';
+import { ErrorNote } from '../components/common/ErrorNote';
 import { Link, useParams } from 'react-router';
 import { getRoom } from '../api/rooms';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
@@ -27,6 +29,14 @@ export function RoomDetailPage() {
     enabled: Number.isFinite(id),
   });
 
+  if (error && !isNotFound(error)) {
+    return (
+      <div className="py-4">
+        <ErrorNote of={{ isError: true, error }} what="Could not load this room" />
+        <Link to="/rooms" className="btn btn-outline-primary mt-3">← All rooms</Link>
+      </div>
+    );
+  }
   if (!Number.isFinite(id) || error) {
     return (
       <div className="text-center py-5">

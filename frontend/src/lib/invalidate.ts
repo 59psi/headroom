@@ -30,8 +30,14 @@ export function invalidateHatViews(qc: QueryClient, hatId?: number) {
   // it; without this the page would keep showing the hat where it used to be
   // for the whole 30s staleTime. Same shape of trap as
   // `['admin','recent-errors']` vs `['admin','recent-errors-count']`.
+  // `['hat', hatId]` refreshes the hat DETAIL page. A caller that knows which
+  // hat changed passes its id and narrows to that one; the whole-collection
+  // callers (re-price all, unlink all, fill from purchases, a case moved
+  // between rooms) pass none and get the bare `['hat']` PREFIX, which — like
+  // `['case']` above — covers every cached `['hat', id]`. Those callers left
+  // every open hat page stale for the 30s staleTime before this key existed.
   const keys: unknown[][] = [['hats'], ['cases'], ['case'], ['rooms'], ['room']];
-  if (hatId !== undefined) keys.push(['hat', hatId]);
+  keys.push(hatId === undefined ? ['hat'] : ['hat', hatId]);
   return Promise.all(keys.map(queryKey => qc.invalidateQueries({ queryKey })));
 }
 

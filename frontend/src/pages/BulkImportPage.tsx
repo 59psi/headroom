@@ -13,6 +13,7 @@ import { DEFAULT_HAT_BASICS } from '../components/hats/HatFormFields';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { invalidateHatViews } from '../lib/invalidate';
 import { formatBytes } from '../lib/format';
+import { ErrorNote } from '../components/common/ErrorNote';
 
 const MAX_FILES = 100;
 
@@ -126,6 +127,14 @@ export function BulkImportPage() {
         <Link to="/hats" className="btn btn-outline-secondary btn-sm">← Hats</Link>
       </div>
 
+      {/* The option lists feed the defaults form below; a failed fetch used
+          to render three empty selects with no explanation. */}
+      <ErrorNote
+        of={[styles, sizes, conditions, cases, recentJobs]}
+        what="Could not load the import options"
+        className="mb-3"
+      />
+
       {activeJobId != null && job.error && (
         <div className="card mb-3">
           <div className="card-body">
@@ -224,6 +233,7 @@ export function BulkImportPage() {
                       <button
                         type="button"
                         className="btn btn-outline-danger btn-sm"
+                        aria-label={`Remove ${f.name}`}
                         onClick={() => removeFile(fileKey(f))}
                       >×</button>
                     </div>
@@ -233,9 +243,7 @@ export function BulkImportPage() {
             </div>
           </div>
 
-          {submit.error && (
-            <div className="alert alert-danger">{String(submit.error)}</div>
-          )}
+          <ErrorNote of={submit} className="mb-3" />
 
           <button
             type="button"
@@ -265,6 +273,7 @@ export function BulkImportPage() {
             <div className="text-secondary small mb-3">
               {job.data.done} done · {job.data.errors} errors · {job.data.skipped} skipped · of {job.data.total}
             </div>
+            <ErrorNote of={cancelMut} what="Could not cancel" className="mb-3" />
             <div style={{
               height: 8, background: 'rgba(0,0,0,0.3)', borderRadius: 4, overflow: 'hidden',
               marginBottom: '1rem',
@@ -326,7 +335,9 @@ export function BulkImportPage() {
               >
                 <div className="flex-grow-1 text-start">
                   <div className="font-mono small">Job #{j.id}</div>
-                  <div className="text-muted small">{new Date(j.created_at).toLocaleString()}</div>
+                  <div className="text-muted small">
+                    {j.created_at ? new Date(j.created_at).toLocaleString() : '—'}
+                  </div>
                 </div>
                 <div className="text-end">
                   <div className="badge bg-info">{j.status}</div>

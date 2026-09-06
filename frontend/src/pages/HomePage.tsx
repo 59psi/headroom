@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { ErrorNote } from '../components/common/ErrorNote';
 import { Link } from 'react-router';
 import { listCases } from '../api/cases';
 import { listAllHats } from '../api/hats';
@@ -136,6 +137,9 @@ export function HomePage() {
   const totalHats = hats.data?.length ?? 0;
   const totalCases = cases.data?.length ?? 0;
   const totalRooms = rooms.data?.length ?? 0;
+  // `rooms` and `logo` are not in the hard error guard above (the page is
+  // useful without them), but a failed rooms load showed "0 Rooms" as if the
+  // collection had none.
   const archiveCases = cases.data?.filter(c => c.case_type === 'archive').length ?? 0;
   const dailyCases = cases.data?.filter(c => c.case_type === 'daily_wear').length ?? 0;
 
@@ -168,6 +172,7 @@ export function HomePage() {
             <span className="hr-stat-cap">Rooms</span>
           </Link>
         </div>
+        <ErrorNote of={[rooms, logo]} what="Some of the dashboard could not load" className="mt-2" />
         <div className="hr-stat-sub">
           <Link to="/cases?type=archive"><b>{archiveCases}</b> Archive</Link>
           <Link to="/cases?type=daily_wear"><b>{dailyCases}</b> Daily</Link>

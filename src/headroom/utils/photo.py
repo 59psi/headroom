@@ -1,13 +1,66 @@
 import asyncio
 import logging
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 logger = logging.getLogger(__name__)
 
 MAX_DIMENSION = 1200
+
+#: The most pixels a source image may declare before Pillow refuses to decode
+#: it. Pillow's own default only WARNS at ~89 megapixels and errors at twice
+#: that, and a 178-megapixel file decodes to ~700 MB of RGBA — beside the
+#: 179 MB rembg model, in a 1 GB container. Pillow errors above 2× this
+#: number, so the ceiling is 80 megapixels: the largest phone photo (8064 ×
+#: 6048, 48.8 MP) decodes with at most a warning, and a bomb is refused from
+#: its header before a pixel is allocated. Set here, once, because every
+#: decoder in the app imports from this module and a per-call-site setting is
+#: the one a new `Image.open` forgets.
+MAX_SOURCE_PIXELS = 40_000_000
+Image.MAX_IMAGE_PIXELS = MAX_SOURCE_PIXELS
+
+#: The 400 both single-file upload routes answer with. One string, so the
+#: two cannot drift apart in wording the way they drifted apart in behavior.
+UNREADABLE_IMAGE_DETAIL = "That file is not an image Headroom can read."
+
+
+class UnreadableImage(ValueError):
+    """The bytes are not an image this app can decode — a CLIENT error.
+
+    Raised for anything Pillow refuses (unrecognized bytes, a truncated file,
+    a header claiming more pixels than `MAX_SOURCE_PIXELS` allows). The
+    content-type check on the upload routes reads a header the client chose;
+    the decode is the real gate, and its failure used to be unhandled on the
+    hat-photo route — a 500 plus a durable `error.unhandled` row for an HTML
+    file with an image MIME — while the logo route answered 400 for the same
+    bytes (and 500'd on a bomb, which is not an `OSError`). One decoder, one
+    exception, one answer.
+    """
+
+
+@contextmanager
+def decoded_image(path: Path) -> Iterator[Image.Image]:
+    """Open `path` and decode it fully, or raise `UnreadableImage`.
+
+    `Image.open` is lazy: it reads the header (which is where a bomb is
+    refused) and the pixels only on first use, so a corrupt body surfaces
+    somewhere inside the caller's resize. Loading here means the caller sees
+    a good image or nothing.
+    """
+    try:
+        opened = Image.open(path)
+    except (UnidentifiedImageError, Image.DecompressionBombError, OSError, ValueError) as exc:
+        raise UnreadableImage(str(exc)) from exc
+    with opened:
+        try:
+            opened.load()
+        except (Image.DecompressionBombError, OSError, ValueError) as exc:
+            raise UnreadableImage(str(exc)) from exc
+        yield opened
 
 # Gallery tiles render at roughly 160 CSS px, so 320 covers a 2x display and
 # nothing more. The full cutout is a 1200px RGBA PNG — a few hundred KB each,
@@ -54,7 +107,7 @@ def process_image(input_path: Path, output_path: Path) -> Path:
     async code so Pillow's CPU work doesn't block the event loop.
     """
     try:
-        import pillow_heif  # noqa: PLC0415
+        import pillow_heif  # noqa: PLC0415 — optional dependency; registering the opener is the import's side effect, done once per call site that needs HEIC
         pillow_heif.register_heif_opener()
     except ImportError:
         pass
@@ -64,7 +117,7 @@ def process_image(input_path: Path, output_path: Path) -> Path:
     # sensor sideways and records Orientation 6/8 in EXIF; `.convert("RGB")`
     # + JPEG save drops that tag without honoring it, so the stored photo — and
     # the cutout, the thumbnail and everything Claude sees — was on its side.
-    with Image.open(input_path) as opened:
+    with decoded_image(input_path) as opened:
         img = ImageOps.exif_transpose(opened) or opened
         if img.mode != "RGB":
             img = img.convert("RGB")

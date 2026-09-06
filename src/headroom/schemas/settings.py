@@ -1,5 +1,7 @@
 from datetime import datetime
 
+from urllib.parse import urlsplit
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
@@ -37,7 +39,10 @@ class ModelStatus(BaseModel):
 class ModelUpdate(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
 
-    model_id: str = Field(min_length=3, max_length=120)
+    # It becomes the `model` parameter of every Claude call. Anthropic ids are
+    # letters, digits, dots, dashes and colons; anything else (HTML, spaces)
+    # is a typo at best and stored HTML at worst.
+    model_id: str = Field(min_length=3, max_length=120, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
 
 
 class TlsStatusRead(BaseModel):
@@ -130,6 +135,13 @@ class TagBaseUpdate(BaseModel):
         cleaned = v.strip()
         if not cleaned.startswith(("http://", "https://")):
             raise ValueError("must start with http:// or https://")
+        # A scheme alone is not a host: `http://` was stored as `http:` and
+        # every tag then read `http:/t/h/1`.
+        parsed = urlsplit(cleaned)
+        if not parsed.hostname:
+            raise ValueError("must name a host, e.g. http://headroom.local:8000")
+        if parsed.username or parsed.password:
+            raise ValueError("must not carry credentials")
         return cleaned
 
 

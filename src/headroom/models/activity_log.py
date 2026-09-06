@@ -1,9 +1,9 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Integer, String, Text, func
+from sqlalchemy import Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
-from headroom.database import Base
+from headroom.database import Base, UtcDateTime
 
 
 class ActivityLog(Base):
@@ -13,7 +13,7 @@ class ActivityLog(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     occurred_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), index=True
+        UtcDateTime, server_default=func.now(), index=True
     )
     kind: Mapped[str] = mapped_column(String(40), index=True)
     entity_type: Mapped[str] = mapped_column(String(20), index=True)

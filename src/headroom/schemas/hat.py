@@ -1,8 +1,13 @@
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+
+from headroom.schemas.common import (
+    Brand, Colorway, Construction, Counterparty, LogoDetected, LongNotes, ModelName, Money,
+    Series, ShortNotes, StyleDescriptor,
+)
 
 _NON_WORD = re.compile(r"[^a-z0-9]+")
 
@@ -75,6 +80,30 @@ BEANIE_STYLES: frozenset[str] = frozenset(
         HatStyle.destination.value,
     }
 )
+
+
+#: How each style is printed — the option label, every list, the report.
+#: Beside the enum rather than in `routes/meta.py`, because search matches on
+#: it too: the value is `a_game`, the page says `A-Game`, and a search for
+#: what the page says used to find nothing.
+STYLE_LABELS: dict[str, str] = {
+    "a_game": "A-Game",
+    "odysea": "Odysea",
+    "trenches": "Trenches",
+    "coronado": "Coronado",
+    "eagle": "Eagle",
+    "compass": "Compass",
+    "legend": "Legend",
+    "caddy": "Caddy",
+    "coast": "Coast",
+    "shore": "The Shore",
+    "aviator": "Aviator",
+    "collab": "Collab",
+    "beanie": "Beanie (unspecified)",
+    "all_day": "All Day Beanie",
+    "journey": "Journey Beanie",
+    "destination": "Destination Beanie",
+}
 
 
 def is_beanie_style(style: str | None) -> bool:
@@ -225,21 +254,21 @@ class HatCreate(BaseModel):
     size: HatSize
     style: HatStyle
     # Free-form: "HYDRO", "HYDROLite", "Thermal", or whatever the tag says.
-    construction: str | None = None
+    construction: Construction = None
     date_last_worn: date | None = None
     # Both accepted at creation because the owner frequently knows them while
     # the analyzer cannot: a collection name is printed on the box or the hang
     # tag, not visible in a photo of the hat. Withholding these until the Edit
     # form meant typing them twice, or hoping Claude guessed.
-    artist_series: str | None = None
-    model_name: str | None = None
+    artist_series: Series = None
+    model_name: ModelName = None
     # Same reasoning, applied to cost basis: the receipt is in hand at the
     # moment a hat is added and nowhere to be found a week later. Without this
     # the only ways to record a price were the Edit form or an order-history
     # import, so anything bought secondhand or in person had no cost basis at
     # all — and a purchase price is the one figure in this app that is a fact
     # rather than an estimate.
-    purchase_price: float | None = None
+    purchase_price: Money | None = None
     purchased_at: datetime | None = None
     # Deprecated, accepted for back-compat. Read `construction` instead.
     hydrolite: bool = False
@@ -259,7 +288,7 @@ class HatUpdate(BaseModel):
     condition: HatCondition | None = None
     size: HatSize | None = None
     style: HatStyle | None = None
-    construction: str | None = None
+    construction: Construction = None
     date_last_worn: date | None = None
     # Deprecated, accepted for back-compat. Read `construction` instead.
     #
@@ -269,18 +298,18 @@ class HatUpdate(BaseModel):
     # `hat_service.update_hat` resolves it where the hat is in hand.
     hydrolite: bool | None = None
     hydro: bool | None = None
-    brand: str | None = None
-    logo_detected: str | None = None
-    artist_series: str | None = None
-    model_name: str | None = None
-    colorway: str | None = None
-    purchase_price: float | None = None
+    brand: Brand = None
+    logo_detected: LogoDetected = None
+    artist_series: Series = None
+    model_name: ModelName = None
+    colorway: Colorway = None
+    purchase_price: Money | None = None
     purchased_at: datetime | None = None
-    style_descriptor: str | None = None
-    design_notes: str | None = None
-    owner_notes: str | None = None
-    estimated_new_price: float | None = None
-    resale_price: float | None = None
+    style_descriptor: StyleDescriptor = None
+    design_notes: LongNotes = None
+    owner_notes: LongNotes = None
+    estimated_new_price: Money | None = None
+    resale_price: Money | None = None
 
 
 # Populated straight off the ORM object via `HatRead.model_validate(hat)` —
@@ -395,10 +424,19 @@ class DisposedVia(StrEnum):
 
 class HatDispose(BaseModel):
     via: DisposedVia
-    price: float | None = None
-    to: str | None = None
-    notes: str | None = None
+    price: Money | None = None
+    to: Counterparty = None
+    notes: ShortNotes = None
     disposed_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def _price_only_when_money_changed_hands(self):
+        # A sale or a trade has a price; a gift, a loss or the bin does not.
+        # The modal used to carry the previous sale's $50 into "lost", and the
+        # server stored it — "disposed via lost for $50.00" in the audit log.
+        if self.price is not None and self.via not in (DisposedVia.SOLD, DisposedVia.TRADE):
+            raise ValueError(f"a price makes no sense for '{self.via.value}'")
+        return self
 
 
 class ColorsUpdate(BaseModel):
@@ -420,3 +458,12 @@ class HatAssign(BaseModel):
 
 class WearCreate(BaseModel):
     worn_at: date | None = None  # default: today (UTC)
+
+    @field_validator("worn_at")
+    @classmethod
+    def _not_in_the_future(cls, v: date | None) -> date | None:
+        # "Last worn 2099-01-01" is a typo, not a plan. Tomorrow is allowed:
+        # the client's calendar day can be ahead of the server's UTC one.
+        if v is not None and v > date.today() + timedelta(days=1):
+            raise ValueError("worn_at cannot be in the future")
+        return v

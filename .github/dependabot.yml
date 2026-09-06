@@ -87,8 +87,11 @@ updates:
         update-types: [minor, patch]
 
   # --- Container base images + the uv toolchain pin ------------------------- #
-  # This is the one that would have caught uv 0.5.4 sitting stale from v0.2.0
-  # through v2.0.6.
+  # This ecosystem parses FROM lines and nothing else. The uv pin lived in a
+  # `COPY --from=ghcr.io/astral-sh/uv:<tag>` for months, so eleven updater
+  # runs reported "Found no dependencies to update" while the pin sat at a
+  # version from before the lock format it reads — the comment here said this
+  # entry "would have caught" exactly that. The pin is a `FROM ... AS uv` now.
   - package-ecosystem: docker
     directory: /
     schedule:
@@ -103,6 +106,20 @@ updates:
         patterns: ["*"]
 
   # --- The workflows themselves -------------------------------------------- #
+  # --- Images the compose overlays pull ------------------------------------ #
+  # `caddy:2-alpine`, `willfarrell/autoheal:1.2.0` (a 2021 build holding a
+  # root-equivalent socket) and the rclone image are pulled by the compose
+  # files, which the docker ecosystem above does not read.
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
   - package-ecosystem: github-actions
     directory: /
     schedule:

@@ -12,6 +12,8 @@ import { HatNotesCard } from '../components/hats/HatNotesCard';
 import { TagUrlRow } from '../components/common/TagUrlRow';
 import { useState } from 'react';
 import { invalidateHatViews } from '../lib/invalidate';
+import { ErrorNote } from '../components/common/ErrorNote';
+import { isNotFound } from '../api/client';
 import { money, valueHat } from '../lib/valuation';
 import type { HatRead } from '../types';
 
@@ -155,7 +157,15 @@ export function HatDetailPage() {
   });
 
   if (isLoading) return <LoadingSpinner />;
-  if (error || !data) return (
+  // Only a 404 is "not found". A locked database or a dead server used to
+  // render the same "may have been deleted" copy — the opposite of the truth.
+  if (error && !isNotFound(error)) return (
+    <div className="py-4">
+      <ErrorNote of={{ isError: true, error }} what="Could not load this hat" />
+      <Link to="/hats" className="btn btn-outline-primary mt-3">← Back to Hats</Link>
+    </div>
+  );
+  if (!data) return (
     <div className="text-center py-5">
       <h5 className="mb-2">Hat not found</h5>
       <p className="text-secondary small mb-3">This hat may have been deleted or doesn't exist.</p>
@@ -329,19 +339,17 @@ export function HatDetailPage() {
                     onClick={() => undoWearMut.mutate()}>undo</button>
                 )}
               </div>
-              {recutMut.error && (
-                <div className="alert alert-danger mt-2 mb-0">{String(recutMut.error)}</div>
-              )}
-              {reanalyzeMut.error && (
-                <div className="alert alert-danger mt-2 mb-0">{String(reanalyzeMut.error)}</div>
-              )}
+              {/* The app's primary daily action, and until now the one whose
+                  failure said nothing: the button un-pressed and the count
+                  stayed put. */}
+              <ErrorNote of={[wearMut, undoWearMut]} what="Wear not logged" />
+              <ErrorNote of={recutMut} className="mt-2 mb-0" />
+              <ErrorNote of={reanalyzeMut} className="mt-2 mb-0" />
             </>
           ) : (
             <PhotoCapture onCapture={file => uploadMut.mutate(file)} previewUrl={null} />
           )}
-          {uploadMut.error && (
-            <div className="alert alert-danger mt-2 mb-0">{String(uploadMut.error)}</div>
-          )}
+          <ErrorNote of={uploadMut} className="mt-2 mb-0" />
           {uploadMut.isPending && (
             <div className="text-secondary small mt-2 font-mono" style={{ letterSpacing: '0.08em' }}>
               {/* Since 2.6.0 the POST only saves the photo and queues the
@@ -377,9 +385,7 @@ export function HatDetailPage() {
                 </button>
               )}
             </div>
-            {ebayMut.error && (
-              <div className="alert alert-danger mt-2 mb-0">{String(ebayMut.error)}</div>
-            )}
+            <ErrorNote of={ebayMut} className="mt-2 mb-0" />
             {/* Two-up rather than three-across: at 375px the old row gave each
                 tile ~110px, which a four-digit price and a source line don't
                 fit into. */}
@@ -491,9 +497,7 @@ export function HatDetailPage() {
               >
                 Undo — restore to active
               </button>
-              {undisposeMut.error && (
-                <div className="alert alert-danger mt-2 mb-0">{String(undisposeMut.error)}</div>
-              )}
+              <ErrorNote of={undisposeMut} className="mt-2 mb-0" />
             </>
           ) : (
             <>
@@ -620,9 +624,7 @@ export function HatDetailPage() {
               </button>
             </div>
           </div>
-          {clearColorsMutation.error && (
-            <div className="alert alert-danger small">{String(clearColorsMutation.error)}</div>
-          )}
+          <ErrorNote of={clearColorsMutation} className="small" />
           {data.colors.length === 0 ? (
             <p className="text-muted small mb-0">
               No colors yet — tap "Add Color" to seed the palette manually, or run Reanalyze.
@@ -725,9 +727,7 @@ export function HatDetailPage() {
           Delete
         </button>
       </div>
-      {removeMutation.error && (
-        <div className="alert alert-danger mt-2 mb-0">{String(removeMutation.error)}</div>
-      )}
+      <ErrorNote of={removeMutation} className="mt-2 mb-0" />
 
       <DisposeModal hatId={data.id} show={disposeOpen} onClose={() => setDisposeOpen(false)} />
       {colorEditOpen !== null && (

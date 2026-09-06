@@ -1,6 +1,8 @@
+import { useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getColorwayStatus, refreshColorwayCatalog } from '../../api/settings';
 import { SweepProgressBar } from '../common/SweepProgressBar';
+import { ErrorNote } from '../common/ErrorNote';
 
 export function ColorwayCatalogCard() {
   const qc = useQueryClient();
@@ -22,6 +24,19 @@ export function ColorwayCatalogCard() {
   });
   const inFlight = status.data?.in_flight ?? false;
 
+  // The picker's colorway feed changes when the harvest FINISHES, not when
+  // the 202 arrives. It used to be invalidated on the 202 — before a single
+  // row had been written — so the Edit form kept the pre-harvest catalog
+  // until its own staleTime ran out. The true→false edge is also reached
+  // when a harvest started from another device finishes under us.
+  const wasInFlight = useRef(false);
+  useEffect(() => {
+    if (wasInFlight.current && !inFlight) {
+      qc.invalidateQueries({ queryKey: ['meta', 'colorways'] });
+    }
+    wasInFlight.current = inFlight;
+  }, [inFlight, qc]);
+
   const refreshMut = useMutation({
     // 202: the harvest is minutes of sequential external calls and now runs
     // in the background, so this returns as soon as it has started rather than
@@ -32,7 +47,6 @@ export function ColorwayCatalogCard() {
       // began nothing. Treating a refusal as a start would show "Harvest
       // finished" for somebody else's run.
       if (res.already_running) return;
-      qc.invalidateQueries({ queryKey: ['meta', 'colorways'] });
       qc.invalidateQueries({ queryKey: ['admin', 'colorway-status'] });
     },
   });
@@ -85,9 +99,7 @@ export function ColorwayCatalogCard() {
             }
           />
         </div>
-        {refreshMut.error && (
-          <div className="alert alert-danger small mt-3 mb-0">{String(refreshMut.error)}</div>
-        )}
+        <ErrorNote of={[status, refreshMut]} className="mt-3" />
       </div>
     </div>
   );

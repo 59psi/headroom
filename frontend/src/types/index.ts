@@ -256,6 +256,8 @@ export interface SharedHat {
   model_name: string | null;
   style: string;
   photo_url: string | null;
+  /** The grid thumbnail on the same public route; the full photo is for the hat page. */
+  thumb_url: string | null;
   colors: { name: string; hex: string | null }[];
   case: string | null;
   room: string | null;
@@ -516,8 +518,19 @@ export interface PurchaseRow {
   order_ref: string | null;
   order_date: string | null;
   item_title: string;
+  model_name: string | null;
+  colorway: string | null;
+  size: string | null;
   price: number | null;
+  quantity: number | null;
   hat_id: number | null;
+  source: string | null;
+}
+
+export interface UnmatchOneResult {
+  unmatched: number;
+  hat_id: number | null;
+  cleared: string[];
 }
 
 /** What importing WOULD do. Nothing is written to produce this. */

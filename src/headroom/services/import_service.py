@@ -249,6 +249,11 @@ async def _process_item(item_id: int) -> None:
         if job is not None and job.status == "canceled":
             return
         job_id = item.job_id
+        # A hat a PREVIOUS attempt created before the process died. The item
+        # records it before the slow work below, so a re-run after a crash
+        # adopts it rather than making a second one — measured: four hats
+        # for three photos after a kill inside item 2, one of them photo-less.
+        adopted_hat_id = item.hat_id
 
     # Everything below runs under one try so that ANY failure — including a
     # transient "database is locked" on the mark-running commit — marks the
@@ -316,8 +321,22 @@ async def _process_item(item_id: int) -> None:
             output_path = upload_dir / filename
             final_path = await process_image_async(staged, output_path)
 
-            hat = await hat_service.create_hat(db, create_data)
-            created_hat_id = hat.id
+            hat = None
+            if adopted_hat_id is not None:
+                hat = await hat_service.get_hat_or_none(db, adopted_hat_id)
+            if hat is None:
+                hat = await hat_service.create_hat(db, create_data)
+                # Recorded NOW, before rembg and Claude spend their minutes:
+                # this is what a re-run after a power cut finds and adopts.
+                item = (await db.execute(
+                    select(ImportJobItem).where(ImportJobItem.id == item_id)
+                )).scalar_one()
+                item.hat_id = hat.id
+                await db.commit()
+            # A hat with no committed photo — created just now, or adopted
+            # from a dead attempt — is this import's to remove if it fails
+            # again; one that already has its photo is a finished hat.
+            created_hat_id = None if hat.photo_path else hat.id
             await finalize_hat_photo(db, hat, final_path)
             await db.commit()
 

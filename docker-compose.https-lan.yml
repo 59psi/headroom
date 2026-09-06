@@ -51,6 +51,15 @@ services:
     image: caddy:2-alpine
     container_name: headroom-caddy
     restart: unless-stopped
+    # Bounded like the app is: an unbounded json-file log on a Pi's SD card
+    # and an unbounded sidecar were the two limits the app service carried
+    # and its neighbors did not.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 256m
     network_mode: host
     # A Caddyfile rather than `caddy reverse-proxy`, because the CLI cannot
     # express PKI options and the default it gives you is a TWELVE-HOUR
@@ -109,22 +118,39 @@ services:
     image: caddy:2-alpine
     container_name: headroom-caddy-ca-export
     restart: unless-stopped
+    # Bounded like the app is: an unbounded json-file log on a Pi's SD card
+    # and an unbounded sidecar were the two limits the app service carried
+    # and its neighbors did not.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 64m
     depends_on:
       - caddy
     volumes:
       - caddy-data:/data:ro
       - caddy-ca:/export
     entrypoint: ["/bin/sh", "-c"]
+    # `cmp -s` before every `install`: an unconditional copy rewrote the same
+    # bytes with a new mtime every minute, and the backup change-gate keyed
+    # on mtime — so every daily check saw a change and a full tarball was
+    # written every cycle. The gate now hashes content as well; copying only
+    # what changed is the sidecar's half of the same fix, and it also stops
+    # a sixty-second write to the SD card for nothing.
     command: >
       'PKI=/data/caddy/pki/authorities/local;
        while :; do
          if [ -f "$$PKI/root.crt" ]; then
-           install -m 0644 "$$PKI/root.crt" /export/root.crt;
+           if ! cmp -s "$$PKI/root.crt" /export/root.crt; then
+             install -m 0644 "$$PKI/root.crt" /export/root.crt;
+           fi;
            mkdir -p /export/pki;
            chown 1000:1000 /export/pki;
            chmod 0700 /export/pki;
            for f in root.crt root.key intermediate.crt intermediate.key; do
-             if [ -f "$$PKI/$$f" ]; then
+             if [ -f "$$PKI/$$f" ] && ! cmp -s "$$PKI/$$f" "/export/pki/$$f"; then
                install -o 1000 -g 1000 -m 0600 "$$PKI/$$f" "/export/pki/$$f";
              fi;
            done;

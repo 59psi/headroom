@@ -15,15 +15,23 @@ import { hatFixture } from '../test/fixtures';
 import { HatDetailPage } from './HatDetailPage';
 import * as hatsApi from '../api/hats';
 
-vi.mock('../api/hats', () => ({
-  getHat: vi.fn(),
-  deleteHat: vi.fn(), uploadHatPhoto: vi.fn(), reanalyzeHat: vi.fn(), recutHat: vi.fn(),
-  refreshEbayForHat: vi.fn(), undisposeHat: vi.fn(), updateHatColors: vi.fn(),
-  logWear: vi.fn(), undoLatestWear: vi.fn(),
-}));
-vi.mock('../api/settings', () => ({
-  getTagBase: vi.fn(async () => ({ base_url: 'http://h', source: 'request', example_url: 'http://h/t/h/1' })),
-}));
+vi.mock('../api/hats', async (importOriginal) => {
+  const { stubAll } = await import('../test/stubModule');
+  return {
+    ...stubAll(await importOriginal<object>()),
+    getHat: vi.fn(),
+    deleteHat: vi.fn(), uploadHatPhoto: vi.fn(), reanalyzeHat: vi.fn(), recutHat: vi.fn(),
+    refreshEbayForHat: vi.fn(), undisposeHat: vi.fn(), updateHatColors: vi.fn(),
+    logWear: vi.fn(), undoLatestWear: vi.fn(),
+  };
+});
+vi.mock('../api/settings', async (importOriginal) => {
+  const { stubAll } = await import('../test/stubModule');
+  return {
+    ...stubAll(await importOriginal<object>()),
+    getTagBase: vi.fn(async () => ({ base_url: 'http://h', source: 'request', example_url: 'http://h/t/h/1' })),
+  };
+});
 // The real capture goes through a cropper canvas; the page only needs a File.
 vi.mock('../components/photos/PhotoCapture', () => ({
   PhotoCapture: ({ onCapture }: { onCapture: (f: File) => void }) => (

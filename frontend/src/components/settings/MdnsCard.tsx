@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { getMdnsStatus } from '../../api/settings';
+import { ErrorNote } from '../common/ErrorNote';
 
 export function MdnsCard() {
   // Env-configured — only changes at server boot, so never refetch.
@@ -20,6 +21,7 @@ export function MdnsCard() {
           setup and the Face&nbsp;ID / HTTPS walkthrough are in the README
           ("Find it on your LAN").
         </p>
+        <ErrorNote of={mdns} className="mb-2" />
         {mdns.data && (
           <div className="hr-metric">
             {/* Three facts, three slots. This used to run through `hr-metric`'s

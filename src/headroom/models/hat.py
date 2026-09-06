@@ -1,10 +1,12 @@
 from datetime import date, datetime
 from enum import StrEnum
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, func, text
+from sqlalchemy import (
+    Boolean, Date, Float, ForeignKey, Index, Integer, String, Text, func, text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from headroom.database import Base
+from headroom.database import Base, UtcDateTime
 
 
 class ResaleScope(StrEnum):
@@ -22,6 +24,22 @@ class ResaleScope(StrEnum):
 
 class Hat(Base):
     __tablename__ = "hats"
+    __table_args__ = (
+        # Two ACTIVE hats can never share a slot. `display_id` is derived from
+        # case + position, so a duplicate here is two hats with one label —
+        # which is what a concurrency gap produced before the placement lock
+        # existed. Partial: a disposed hat keeps its old position as history
+        # and `undispose` re-slots it, so only live rows are constrained.
+        # Existing databases get the same index from `database._run_migrations`
+        # after `_repair_duplicate_positions` has renumbered any fallout.
+        Index(
+            "ux_hats_case_position",
+            "case_id",
+            "position_in_case",
+            unique=True,
+            sqlite_where=text("case_id IS NOT NULL AND disposed_at IS NULL"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     case_id: Mapped[int | None] = mapped_column(
@@ -75,13 +93,13 @@ class Hat(Base):
     # Pricing
     # Cost basis — what was actually paid (purchase-history import or manual)
     purchase_price: Mapped[float | None] = mapped_column(Float, nullable=True)
-    purchased_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    purchased_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
     estimated_new_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     estimated_new_price_source: Mapped[str | None] = mapped_column(String(80), nullable=True)
     resale_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     resale_price_source: Mapped[str | None] = mapped_column(String(80), nullable=True)
     resale_price_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    resale_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    resale_checked_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
     # How much `resale_price` is actually about THIS hat. The three values are
     # not degrees of confidence in one measurement -- they are three different
     # measurements that happen to share a column:
@@ -152,17 +170,17 @@ class Hat(Base):
     #: "identifying" — so the UI can only say "Analyzing…" and hope. With a
     #: timestamp it can say "in identifying for 41 min", which is the same
     #: information a person would use to decide something is stuck.
-    analysis_stage_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    analysis_stage_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
     # Which bulk re-analysis run this hat belongs to, if any. Indexed because
     # progress for a job is a COUNT over exactly this column.
     analysis_job_id: Mapped[int | None] = mapped_column(
         Integer, nullable=True, index=True
     )
     analysis_error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    analyzed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    analyzed_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
 
     # v0.3 — disposition (sold/gifted/lost/trashed/trade)
-    disposed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    disposed_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
     disposed_via: Mapped[str | None] = mapped_column(String(20), nullable=True)
     disposed_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     disposed_to: Mapped[str | None] = mapped_column(String(120), nullable=True)
@@ -173,13 +191,13 @@ class Hat(Base):
     ebay_median_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     ebay_listing_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     ebay_search_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    ebay_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    ebay_checked_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now()
+        UtcDateTime, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), onupdate=func.now()
+        UtcDateTime, server_default=func.now(), onupdate=func.now()
     )
 
     case: Mapped["Case | None"] = relationship(  # noqa: F821

@@ -592,7 +592,7 @@ Data → Re-pricing; neither spends a Claude call.
 | `HEADROOM_MDNS_ENABLED` | `true` | Advertise `headroom.local` on the LAN (Docker: stack `docker-compose.mdns.yml`, or `docker-compose.https-lan.yml` for passkey-grade HTTPS) |
 | `HEADROOM_MDNS_HOSTNAME` | `headroom` | mDNS host label — resolves as `<label>.local` |
 | `HEADROOM_MDNS_PORT` | `8000` | Port the mDNS advertisement points at |
-| `HEADROOM_SITE_ADDRESSES` | `<HEADROOM_MDNS_HOSTNAME>.local` | LAN HTTPS overlay only. Every name/address Caddy answers on **and** puts in the certificate, comma-separated. Add the LAN IP to reach it where `.local` can't resolve — a VPN, a tunnel, another subnet |
+| `HEADROOM_SITE_ADDRESSES` | `<HEADROOM_MDNS_HOSTNAME>.local` | LAN HTTPS overlay only. Every name/address Caddy answers on **and** puts in the certificate, space-separated (Caddy refuses a bare comma). Add the LAN IP to reach it where `.local` can't resolve — a VPN, a tunnel, another subnet |
 | `HEADROOM_MEM_LIMIT` | `1g` | Container memory ceiling (compose `mem_limit`) |
 | `HEADROOM_BUILD_SHA` | _(local git SHA)_ | Build stamp shown in the footer; `scripts/stamp-build.sh` writes it into `.env` |
 | `FORWARDED_ALLOW_IPS` | `127.0.0.1` | Which peers uvicorn trusts for `X-Forwarded-*`; the Let's Encrypt overlay pins the compose subnet |

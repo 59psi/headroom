@@ -84,6 +84,11 @@ class SharedHat(BaseModel):
     model_name: str | None
     style: str
     photo_url: str | None
+    #: The 320 px WebP the authenticated grids render, on the same public
+    #: route with `?variant=thumb`. The shared and guest grids served the
+    #: full 1200 px cutout per tile (~170 KB each) — about 40 MB per open of
+    #: a "group chat" link on the real collection.
+    thumb_url: str | None = None
     colors: list[SharedColor]
     case: str | None
     room: str | None

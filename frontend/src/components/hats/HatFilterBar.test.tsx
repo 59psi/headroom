@@ -4,20 +4,28 @@ import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../../test/utils';
 import { useHatFilters, HatFilterBar, FilterToggleButton } from './HatFilters';
 
-vi.mock('../../api/hats', () => ({
-  getStyles: vi.fn(async () => [
-    { value: 'a_game', label: 'A-Game' },
-    { value: 'odysea', label: 'Odysea' },
-  ]),
-  getSizes: vi.fn(async () => [{ value: 'classic', label: 'Classic' }]),
-  getConditions: vi.fn(async () => [{ value: 'new', label: 'New' }]),
-  getConstructions: vi.fn(async () => ['HYDRO', 'HYDROLite', 'Thermal']),
-  getCollections: vi.fn(async () => ['Piña', 'Skye Walker']),
-}));
+vi.mock('../../api/hats', async (importOriginal) => {
+  const { stubAll } = await import('../../test/stubModule');
+  return {
+    ...stubAll(await importOriginal<object>()),
+    getStyles: vi.fn(async () => [
+      { value: 'a_game', label: 'A-Game' },
+      { value: 'odysea', label: 'Odysea' },
+    ]),
+    getSizes: vi.fn(async () => [{ value: 'classic', label: 'Classic' }]),
+    getConditions: vi.fn(async () => [{ value: 'new', label: 'New' }]),
+    getConstructions: vi.fn(async () => ['HYDRO', 'HYDROLite', 'Thermal']),
+    getCollections: vi.fn(async () => ['Piña', 'Skye Walker']),
+  };
+});
 
-vi.mock('../../api/rooms', () => ({
-  getRoomOptions: vi.fn(async () => [{ value: '3', label: 'Closet' }]),
-}));
+vi.mock('../../api/rooms', async (importOriginal) => {
+  const { stubAll } = await import('../../test/stubModule');
+  return {
+    ...stubAll(await importOriginal<object>()),
+    getRoomOptions: vi.fn(async () => [{ value: '3', label: 'Closet' }]),
+  };
+});
 
 /** Stands in for a page: owns the hook, renders the bar, exposes state as text. */
 function Harness({ withExtra = false }: { withExtra?: boolean }) {

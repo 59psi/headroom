@@ -6,6 +6,128 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.79.0] — 2026-09-06
+
+A second whole-project review, adversarial this time: every sub-agent booted a
+live instance in an isolated repo copy, attacked it, and mutation-probed the
+code rather than reading it. What reading and 88% line coverage missed, a
+request and a reverted constant found.
+
+### Security
+
+- **Login no longer leaks which username is the owner's.** A name that did
+  not exist skipped the argon2 verify and answered ~8× faster (measured 4 ms
+  vs 36 ms; hundreds of ms on a Pi), and the limiter keyed on (ip, username)
+  so rotating candidate names never locked out. Both branches now do equal
+  argon2 work, and a second rate-limit bucket keyed on the address alone
+  bounds an anonymous flood — rows, keys and work — however the username is
+  rotated.
+- **A `multipart/form-data` label no longer bypasses the body-size limit.**
+  The exemption keyed on the client-chosen Content-Type, so a 900 MB JSON body
+  labelled multipart was buffered whole into a 1 GB container — an
+  unauthenticated OOM. The cap is now chosen by the ENDPOINT (an `UploadFile`
+  route gets the large ceiling, everything else the 2 MB one), and even upload
+  routes have a wire ceiling.
+- **A share token can no longer reach the `error.unhandled` row or the log
+  through a database error.** SQLAlchemy renders bound parameters in its
+  exception text, and `resolve_token` binds the token; the engine now hides
+  parameters and the handler formats statement errors from their DBAPI cause.
+- **The hat-photo route answers 400, not 500, for an undecodable upload** (an
+  HTML file with an image MIME, a 0-byte file, a decompression bomb), matching
+  the logo route; Pillow's pixel ceiling is set centrally at 40 MP. One
+  decoder for both.
+- **The login page's `?next=` is no longer an open redirect.** A tab, LF or CR
+  survived the same-origin check and the browser's URL parser stripped it, so
+  `/%09/evil.com` navigated off-origin; the guard now resolves against the
+  real origin.
+- **Session cookie flags, the `Set-Cookie` attributes the whole CSRF defense
+  rests on, are now pinned by a test** (a mutation inverting `HttpOnly` /
+  `SameSite` / `Secure` had shipped green).
+- **No test can reach the network**, whichever HTTP library tries — a stored
+  key plus an un-stubbed analysis had made one real request to Anthropic
+  through `httpx2`, which no fixture watched.
+
+### Data integrity
+
+- **Concurrent placement can no longer overfill a case or duplicate a shelf
+  label.** Ten simultaneous assigns into a three-hat case landed five at one
+  position (five hats, one `display_id`, one QR sticker); an in-process lock
+  serializes every placement writer and a partial unique index is the
+  backstop. Two concurrent imports of one order file no longer double the
+  rows.
+- **The purchase-import body is validated line by line** — it was the one
+  request body with no schema, and `quantity: 1e9` on a dry run allocated
+  15 GB, `price: "abc"` 500'd the real import after the preview passed it,
+  `price: -5` wrote `PAID $-5`.
+- **Money and text are validated at the wire everywhere.** `NaN`/`Infinity`/
+  negative prices are refused (a `NaN` had become a NULL price stamped
+  `manual`, immune to every refresh); names and notes are length-capped and
+  stripped of bidi and NUL controls (a 500-char room name stretched a select
+  5,205 px; a right-to-left override made `evil` read `live`). A dispose price
+  is rejected for a non-sale channel; a wear date cannot be in the future.
+- **Timestamps carry their zone on the wire.** Every `DateTime` column is now
+  UTC-aware, so the browser stops reading them as local time — a change made
+  seven hours in the future, a run "40 minutes ago" that started this morning.
+- **Restoring a hat into a full case no longer 500s**, and a crash between a
+  bulk-import hat row and its photo no longer leaves an orphan or makes a
+  duplicate on the re-run.
+- **Deleting a hat returns its receipt to the pool** instead of leaving a
+  purchase pointing at a row that no longer exists.
+
+### Correctness
+
+- **"Redo cutout" spends no Claude call and touches nothing you wrote.** It
+  ran the whole pipeline — a call per press, the analyzer's `model_name` and
+  `design_notes` written over yours — despite the docs. It now re-cuts and
+  stops.
+- **A re-pricing sweep the marketplace never answered is recorded as a
+  failure, not a success** ("0 of 234 changed" with `last_error` null), and
+  the hats it could not reach are not stamped to the back of the queue.
+- **A colorway harvest that loses every category says so** rather than
+  reporting "finished — the counts are current" over zero entries.
+- **One reading of a product name** across the catalog matcher, the
+  marketplace pricer and the analyzer — they disagreed, so a quoted or
+  fullwidth name was priceable and unmatchable at once.
+- **Search matches a style as it is printed** (`A-Game`, not only `a_game`),
+  treats `%` and `_` as text, and a filtered-to-empty result no longer
+  strands the filter that produced it.
+- **The vocabulary tiebreak counts real rows**, so a typed `neon` snaps to a
+  collection recorded three times as `Neon` rather than to a single `NEON`.
+
+### Reliability & ops
+
+- **A scheduled backup interrupted mid-write no longer leaves a torn archive
+  under a real name** that the app then lists, trusts and keeps while deleting
+  the good one — it writes under `.partial` and renames only when whole, and
+  the app gets a 60 s stop grace period.
+- **The Let's Encrypt overlay stops advertising an HTTP/3 it cannot serve**
+  (the UDP port is published; a Caddyfile adds HSTS and compression), and both
+  Caddyfiles compress the bundle.
+- **The CA export no longer defeats the backup change-gate** — it rewrote the
+  same bytes every 60 s and the fingerprint keyed on mtime, so a full tarball
+  was written every cycle; the fingerprint hashes content and the sidecar
+  copies only what changed.
+- **Every `HEADROOM_*` knob a bad value could brick now degrades to its
+  default** (`nan`/`inf` intervals, a zeroed body cap, a zeroed retention).
+- **The image ships a smaller attack surface**: `/app` is root-owned (a
+  compromise cannot rewrite the code in place), the base compose runs the app
+  read-only, and the container declares its own healthcheck. The rembg model
+  is found at runtime (`U2NET_HOME`) instead of re-downloaded on every first
+  analysis. Responses carry a caching policy by path class, so a hat photo is
+  no longer served from the browser cache after sign-out.
+- **Dependabot can see the uv pin again** (a `FROM` line, not a `COPY --from`)
+  and now tracks the compose overlays' images; CI SHA-pins its actions and
+  carries per-job timeouts.
+
+### Breaking
+
+- Stricter validation rejects request bodies that earlier releases stored as
+  garbage: non-finite or negative money, a purchase line with `quantity`
+  beyond 20 or a non-numeric price, a dispose price on a gift/loss, a
+  future wear date, a model id that is not `[A-Za-z0-9._:-]`, a tag base URL
+  with no host. Correct clients are unaffected. `SharedHat` gains
+  `thumb_url` (additive).
+
 ## [2.78.0] — 2026-09-06
 
 The whole project, reviewed at maximum effort on both axes and fixed in one

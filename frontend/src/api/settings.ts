@@ -105,6 +105,27 @@ export function backupDownloadUrl(includeUploads = true): string {
   return includeUploads ? '/api/admin/backup' : '/api/admin/backup?include_uploads=false';
 }
 
+/**
+ * Printable QR label sheets (anchor targets, opened in a new tab).
+ *
+ * `case` narrows the hat sheet to one case's hats. These were inline
+ * `href="/api/admin/hat-labels"` strings in three components — the one kind
+ * of URL this module exists to own, since a page with an inline path is a
+ * page whose test has to know the route.
+ */
+export function hatLabelsUrl(caseDisplayId?: string): string {
+  return caseDisplayId
+    ? `/api/admin/hat-labels?case=${encodeURIComponent(caseDisplayId)}`
+    : '/api/admin/hat-labels';
+}
+
+export function caseLabelsUrl(): string {
+  return '/api/admin/case-labels';
+}
+
+/** Caddy's root certificate, served for the Trust-this-device install flow. */
+export const CA_CERTIFICATE_URL = '/api/public/ca-certificate';
+
 export function inventoryReportUrl(opts?: { includeDisposed?: boolean; includePhotos?: boolean }): string {
   const p = new URLSearchParams();
   if (opts?.includeDisposed) p.set('include_disposed', 'true');
@@ -332,6 +353,13 @@ export function releaseFrozenPrices(
     dry_run: String(dryRun),
     market_priced_only: String(marketPricedOnly),
   });
+  // An EMPTY array is not "release all": the server reads absent `hat_ids`
+  // as every frozen hat, and `if (hatIds)` on `[]` (truthy) appended nothing
+  // — so `releaseFrozenPrices([], ...)` would have released the lot. Only a
+  // null selection means all; a chosen-but-empty one is a no-op refused here.
+  if (hatIds && hatIds.length === 0) {
+    return Promise.resolve({ dry_run: dryRun, released: 0, hats: [] });
+  }
   if (hatIds) for (const id of hatIds) qs.append('hat_ids', String(id));
   return apiFetch<PriceReleaseResult>(`/api/admin/prices/release?${qs}`, {
     method: 'POST',
@@ -393,7 +421,7 @@ export function runRepricing() {
  */
 export async function caCertificateAvailable(): Promise<boolean> {
   try {
-    const resp = await fetch('/api/public/ca-certificate', { credentials: 'same-origin' });
+    const resp = await fetch(CA_CERTIFICATE_URL, { credentials: 'same-origin' });
     return resp.ok;
   } catch {
     return false;

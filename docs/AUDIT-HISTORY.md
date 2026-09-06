@@ -19,7 +19,11 @@ outstanding.
 | `R` | General code review, same era |
 
 Later passes are recorded in `CHANGELOG.md` under the release that fixed them,
-and in `docs/CODE-REVIEW-2026-08.md` / `docs/CODE-REVIEW-2026-09.md`. The full 2026-08 archaeology bundle is
+and in `docs/CODE-REVIEW-2026-08.md` / `docs/CODE-REVIEW-2026-09.md` /
+`docs/CODE-REVIEW-2026-09b.md`. The 2.77.0 `S-NN` production-hardening backlog
+lives in that release's CHANGELOG entry rather than being duplicated here; a
+test that needs a stable citation points at a row in this file (`S1`…`S10`).
+The full 2026-08 archaeology bundle is
 generated into `analysis/` (gitignored — regenerate it with
 `/code-archaeology` rather than committing it).
 
@@ -36,6 +40,13 @@ generated into `analysis/` (gitignored — regenerate it with
 | **S4** | Failed logins were not recorded, so a credential-stuffing run left no trace unless somebody was reading the container log at the time. | `routes/auth.py::login` writes an `auth.login_failed` activity row (committed before the 401 is raised); `tests/test_prod_hardening.py` covers it. S10 is the backup-download half of the same audit finding. |
 | **S5 / R10** | First-run `/api/auth/setup` check-then-insert allowed two concurrent requests to create two co-equal owner accounts. | `routes/auth.py` — serialized behind an `app_settings` primary-key sentinel, so the second request loses the insert rather than racing. |
 | **S9 / R6** | Bulk import read every uploaded file fully into memory with no ceiling, so 100 × 20 MB could OOM-kill the container on a small Pi. | `routes/import_jobs.py` — files are spooled to disk as they arrive (2.12.0); the byte ceiling now bounds job size rather than RAM. |
+| **A1** (2.79.0) | Login skipped argon2 for an unknown username — an 8× timing oracle for the owner's name, past a limiter keyed on (ip, username). | `routes/auth.py` — both branches verify against a placeholder hash; a per-IP bucket bounds rotation. `tests/test_auth.py`. |
+| **A2** (2.79.0) | A `multipart/form-data` label exempted a request from the body-size cap whatever route it hit, so an anonymous 900 MB JSON body was buffered whole. | `limits.py` — the cap is chosen by the endpoint, not the client's Content-Type. `tests/test_request_limits.py`. |
+| **A3** (2.79.0) | A share token reached the durable `error.unhandled` row and the log through SQLAlchemy's bound-parameter rendering on any DB fault while resolving it. | `database.py` `hide_parameters=True` + `error_handler.describe_exception`. `tests/test_reliability_signals.py`. |
+| **A4** (2.79.0) | Concurrent placement could land several hats at one `position_in_case` — one `display_id`, one QR label for many hats. | `services/locks.loop_lock` + the `ux_hats_case_position` partial index + `_repair_duplicate_positions`. `tests/test_placement_race.py`. |
+
+The 2.79.0 adversarial pass is written up in `docs/CODE-REVIEW-2026-09b.md`;
+only the findings a test cites by id are rowed here.
 
 ## Conventions going forward
 

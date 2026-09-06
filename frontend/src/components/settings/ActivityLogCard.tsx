@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { ErrorNote } from '../common/ErrorNote';
 import { getActivityLog, getRetentionStatus } from '../../api/settings';
 
 const ROWS_SHOWN = 25;
@@ -56,7 +57,8 @@ export function ActivityLogCard() {
             )}
           </p>
         )}
-        {(activity.data?.length ?? 0) === 0 ? (
+        <ErrorNote of={[activity, retention]} className="mb-2" />
+        {activity.isSuccess && activity.data.length === 0 ? (
           <p className="text-secondary small mb-0">No activity logged yet.</p>
         ) : (
           <div>

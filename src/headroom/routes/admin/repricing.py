@@ -17,6 +17,7 @@ from headroom.schemas.admin import (
     RepricingSweepStarted,
 )
 from headroom.services import repricing
+from headroom.services.melin_recap import MelinRecapError
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +83,14 @@ async def run_repricing(request: Request):
         repriced, considered = await repricing.reprice_once(
             session_factory=factory, limit=repricing.MANUAL_SWEEP_LIMIT
         )
+    except MelinRecapError as exc:
+        # The marketplace was unreachable for every hat swept. Recorded like
+        # any failure, and answered as a 503 with the reason rather than a
+        # 500 with a traceback: a dead marketplace is a condition to report,
+        # not an incident to file. This sweep used to record itself as a
+        # SUCCESS in that state — "0 of 50 hats changed price".
+        repricing.health().record_failure(exc)
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:  # a failed run must be RECORDED, then raised
         # Without this a manual sweep could fail forever while the card went on
         # showing the last success, which is the same blindness the health

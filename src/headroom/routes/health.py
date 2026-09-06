@@ -7,7 +7,7 @@ configured. Use this from container orchestrators or external monitoring.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, Request, Response, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,7 +28,11 @@ async def health():
     return {"status": "ok"}
 
 
-@router.get("/health/ready", response_model=ReadinessRead, responses={503: {"model": ReadinessRead}})
+@router.get(
+    "/health/ready",
+    response_model=ReadinessRead,
+    responses={503: {"model": ReadinessRead}},
+)
 async def ready(request: Request, db: AsyncSession = Depends(get_db)):
     """Readiness — DB, uploads dir, free space, workers, and the API key.
 
@@ -151,3 +155,21 @@ async def ready(request: Request, db: AsyncSession = Depends(get_db)):
     body = {"ok": overall_ok, "checks": checks}
     code = status.HTTP_200_OK if overall_ok else status.HTTP_503_SERVICE_UNAVAILABLE
     return JSONResponse(body, status_code=code)
+
+
+# Uptime monitors default to HEAD, and a `@router.get` answers 405 to it — so a
+# `curl -I /health/ready` watchdog read the box as down. These are registered as
+# SEPARATE routes rather than `methods=["GET", "HEAD"]` on the two above,
+# because FastAPI derives an operationId from the route's FIRST method only, so
+# one GET+HEAD route emits the same id for both methods and produces a duplicate
+# operationId in the OpenAPI spec (which forbids them). Kept OUT of the schema
+# and delegating to the GET handlers, so there is one implementation per check.
+@router.head("/health", include_in_schema=False)
+async def health_head() -> Response:
+    return Response(status_code=status.HTTP_200_OK)
+
+
+@router.head("/health/ready", include_in_schema=False)
+async def ready_head(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
+    # Delegates so the readiness status code is computed once, not guessed here.
+    return await ready(request, db)

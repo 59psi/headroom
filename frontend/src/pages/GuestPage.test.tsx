@@ -14,7 +14,13 @@ import { renderWithProviders } from '../test/utils';
 import { GuestPage } from './GuestPage';
 import * as guestApi from '../api/guest';
 
-vi.mock('../api/guest', () => ({ getGuestCollection: vi.fn() }));
+vi.mock('../api/guest', async (importOriginal) => {
+  const { stubAll } = await import('../test/stubModule');
+  return {
+    ...stubAll(await importOriginal<object>()),
+    getGuestCollection: vi.fn()
+  };
+});
 
 const mocked = vi.mocked(guestApi);
 
@@ -24,7 +30,7 @@ function collection(names: string[]) {
     hat_count: names.length,
     hats: names.map((model_name, i) => ({
       id: i + 1, display_id: null, brand: 'Melin', model_name,
-      style: 'a_game', photo_url: null, colors: [], case: null, room: null,
+      style: 'a_game', photo_url: null, thumb_url: null, colors: [], case: null, room: null,
     })),
   };
 }

@@ -1,9 +1,9 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, func
+from sqlalchemy import ForeignKey, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from headroom.database import Base
+from headroom.database import Base, UtcDateTime
 
 
 class Case(Base):
@@ -21,10 +21,10 @@ class Case(Base):
     capacity: Mapped[int | None] = mapped_column(Integer, nullable=True)
     room_id: Mapped[int] = mapped_column(Integer, ForeignKey("rooms.id"), default=1)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now()
+        UtcDateTime, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), onupdate=func.now()
+        UtcDateTime, server_default=func.now(), onupdate=func.now()
     )
 
     hats: Mapped[list["Hat"]] = relationship(  # noqa: F821

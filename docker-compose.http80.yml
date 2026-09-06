@@ -30,6 +30,15 @@ services:
     image: caddy:2-alpine
     container_name: headroom-caddy
     restart: unless-stopped
+    # Bounded like the app is: an unbounded json-file log on a Pi's SD card
+    # and an unbounded sidecar were the two limits the app service carried
+    # and its neighbors did not.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 256m
     network_mode: host
     # `--from :80` serves plain HTTP on port 80 for ANY host (headroom.local
     # AND the raw IP) — no TLS, no certificate to trust anywhere.

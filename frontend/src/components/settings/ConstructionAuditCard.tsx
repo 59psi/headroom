@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { auditConstructions, clearConstruction } from '../../api/settings';
 import type { ConstructionClearResult } from '../../types';
 import { invalidateHatVocabulary } from '../../lib/invalidate';
+import { ErrorNote } from '../common/ErrorNote';
 
 /**
  * Review constructions and undo ones analysis guessed.
@@ -16,10 +17,11 @@ import { invalidateHatVocabulary } from '../../lib/invalidate';
  */
 export function ConstructionAuditCard() {
   const qc = useQueryClient();
-  const { data } = useQuery({
+  const audit = useQuery({
     queryKey: ['admin', 'construction-audit'],
     queryFn: auditConstructions,
   });
+  const data = audit.data;
   const [preview, setPreview] = useState<ConstructionClearResult | null>(null);
   // What the matched hats become. Blank clears the field; the common case is
   // not "I don't know" but "these are all actually HYDRO", and clearing would
@@ -69,7 +71,10 @@ export function ConstructionAuditCard() {
           />
         </div>
 
-        {!data?.length && <p className="text-secondary small mb-0">No constructions recorded.</p>}
+        <ErrorNote of={[audit, dryRun, apply]} className="mb-2" />
+        {audit.isSuccess && !data?.length && (
+          <p className="text-secondary small mb-0">No constructions recorded.</p>
+        )}
 
         {!!data?.length && (
           <div className="table-responsive">

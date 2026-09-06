@@ -21,6 +21,22 @@ services:
     image: headroom:latest
     container_name: headroom
     restart: unless-stopped
+    # Docker's default is 10 s from SIGTERM to SIGKILL. Shutdown here stops
+    # four workers, lets an in-flight per-hat commit finish and then
+    # checkpoints the WAL — and a scheduled backup that happened to be
+    # running used to be killed mid-tar, leaving a torn archive under a real
+    # name (now written under `.partial` and renamed only when whole). Sixty
+    # seconds covers the shutdown sequence on a Pi; a backup that is still
+    # writing at that point is abandoned as a partial and swept at boot.
+    stop_grace_period: 60s
+    # Nothing the app writes lives outside `/data` (the volume) and `/tmp`
+    # (the upload spool before it is moved onto the volume). The image no
+    # longer chowns `/app` to the runtime user; this is the other half —
+    # code that cannot be edited in place by a compromised process. Verified:
+    # the container boots and passes readiness this way.
+    read_only: true
+    tmpfs:
+      - /tmp
     ports:
       - "8000:8000"
     volumes:
@@ -35,7 +51,17 @@ services:
       # ENV, which would override the model baked in by the REMBG_MODEL build
       # arg above. Set it here only to force a model that is NOT in the image
       # (the Pi will then download it on first use).
-      HEADROOM_CORS_ORIGINS: '["http://localhost:8000"]'
+      # The base install's own origin, unless `.env` says otherwise. Anyone
+      # fronting THIS file with their own TLS (Tailscale Serve, a NAS reverse
+      # proxy, a tunnel) needs these four to reach the container — they used
+      # to be set only by the shipped HTTPS overlays, so a `.env` value for
+      # them reached nothing: passkeys could never work and `tls_health` went
+      # on probing `http://localhost:8000`. An overlay's explicit value still
+      # wins the merge over a passthrough.
+      HEADROOM_CORS_ORIGINS: ${HEADROOM_CORS_ORIGINS:-["http://localhost:8000"]}
+      HEADROOM_RP_ID: "${HEADROOM_RP_ID:-}"
+      HEADROOM_ORIGIN: "${HEADROOM_ORIGIN:-}"
+      HEADROOM_MDNS_PORT: "${HEADROOM_MDNS_PORT:-}"
       # ---- Operator knobs, forwarded from `.env` ---------------------------
       # Compose's `.env` feeds variable INTERPOLATION only; it never becomes the
       # container's environment. Every variable the docs tell you to "set in
@@ -54,6 +80,10 @@ services:
       HEADROOM_EBAY_APP_ID: "${HEADROOM_EBAY_APP_ID:-}"
       HEADROOM_EBAY_CERT_ID: "${HEADROOM_EBAY_CERT_ID:-}"
       HEADROOM_HTTP_TIMEOUT: "${HEADROOM_HTTP_TIMEOUT:-}"
+      # The Melin Recap client id is baked in, and OPERATIONS §9 tells the
+      # operator to set this when Treet rotates it. A knob the docs name is a
+      # knob that has to reach the container.
+      HEADROOM_MELIN_CLIENT_ID: "${HEADROOM_MELIN_CLIENT_ID:-}"
       HEADROOM_MDNS_ENABLED: "${HEADROOM_MDNS_ENABLED:-}"
       HEADROOM_MDNS_HOSTNAME: "${HEADROOM_MDNS_HOSTNAME:-}"
       HEADROOM_MDNS_INTERFACE: "${HEADROOM_MDNS_INTERFACE:-}"

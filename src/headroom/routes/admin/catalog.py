@@ -22,6 +22,7 @@ from headroom.schemas.admin import (
     UnmatchOneResult,
 )
 from headroom.services import catalog_service
+from headroom.services.locks import loop_lock
 from headroom.services.melin_recap import MelinRecapError
 
 logger = logging.getLogger(__name__)
@@ -124,8 +125,13 @@ async def import_purchases(
     """
     if dry_run:
         return await catalog_service.preview_import(db, data.items)
-    result = await catalog_service.import_purchases(db, data.items)
-    match = await catalog_service.match_purchases_to_hats(db)
+    # One import at a time. The dedupe counts rows already on record, so two
+    # imports of the same file running together each saw none and wrote
+    # every line twice (measured: qty 2 → 4 rows, both requests 200). The
+    # matcher that follows mutates hats and is not reentrant either.
+    async with loop_lock("purchase-import"):
+        result = await catalog_service.import_purchases(db, data.items)
+        match = await catalog_service.match_purchases_to_hats(db)
     return {**result, **match}
 
 

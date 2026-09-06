@@ -5,17 +5,21 @@ import { renderWithProviders } from '../../test/utils';
 import { AccountCard } from './AccountCard';
 import * as api from '../../api/auth';
 
-vi.mock('../../api/auth', () => ({
-  getMe: vi.fn(),
-  listPasskeys: vi.fn(async () => []),
-  revealApiToken: vi.fn(),
-  rotateApiToken: vi.fn(),
-  changePassword: vi.fn(),
-  deletePasskey: vi.fn(),
-  passkeyRegisterOptions: vi.fn(),
-  passkeyRegisterVerify: vi.fn(),
-  logout: vi.fn(),
-}));
+vi.mock('../../api/auth', async (importOriginal) => {
+  const { stubAll } = await import('../../test/stubModule');
+  return {
+    ...stubAll(await importOriginal<object>()),
+    getMe: vi.fn(),
+    listPasskeys: vi.fn(async () => []),
+    revealApiToken: vi.fn(),
+    rotateApiToken: vi.fn(),
+    changePassword: vi.fn(),
+    deletePasskey: vi.fn(),
+    passkeyRegisterOptions: vi.fn(),
+    passkeyRegisterVerify: vi.fn(),
+    logout: vi.fn(),
+  };
+});
 vi.mock('../../lib/webauthn', () => ({
   createPasskey: vi.fn(), passkeysSupported: vi.fn(() => false),
 }));

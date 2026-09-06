@@ -12,7 +12,13 @@ import { TrustCertCard } from './TrustCertCard';
 import * as settingsApi from '../../api/settings';
 import type { TlsStatus } from '../../types';
 
-vi.mock('../../api/settings', () => ({ getTlsStatus: vi.fn(), caCertificateAvailable: vi.fn() }));
+vi.mock('../../api/settings', async (importOriginal) => {
+  const { stubAll } = await import('../../test/stubModule');
+  return {
+    ...stubAll(await importOriginal<object>()),
+    getTlsStatus: vi.fn(), caCertificateAvailable: vi.fn()
+  };
+});
 
 const tlsApi = vi.mocked(settingsApi);
 

@@ -27,6 +27,8 @@ from headroom.services.hat_analysis_pipeline import (
     reanalyze_existing_photo,
 )
 from headroom.utils.photo import (
+    UNREADABLE_IMAGE_DETAIL,
+    UnreadableImage,
     export_derivative_path,
     generate_filename,
     process_image_async,
@@ -204,6 +206,13 @@ async def upload_hat_photo(
     output_path = upload_dir / filename
     try:
         final_path = await process_image_async(tmp_path, output_path)
+    except UnreadableImage as exc:
+        # The content-type check above reads a header the client chose; this
+        # is the real gate. Unhandled, it was a 500 and an `error.unhandled`
+        # row for an HTML file named `.png` — a client error filed as an
+        # incident, on the one route that did not catch what the logo route
+        # already caught.
+        raise HTTPException(status_code=400, detail=UNREADABLE_IMAGE_DETAIL) from exc
     finally:
         tmp_path.unlink(missing_ok=True)
 
@@ -256,9 +265,15 @@ async def recut_hat(hat_id: int, db: AsyncSession = Depends(get_db)):
     which is why `finalize_hat_photo` refuses to. So a re-cut has to start from
     the original JPEG, which is exactly why it is now kept.
 
-    Implemented by pointing `photo_path` back at that original and queueing:
-    the pipeline then sees a `.jpg`, cuts it, and overwrites the old PNG in
-    place. No special-casing anywhere — it is the upload path, run again.
+    Implemented by pointing `photo_path` back at that original and queueing
+    the pipeline in `cutout_only` mode: it sees a `.jpg`, cuts it, overwrites
+    the old PNG in place, regenerates the thumbnail and export derivative, and
+    STOPS. It used to run the whole pipeline — a Claude call per press, the
+    analyzer's `model_name` and `design_notes` written over the owner's edits
+    — which is not what "Redo cutout" says and not what the docs promised.
+    The analysis record (`analysis_status`, `analyzed_at`, the error text) is
+    therefore left exactly as it was; only the stage is published so the
+    page can show the cut in progress.
     """
     hat = await hat_service.get_hat(db, hat_id)
     if not hat.original_path:
@@ -274,13 +289,13 @@ async def recut_hat(hat_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Original photo missing on disk")
 
     hat.photo_path = hat.original_path
-    hat.analysis_status = analysis_queue.PENDING
-    hat.analysis_error = None
-    hat.analyzed_at = None
+    hat.analysis_stage = "cutout"
     await db.commit()
 
-    if not analysis_queue.enqueue(hat.id):
-        await _run_inline(db, hat_id, "re-cut", finalize_hat_photo(db, hat, original))
+    if not analysis_queue.enqueue(hat.id, cutout_only=True):
+        await _run_inline(
+            db, hat_id, "re-cut", finalize_hat_photo(db, hat, original, cutout_only=True)
+        )
 
     db.expire_all()
     return hat_to_read(await hat_service.get_hat(db, hat_id))

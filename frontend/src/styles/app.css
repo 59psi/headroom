@@ -321,7 +321,9 @@ button.card:hover::before,
 
 .btn-danger {
   background: var(--neon-red);
-  color: var(--text);
+  /* Dark ink, not --text: white on this red is 3.0:1, below AA. The same
+     ink .btn-primary uses on pink reads 5.9:1 here. */
+  color: var(--text-on-neon);
   border: none;
   text-transform: uppercase;
   font-weight: 700;
@@ -979,11 +981,6 @@ kbd {
   line-height: 1.35;
 }
 
-.hr-tile-cyan .hr-tile-value { color: var(--neon-cyan); }
-.hr-tile-pink .hr-tile-value { color: var(--neon-pink); }
-.hr-tile-purple .hr-tile-value { color: var(--neon-purple); }
-.hr-tile-muted .hr-tile-value { color: var(--text-secondary); }
-
 /* ===== Charts ====================================================
    See components/charts/Charts.tsx for why these are hand-rolled. */
 .hr-barlist {
@@ -1367,8 +1364,10 @@ kbd {
   line-height: 1;
   padding: 0.25rem;
   cursor: pointer;
-  width: 32px;
-  height: 32px;
+  /* 44px hit area — the coarse-pointer bump the other -sm controls got did
+     not reach this one, and it is every modal's close button. */
+  width: 44px;
+  height: 44px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1933,6 +1932,18 @@ kbd {
 }
 @media (prefers-reduced-motion: reduce) {
   .hr-progress-fill { transition: none; }
+  /* The neon flicker (`neonFlicker 5s infinite`) runs forever, fadeIn on
+     every route, both spinners. A vestibular-sensitive visitor asked the
+     browser to stop and only the progress bar was listening. One blanket
+     rule: animations to a single instant frame, transitions to none —
+     nothing decorative moves, and a spinner that completes once still shows
+     the page is working. */
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 .justify-content-between { justify-content: space-between !important; }
 .justify-content-center { justify-content: center !important; }

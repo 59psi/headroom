@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
+import { useDialogKeys } from './Modal';
 
 interface Props {
   src: string;
@@ -17,15 +18,12 @@ interface Props {
  */
 export function ImageLightbox({ src, alt = '', hat = false }: Props) {
   const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    if (!open) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setOpen(false);
-    }
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [open]);
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const close = useCallback(() => setOpen(false), []);
+  // Escape closes, focus moves onto the close button and comes back to the
+  // thumbnail afterwards, Tab cannot leave the overlay — the same contract
+  // every other dialog here honors.
+  useDialogKeys(open, close, overlayRef);
 
   return (
     <>
@@ -55,12 +53,12 @@ export function ImageLightbox({ src, alt = '', hat = false }: Props) {
           aria-modal="true"
           aria-label={alt || 'Photo'}
           onClick={() => setOpen(false)}
+          ref={overlayRef}
         >
           <button
             className="hr-lightbox-close"
             onClick={e => { e.stopPropagation(); setOpen(false); }}
             aria-label="Close"
-            autoFocus
           >
             ×
           </button>

@@ -158,7 +158,7 @@ async def test_wear_idempotent_same_day(client):
 async def test_password_change_rotates_api_token(client):
     """Reads the token through the password-gated route, not `/me`.
 
-    `/me` no longer carries it (S-07): a session alone must not yield a
+    `/me` no longer carries it (AUDIT-HISTORY S3): a session alone must not yield a
     credential that outlives every form of session revocation this app has.
     """
     reveal = "/api/auth/token/reveal"

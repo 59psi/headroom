@@ -108,6 +108,30 @@ async def test_upload_hat_photo_no_api_key(client):
 
 
 @pytest.mark.anyio
+async def test_the_no_key_path_still_logs_its_timing(client, caplog):
+    """A 24 s rembg run (minutes on a Pi) left no log line at all when no key
+    was set: the timing line sat below the early return. Per-stage timing is
+    a promise CLAUDE.md makes for every analysis, not only the ones Claude
+    joined."""
+    import logging
+
+    resp = await client.post(
+        "/api/hats", json={"condition": "new", "size": "classic", "style": "a_game"}
+    )
+    hat_id = resp.json()["id"]
+    with caplog.at_level(logging.INFO, logger="headroom.services.hat_analysis_pipeline"):
+        resp = await client.post(
+            f"/api/hats/{hat_id}/photo",
+            files={"photo": ("hat.jpg", _make_test_image_file(), "image/jpeg")},
+        )
+    assert resp.status_code == 200
+    assert any(
+        f"hat={hat_id} analyzed" in r.getMessage() and "rembg=" in r.getMessage()
+        for r in caplog.records
+    ), [r.getMessage() for r in caplog.records]
+
+
+@pytest.mark.anyio
 async def test_upload_invalid_type(client):
     resp = await client.post(
         "/api/hats",
@@ -120,6 +144,91 @@ async def test_upload_invalid_type(client):
         files={"photo": ("test.txt", b"not an image", "text/plain")},
     )
     assert resp.status_code == 400
+
+
+def _bomb_jpeg(width: int, height: int) -> bytes:
+    """A real 1×1 JPEG whose frame header is patched to claim `width`×`height`.
+
+    Pillow reads the dimensions out of the SOF0 marker before allocating a
+    single pixel, which is exactly where the ceiling must fire.
+    """
+    buf = io.BytesIO()
+    Image.new("RGB", (1, 1)).save(buf, "JPEG")
+    data = bytearray(buf.getvalue())
+    sof0 = data.index(b"\xff\xc0")
+    # marker(2) length(2) precision(1) height(2) width(2)
+    data[sof0 + 5 : sof0 + 7] = height.to_bytes(2, "big")
+    data[sof0 + 7 : sof0 + 9] = width.to_bytes(2, "big")
+    return bytes(data)
+
+
+async def _hat_id(client) -> int:
+    resp = await client.post(
+        "/api/hats", json={"condition": "new", "size": "classic", "style": "a_game"}
+    )
+    return resp.json()["id"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "name, body, mime",
+    [
+        ("page.png", b"<html><script>alert(1)</script></html>", "image/png"),
+        ("empty.jpg", b"", "image/jpeg"),
+        ("bomb.jpg", _bomb_jpeg(60000, 60000), "image/jpeg"),
+    ],
+    ids=["html-as-png", "zero-bytes", "decompression-bomb"],
+)
+async def test_an_unreadable_photo_is_a_400_not_a_500(client, name, body, mime):
+    """The content-type check reads a header the client chose; the real gate
+    is Pillow's decode, and its failure was unhandled on THIS route while the
+    logo route (fixed in review) answered 400 for the same bytes. Each of
+    these produced a 500 and a durable `error.unhandled` row: HTML with an
+    image MIME, an empty file, and a 60000×60000 header (3.6 gigapixels —
+    Pillow refuses it before allocating, but only because a ceiling is set).
+    """
+    hat_id = await _hat_id(client)
+
+    resp = await client.post(f"/api/hats/{hat_id}/photo", files={"photo": (name, body, mime)})
+
+    assert resp.status_code == 400, resp.text
+    assert "not an image" in resp.json()["detail"]
+    rows = (await client.get("/api/admin/activity-log?limit=20")).json()
+    assert not [r for r in rows if r["kind"] == "error.unhandled"], (
+        "a bad upload is a client error, not an incident"
+    )
+
+
+@pytest.mark.anyio
+async def test_the_logo_route_refuses_the_same_files_the_same_way(client):
+    """One decoder, one answer: the two single-file routes must not diverge
+    again (they did — B-2 fixed the logo and left the hat photo 500ing)."""
+    for name, body, mime in [
+        ("page.png", b"<html>", "image/png"),
+        ("bomb.jpg", _bomb_jpeg(60000, 60000), "image/jpeg"),
+    ]:
+        resp = await client.post("/api/settings/logo", files={"photo": (name, body, mime)})
+        assert resp.status_code == 400, (name, resp.text)
+        assert "not an image" in resp.json()["detail"]
+
+
+@pytest.mark.anyio
+async def test_the_pixel_ceiling_is_set_once_for_every_decoder():
+    """Pillow's default only WARNS at ~89 megapixels and errors at twice that,
+    and a 178-megapixel file decodes to ~700 MB of RGBA beside the 179 MB
+    rembg model in a 1 GB container. The ceiling is set where every decoder
+    imports from, so a new `Image.open` site inherits it. A 48-megapixel
+    phone photo must still pass (warning only, no error).
+    """
+    from PIL import Image
+
+    from headroom.utils import photo
+
+    assert Image.MAX_IMAGE_PIXELS == photo.MAX_SOURCE_PIXELS
+    assert 40_000_000 <= photo.MAX_SOURCE_PIXELS <= 60_000_000
+    # Pillow errors above 2× the ceiling, so the largest phone photo (8064 ×
+    # 6048 = 48.8 MP) decodes and the bomb above does not.
+    assert 8064 * 6048 < 2 * photo.MAX_SOURCE_PIXELS < 60000 * 60000
 
 
 @pytest.mark.anyio
