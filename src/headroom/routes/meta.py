@@ -10,6 +10,7 @@ from headroom.schemas.hat import (
     HatStyle,
     is_beanie_style,
 )
+from headroom.schemas.settings import MetaOption, PaletteColor, StyleOption, TextOption
 from headroom.services import room_service, vocabulary
 from headroom.services.catalog_service import catalog_options
 from headroom.services.color_extraction import palette
@@ -36,12 +37,13 @@ STYLE_LABELS: dict[str, str] = {
 }
 
 
-@router.get("/styles")
+@router.get("/styles", response_model=list[StyleOption])
 async def list_styles():
     """Style options, each flagged with whether it is a beanie.
 
     The flag is served rather than re-derived client-side because it decides
-    which cases the picker offers (6 beanies per case vs 3 regular hats). A
+    which cases the picker offers (`capacity.MAX_BEANIE` beanies per case vs
+    `capacity.MAX_REGULAR` regular hats — the figures live there). A
     hardcoded list in TypeScript would be a second definition of
     `BEANIE_STYLES`, and when the two disagreed the picker would offer a case
     the save then rejects with a 409.
@@ -56,29 +58,29 @@ async def list_styles():
     ]
 
 
-@router.get("/sizes")
+@router.get("/sizes", response_model=list[MetaOption])
 async def list_sizes():
     return [{"value": s.value, "label": s.value.replace("_", " ").title()} for s in HatSize]
 
 
-@router.get("/conditions")
+@router.get("/conditions", response_model=list[MetaOption])
 async def list_conditions():
     return [{"value": c.value, "label": c.value.replace("_", " ").title()} for c in HatCondition]
 
 
-@router.get("/rooms")
+@router.get("/rooms", response_model=list[MetaOption])
 async def list_rooms(db: AsyncSession = Depends(get_db)):
     rooms = await room_service.list_rooms(db)
     return [{"value": r.id, "label": r.name} for r, _count in rooms]
 
 
-@router.get("/colors")
+@router.get("/colors", response_model=list[PaletteColor])
 async def list_colors():
     """The curated color palette — the UI renders these as filter chips."""
     return palette()
 
 
-@router.get("/constructions")
+@router.get("/constructions", response_model=list[str])
 async def list_constructions(db: AsyncSession = Depends(get_db)):
     """Suggestions for the construction field: the curated list, plus anything
     already in use.
@@ -96,7 +98,7 @@ async def list_constructions(db: AsyncSession = Depends(get_db)):
     ]
 
 
-@router.get("/collections")
+@router.get("/collections", response_model=list[str])
 async def list_collections(db: AsyncSession = Depends(get_db)):
     """Collection / collaboration names already in use, for autocomplete.
 
@@ -108,7 +110,7 @@ async def list_collections(db: AsyncSession = Depends(get_db)):
     return await vocabulary.distinct_values(db, Hat.artist_series)
 
 
-@router.get("/colorways")
+@router.get("/colorways", response_model=list[TextOption])
 async def list_colorways(
     q: str | None = None,
     model: str | None = None,

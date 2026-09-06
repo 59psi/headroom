@@ -1,4 +1,4 @@
-import type { HatRead } from '../types';
+import type { CaseRead, HatRead } from '../types';
 
 /**
  * A fully-populated `HatRead` with everything null/zero, for tests to override.
@@ -45,6 +45,27 @@ export function sweepProgressFixture(
   return {
     running: false, done: 0, total: 0, label: null,
     started_at: null, finished_at: null, error: null, pct: 0,
+    ...over,
+  };
+}
+
+
+/**
+ * A fully-populated `CaseRead` — an empty archive case in the default room.
+ *
+ * Two test files carried their own copy of this literal (`HatFormFields.test`,
+ * `RoomDetailPage.test`), one of them captioned "Real payload shape" while
+ * missing five fields pydantic always serializes. One copy, typed, so a new
+ * `CaseRead` field breaks exactly here.
+ */
+export function caseFixture(over: Partial<CaseRead> = {}): CaseRead {
+  return {
+    id: 1, case_type: 'archive', sequence_number: 1, display_id: 'A-001',
+    capacity: null, retail_price: 49, hat_count: 0, beanie_count: 0, regular_count: 0,
+    room_id: 1, room_name: 'Default Room', hat_thumbs: [], overfull: false,
+    nominal_capacity: 3, nominal_regular: 3, nominal_beanie: 6,
+    accepts_regular: true, accepts_beanie: true, free_regular: 3, free_beanie: 6,
+    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
     ...over,
   };
 }

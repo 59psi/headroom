@@ -1,6 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { apiFetch } from '../../api/client';
-import { getTlsStatus } from '../../api/settings';
+import { caCertificateAvailable, getTlsStatus } from '../../api/settings';
 
 /**
  * Install Caddy's root CA on the device you're reading this on.
@@ -18,18 +17,12 @@ import { getTlsStatus } from '../../api/settings';
  * XHR-fetched blob does not trigger it.
  */
 export function TrustCertCard() {
-  // A HEAD would be tidier, but the route only answers GET; this is a few
-  // hundred bytes and the answer is cached for the page's life.
+  // A HEAD would be tidier, but the route only answers GET (FastAPI does not
+  // add HEAD for free); this is a kilobyte and the answer is cached for the
+  // page's life. See `caCertificateAvailable` for why it is not `apiFetch`.
   const { data: available } = useQuery({
     queryKey: ['ca-certificate', 'available'],
-    queryFn: async () => {
-      try {
-        await apiFetch<unknown>('/api/public/ca-certificate');
-        return true;
-      } catch {
-        return false;
-      }
-    },
+    queryFn: caCertificateAvailable,
     retry: false,
   });
 

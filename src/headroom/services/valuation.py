@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from headroom.models.hat import Hat
+from headroom.models.hat import Hat, ResaleScope
 from headroom.services import retail_pricing
 
 def value_cases(count: int) -> float:
@@ -91,10 +91,10 @@ def value_hat(hat: Hat) -> HatValue:
     retail = hat.estimated_new_price or 0.0
     condition = hat.condition or ""
 
-    if hat.resale_price_scope == "manual" and ask > 0:
+    if hat.resale_price_scope == ResaleScope.MANUAL and ask > 0:
         return HatValue(ask, "manual")
 
-    if hat.resale_price_scope == "model" and ask > 0:
+    if hat.resale_price_scope == ResaleScope.MODEL and ask > 0:
         return HatValue(ask, "comp")
 
     if retail > 0:

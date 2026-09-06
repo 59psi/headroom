@@ -1,29 +1,5 @@
-import io
 
 import pytest
-from PIL import Image
-
-
-def _make_test_image(color=(255, 0, 0)):
-    img = Image.new("RGB", (100, 100), color)
-    buf = io.BytesIO()
-    img.save(buf, "JPEG")
-    buf.seek(0)
-    return buf
-
-
-async def _create_hat_with_photo(client, style="a_game", color=(255, 0, 0)):
-    resp = await client.post(
-        "/api/hats",
-        json={"condition": "new", "size": "classic", "style": style},
-    )
-    hat_id = resp.json()["id"]
-    photo = _make_test_image(color)
-    await client.post(
-        f"/api/hats/{hat_id}/photo",
-        files={"photo": ("hat.jpg", photo, "image/jpeg")},
-    )
-    return hat_id
 
 
 async def _create_hat_with_colors(client, colors, style="a_game"):

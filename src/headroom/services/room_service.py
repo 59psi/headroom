@@ -6,6 +6,7 @@ from sqlalchemy.orm import selectinload
 from headroom.models.case import Case
 from headroom.models.hat import Hat
 from headroom.models.room import Room
+from headroom.services.hat_service import hat_loads
 from headroom.schemas.room import RoomCreate, RoomUpdate
 from headroom.services.activity_service import log_and_commit
 
@@ -186,9 +187,7 @@ async def get_room_contents(db: AsyncSession, room_id: int) -> tuple[Room, list[
         await db.execute(
             select(Hat)
             .options(
-                selectinload(Hat.case).selectinload(Case.room),
-                selectinload(Hat.direct_room),
-                selectinload(Hat.colors),
+                *hat_loads(),
             )
             .where(Hat.direct_room_id == room_id, Hat.disposed_at.is_(None))
             .order_by(Hat.created_at.desc(), Hat.id.desc())

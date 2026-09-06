@@ -31,10 +31,6 @@ def retention_days() -> int:
     return max(1, env_int("HEADROOM_ACTIVITY_LOG_RETENTION_DAYS", 90))
 
 
-#: Kept as the module-private name the rest of this file already uses.
-_retention_days = retention_days
-
-
 async def log_activity(
     db: AsyncSession,
     *,
@@ -116,10 +112,10 @@ retention_health = TaskHealth(name="retention prune")
 
 async def prune_activity(db: AsyncSession) -> int:
     """Delete activity_log rows older than the retention window."""
-    cutoff = datetime.now(timezone.utc) - timedelta(days=_retention_days())
+    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days())
     result = await db.execute(delete(ActivityLog).where(ActivityLog.occurred_at < cutoff))
     await db.commit()
     deleted = result.rowcount or 0
     if deleted:
-        logger.info("Pruned %d activity_log rows older than %d days", deleted, _retention_days())
+        logger.info("Pruned %d activity_log rows older than %d days", deleted, retention_days())
     return deleted

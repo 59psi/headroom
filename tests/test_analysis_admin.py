@@ -158,8 +158,12 @@ async def test_reanalyze_all_opens_a_job_and_derives_its_progress(client):
     # Finish one, fail the other — the counts must follow the hats.
     async with test_session_factory() as db:
         await db.execute(sa_update(Hat).where(Hat.id == a).values(analysis_status="ok"))
+        # A failure carries its reason — `stamp_failure` always writes both, and
+        # "failed" is defined by the reason being present, not by the status.
         await db.execute(
-            sa_update(Hat).where(Hat.id == b).values(analysis_status="error")
+            sa_update(Hat)
+            .where(Hat.id == b)
+            .values(analysis_status="error", analysis_error="Claude analysis failed: boom")
         )
         await db.commit()
 
@@ -253,7 +257,9 @@ async def test_reanalyze_all_still_skips_photoless_and_disposed(client):
     body = (await client.post("/api/admin/analysis/reanalyze-all")).json()
 
     assert body["queued"] == 1, f"expected only #{with_photo}"
-    assert no_photo and disposed  # named for the reader
+    # The two that must NOT be queued keep whatever status they had.
+    for excluded in (no_photo, disposed):
+        assert (await client.get(f"/api/hats/{excluded}")).json()["analysis_status"] != "pending"
 
 
 @pytest.mark.anyio
@@ -581,6 +587,30 @@ async def test_a_run_detail_lists_its_hats_failures_first(client, db_session):
         "hat's log is where the whole string belongs"
     )
     assert {h["id"] for h in body["hats"]} == set(ids)
+
+
+async def test_a_degraded_hat_counts_as_failed_in_the_run_summary(client, db_session):
+    """`failed` and `failed_count` are one number, under one predicate.
+
+    A Claude outage does not leave hats in status `error`: the pipeline
+    degrades them to `fallback` (colors off the cutout) or `skipped` WITH the
+    reason in `analysis_error`. The run summary counted `analysis_status ==
+    "error"`, so during a total outage it read 0 failed while `failed_count`
+    on the same payload — derived from `hat_service.failed_analysis_filters`
+    — read every hat. The two must agree, so both come from that one filter.
+    """
+    ids = [await _hat_with_photo(client) for _ in range(2)]
+    job_id = (await client.post("/api/admin/analysis/reanalyze-all")).json()["job"]["id"]
+
+    await _set_analysis(
+        db_session, ids[0], status="fallback", error="Claude analysis failed: 529 Overloaded"
+    )
+    await _set_analysis(db_session, ids[1], status="ok", error=None)
+
+    body = (await client.get(f"/api/admin/analysis/jobs/{job_id}")).json()
+    assert body["failed"] == 1, "a degraded hat carrying a reason IS a failure"
+    assert body["failed"] == body["failed_count"], "two failed numbers on one payload"
+    assert body["done"] == 2
 
 
 async def test_an_old_run_says_its_hats_moved_on_rather_than_looking_empty(client):

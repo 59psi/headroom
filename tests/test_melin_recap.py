@@ -90,7 +90,7 @@ async def test_stats_narrows_to_model_when_sample_big_enough(monkeypatch):
 
     _stub_query(monkeypatch, [
         _listing("A-Game Hydro - Red", 8000),
-        _listing("A-Game Hydro - Grey", 9000),
+        _listing("A-Game Hydro - Gray", 9000),
         _listing("a-game hydro - Navy", 10000),
         _listing("A-Game Scout - Grey", 1000),
     ])
@@ -127,7 +127,7 @@ async def test_refresh_melin_resale_persists_median(monkeypatch):
 
     _stub_query(monkeypatch, [
         _listing("A-Game Hydro - Red", 8000),
-        _listing("A-Game Hydro - Grey", 9000),
+        _listing("A-Game Hydro - Gray", 9000),
         _listing("A-Game Hydro - Navy", 10000),
     ])
     hat = Hat(condition="new", size="classic", style="a_game", brand="Melin",
@@ -176,7 +176,7 @@ async def test_scope_records_model_when_listings_match_the_model(monkeypatch):
 
     _stub_query(monkeypatch, [
         _listing("A-Game Hydro - Red", 8000),
-        _listing("A-Game Hydro - Grey", 9000),
+        _listing("A-Game Hydro - Gray", 9000),
         _listing("A-Game Hydro - Navy", 10000),
     ])
     hat = Hat(condition="new", size="classic", style="a_game", brand="Melin",
@@ -212,7 +212,7 @@ async def test_manual_resale_price_survives_a_refresh(monkeypatch):
 
     _stub_query(monkeypatch, [
         _listing("A-Game Hydro - Red", 8000),
-        _listing("A-Game Hydro - Grey", 9000),
+        _listing("A-Game Hydro - Gray", 9000),
         _listing("A-Game Hydro - Navy", 10000),
     ])
     hat = Hat(condition="new", size="classic", style="a_game", brand="Melin",
@@ -275,7 +275,7 @@ async def test_median_is_scoped_to_the_hats_condition(monkeypatch):
 
     _stub_query(monkeypatch, [
         _listing("A-Game Hydro - Red", 10000, condition="new_with_tags"),
-        _listing("A-Game Hydro - Grey", 10000, condition="new_with_tags"),
+        _listing("A-Game Hydro - Gray", 10000, condition="new_with_tags"),
         _listing("A-Game Hydro - Navy", 10000, condition="new_with_tags"),
         _listing("A-Game Hydro - Bone", 5000, condition="excellent"),
         _listing("A-Game Hydro - Tan", 5000, condition="excellent"),
@@ -418,7 +418,7 @@ async def test_every_page_of_the_category_is_read_not_just_the_first(monkeypatch
     """
     import headroom.services.melin_recap as mr
 
-    monkeypatch.setattr(mr, "_PAGE_SIZE", 2)
+    monkeypatch.setattr(mr, "PAGE_SIZE", 2)
     calls = _stub_pages(monkeypatch, [
         [_listing("Odysea Rope Hydro - A", 7000), _listing("Odysea Rope Hydro - B", 8000)],
         [_listing("Odysea Rope Hydro - C", 9000), _listing("Odysea Rope Hydro - D", 10000)],
@@ -436,7 +436,7 @@ async def test_the_page_walk_is_bounded(monkeypatch):
     """Somebody else's public API — a full page every time must not loop away."""
     import headroom.services.melin_recap as mr
 
-    monkeypatch.setattr(mr, "_PAGE_SIZE", 1)
+    monkeypatch.setattr(mr, "PAGE_SIZE", 1)
     calls = _stub_pages(monkeypatch, [[_listing(f"Odysea {i}", 7000)] for i in range(50)])
 
     await mr.query_all_listings({"pub_category": "odysea"}, max_pages=4)
@@ -457,7 +457,7 @@ async def test_punctuation_does_not_make_a_model_unmatchable(monkeypatch):
         _listing("Odysea Hydro - Have More Fun", 9000),
         _listing("Odysea Hydro - Have More Fun", 10000),
         _listing("Odysea Rope - Black", 2000),
-        _listing("Odysea Stacked - Grey", 2000),
+        _listing("Odysea Stacked - Gray", 2000),
     ])
 
     stats = await fetch_resale_stats("odysea", 'Odysea Hydro "Have More Fun"')
@@ -616,6 +616,35 @@ async def test_a_colorway_token_may_not_be_satisfied_by_the_model_half(monkeypat
     assert stats["median"] == 60.0
 
 
+async def test_a_single_word_colorway_is_not_every_colorway_containing_it(monkeypatch):
+    """The colorway half is matched by EQUALITY, not containment.
+
+    `Camo`, `Rain Camo` and `Hawaii 808 Camo` are three products. Under token
+    containment a hat whose colorway is `Camo` matched all three — under the
+    `_MAX_PRODUCTS` ceiling, so it was still called a product match — and was
+    priced as their combined median, labeled as its own item. Single-word
+    colorways are the common case (Camo, Black, Navy, Bone), so this was the
+    typical shape, not an edge. `catalog_service.is_real_product` already used
+    equality for the same reason; the two validators now agree. The expensive
+    Rain Camo rows make a leak visible in the number, not only the label.
+    """
+    from headroom.services.melin_recap import fetch_resale_stats
+
+    _stub_query(monkeypatch, [
+        _product(6000, "Trenches Icon Hydro - Camo", "Camo"),
+        _product(6200, "Trenches Icon Hydro - Camo", "Camo"),
+        _product(20000, "Trenches Icon Hydro - Rain Camo", "Rain Camo"),
+        _product(20000, "Trenches Icon Hydro - Hawaii 808 Camo", "Hawaii 808 Camo"),
+    ])
+
+    stats = await fetch_resale_stats(
+        "trenches", "Trenches Icon Hydro", "new_with_tags", "classic", colorway="Camo",
+    )
+    assert stats["matched"] == "Trenches Icon Hydro - Camo"
+    assert stats["median"] == 61.0, "Camo's own two listings, not the Rain/808 ones"
+    assert stats["count"] == 2
+
+
 async def test_one_live_listing_of_the_right_product_beats_a_line_median(monkeypatch):
     """No minimum sample for a product match.
 
@@ -754,7 +783,7 @@ async def test_a_construction_in_the_MODEL_half_still_vetoes(monkeypatch):
         _product(6500, "Trenches Icon Denim - Black", "Black"),
         _product(8000, "Trenches Icon Hydro - Sand", "Sand"),
         _product(8000, "Trenches Icon Hydro - Navy", "Navy"),
-        _product(8000, "Trenches Icon Hydro - Grey", "Grey"),
+        _product(8000, "Trenches Icon Hydro - Gray", "Gray"),
     ])
 
     stats = await fetch_resale_stats(
@@ -811,3 +840,59 @@ async def test_the_source_names_only_the_products_that_set_the_number(monkeypatc
     assert stats["matched"] == "Trenches Icon Hydro - Maroon", (
         "the worn Heather Maroon did not price this hat and must not be cited"
     )
+
+
+from headroom.services.melin_recap import query_listings as _REAL_QUERY_LISTINGS
+
+
+async def test_the_pages_of_one_sweep_share_one_connection_pool(monkeypatch):
+    """`query_all_listings` opened a new `httpx.AsyncClient` — a TCP + TLS
+    handshake — per page: six per pricing call, up to 450 per harvest. Inside
+    `shared_client()` every page reuses one pool, while `query_listings(params)`
+    keeps the one-argument signature fourteen stubs rely on. Below the stub is
+    one level down, at `_query_with`, so the real `query_listings` runs and the
+    client it was handed is what gets counted."""
+    import headroom.services.melin_recap as mr
+
+    built: list[int] = []
+    used: list[int] = []
+    real_client = mr.httpx.AsyncClient
+
+    class _CountingClient(real_client):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            built.append(id(self))
+
+    class _Resp:
+        status_code = 200
+
+        def __init__(self, rows):
+            self._rows = rows
+
+        def json(self):
+            return {"data": self._rows}
+
+    async def _fake_query_with(client, params):
+        used.append(id(client))
+        page = params["page"]
+        return _Resp([{"n": page}] * (mr.PAGE_SIZE if page < 3 else 1))
+
+    monkeypatch.setattr(mr.httpx, "AsyncClient", _CountingClient)
+    monkeypatch.setattr(mr, "_query_with", _fake_query_with)
+    # The autouse network guard replaces `query_listings` wholesale; this test
+    # needs the REAL one to run (its network is stubbed one level down), so
+    # restore the original for this test only. Still no live call: `_query_with`
+    # is the fake above.
+    monkeypatch.setattr(mr, "query_listings", _REAL_QUERY_LISTINGS)
+
+    rows = await mr.query_all_listings({"pub_category": "odysea"})
+
+    assert len(rows) == 2 * mr.PAGE_SIZE + 1, "three pages were read"
+    assert len(used) == 3
+    assert len(built) == 1, f"one pool for the sweep, not one per page: {len(built)}"
+    assert len(set(used)) == 1
+
+    # Outside a sweep a lone call still gets (and closes) its own client.
+    built.clear()
+    await mr.query_listings({"pub_category": "odysea", "page": 3})
+    assert len(built) == 1

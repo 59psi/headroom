@@ -88,16 +88,12 @@ async def test_spa_does_not_serve_files_outside_dist(tmp_path, monkeypatch):
         assert resp.status_code in (200, 404)
 
 
-# ---- Admin-token guard on /api/settings/api-key ------------------------ #
+# ---- Key endpoints accept a session ----------------------------------- #
 
 
-async def test_set_api_key_requires_session(client, anon_client):
-    """v1.0: key endpoints reject anonymous requests; sessions pass."""
-    resp = await anon_client.put(
-        "/api/settings/api-key", json={"api_key": "sk-ant-foo-bar-12345"}
-    )
-    assert resp.status_code == 401
-
+async def test_set_api_key_accepts_a_session(client):
+    """v1.0: key endpoints accept a session. (The anonymous half is covered by
+    `test_every_api_path_is_gated_unless_it_is_on_the_allowlist`.)"""
     resp = await client.put(
         "/api/settings/api-key", json={"api_key": "sk-ant-foo-bar-12345"}
     )

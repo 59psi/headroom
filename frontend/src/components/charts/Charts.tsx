@@ -13,6 +13,7 @@
  * the edge of a phone.
  */
 import type { ReactNode } from 'react';
+import { Link } from 'react-router';
 
 /** Series colors, in assignment order. Distinguishable on a dark canvas. */
 export const SERIES_COLORS = [
@@ -22,8 +23,8 @@ export const SERIES_COLORS = [
   'var(--neon-orange)',
   'var(--neon-yellow)',
   'var(--neon-green)',
-  '#4aa8ff',
-  '#ff6b9d',
+  'var(--neon-sky)',
+  'var(--neon-rose)',
 ];
 
 export function seriesColor(i: number): string {
@@ -87,8 +88,10 @@ export function BarList({
             </div>
           </>
         );
+        // Every href a chart is fed is an in-app path (a search, a case, a
+        // filtered list); a plain <a> reloaded the whole SPA to follow it.
         return d.href ? (
-          <a key={d.label} href={d.href} className="hr-barlist-row hr-barlist-row-link">{row}</a>
+          <Link key={d.label} to={d.href} className="hr-barlist-row hr-barlist-row-link">{row}</Link>
         ) : (
           <div key={d.label} className="hr-barlist-row">{row}</div>
         );

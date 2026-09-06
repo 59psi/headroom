@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from headroom.config import env_flag
 from headroom.config import settings as config_settings
 from headroom.database import async_session
+from headroom.models.hat import Hat
 from headroom.models.import_job import ImportJob, ImportJobItem
 from headroom.schemas.hat import HAT_DEFAULTS, HatCreate
 from headroom.services import hat_service
@@ -36,6 +37,8 @@ from headroom.utils.photo import process_image_async
 #: monkeypatch, and a factory captured at import would have silently ignored
 #: them. `stop_worker()` resets it so one test's factory cannot leak into the
 #: next boot.
+from fastapi import HTTPException
+from headroom.utils.photo import generate_filename
 _session_factory = None
 
 
@@ -47,6 +50,13 @@ logger = logging.getLogger(__name__)
 
 MAX_FILES_PER_JOB = 100
 MAX_BYTES_PER_FILE = 20 * 1024 * 1024  # 20 MB
+#: Ceiling on the total bytes accepted for ONE batch, whichever door it comes
+#: through (the upload route or the Android share target). Files are spooled to
+#: disk as they arrive, so this bounds disk and job size rather than RAM; phone
+#: photos are a few MB, so it is generous for real use while blocking the
+#: pathological case (S9/R6 — docs/AUDIT-HISTORY.md). It lived as two mirrored
+#: constants in the two routes; a mirrored constant is two constants.
+MAX_TOTAL_UPLOAD_BYTES = 750 * 1024 * 1024
 
 # Terminal item status -> the ImportJob counter column it feeds. The two names
 # genuinely differ ("error" item, "errors" counter), which is exactly the slip a
@@ -68,6 +78,19 @@ def staging_dir() -> Path:
     return d
 
 
+def spool_dir() -> Path:
+    """Where a request should spool incoming files before `create_job`.
+
+    Beside the job dirs, on the same filesystem, so `create_job` can stage by
+    rename. `tempfile.mkdtemp()`'s default is the container's `/tmp`, which is
+    a different filesystem from the `/data` volume — a move from there is a
+    full copy, and on an SD card a copy is the cost this exists to avoid.
+    """
+    d = staging_dir() / "spool"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 async def create_job(
     db: AsyncSession,
     *,
@@ -78,13 +101,12 @@ async def create_job(
 
     `files` is (original filename, path to a temp copy). Paths rather than
     bytes so a batch is never resident in memory — the caller spools each
-    upload to disk as it arrives and deletes its temp dir afterwards.
+    upload to disk as it arrives and deletes its temp dir afterwards. Spool
+    under `spool_dir()` so staging is a rename rather than a second write.
     """
     if not files:
-        from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="No files provided")
     if len(files) > MAX_FILES_PER_JOB:
-        from fastapi import HTTPException
         raise HTTPException(status_code=413, detail=f"Max {MAX_FILES_PER_JOB} files per job")
 
     job = ImportJob(
@@ -109,12 +131,18 @@ async def create_job(
             job.errors += 1
             continue
         # Stage the file before commit so the worker has something to read.
-        # `copy2`, not `read_bytes`+`write_bytes`: the caller has already spooled
-        # this to disk precisely so a batch never sits in memory, and reading it
-        # back to write it out again would undo that one file at a time.
+        # A MOVE, off the event loop. This was a synchronous `shutil.copy2` in
+        # the request handler: up to 100 x 20 MB of SD-card writes with the
+        # loop blocked for the duration, and every byte written twice (the
+        # caller had just spooled it). Both callers spool under
+        # `staging_dir()` — the same filesystem as the job dir — so this is an
+        # atomic rename in practice; `shutil.move` falls back to a copy if a
+        # caller ever hands over a path from elsewhere, and `to_thread` keeps
+        # that fallback off the loop too. The caller's temp dir is still
+        # disposable afterwards: it is simply emptier.
         safe_name = f"{idx:04d}-{Path(filename).name[:120]}"
         staged = job_dir / safe_name
-        shutil.copy2(source, staged)
+        await asyncio.to_thread(shutil.move, str(source), str(staged))
         db.add(ImportJobItem(
             job_id=job.id, filename=filename, status="queued",
             bytes=size, staged_path=str(staged),
@@ -181,10 +209,10 @@ async def cancel_job(db: AsyncSession, job_id: int) -> ImportJob | None:
     job = await get_job(db, job_id)
     if not job:
         return None
-    if job.status in ("done", "cancelled"):
+    if job.status in ("done", "canceled"):
         return job
-    job.status = "cancelled"
-    # Mark queued items as cancelled — in-flight items finish naturally
+    job.status = "canceled"
+    # Mark queued items as canceled — in-flight items finish naturally
     result = await db.execute(
         select(ImportJobItem).where(
             ImportJobItem.job_id == job_id,
@@ -192,13 +220,13 @@ async def cancel_job(db: AsyncSession, job_id: int) -> ImportJob | None:
         )
     )
     for item in result.scalars().all():
-        item.status = "cancelled"
+        item.status = "canceled"
         if item.staged_path:
             Path(item.staged_path).unlink(missing_ok=True)
     await db.commit()
     await log_activity(
-        db, kind="import.cancelled", entity_type="system", entity_id=job_id,
-        summary=f"Bulk import job #{job_id} cancelled",
+        db, kind="import.canceled", entity_type="system", entity_id=job_id,
+        summary=f"Bulk import job #{job_id} canceled",
     )
     await db.commit()
     return job
@@ -216,9 +244,9 @@ async def _process_item(item_id: int) -> None:
         )
         item = result.scalar_one_or_none()
         if item is None or item.status != "queued":
-            return  # already cancelled or processed
+            return  # already canceled or processed
         job = await db.get(ImportJob, item.job_id)
-        if job is not None and job.status == "cancelled":
+        if job is not None and job.status == "canceled":
             return
         job_id = item.job_id
 
@@ -226,6 +254,7 @@ async def _process_item(item_id: int) -> None:
     # transient "database is locked" on the mark-running commit — marks the
     # item errored and bumps the counter rather than escaping to the worker
     # loop. The loop has its own catch-all too (belt and suspenders).
+    created_hat_id: int | None = None
     try:
         # Mark running
         async with _sessions() as db:
@@ -273,16 +302,22 @@ async def _process_item(item_id: int) -> None:
                 style=defaults.get("style", HAT_DEFAULTS["style"]),
             )
 
-            # Create the hat row first
-            hat = await hat_service.create_hat(db, create_data)
-
-            # Process the photo (resize → bg-remove → Claude analysis)
-            from headroom.utils.photo import generate_filename
+            # Decode the photo BEFORE a hat row exists. This ran the other way
+            # round — `create_hat` (which commits) and then the resize — so a
+            # file Pillow could not open left a photo-less hat with default
+            # style/size/condition in the collection forever, possibly holding
+            # the job's case slot, while the item read `error` and looked
+            # handled. The decode is the step most likely to fail on a real
+            # camera roll (an undecodable HEIC, a video, a text file with a
+            # .jpg name), and nothing it needs depends on the hat.
             upload_dir = config_settings.upload_dir / "hats"
             upload_dir.mkdir(parents=True, exist_ok=True)
             filename = generate_filename(original_filename)
             output_path = upload_dir / filename
             final_path = await process_image_async(staged, output_path)
+
+            hat = await hat_service.create_hat(db, create_data)
+            created_hat_id = hat.id
             await finalize_hat_photo(db, hat, final_path)
             await db.commit()
 
@@ -311,6 +346,15 @@ async def _process_item(item_id: int) -> None:
                     await db.commit()
                     if item.staged_path:
                         Path(item.staged_path).unlink(missing_ok=True)
+                # A hat this attempt created but never finished must not
+                # outlive its failed import: with no committed photo it is
+                # indistinguishable from a hat somebody added by hand and
+                # forgot to photograph, so nothing would ever clean it up.
+                if created_hat_id is not None:
+                    orphan = await db.get(Hat, created_hat_id)
+                    if orphan is not None and orphan.photo_path is None:
+                        await db.delete(orphan)
+                        await db.commit()
         except Exception as inner:  # noqa: BLE001 — bookkeeping must not raise
             logger.warning("Import item %s error-bookkeeping failed: %s", item_id, inner)
         await _bump_job_counter(job_id, "error")
@@ -334,9 +378,9 @@ async def _bump_job_counter(job_id: int, item_status: str) -> None:
             return
         setattr(job, counter, getattr(job, counter) + 1)
         # Job done if every item is in a terminal state — but never resurrect a
-        # cancelled job whose in-flight items are still finishing.
+        # canceled job whose in-flight items are still finishing.
         if (
-            job.status != "cancelled"
+            job.status != "canceled"
             and sum(getattr(job, c) for c in _JOB_COUNTER.values()) >= job.total
         ):
             job.status = "done"
@@ -384,14 +428,14 @@ async def _worker_loop() -> None:
             item_id = await _queue.get()
             try:
                 await _process_item(item_id)
-            except Exception as exc:  # noqa: BLE001 — one bad item must NOT
+            except Exception as exc:  # one bad item must NOT
                 # kill the worker; _process_item handles its own bookkeeping,
                 # this is the last line of defense against an unforeseen escape.
                 logger.exception("Import worker: unhandled error on item %s: %s", item_id, exc)
             finally:
                 _queue.task_done()
     except asyncio.CancelledError:
-        logger.info("Import worker cancelled.")
+        logger.info("Import worker canceled.")
         raise
 
 
@@ -428,8 +472,8 @@ async def _recover_on_boot() -> None:
         )).scalars().all()
         for item in stuck:
             job = await db.get(ImportJob, item.job_id)
-            # A cancelled job's in-flight item becomes cancelled; otherwise retry.
-            item.status = "cancelled" if (job and job.status == "cancelled") else "queued"
+            # A canceled job's in-flight item becomes canceled; otherwise retry.
+            item.status = "canceled" if (job and job.status == "canceled") else "queued"
         if stuck:
             await db.commit()
 
@@ -471,7 +515,6 @@ async def start_worker(session_factory=None) -> None:
 
 async def stop_worker() -> None:
     global _session_factory
-    _session_factory = None
     # Clears `_queue` as well as the task, matching `analysis_queue.stop_worker`.
     # Leaving a queue object behind after the worker is gone is what let
     # `create_job` believe work had been accepted: the put succeeds, nothing
@@ -485,3 +528,6 @@ async def stop_worker() -> None:
             pass
         _worker_task = None
     _queue = None
+    # Cleared LAST, after the task is gone, for the reason
+    # `analysis_queue.stop_worker` gives.
+    _session_factory = None

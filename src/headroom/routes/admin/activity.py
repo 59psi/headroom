@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.database import get_db
-from headroom.schemas.admin import ActivityRow
+from headroom.schemas.admin import ActivityRow, CountRead, RetentionStatus
 from headroom.services import activity_service
 
 router = APIRouter()
@@ -33,12 +33,12 @@ async def list_activity_log(
     ]
 
 
-@router.get("/activity-log/count")
+@router.get("/activity-log/count", response_model=CountRead)
 async def activity_log_count(db: AsyncSession = Depends(get_db)):
     return {"count": await activity_service.count_activity(db)}
 
 
-@router.get("/activity-log/retention")
+@router.get("/activity-log/retention", response_model=RetentionStatus)
 async def retention_status():
     """Is the daily prune still running, and what did it last remove?
 

@@ -4,7 +4,9 @@ Two defects produced the same visible symptom — hats rendering faded and
 brim-less on the near-black canvas — from opposite ends of the pipeline:
 
 1. Soft, mid-confidence alpha from the saliency model came through as
-   semi-transparent pixels ("ghosted"). `post_process_mask` binarises it.
+   semi-transparent pixels ("ghosted"). `_harden_alpha` ramps it toward
+   opaque — a binarizing `post_process_mask` was tried first and replaced,
+   see the test docstrings below.
 2. Re-analysis re-ran background removal against the stored PNG cutout,
    writing the result back over the same file, so every Reanalyze ate a
    little more of the alpha and the bill.

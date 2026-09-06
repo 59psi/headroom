@@ -10,7 +10,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { screen } from '@testing-library/react';
 import { Routes, Route } from 'react-router';
 import { renderWithProviders } from '../test/utils';
-import { hatFixture } from '../test/fixtures';
+import { caseFixture, hatFixture } from '../test/fixtures';
 import { RoomDetailPage } from './RoomDetailPage';
 import * as roomsApi from '../api/rooms';
 import type { CaseRead, RoomDetail } from '../types';
@@ -20,16 +20,10 @@ vi.mock('../api/rooms', () => ({ getRoom: vi.fn() }));
 const mocked = vi.mocked(roomsApi);
 
 function aCase(over: Partial<CaseRead> = {}): CaseRead {
-  return {
-    id: 1, case_type: 'archive', sequence_number: 1, display_id: 'A-001',
-    photo_path: null, capacity: null, retail_price: 49,
-    hat_count: 1, beanie_count: 0, regular_count: 1,
-    room_id: 1, room_name: 'Study', hat_thumbs: [],
-    overfull: false, nominal_capacity: 3, nominal_regular: 3, nominal_beanie: 6,
-    accepts_regular: true, accepts_beanie: false, free_regular: 2, free_beanie: 0,
-    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
-    ...over,
-  };
+  return caseFixture({
+    room_name: 'Study', hat_count: 1, regular_count: 1,
+    accepts_beanie: false, free_regular: 2, free_beanie: 0, ...over,
+  });
 }
 
 function room(over: Partial<RoomDetail> = {}): RoomDetail {

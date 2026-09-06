@@ -77,7 +77,7 @@ async def test_requirements_txt_matches_the_lockfile():
         f"Regenerate: {' '.join(EXPORT_CMD)} -o requirements.txt"
     )
 
-    result = subprocess.run(  # noqa: S603 — fixed argv, no shell
+    result = subprocess.run(  # fixed argv, no shell
         EXPORT_CMD, cwd=ROOT, capture_output=True, text=True, check=False,
         env={**os.environ, "NO_COLOR": "1"},
     )

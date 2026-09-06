@@ -216,3 +216,12 @@ async def test_record_failure_accepts_a_plain_reason(monkeypatch):
     h.record_failure(OSError("disk full"))
     assert h.consecutive_failures == 2
     assert "OSError" in h.last_error
+
+
+async def test_the_scheduler_loops_docstring_is_attached_to_the_function():
+    """The loop's docstring sat AFTER two statements, so it was a no-op string
+    expression and `__doc__` was None — the module's own justification for its
+    try/except shape, invisible to `help()`. Ruff exempts string literals from
+    B018 and no D-rules run, so only a test can see it."""
+    assert backup_service.scheduled_backup_loop.__doc__
+    assert "interval_hours" in backup_service.scheduled_backup_loop.__doc__

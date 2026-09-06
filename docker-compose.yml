@@ -36,6 +36,46 @@ services:
       # arg above. Set it here only to force a model that is NOT in the image
       # (the Pi will then download it on first use).
       HEADROOM_CORS_ORIGINS: '["http://localhost:8000"]'
+      # ---- Operator knobs, forwarded from `.env` ---------------------------
+      # Compose's `.env` feeds variable INTERPOLATION only; it never becomes the
+      # container's environment. Every variable the docs tell you to "set in
+      # .env" therefore needs a line here or the app reads nothing — which is
+      # exactly what happened: `HEADROOM_SETUP_TOKEN` in `.env` protected
+      # nothing, silently, and `HEADROOM_MDNS_HOSTNAME=hats` renamed Caddy's
+      # certificate while the app kept advertising `headroom.local`. Empty
+      # (`${VAR:-}`) means "unset" to every reader, so an untouched `.env`
+      # changes nothing. `HEADROOM_REMBG_MODEL` is deliberately NOT here — see
+      # the note above about the baked-in model.
+      HEADROOM_SETUP_TOKEN: "${HEADROOM_SETUP_TOKEN:-}"
+      HEADROOM_LOG_LEVEL: "${HEADROOM_LOG_LEVEL:-}"
+      HEADROOM_ANTHROPIC_API_KEY: "${HEADROOM_ANTHROPIC_API_KEY:-}"
+      HEADROOM_ANTHROPIC_MODEL: "${HEADROOM_ANTHROPIC_MODEL:-}"
+      HEADROOM_GOOGLE_VISION_API_KEY: "${HEADROOM_GOOGLE_VISION_API_KEY:-}"
+      HEADROOM_EBAY_APP_ID: "${HEADROOM_EBAY_APP_ID:-}"
+      HEADROOM_EBAY_CERT_ID: "${HEADROOM_EBAY_CERT_ID:-}"
+      HEADROOM_HTTP_TIMEOUT: "${HEADROOM_HTTP_TIMEOUT:-}"
+      HEADROOM_MDNS_ENABLED: "${HEADROOM_MDNS_ENABLED:-}"
+      HEADROOM_MDNS_HOSTNAME: "${HEADROOM_MDNS_HOSTNAME:-}"
+      HEADROOM_MDNS_INTERFACE: "${HEADROOM_MDNS_INTERFACE:-}"
+      HEADROOM_IMPORT_WORKER_ENABLED: "${HEADROOM_IMPORT_WORKER_ENABLED:-}"
+      HEADROOM_ANALYSIS_WORKER_ENABLED: "${HEADROOM_ANALYSIS_WORKER_ENABLED:-}"
+      HEADROOM_REMBG_CONCURRENCY: "${HEADROOM_REMBG_CONCURRENCY:-}"
+      HEADROOM_BACKUP_ENABLED: "${HEADROOM_BACKUP_ENABLED:-}"
+      HEADROOM_BACKUP_INTERVAL_HOURS: "${HEADROOM_BACKUP_INTERVAL_HOURS:-}"
+      HEADROOM_BACKUP_KEEP: "${HEADROOM_BACKUP_KEEP:-}"
+      # The pre-2.40 name for the same count, still read so an old `.env` keeps meaning something.
+      HEADROOM_BACKUP_RETENTION_DAYS: "${HEADROOM_BACKUP_RETENTION_DAYS:-}"
+      HEADROOM_BACKUP_UPLOAD_CMD: "${HEADROOM_BACKUP_UPLOAD_CMD:-}"
+      HEADROOM_BACKUP_UPLOAD_TIMEOUT: "${HEADROOM_BACKUP_UPLOAD_TIMEOUT:-}"
+      HEADROOM_REPRICING_ENABLED: "${HEADROOM_REPRICING_ENABLED:-}"
+      HEADROOM_REPRICING_INTERVAL_HOURS: "${HEADROOM_REPRICING_INTERVAL_HOURS:-}"
+      HEADROOM_REPRICING_DELAY_SECONDS: "${HEADROOM_REPRICING_DELAY_SECONDS:-}"
+      HEADROOM_REPRICING_BATCH_LIMIT: "${HEADROOM_REPRICING_BATCH_LIMIT:-}"
+      HEADROOM_ACTIVITY_LOG_RETENTION_DAYS: "${HEADROOM_ACTIVITY_LOG_RETENTION_DAYS:-}"
+      HEADROOM_DISK_MIN_FREE_MB: "${HEADROOM_DISK_MIN_FREE_MB:-}"
+      HEADROOM_DISK_WARN_PCT: "${HEADROOM_DISK_WARN_PCT:-}"
+      HEADROOM_MAX_BODY_BYTES: "${HEADROOM_MAX_BODY_BYTES:-}"
+      HEADROOM_SQLITE_SYNCHRONOUS: "${HEADROOM_SQLITE_SYNCHRONOUS:-}"
       # Password for the Synology / rsync-daemon backup target, forwarded from
       # your `.env` into the container.
       #

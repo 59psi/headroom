@@ -79,9 +79,29 @@ def isolated_upload_dir(tmp_path, monkeypatch):
 
     upload_dir = tmp_path / "uploads"
     # Mirror what the app lifespan creates (it doesn't run under ASGITransport).
-    for sub in ("cases", "hats", "branding"):
+    # No `cases/`: there is deliberately no case-photo feature, and the lifespan
+    # creates no such directory either.
+    for sub in ("hats", "branding"):
         (upload_dir / sub).mkdir(parents=True)
     monkeypatch.setattr(settings, "upload_dir", upload_dir)
+
+
+@pytest.fixture(autouse=True)
+def fresh_rate_limiter():
+    """The login rate limiter and its block log are module-level dicts.
+
+    Tests used to clear them AFTER their assertions, so a failing assertion
+    leaked five to twenty recorded failures into whatever ran next — and the
+    next login test then hit a lockout it did not cause. Reset both before and
+    after every test, in one place.
+    """
+    from headroom.services import auth_service
+
+    auth_service._failures.clear()
+    auth_service._blocked_logged.clear()
+    yield
+    auth_service._failures.clear()
+    auth_service._blocked_logged.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -122,7 +142,7 @@ def stub_background_removal(monkeypatch):
 
 @pytest.fixture(autouse=True)
 async def setup_db():
-    from headroom.models import __all_models__  # noqa: F811
+    from headroom.models import __all_models__
     from headroom.models.room import Room
 
     _ = __all_models__

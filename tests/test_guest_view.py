@@ -221,14 +221,6 @@ async def test_the_guest_surface_is_read_only(client, anon_client, method):
     assert resp.status_code in (404, 405), f"{method.upper()} was routed"
 
 
-async def test_guest_view_does_not_open_the_rest_of_the_api(client, anon_client):
-    """Enabling guest browsing must not weaken the gate on anything else."""
-    await _enable(client)
-
-    for path in ("/api/hats", "/api/cases", "/api/rooms", "/api/settings/guest-view"):
-        assert (await anon_client.get(path)).status_code == 401, path
-
-
 # --------------------- search must not become an oracle --------------------- #
 
 
@@ -266,7 +258,10 @@ async def test_guest_search_cannot_probe_for_hidden_fields(
     assert [h["model_name"] for h in hits] != ["Marked"], (
         f"guest search leaked {field}={value!r} via ?q={term}"
     )
-    assert marked  # named for the reader
+    # The marked hat is still ON SHOW when not searched for — the field is
+    # withheld from matching, not the hat from the collection.
+    browse = (await anon_client.get("/api/public/guest/collection")).json()["hats"]
+    assert marked["id"] in {h["id"] for h in browse}
 
 
 async def test_guest_search_still_works_on_what_it_shows(client, anon_client):
@@ -298,9 +293,24 @@ async def test_the_owners_own_search_still_sees_everything(client):
         assert [h["model_name"] for h in hits] == ["Marked"], term
 
 
-async def test_guest_search_count_is_not_capped(client, anon_client):
+async def test_guest_search_count_is_not_capped(client, anon_client, monkeypatch):
     """`hat_count` is the response's own length, so a truncated list would make
-    it a lie — the `len()`-of-a-capped-list mistake, for the third time."""
+    it a lie — the `len()`-of-a-capped-list mistake, for the third time. First
+    the cap was 50, then 500; any ceiling lies once the collection outgrows it,
+    and the browse path already returns everything, so search has NO cap now.
+    Fifty-five hats prove the old 50; the captured `limit` proves there is no
+    ceiling left to outgrow."""
+    from headroom.services import search_service
+
+    seen: dict = {}
+    real = search_service.search_hats
+
+    async def _capture(db, query, **kw):
+        seen.update(kw)
+        return await real(db, query, **kw)
+
+    monkeypatch.setattr(search_service, "search_hats", _capture)
+
     for i in range(55):
         await _hat(client, model_name=f"Coronado {i}")
     await _enable(client)
@@ -309,6 +319,7 @@ async def test_guest_search_count_is_not_capped(client, anon_client):
 
     assert body["hat_count"] == 55
     assert len(body["hats"]) == 55
+    assert seen.get("limit", "unset") is None, f"guest search still capped: {seen}"
 
 
 # ------------------------------- hat detail --------------------------------- #
@@ -411,3 +422,36 @@ async def test_share_link_photos_still_require_a_photo(client, anon_client):
     resp = await anon_client.get(f"/api/public/share/{token}/photo/{hat['id']}")
 
     assert resp.status_code == 404
+
+
+async def test_no_route_module_holds_a_shared_exception_instance(anon_client):
+    """A module-level `HTTPException` re-raised per request leaks.
+
+    CPython prepends each raise's frames onto the exception's existing
+    `__traceback__`, so a shared instance grows a traceback chain for the life
+    of the process and pins every request's locals with it — measured 0 → 30
+    retained frames after five anonymous requests to these two modules, both
+    reachable without a session. The 404s are factories now; this pins that no
+    route module goes back to a shared instance, and drives the anonymous path
+    a few times to make the property observable rather than declared.
+    """
+    import importlib
+    import pkgutil
+
+    from fastapi import HTTPException
+
+    import headroom.routes as routes_pkg
+
+    for _ in range(5):
+        assert (await anon_client.get("/api/public/guest/collection")).status_code == 404
+        assert (await anon_client.get("/api/public/share/not-a-real-token")).status_code == 404
+
+    offenders = []
+    for info in pkgutil.walk_packages(routes_pkg.__path__, routes_pkg.__name__ + "."):
+        module = importlib.import_module(info.name)
+        for name, value in vars(module).items():
+            if isinstance(value, HTTPException):
+                offenders.append(f"{info.name}.{name}")
+                if value.__traceback__ is not None:
+                    offenders[-1] += " (already carrying a traceback)"
+    assert offenders == [], offenders

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { updateHat } from '../../api/hats';
 import { invalidateHatViews } from '../../lib/invalidate';
@@ -17,13 +17,12 @@ export function HatNotesCard({ hat }: { hat: HatRead }) {
   const [notes, setNotes] = useState(hat.owner_notes ?? '');
   const [saved, setSaved] = useState(false);
 
-  // Reset when the page swaps to a DIFFERENT hat. Keyed on the id, not on the
-  // notes: following `owner_notes` would overwrite whatever is being typed
-  // every time a refetch lands, and the only thing that changes it server-side
-  // is this component's own save.
-  useEffect(() => {
-    setNotes(hat.owner_notes ?? '');
-  }, [hat.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // No reset effect. `HatDetailPage` mounts this as `<HatNotesCard key={data.id}>`,
+  // so swapping to a different hat is a fresh instance and `hat.id` can never
+  // change inside one; the `useState` seed above is the reset. (The draft is
+  // deliberately NOT re-synced from `owner_notes` on refetch — that would
+  // overwrite whatever is being typed, and the only thing that changes it
+  // server-side is this component's own save.)
 
   const save = useMutation({
     // null, not '' — an empty string reads as "has notes, which are blank",

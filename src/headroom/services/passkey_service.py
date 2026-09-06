@@ -23,6 +23,7 @@ from webauthn import (
     verify_registration_response,
 )
 from webauthn.helpers import base64url_to_bytes, bytes_to_base64url, options_to_json
+from webauthn.helpers.structs import PublicKeyCredentialDescriptor
 
 from headroom.config import settings
 from headroom.models.user import PasskeyCredential, User
@@ -72,8 +73,14 @@ def registration_options(user: User, existing: list[PasskeyCredential]) -> tuple
         rp_name="Headroom",
         user_id=str(user.id).encode(),
         user_name=user.username,
+        # Descriptors, not dicts: py_webauthn's `options_to_json` reads
+        # `cred.id` / `cred.type.value` off each entry, so a plain dict raised
+        # AttributeError the moment a user with ONE passkey tried to add a
+        # second — every "Face ID on another device" registration 500'd, and
+        # the only tested path was the first passkey, where the list is empty.
         exclude_credentials=[
-            {"id": base64url_to_bytes(c.credential_id)} for c in existing
+            PublicKeyCredentialDescriptor(id=base64url_to_bytes(c.credential_id))
+            for c in existing
         ]
         or None,
     )

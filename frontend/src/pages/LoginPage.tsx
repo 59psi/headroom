@@ -67,7 +67,12 @@ export function LoginPage() {
     try {
       if (needsSetup) await setupOwner(username.trim(), password, setupToken.trim());
       else await login(username.trim(), password);
-      window.location.assign('/');
+      // `next`, not '/'. The effect above honors `?next=` only for a visitor who
+      // arrives already signed in; the actual sign-in paths went home, which
+      // dropped the one thing a tag tap with an expired session carried —
+      // which hat you were holding. `safeNext` has already refused anything
+      // off-site, so this is a same-origin path.
+      window.location.assign(next);
     } catch (err) {
       setError(String(err instanceof Error ? err.message : err));
     } finally {
@@ -82,7 +87,7 @@ export function LoginPage() {
       const { state_id, options } = await passkeyLoginOptions();
       const credential = await getPasskeyAssertion(options);
       await passkeyLoginVerify(state_id, credential);
-      window.location.assign('/');
+      window.location.assign(next);
     } catch (err) {
       setError(String(err instanceof Error ? err.message : err));
     } finally {
@@ -111,8 +116,9 @@ export function LoginPage() {
 
           <form onSubmit={submit}>
             <div className="mb-3">
-              <label className="form-label">Username</label>
+              <label className="form-label" htmlFor="login-username">Username</label>
               <input
+                id="login-username"
                 className="form-control"
                 value={username}
                 onChange={e => setUsername(e.target.value)}
@@ -121,8 +127,9 @@ export function LoginPage() {
               />
             </div>
             <div className="mb-3">
-              <label className="form-label">Password</label>
+              <label className="form-label" htmlFor="login-password">Password</label>
               <input
+                id="login-password"
                 type="password"
                 className="form-control"
                 value={password}
@@ -133,8 +140,9 @@ export function LoginPage() {
             </div>
             {needsSetup && (
               <div className="mb-3">
-                <label className="form-label">Confirm password</label>
+                <label className="form-label" htmlFor="login-confirm">Confirm password</label>
                 <input
+                  id="login-confirm"
                   type="password"
                   className="form-control"
                   value={confirm}

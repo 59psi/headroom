@@ -105,16 +105,18 @@ export function EbayCredsCard() {
             Not configured — eBay tile shows the search deep-link only, no live prices.
           </p>
         )}
-        <label className="form-label">App ID (Client ID)</label>
+        <label className="form-label" htmlFor="ebay-app-id">App ID (Client ID)</label>
         <input
+          id="ebay-app-id"
           type="text"
           className="form-control mb-2"
           value={ebayAppId}
           onChange={e => setEbayAppId(e.target.value)}
           autoComplete="off"
         />
-        <label className="form-label">Cert ID (Client Secret)</label>
+        <label className="form-label" htmlFor="ebay-cert-id">Cert ID (Client Secret)</label>
         <input
+          id="ebay-cert-id"
           type="password"
           className="form-control mb-2"
           value={ebayCertId}

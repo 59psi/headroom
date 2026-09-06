@@ -34,6 +34,8 @@ Two things this table deliberately does NOT do:
 
 from __future__ import annotations
 
+from sqlalchemy import select
+from headroom.models.hat import Hat
 MANUAL_SOURCE = "Manual"
 TABLE_SOURCE = "melin retail"
 
@@ -158,9 +160,7 @@ async def backfill_retail_prices(db) -> int:
     Manual prices are untouched — `resolve_retail` enforces that, and this walks
     every hat through it rather than reimplementing the rule.
     """
-    from sqlalchemy import select
 
-    from headroom.models.hat import Hat
 
     changed = 0
     for hat in (await db.execute(select(Hat))).scalars().all():

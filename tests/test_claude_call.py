@@ -12,8 +12,12 @@ was silently dropped is invisible from the outside — that exact bug shipped
 once. And the FAILURE TRANSLATION, because every caller catches
 `ClaudeAnalysisError` and degrades; anything else escaping takes the run down.
 
-The Anthropic client is replaced wholesale, so no key is needed and no request
-leaves the process.
+The client is replaced through `_anthropic_client`, the ONE seam that builds
+an `AsyncAnthropic` — the same seam `test_claude_call_shape.py` uses to drive
+the real SDK against an in-memory transport. This file used to patch the
+`AsyncAnthropic` name itself, which was a second seam for one call and one the
+module could stop honoring without any test noticing. No key is needed and no
+request leaves the process.
 """
 
 from __future__ import annotations
@@ -69,7 +73,15 @@ def _stub_client(monkeypatch, *, payload=None, raises=None, capture=None):
         def __init__(self, **_kw):
             self.messages = _Messages()
 
-    monkeypatch.setattr(claude_analysis, "AsyncAnthropic", _Client)
+        # The real client is used as `async with`, so the pool it owns is
+        # closed after each analysis; the stub has to speak the same protocol.
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(claude_analysis, "_anthropic_client", lambda api_key, timeout, **kw: _Client())
 
 
 # ---- the request ------------------------------------------------------ #
@@ -182,7 +194,13 @@ async def test_a_reply_with_no_tool_block_is_an_error(monkeypatch, tmp_path):
         def __init__(self, **_kw):
             self.messages = _Messages()
 
-    monkeypatch.setattr(claude_analysis, "AsyncAnthropic", _Client)
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(claude_analysis, "_anthropic_client", lambda api_key, timeout, **kw: _Client())
 
     with pytest.raises(ClaudeAnalysisError):
         await claude_analysis.analyze_hat_image(_photo(tmp_path), "sk-ant-test")

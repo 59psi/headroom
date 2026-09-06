@@ -44,6 +44,15 @@ export function AccountCard() {
     onError: (e) => setPwMsg(String(e instanceof Error ? e.message : e)),
   });
 
+  // A mutation, like the two above — this was a bare `await deletePasskey()`
+  // in the click handler, so a failure was an unhandled rejection and the
+  // passkey simply stayed in the list with nothing said.
+  const removePasskeyMut = useMutation({
+    mutationFn: (id: number) => deletePasskey(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['auth', 'passkeys'] }),
+    onError: (e) => setPkError(String(e instanceof Error ? e.message : e)),
+  });
+
   async function addPasskey() {
     setPkError(null);
     try {
@@ -146,12 +155,10 @@ export function AccountCard() {
                 type="button"
                 className="btn btn-link btn-sm p-0"
                 style={{ color: 'var(--neon-red)' }}
-                onClick={async () => {
-                  if (confirm(`Remove passkey "${p.name}"?`)) {
-                    await deletePasskey(p.id);
-                    qc.invalidateQueries({ queryKey: ['auth', 'passkeys'] });
-                  }
+                onClick={() => {
+                  if (confirm(`Remove passkey "${p.name}"?`)) removePasskeyMut.mutate(p.id);
                 }}
+                disabled={removePasskeyMut.isPending}
               >remove</button>
             </div>
           ))}
@@ -167,9 +174,9 @@ export function AccountCard() {
           <div className="hr-metric-label mb-1">Change password</div>
           <div className="d-flex gap-2 flex-wrap">
             <input type="password" className="form-control" style={{ maxWidth: 200 }} placeholder="Current"
-              value={curPw} onChange={e => setCurPw(e.target.value)} autoComplete="current-password" />
+              aria-label="Current password" value={curPw} onChange={e => setCurPw(e.target.value)} autoComplete="current-password" />
             <input type="password" className="form-control" style={{ maxWidth: 200 }} placeholder="New (8+ chars)"
-              value={newPw} onChange={e => setNewPw(e.target.value)} autoComplete="new-password" />
+              aria-label="New password" value={newPw} onChange={e => setNewPw(e.target.value)} autoComplete="new-password" />
             <button type="button" className="btn btn-outline-primary"
               disabled={!curPw || newPw.length < 8 || pwMut.isPending}
               onClick={() => pwMut.mutate()}>

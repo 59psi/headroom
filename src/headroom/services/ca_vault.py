@@ -192,7 +192,7 @@ def issuer_expiry() -> datetime | None:
         from cryptography import x509  # noqa: PLC0415 — heavy, only needed here
 
         return x509.load_pem_x509_certificate(path.read_bytes()).not_valid_after_utc
-    except Exception:  # noqa: BLE001 — a diagnostic must never break the page
+    except Exception:  # a diagnostic must never break the page
         logger.warning("Could not read intermediate expiry", exc_info=True)
         return None
 

@@ -220,7 +220,7 @@ async def test_claude_error_falls_back(client, real_cutout, google_key, monkeypa
     async def _fake_get_key(_db):
         return "sk-ant-fixture", "database"
 
-    async def _boom(_path, _key, model=None, selected_style=None, **_kw):  # noqa: ARG001
+    async def _boom(_path, _key, model=None, selected_style=None, **_kw):
         raise ClaudeAnalysisError("rate limited")
 
     monkeypatch.setattr(

@@ -20,7 +20,6 @@ export interface CaseRead {
   case_type: 'archive' | 'daily_wear';
   sequence_number: number;
   display_id: string;
-  photo_path: string | null;
   capacity: number | null;
   /** What the physical case cost new. Same for every case, so it is
    *  published rather than stored per row. */
@@ -30,8 +29,6 @@ export interface CaseRead {
   regular_count: number;
   room_id: number;
   room_name: string;
-  /** Computed server-side from the same rule the write path enforces, so the
-   *  picker can't disagree with what a save will accept. */
   /** Up to 4 hat photos for the collage the Cases grid renders. */
   hat_thumbs: string[];
   /** Past nominal capacity — a 4th hat in a 3-hat case. Allowed, but shown. */
@@ -41,6 +38,9 @@ export interface CaseRead {
   /** Both type defaults, served so no client restates them. */
   nominal_regular: number;
   nominal_beanie: number;
+  /** Computed server-side from the same rule the write path enforces
+   *  (`capacity.evaluate`), so the picker can't disagree with what a save will
+   *  accept. */
   accepts_regular: boolean;
   accepts_beanie: boolean;
   free_regular: number;
@@ -137,7 +137,7 @@ export interface HatRead {
 export interface ImportJobItem {
   id: number;
   filename: string;
-  status: 'queued' | 'processing' | 'done' | 'error' | 'skipped' | 'cancelled';
+  status: 'queued' | 'processing' | 'done' | 'error' | 'skipped' | 'canceled';
   hat_id: number | null;
   error: string | null;
   bytes: number;
@@ -151,7 +151,7 @@ export interface ImportJob {
   done: number;
   errors: number;
   skipped: number;
-  status: 'queued' | 'running' | 'done' | 'cancelled';
+  status: 'queued' | 'running' | 'done' | 'canceled';
   items: ImportJobItem[];
 }
 
@@ -207,6 +207,11 @@ export interface PaletteColor {
 export interface MetaOption {
   value: string;
   label: string;
+}
+
+/** A free-text suggestion (colorways, model names) — `{value}` only. */
+export interface TextOption {
+  value: string;
 }
 
 /**
@@ -296,6 +301,8 @@ export interface TagBaseStatus {
 export interface ModelStatus {
   model_id: string;
   source: 'database' | 'environment' | 'default';
+  /** The built-in default; the picker marks this option "(default)". */
+  default_model_id: string;
 }
 
 export interface RecentError {
@@ -341,7 +348,6 @@ export interface AnalysisQueueStatus {
   recent_jobs: AnalysisJobRead[];
 }
 
-/** Whether the scheduled-backup task is actually working. */
 /** Is the daily retention prune still running?
  *
  *  The activity-log row COUNT cannot answer this — a table nobody is writing
@@ -361,6 +367,8 @@ export interface RetentionStatus {
   };
 }
 
+/** Whether the scheduled-backup task is actually working — last attempt, last
+ *  success, consecutive failures — plus the persisted off-box upload record. */
 export interface BackupHealth {
   enabled: boolean;
   running: boolean;
@@ -377,12 +385,6 @@ export interface BackupHealth {
   consecutive_failures: number;
 }
 
-/** Whether the off-box backup copy is configured, and whether it works.
- *
- *  Separate from `BackupHealth` because the two fail independently: a local
- *  backup can succeed every night while the upload has been failing for a
- *  month, and only the second means the archive exists nowhere but the card
- *  it is protecting against. */
 /** The certificate the HTTPS front door is actually serving.
  *
  *  Reported, never enforced: the certificate belongs to Caddy, so failing
@@ -443,6 +445,12 @@ export interface BackupUploadProvider {
   binary_available: boolean;
 }
 
+/** Whether the off-box backup copy is configured, and whether it works.
+ *
+ *  Separate from `BackupHealth` because the two fail independently: a local
+ *  backup can succeed every night while the upload has been failing for a
+ *  month, and only the second means the archive exists nowhere but the card
+ *  it is protecting against. */
 export interface BackupUploadStatus {
   configured: boolean;
   provider: string | null;

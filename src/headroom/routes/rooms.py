@@ -2,8 +2,8 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.database import get_db
-from headroom.routes.cases import _case_to_read
-from headroom.routes.hats import _hat_to_read
+from headroom.routes.cases import case_to_read
+from headroom.routes.hats import hat_to_read
 from headroom.schemas.room import RoomCreate, RoomDetail, RoomRead, RoomUpdate
 from headroom.services import room_service
 
@@ -49,8 +49,8 @@ async def get_room(room_id: int, db: AsyncSession = Depends(get_db)):
     base = _room_to_read(room, len(cases), len(loose))
     return RoomDetail(
         **base.model_dump(),
-        loose_hats=[_hat_to_read(h) for h in loose],
-        cases=[_case_to_read(c) for c in cases],
+        loose_hats=[hat_to_read(h) for h in loose],
+        cases=[case_to_read(c) for c in cases],
     )
 
 

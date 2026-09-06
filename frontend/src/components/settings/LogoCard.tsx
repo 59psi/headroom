@@ -1,18 +1,14 @@
-import { useRef, useState } from 'react';
+import { useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getLogo, uploadLogo, deleteLogo } from '../../api/settings';
 
 export function LogoCard() {
   const qc = useQueryClient();
   const inputRef = useRef<HTMLInputElement>(null);
-  const [uploading, setUploading] = useState(false);
   const logo = useQuery({ queryKey: ['settings', 'logo'], queryFn: getLogo });
 
   const uploadMut = useMutation({
-    mutationFn: async (file: File) => {
-      setUploading(true);
-      try { return await uploadLogo(file); } finally { setUploading(false); }
-    },
+    mutationFn: (file: File) => uploadLogo(file),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['settings', 'logo'] }),
   });
 
@@ -68,9 +64,9 @@ export function LogoCard() {
                 type="button"
                 className="btn btn-outline-secondary btn-sm"
                 onClick={() => inputRef.current?.click()}
-                disabled={uploading}
+                disabled={uploadMut.isPending}
               >
-                {uploading ? 'Uploading…' : 'Replace Logo'}
+                {uploadMut.isPending ? 'Uploading…' : 'Replace Logo'}
               </button>
               <button
                 type="button"
@@ -86,9 +82,9 @@ export function LogoCard() {
             type="button"
             className="btn btn-outline-primary"
             onClick={() => inputRef.current?.click()}
-            disabled={uploading}
+            disabled={uploadMut.isPending}
           >
-            {uploading ? 'Uploading…' : 'Upload Logo'}
+            {uploadMut.isPending ? 'Uploading…' : 'Upload Logo'}
           </button>
         )}
 

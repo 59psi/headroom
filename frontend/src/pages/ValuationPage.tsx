@@ -20,7 +20,7 @@ import {
   type ValueBasis, CONDITION_LABEL,
 } from '../lib/valuation';
 import type { HatRead } from '../types';
-import { tileSrc } from '../lib/photo';
+import { RankedHatList } from '../components/hats/RankedHatList';
 
 interface Bucket {
   key: string;
@@ -86,44 +86,6 @@ function BucketTable({ title, buckets }: { title: string; buckets: Bucket[] }) {
         </div>
       ))}
     </ChartCard>
-  );
-}
-
-function HatList({ hats, valueFor }: { hats: HatRead[]; valueFor: (h: HatRead) => string }) {
-  return (
-    <div>
-      {hats.map((h, i) => (
-        <Link
-          key={h.id}
-          to={`/hats/${h.id}`}
-          className="hr-color-row text-decoration-none"
-          style={{ paddingTop: '0.5rem' }}
-        >
-          <div className="font-mono fw-bold" style={{ color: 'var(--neon-purple)', minWidth: 22 }}>
-            {i + 1}.
-          </div>
-          {h.photo_path ? (
-            <img src={tileSrc(h)} alt="" className="hr-thumb flex-shrink-0" style={{ width: 40, height: 40 }} />
-          ) : (
-            <div className="rounded flex-shrink-0" style={{ width: 40, height: 40, background: 'rgba(0,0,0,0.3)' }} />
-          )}
-          <div className="flex-grow-1" style={{ minWidth: 0 }}>
-            <div className="font-mono small" style={{ color: 'var(--neon-cyan)' }}>
-              {h.display_id || `Hat #${h.id}`}
-            </div>
-            <div
-              className="text-secondary small"
-              style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
-            >
-              {h.brand || h.style.replace(/_/g, ' ')}{h.model_name && ` · ${h.model_name}`}
-            </div>
-          </div>
-          <div className="font-mono fw-bold flex-shrink-0" style={{ color: 'var(--neon-pink)' }}>
-            {valueFor(h)}
-          </div>
-        </Link>
-      ))}
-    </div>
   );
 }
 
@@ -365,7 +327,7 @@ export function ValuationPage() {
         }
         action={
           totals.costUnknown > 0
-            ? <Link to="/settings" className="btn btn-outline-primary btn-sm flex-shrink-0">Import</Link>
+            ? <Link to="/settings?tab=data" className="btn btn-outline-primary btn-sm flex-shrink-0">Import</Link>
             : undefined
         }
       >
@@ -390,7 +352,7 @@ export function ValuationPage() {
         {missingCost.length > 0 && (
           <>
             <div className="hr-tier-label mt-3 mb-2">Missing a price</div>
-            <HatList hats={missingCost} valueFor={() => 'set price'} />
+            <RankedHatList hats={missingCost} valueFor={() => 'set price'} />
             {totals.costUnknown > missingCost.length && (
               <p className="text-muted small mb-0 mt-2">
                 …and {totals.costUnknown - missingCost.length} more.
@@ -406,45 +368,26 @@ export function ValuationPage() {
       <BucketTable title="By room" buckets={buckets.room} />
 
       <ChartCard title="Most valuable">
-        {topValued.length ? (
-          <HatList hats={topValued} valueFor={h => money(valueHat(h).value ?? 0)} />
-        ) : (
-          <p className="text-muted small mb-0">
-            No hats have a value estimate yet. Add a Claude API key in{' '}
-            <Link to="/settings">Settings</Link> and analyze a photo, or enter
-            prices by hand.
-          </p>
-        )}
+        <RankedHatList
+          hats={topValued}
+          valueFor={h => money(valueHat(h).value ?? 0)}
+          empty={(
+            <p className="text-muted small mb-0">
+              No hats have a value estimate yet. Add a Claude API key in{' '}
+              <Link to="/settings?tab=analysis">Settings</Link> and analyze a photo, or enter
+              prices by hand.
+            </p>
+          )}
+        />
       </ChartCard>
 
       <ChartCard title="Wear rotation" subtitle="Longest since last worn — give these some sun.">
-        <div>
-          {neglected.map(h => (
-            <Link
-              key={h.id}
-              to={`/hats/${h.id}`}
-              className="hr-color-row text-decoration-none"
-              style={{ paddingTop: '0.5rem' }}
-            >
-              {h.photo_path ? (
-                <img src={tileSrc(h)} alt="" className="hr-thumb flex-shrink-0" style={{ width: 40, height: 40 }} />
-              ) : (
-                <div className="rounded flex-shrink-0" style={{ width: 40, height: 40, background: 'rgba(0,0,0,0.3)' }} />
-              )}
-              <div className="flex-grow-1" style={{ minWidth: 0 }}>
-                <div className="font-mono small" style={{ color: 'var(--neon-cyan)' }}>
-                  {h.display_id || `Hat #${h.id}`}
-                </div>
-                <div className="text-secondary small">
-                  {h.brand || h.style.replace(/_/g, ' ')}{h.model_name && ` · ${h.model_name}`}
-                </div>
-              </div>
-              <div className="text-secondary small font-mono flex-shrink-0">
-                {h.date_last_worn ?? 'never worn'}
-              </div>
-            </Link>
-          ))}
-        </div>
+        <RankedHatList
+          hats={neglected}
+          numbered={false}
+          valueTone="muted"
+          valueFor={h => h.date_last_worn ?? 'never worn'}
+        />
       </ChartCard>
     </>
   );

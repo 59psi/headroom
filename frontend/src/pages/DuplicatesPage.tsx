@@ -4,6 +4,7 @@ import { findDuplicates } from '../api/search';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ConditionBadge } from '../components/common/ConditionBadge';
 import { tileSrc } from '../lib/photo';
+import { placementLabel } from '../lib/placement';
 
 /**
  * Hats that look like the same hat entered twice.
@@ -94,8 +95,8 @@ export function DuplicatesPage() {
                             {hat.display_id || `#${hat.id}`}
                           </div>
                           <div className="text-secondary" style={{ fontSize: '0.7rem' }}>
-                            {hat.case_display_id || 'Unassigned'}
-                            {hat.room_name ? ` · ${hat.room_name}` : ''}
+                            {placementLabel(hat)}
+                            {hat.case_display_id && hat.room_name ? ` · ${hat.room_name}` : ''}
                           </div>
                           <div className="mt-1">
                             <ConditionBadge condition={hat.condition} />

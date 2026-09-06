@@ -12,6 +12,7 @@ brand rather than failing the upload.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 from pathlib import Path
@@ -21,6 +22,11 @@ import httpx
 from headroom.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _read_image_b64(image_path) -> str:
+    """Read and base64-encode a photo; sync, meant to run under `to_thread`."""
+    return base64.b64encode(image_path.read_bytes()).decode("ascii")
 
 _ENDPOINT = "https://vision.googleapis.com/v1/images:annotate"
 # Below this Vision score a "logo" is usually a false hit on embroidery.
@@ -69,11 +75,12 @@ async def detect_brand_logo(
     photo can genuinely disappear mid-run when a replacement upload deletes it.
     """
     try:
-        raw = image_path.read_bytes()
+        # Off the event loop, like the Claude path — a full-resolution cutout
+        # is megabytes, and read+encode on the loop stalls every other request.
+        content = await asyncio.to_thread(_read_image_b64, image_path)
     except OSError as exc:
         logger.warning("Vision logo detection skipped, unreadable %s: %s", image_path, exc)
         return None
-    content = base64.b64encode(raw).decode("ascii")
     payload = {
         "requests": [
             {

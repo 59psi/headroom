@@ -1,7 +1,7 @@
 /**
  * The hats inside a case, as a tile.
  *
- * Replaces a photo of the case itself, which was the same grey box in every
+ * Replaces a photo of the case itself, which was the same gray box in every
  * card — every case looks identical from the outside, so the picture carried
  * no information at the moment you were scanning for one. What you are
  * actually looking for is what's in it.
@@ -26,9 +26,8 @@ export function CaseCollage({ thumbs, label }: { thumbs: string[]; label: string
     <div
       className="hr-case-collage"
       style={{
-        aspectRatio: '4/3',
-        display: 'grid',
-        gap: 2,
+        // The static frame (grid, gap, aspect ratio) is in app.css; only the
+        // template, which depends on the count, is decided here.
         gridTemplateColumns: thumbs.length === 1 ? '1fr' : '1fr 1fr',
         // Three tiles would otherwise leave a hole; the first spans the top.
         gridTemplateRows: thumbs.length <= 2 ? '1fr' : '1fr 1fr',

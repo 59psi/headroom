@@ -419,6 +419,17 @@ button.card:hover::before,
   .form-control-sm {
     min-height: 44px;
   }
+
+  /* 16px as well as 44px. The full-size controls are 16px precisely so iOS
+     does not zoom the page when a field takes focus; the `-sm` variants sat at
+     0.85rem (13.6px), so the seven filter selects, the Cases room filter, the
+     tag host and the token password box all zoomed on every tap. Density is a
+     mouse-and-keyboard preference; a fingertip gets the full-size type. */
+  .form-select-sm,
+  .form-control-sm,
+  .hr-tag-url-row .form-control {
+    font-size: 16px;
+  }
 }
 
 /* ===== Textareas ================================================= */
@@ -533,6 +544,10 @@ kbd {
   color: var(--text-muted);
 }
 
+/* The checkbox + label pair. Had no rule of its own, so the two sat wherever
+   inline flow put them; a flex row with a gap is what every instance wants. */
+.form-check { display: flex; align-items: flex-start; gap: 0.5rem; }
+
 .form-check-input {
   width: 1.2em;
   height: 1.2em;
@@ -622,6 +637,15 @@ kbd {
 .badge.bg-white {
   background: var(--text);
   color: var(--text-on-neon);
+}
+
+/* The severe variant. `DuplicatesPage` marks an EXACT duplicate with it and a
+   LIKELY one with `bg-warning`; without this rule the more serious of the two
+   fell through to the neutral base badge and read as the less serious. */
+.badge.bg-danger {
+  background: rgba(255, 71, 87, 0.18);
+  color: var(--neon-red);
+  border-color: rgba(255, 71, 87, 0.45);
 }
 
 .hr-badge-new { background: rgba(57, 255, 20, 0.15); color: var(--neon-green); border-color: rgba(57, 255, 20, 0.4); }
@@ -939,6 +963,15 @@ kbd {
   overflow-wrap: anywhere;
 }
 
+/* The tone a tile is asked for. `StatTiles` has taken `tone` since the tiles
+   were written and Home and Stats pass pink/cyan/purple/muted — and no rule
+   existed for any of them, so every tile rendered the same. Restraint holds:
+   the tone colors the VALUE only, no border, no glow. */
+.hr-tile-pink .hr-tile-value { color: var(--neon-pink); }
+.hr-tile-cyan .hr-tile-value { color: var(--neon-cyan); }
+.hr-tile-purple .hr-tile-value { color: var(--neon-purple); }
+.hr-tile-muted .hr-tile-value { color: var(--text-secondary); }
+
 .hr-tile-sub {
   font-size: 0.68rem;
   color: var(--text-muted);
@@ -1126,6 +1159,11 @@ kbd {
 }
 
 .hr-carousel-slide {
+  /* An <a> since the slide became a Link — an anchor is inline by default
+     (the same trap `.card` documents), and its caption must not underline. */
+  display: block;
+  text-decoration: none;
+  color: inherit;
   flex: 1 1 0;
   /* Without this a wide caption refuses to shrink and pushes the flex row
      past its container. */
@@ -1772,6 +1810,80 @@ kbd {
 .align-items-baseline { align-items: baseline !important; }
 .hr-plain-list { list-style: none; padding-left: 0; margin-bottom: 0; }
 
+/* The case collage's static frame; the grid TEMPLATE depends on how many hats
+   the case holds and stays inline in `CaseCollage.tsx`. */
+.hr-case-collage { display: grid; gap: 2px; aspect-ratio: 4 / 3; }
+.list-unstyled { list-style: none; padding-left: 0; }
+.text-truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.h6 { font-size: 0.95rem; font-weight: 600; letter-spacing: 0.02em; margin: 0; }
+
+/* ===== Tables ===================================================== */
+/* One table in the app (the construction audit). Designed rather than left at
+   the browser default, which rendered a Windows-95 grid inside a neon card. */
+.table-responsive { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.table { width: 100%; border-collapse: collapse; color: var(--text); font-size: 0.9rem; }
+.table th, .table td { padding: 0.55rem 0.6rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.table thead th {
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-bottom-color: rgba(0, 240, 255, 0.35);
+}
+.table tbody tr:last-child td { border-bottom: 0; }
+.table-sm th, .table-sm td { padding: 0.35rem 0.5rem; }
+.align-middle { vertical-align: middle !important; }
+
+/* ===== Switch ===================================================== */
+/* `role="switch"` checkboxes. A checkbox styled as a checkbox is a lie about
+   what it does — this is a toggle that takes effect immediately, not a choice
+   confirmed by a Save button — so it looks like one. */
+.form-switch { display: flex; align-items: center; gap: 0.6rem; }
+.form-switch .form-check-input {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 2.6em;
+  height: 1.4em;
+  margin: 0;
+  border-radius: 1em;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  position: relative;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.form-switch .form-check-input::before {
+  content: '';
+  position: absolute;
+  top: 0.12em;
+  left: 0.12em;
+  width: 1.05em;
+  height: 1.05em;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+.form-switch .form-check-input:checked { background: rgba(255, 46, 182, 0.25); border-color: var(--neon-pink); }
+.form-switch .form-check-input:checked::before { transform: translateX(1.2em); background: var(--neon-pink); box-shadow: 0 0 8px rgba(255, 46, 182, 0.6); }
+.form-switch .form-check-input:disabled { opacity: 0.5; cursor: default; }
+
+/* ===== Inline row spinner ========================================== */
+/* The analysis queue marks the row being worked on. Same animation as the page
+   spinner, sized for a table row. */
+.hr-analysis-spinner {
+  display: inline-block;
+  width: 0.85em;
+  height: 0.85em;
+  margin-right: 0.35em;
+  vertical-align: -0.1em;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  border-top-color: var(--neon-pink);
+  border-right-color: var(--neon-cyan);
+  animation: spin 0.9s linear infinite;
+}
+
 /* A "Recent runs" row: a real <button> for keyboard and screen-reader access,
    stripped back to look like the text line it replaced. Full width and 44px
    tall so it is a legitimate tap target on a phone. */
@@ -1856,6 +1968,8 @@ kbd {
 .py-4 { padding-top: 1.5rem !important; padding-bottom: 1.5rem !important; }
 .py-5 { padding-top: 3rem !important; padding-bottom: 3rem !important; }
 .px-2 { padding-left: 0.5rem !important; padding-right: 0.5rem !important; }
+.px-3 { padding-left: 1rem !important; padding-right: 1rem !important; }
+.ps-3 { padding-left: 1rem !important; }
 .pt-1 { padding-top: 0.25rem !important; }
 
 .text-center { text-align: center !important; }
@@ -1884,7 +1998,9 @@ kbd {
 .col, [class^="col-"], [class*=" col-"] { padding: 0.5rem; box-sizing: border-box; }
 .col { flex: 1; min-width: 0; }
 .col-4 { flex: 0 0 33.333%; max-width: 33.333%; }
+.col-5 { flex: 0 0 41.6667%; max-width: 41.6667%; }
 .col-6 { flex: 0 0 50%; max-width: 50%; }
+.col-7 { flex: 0 0 58.3333%; max-width: 58.3333%; }
 .col-12 { flex: 0 0 100%; max-width: 100%; }
 
 @media (min-width: 768px) {
@@ -1926,9 +2042,9 @@ kbd {
   list-style: none;
   max-height: 15rem;
   overflow-y: auto;
-  background: var(--surface-raised, #16121f);
+  background: var(--bg-elevated);
   border: 1px solid rgba(0, 240, 255, 0.35);
-  border-radius: var(--radius-md, 10px);
+  border-radius: var(--radius-sm);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
 }
 
@@ -2179,7 +2295,7 @@ body.hr-keyboard-open .bottom-nav {
 }
 
 .hr-settings-tab:hover {
-  color: var(--text-primary, #fff);
+  color: var(--text);
   border-color: var(--neon-cyan);
 }
 
@@ -2210,4 +2326,39 @@ body.hr-keyboard-open .bottom-nav {
 .hr-case-total {
   border-top: 1px solid var(--border);
   padding-top: 0.75rem;
+}
+
+/* The analysis-failure count pinned to the Settings tab (AnalysisErrorBadge).
+   Position (top/right) comes from the nav that places it. */
+.hr-nav-error-badge {
+  position: absolute;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--neon-red);
+  color: var(--text);
+  font-size: 0.55rem;
+  font-weight: 700;
+  box-shadow: 0 0 8px rgba(255, 56, 96, 0.6);
+}
+
+/* The lightbox thumbnail is a button (keyboard-reachable) that looks like the
+   bare image it replaced. */
+.hr-lightbox-trigger {
+  display: block;
+  width: 100%;
+  margin: 0 auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.hr-lightbox-trigger:focus-visible {
+  outline: 2px solid var(--neon-cyan);
+  outline-offset: 4px;
+  border-radius: var(--radius);
 }

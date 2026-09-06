@@ -34,11 +34,10 @@ from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from headroom.config import settings
-from headroom.models.case import Case
 from headroom.models.hat import Hat
+from headroom.services.hat_service import hat_loads
 from headroom.utils.photo import export_derivative_path, make_export_image
 
 logger = logging.getLogger(__name__)
@@ -274,7 +273,7 @@ async def build_export(
     """
     stmt = (
         select(Hat)
-        .options(selectinload(Hat.case).selectinload(Case.room), selectinload(Hat.colors))
+        .options(*hat_loads())
         .order_by(Hat.id)
     )
     if not include_disposed:

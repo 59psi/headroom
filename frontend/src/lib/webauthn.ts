@@ -36,7 +36,7 @@ export async function createPasskey(options: any): Promise<unknown> {
     })),
   };
   const cred = (await navigator.credentials.create({ publicKey })) as any;
-  if (!cred) throw new Error('Passkey creation was cancelled');
+  if (!cred) throw new Error('Passkey creation was canceled');
   return {
     id: cred.id,
     rawId: bufToB64url(cred.rawId),
@@ -58,7 +58,7 @@ export async function getPasskeyAssertion(options: any): Promise<unknown> {
     })),
   };
   const cred = (await navigator.credentials.get({ publicKey })) as any;
-  if (!cred) throw new Error('Passkey sign-in was cancelled');
+  if (!cred) throw new Error('Passkey sign-in was canceled');
   return {
     id: cred.id,
     rawId: bufToB64url(cred.rawId),

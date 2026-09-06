@@ -82,7 +82,7 @@ async def run_repricing(request: Request):
         repriced, considered = await repricing.reprice_once(
             session_factory=factory, limit=repricing.MANUAL_SWEEP_LIMIT
         )
-    except Exception as exc:  # noqa: BLE001 — a failed run must be RECORDED, then raised
+    except Exception as exc:  # a failed run must be RECORDED, then raised
         # Without this a manual sweep could fail forever while the card went on
         # showing the last success, which is the same blindness the health
         # record exists to remove.
@@ -132,9 +132,10 @@ async def run_repricing_all(request: Request):
     microseconds after a 202 — the task never runs. Nothing then releases the
     slot, `_full_sweep_claimed` stays true for the life of the process, and BOTH
     routes are dead: this one refuses every press and `/repricing/run` answers
-    409 forever, with no way back but a restart. The colorway harvest can use a
-    BackgroundTask safely precisely because it claims nothing, so a dropped task
-    there costs one missed harvest. Here the guard outlives the work it guards.
+    409 forever, with no way back but a restart. (The colorway harvest could
+    use a BackgroundTask while it claimed nothing; since 2.76.0 it claims a slot
+    too, and moved to `create_task` for this same reason.) Here the guard
+    outlives the work it guards.
     `create_task` schedules on the event loop immediately, so the release in
     `_sweep_everything`'s `finally` is reachable regardless of the response.
     """

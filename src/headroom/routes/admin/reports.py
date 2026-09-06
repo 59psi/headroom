@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request, Response
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.database import get_db
@@ -27,7 +27,7 @@ async def inventory_report(
     return HTMLResponse(html)
 
 
-@router.get("/collection-export")
+@router.get("/collection-export", response_class=StreamingResponse)
 async def collection_export(
     title: str = "The Collection",
     include_values: bool = False,

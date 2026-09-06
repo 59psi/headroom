@@ -47,9 +47,14 @@ async def test_a_configured_base_wins_over_the_request(client):
     assert body["source"] == "settings"
     assert body["example_url"] == "http://headroom.local:8000/t/h/1"
 
-    # And it survives into what actually gets printed.
+    # And it survives into what actually gets printed. A case has to exist
+    # for that to be checkable — this used to be `... or "0 labels" in html`
+    # with no case created, so the second arm was always true and the base
+    # URL was never actually looked for on the sheet.
+    case = (await client.post("/api/cases", json={"case_type": "archive"})).json()
     html = (await client.get("/api/admin/case-labels")).text
-    assert "http://headroom.local:8000/t/c/" in html or "0 labels" in html
+    assert f"http://headroom.local:8000/t/c/{case['display_id']}" in html
+    assert "0 labels" not in html
 
 
 async def test_trailing_slash_does_not_double_up(client):

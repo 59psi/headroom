@@ -1,9 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { useParams } from 'react-router';
-import { apiFetch } from '../api/client';
+import { getSharedCollection } from '../api/share';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { SharedCollectionGrid } from '../components/share/SharedCollectionGrid';
-import type { SharedCollection } from '../types';
 
 
 /** Public, read-only collection view — reached via a share-link token. */
@@ -11,7 +10,7 @@ export function SharePage() {
   const { token } = useParams<{ token: string }>();
   const { data, isLoading, error } = useQuery({
     queryKey: ['public-share', token],
-    queryFn: () => apiFetch<SharedCollection>(`/api/public/share/${token}`),
+    queryFn: () => getSharedCollection(token!),
     enabled: !!token,
     retry: false,
   });

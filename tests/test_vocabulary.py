@@ -107,6 +107,25 @@ async def test_editing_canonicalizes_too(client):
     assert edited["artist_series"] == "Neon"
 
 
+async def test_colorway_canonicalizes_on_the_edit_path(client):
+    """Colorway is free text with the same failure mode as a series — and the
+    field `is_real_product`/`_product_comp` test by token EQUALITY, so two
+    spellings of one colorway are two products to the pricer. The analysis path
+    canonicalized it; the edit path (and the purchase matcher) wrote straight
+    through."""
+    first = await _add(client)
+    assert (
+        await client.put(f"/api/hats/{first['id']}", json={"colorway": "Heather Grey"})
+    ).status_code == 200
+    second = await _add(client)
+
+    edited = (
+        await client.put(f"/api/hats/{second['id']}", json={"colorway": "heather grey"})
+    ).json()
+
+    assert edited["colorway"] == "Heather Grey"
+
+
 async def test_construction_canonicalizes_on_the_same_rule(client):
     """Same treatment — it is the other free-text vocabulary field."""
     await _add(client, construction="Waxed Canvas")
@@ -166,7 +185,9 @@ async def test_existing_variants_are_merged_once(client, db_session):
 
     # Idempotent — a second pass has nothing left to do.
     assert await vocabulary.merge_case_variants(db_session, Hat.artist_series) == 0
-    assert a and b  # created, and untouched by the merge
+    # The already-canonical rows were not rewritten — merge touched only the variants.
+    for untouched in (a, b):
+        assert (await client.get(f"/api/hats/{untouched['id']}")).json()["artist_series"] == "Neon"
 
 
 async def test_the_merge_keeps_the_most_common_spelling(client, db_session):

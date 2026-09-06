@@ -4,35 +4,17 @@ import { Link } from 'react-router';
 import {
   getAnalysisFailures, getAnalysisJob, getAnalysisQueue, reanalyzeAll, retryFailedAnalysis,
 } from '../../api/settings';
+import { STAGE_SHORT } from '../hats/AnalysisStatus';
+import { timeAgo } from '../../lib/format';
 
-/** Mirrors the stage labels on the hat page. */
-const STAGE_LABELS: Record<string, string> = {
-  cutout: 'removing background',
-  identifying: 'identifying',
-  pricing: 'checking prices',
-  resale: 'checking resale',
-};
+/** The hat page's stage labels, lower-cased for mid-sentence use ("· identifying").
+ *  Imported rather than restated: a second table had already drifted in casing. */
+const STAGE_LABELS: Record<string, string> = Object.fromEntries(
+  Object.entries(STAGE_SHORT).map(([k, v]) => [k, v.toLowerCase()]),
+);
 
-/**
- * What the analysis worker is doing, and the button that fills it.
- *
- * Before this the queue was invisible: a hat showed "Analyzing…" with no way to
- * tell whether twenty were ahead of it, or whether anything was draining the
- * queue at all. The two numbers are deliberately separate — `queued` is the
- * in-memory depth, `pending_count` is what the database says. A backlog with a
- * dead worker is the failure worth seeing, and only the DB number reveals it.
- */
 function pct(job: { done: number; total: number }): number {
   return job.total > 0 ? Math.round((job.done / job.total) * 100) : 0;
-}
-
-/** Coarse relative time — a job list wants "4m ago", not a timestamp. */
-function since(iso: string): string {
-  const secs = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
-  if (secs < 60) return 'just now';
-  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
-  if (secs < 86_400) return `${Math.floor(secs / 3600)}h ago`;
-  return `${Math.floor(secs / 86_400)}d ago`;
 }
 
 /**
@@ -109,6 +91,15 @@ function RunLog({ jobId }: { jobId: number }) {
   );
 }
 
+/**
+ * What the analysis worker is doing, and the button that fills it.
+ *
+ * Before this the queue was invisible: a hat showed "Analyzing…" with no way to
+ * tell whether twenty were ahead of it, or whether anything was draining the
+ * queue at all. The two numbers are deliberately separate — `queued` is the
+ * in-memory depth, `pending_count` is what the database says. A backlog with a
+ * dead worker is the failure worth seeing, and only the DB number reveals it.
+ */
 export function AnalysisQueueCard() {
   const qc = useQueryClient();
   const [confirming, setConfirming] = useState(false);
@@ -209,7 +200,7 @@ export function AnalysisQueueCard() {
               />
             </div>
             <div className="text-secondary small">
-              started {since(data.current_job.started_at)}
+              started {timeAgo(data.current_job.started_at)}
               {data.current_job.failed > 0 && ` · ${data.current_job.failed} failed`}
             </div>
           </div>
@@ -280,7 +271,7 @@ export function AnalysisQueueCard() {
                       onClick={() => setOpenJob(open ? null : j.id)}
                     >
                       <span aria-hidden="true" className="hr-run-caret">{open ? '▾' : '▸'}</span>
-                      {j.status === 'running' ? 'running' : since(j.finished_at ?? j.started_at)}
+                      {j.status === 'running' ? 'running' : timeAgo(j.finished_at ?? j.started_at)}
                       {' · '}{j.done}/{j.total}
                       {j.failed > 0 && ` · ${j.failed} failed`}
                     </button>
@@ -372,7 +363,7 @@ export function AnalysisQueueCard() {
         {/* Outside the failures block on purpose. A successful retry clears the
             failures it just queued, so the list empties and unmounts — and a
             banner nested inside it would disappear in the same render, leaving
-            the press with no acknowledgement at all. */}
+            the press with no acknowledgment at all. */}
         {retry.data && (
           <div className="alert alert-success mb-3 small">
             {retry.data.queued > 0

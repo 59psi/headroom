@@ -32,6 +32,8 @@ from headroom.models.hat import Hat
 from headroom.services import settings_service
 
 #: App-settings key. Absent or anything but "1" means disabled.
+from headroom.services import share_link_service
+from headroom.services import search_service
 GUEST_VIEW_KEY = "guest_view_enabled"
 
 
@@ -60,8 +62,6 @@ async def guest_hats(
     themselves; the owner's room filter takes an id from a caller who has seen
     the room list, which a guest has not.
     """
-    from headroom.services import share_link_service
-    from headroom.services.search_service import GUEST_SEARCH_LIMIT, search_hats
 
     if query and query.strip():
         # `public_fields_only` is the important half. Matching on a field the
@@ -70,15 +70,19 @@ async def guest_hats(
         # condition — and its size, collection and construction — by probing,
         # even though `SharedHat` withholds all four.
         #
-        # The higher limit is the other half: the response reports its own
-        # length as the match count, so a truncated list would make that count
-        # a lie. That is the `len()`-of-a-capped-list mistake this codebase has
-        # already made twice.
-        return await search_hats(
+        # No cap is the other half: the response reports its own length as the
+        # match count, so ANY ceiling makes that count a lie once the collection
+        # outgrows it — the `len()`-of-a-capped-list mistake this codebase has
+        # made three times, twice on this very path (50, then 500). The browse
+        # branch below returns the whole active collection; a search can only
+        # ever return a subset of that, so it needs no ceiling of its own.
+        # Module attribute, so a test's stub of `search_service.search_hats` is
+        # what runs — a `from … import` here would bind the real one at import.
+        return await search_service.search_hats(
             db,
             query.strip(),
             public_fields_only=True,
             color_scope=color_scope,
-            limit=GUEST_SEARCH_LIMIT,
+            limit=None,
         )
     return await share_link_service.shared_hats(db)

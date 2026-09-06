@@ -6,6 +6,7 @@ import { renderWithProviders } from '../test/utils';
 import { EditHatPage } from './EditHatPage';
 import * as hatsApi from '../api/hats';
 import type { HatRead } from '../types';
+import { hatFixture } from '../test/fixtures';
 
 /**
  * The Collection / collab field is wired through a `Record<string, unknown>`
@@ -15,66 +16,11 @@ import type { HatRead } from '../types';
  * tests pin the seed and the submit.
  */
 
-const HAT: HatRead = {
-  direct_room_id: null, limited_edition: false,
-  id: 7,
-  case_id: null,
-  position_in_case: null,
-  display_id: 'H-007',
-  case_display_id: null,
-  case_type: null,
-  photo_path: null,
-  original_path: null,
-  thumb_path: null,
-  condition: 'new',
-  date_last_worn: null,
-  wear_count: 0,
-  size: 'classic',
-  style: 'collab',
-  construction: null,
-  hydrolite: false,
-  hydro: false,
-  is_beanie: false,
-  colors: [],
-  room_id: null,
-  room_name: null,
-  brand: 'melin',
-  logo_detected: null,
-  artist_series: 'Skye Walker',
-  model_name: 'Coronado',
-  colorway: null,
-  purchase_price: null,
-  purchased_at: null,
-  model_confidence: null,
-  style_descriptor: null,
-  design_notes: null,
-  owner_notes: null,
-  estimated_new_price: null,
-  estimated_new_price_source: null,
-  resale_price: null,
-  resale_price_source: null,
-  resale_price_url: null,
-  resale_price_scope: null,
-  resale_checked_at: null,
-  analysis_status: 'ok',
-  analysis_stage: null,
-  analysis_stage_at: null,
-  analysis_job_id: null,
-  analysis_error: null,
-  analyzed_at: null,
-  disposed_at: null,
-  disposed_via: null,
-  disposed_price: null,
-  disposed_to: null,
-  disposed_notes: null,
-  ebay_avg_price: null,
-  ebay_median_price: null,
-  ebay_listing_count: null,
-  ebay_search_url: null,
-  ebay_checked_at: null,
-  created_at: '2026-08-01T00:00:00Z',
-  updated_at: '2026-08-01T00:00:00Z',
-};
+const HAT: HatRead = hatFixture({
+  id: 7, display_id: 'H-007', case_display_id: null, style: 'collab', brand: 'melin',
+  artist_series: 'Skye Walker', model_name: 'Coronado', analysis_status: 'ok',
+  created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z',
+});
 
 vi.mock('../api/hats', () => ({
   getHat: vi.fn(async () => HAT),
@@ -87,9 +33,9 @@ vi.mock('../api/hats', () => ({
   getConditions: vi.fn(async () => [{ value: 'new', label: 'New' }]),
   getConstructions: vi.fn(async () => ['HYDRO', 'HYDROLite', 'Thermal']),
   getCollections: vi.fn(async () => ['Piña', 'Skye Walker']),
+  getColorwayOptions: vi.fn(async () => []),
 }));
 vi.mock('../api/cases', () => ({ listCases: vi.fn(async () => []) }));
-vi.mock('../api/client', () => ({ apiFetch: vi.fn(async () => []) }));
 vi.mock('react-router', async (importOriginal) => ({
   ...(await importOriginal<typeof import('react-router')>()),
   useParams: () => ({ hatId: '7' }),

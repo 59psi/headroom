@@ -38,14 +38,18 @@ async def test_docs_advertise_the_real_default_model(doc):
     )
 
 
-async def test_settings_ui_marks_the_real_default_model():
+async def test_settings_ui_marks_the_default_from_the_server_not_a_label():
+    """The picker used to carry "(default)" inside one option's hand-typed
+    label — a copy of `config.Settings.anthropic_model` that a model bump left
+    pointing at a superseded id for a generation. `ModelStatus` now serves
+    `default_model_id` and the card tags whichever option matches it, so the
+    label text must carry no copy of the fact."""
     source = _MODEL_CARD.read_text()
-    match = _DEFAULT_OPTION.search(source)
-    assert match, "no model option in ClaudeModelCard.tsx is labeled '(default)'"
-    assert match.group(1) == settings.anthropic_model, (
-        f"the Settings picker labels '{match.group(1)}' as the default but the "
-        f"code default is '{settings.anthropic_model}'"
+    assert not _DEFAULT_OPTION.search(source), (
+        "a model option label hard-codes '(default)'; the card derives it from "
+        "`ModelStatus.default_model_id`"
     )
+    assert "default_model_id" in source, "the card must read the served default"
 
 
 async def test_settings_ui_offers_the_default_model_as_a_choice():
@@ -95,3 +99,25 @@ async def test_the_prompt_agrees_with_the_price_table():
     assert "HIGHER than the base" in SYSTEM_PROMPT
     # The exact phrasing that caused the original underestimate must not return.
     assert "using your knowledge of\n     the brand's typical pricing tiers" not in SYSTEM_PROMPT
+
+
+async def test_the_npm_pin_is_one_number_in_three_files():
+    """`npm 12.0.2` lives in the Dockerfile (`ARG NPM_VERSION`), the CI job that
+    builds the SPA, and `setup.sh` (`NPM_INSTALL`). Each carries prose asking to
+    be kept in step with the others; nothing checked that they were. Pinning
+    npm in the Dockerfile alone once left CI and setup on npm 11, so the
+    frontend job green-lit a toolchain that never ships — the exact drift this
+    repo's parity tests exist to catch, missing for the one pin that moves most.
+    """
+    dockerfile = (_ROOT / "Dockerfile").read_text()
+    ci = (_ROOT / ".github/workflows/ci.yml").read_text()
+    setup = (_ROOT / "scripts/setup.sh").read_text()
+
+    docker_pin = re.search(r"^ARG NPM_VERSION=(\S+)$", dockerfile, re.M).group(1)
+    ci_pin = re.search(r"npm install -g npm@(\S+)", ci).group(1)
+    setup_pin = re.search(r'^NPM_INSTALL="([^"]+)"$', setup, re.M).group(1)
+    setup_major = re.search(r"^NPM_MIN_MAJOR=(\d+)$", setup, re.M).group(1)
+
+    assert ci_pin == docker_pin, f"CI installs npm {ci_pin}; the image ships {docker_pin}"
+    assert setup_pin == docker_pin, f"setup.sh installs npm {setup_pin}; the image ships {docker_pin}"
+    assert setup_major == docker_pin.split(".")[0], "setup.sh's floor is a different major"

@@ -14,19 +14,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.config import settings
 from headroom.database import get_db
+from headroom.schemas.settings import LivenessRead, ReadinessRead
 from headroom.services import analysis_queue, import_service, settings_service
 from headroom.utils import disk
+from headroom.auth import resolve_user
 
 router = APIRouter()
 
 
-@router.get("/health")
+@router.get("/health", response_model=LivenessRead)
 async def health():
     """Liveness — always returns 200 if the process is reachable."""
     return {"status": "ok"}
 
 
-@router.get("/health/ready")
+@router.get("/health/ready", response_model=ReadinessRead, responses={503: {"model": ReadinessRead}})
 async def ready(request: Request, db: AsyncSession = Depends(get_db)):
     """Readiness — DB, uploads dir, free space, workers, and the API key.
 
@@ -99,7 +101,6 @@ async def ready(request: Request, db: AsyncSession = Depends(get_db)):
 
     # Detailed view only for an authenticated caller; anonymous callers (incl.
     # the container healthcheck) get booleans, enough to gate readiness.
-    from headroom.auth import resolve_user
 
     authed = (await resolve_user(request)) is not None
     if authed:

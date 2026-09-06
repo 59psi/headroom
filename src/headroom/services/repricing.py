@@ -35,12 +35,13 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
 from headroom.config import env_flag, env_float, env_int
-from headroom.models.hat import Hat
+from headroom.models.hat import Hat, ResaleScope
+from headroom.services import hat_analysis_pipeline
 from headroom.services import sweep_progress
 
 logger = logging.getLogger(__name__)
@@ -209,21 +210,30 @@ def status() -> dict:
     }
 
 
-async def _eligible_hats(db, limit: int | None = None) -> list[Hat]:
+async def _eligible_hats(
+    db, limit: int | None = None, *, stale_before: datetime | None = None
+) -> list[Hat]:
     """Active hats whose price this task is allowed to move.
 
     `manual` is excluded HERE as well as inside `refresh_melin_resale`. The
     inner guard makes the write safe; this one makes it free — a protected hat
     should not cost a network round trip to discover it is protected.
+
+    `stale_before` narrows to hats not checked since then (never-checked hats
+    always qualify). The scheduler passes it; the buttons do not.
     """
     stmt = (
         select(Hat)
         .where(
             Hat.disposed_at.is_(None),
-            (Hat.resale_price_scope.is_(None)) | (Hat.resale_price_scope != "manual"),
+            (Hat.resale_price_scope.is_(None)) | (Hat.resale_price_scope != ResaleScope.MANUAL),
         )
         .order_by(Hat.resale_checked_at.asc().nulls_first(), Hat.id)
     )
+    if stale_before is not None:
+        stmt = stmt.where(
+            Hat.resale_checked_at.is_(None) | (Hat.resale_checked_at < stale_before)
+        )
     cap = limit if limit is not None else repricing_batch_limit()
     if cap:
         stmt = stmt.limit(cap)
@@ -262,7 +272,7 @@ async def count_eligible(session_factory=None, *, stale_before=None) -> int:
                     .where(
                         Hat.disposed_at.is_(None),
                         (Hat.resale_price_scope.is_(None))
-                        | (Hat.resale_price_scope != "manual"),
+                        | (Hat.resale_price_scope != ResaleScope.MANUAL),
                         *(
                             (
                                 (Hat.resale_checked_at.is_(None))
@@ -277,12 +287,22 @@ async def count_eligible(session_factory=None, *, stale_before=None) -> int:
         )
 
 
-async def reprice_once(session_factory=None, limit: int | None = None) -> tuple[int, int]:
+async def reprice_once(
+    session_factory=None, limit: int | None = None, *, stale_before: datetime | None = None,
+) -> tuple[int, int]:
     """One sweep. Returns (repriced, considered). Raises only on a total failure.
 
     Ordering is oldest-checked-first, so a sweep that is cut short by a
     restart or a batch limit still makes progress on the stalest prices rather
     than re-doing the freshest ones.
+
+    `stale_before` is the scheduler's staleness gate: only hats not checked
+    since then are swept. Without it the loop re-priced the WHOLE shelf on
+    every boot — a restart loop meant ~235 marketplace calls at 1 s spacing per
+    restart, against somebody else's public API, for prices checked minutes
+    earlier. `backup_service` has skipped its startup run when a recent backup
+    exists since 2.26; this is the same courtesy. `resale_checked_at` already
+    answers "is this stale", so the gate is a WHERE clause, not a timer.
 
     `session_factory` is the seam: the route passes
     `request.app.state.session_factory` (which tests swap for the test DB) and
@@ -300,7 +320,7 @@ async def reprice_once(session_factory=None, limit: int | None = None) -> tuple[
 
     # One sweep at a time — see `_sweep_lock`.
     async with _sweep_lock, session_factory() as db:
-        hats = await _eligible_hats(db, limit=limit)
+        hats = await _eligible_hats(db, limit=limit, stale_before=stale_before)
         # try/finally, not a happy-path call at the bottom: a sweep that raises
         # and leaves `running` true reads as permanently in flight, which is
         # the exact false signal the progress record exists to remove.
@@ -323,17 +343,22 @@ async def reprice_once(session_factory=None, limit: int | None = None) -> tuple[
 
 async def _sweep(db, hats: list, delay: float) -> tuple[int, int]:
     """The loop itself, split out so `reprice_once` owns only the bookkeeping."""
-    from headroom.services.hat_analysis_pipeline import refresh_melin_resale
-
     repriced = 0
     for index, hat in enumerate(hats):
         before = hat.resale_price
-        # Plain columns only. `display_id` walks `hat.case`, and these rows
-        # are loaded without `selectinload`, so touching it would fire a
-        # lazy load on an async session and blow up mid-sweep.
-        progress.advance(hat.model_name or f"Hat #{hat.id}")
+        # Plain columns for the label. `display_id` would resolve fine —
+        # `Hat.case` is `lazy="selectin"`, so there is no lazy-load hazard here
+        # (a previous version of this comment claimed one) — but a per-hat
+        # progress label has no use for a shelf slot.
+        progress.start_unit(hat.model_name or f"Hat #{hat.id}")
         try:
-            await refresh_melin_resale(hat)
+            # Module attribute, looked up at CALL time: the tests (and the
+            # scheduler tests especially) stub `hat_analysis_pipeline.
+            # refresh_melin_resale`, and a `from … import` bound at import time
+            # would have kept calling the real one. This was a function-local
+            # import for that reason; the attribute lookup keeps the late
+            # binding with the import where imports belong.
+            await hat_analysis_pipeline.refresh_melin_resale(hat)
         except Exception as exc:  # noqa: BLE001 — one hat must not stop the sweep
             logger.info("Re-pricing skipped for hat=%s: %s", hat.id, exc)
         else:
@@ -357,6 +382,7 @@ async def _sweep(db, hats: list, delay: float) -> tuple[int, int]:
         # Commit as we go. A sweep is minutes long; holding every change to
         # the end means a restart in the middle throws all of it away.
         await db.commit()
+        progress.advance()
         if delay and index + 1 < len(hats):
             await asyncio.sleep(delay)
 
@@ -387,7 +413,12 @@ async def _loop(session_factory=None) -> None:
             logger.info("Re-pricing sweep skipped: a full sweep is already running")
         else:
             try:
-                repriced, considered = await reprice_once(session_factory)
+                # Only what is DUE: a hat checked within one interval is left
+                # alone, so a restart does not re-run a sweep that just finished.
+                due_before = datetime.now(timezone.utc) - timedelta(seconds=interval)
+                repriced, considered = await reprice_once(
+                    session_factory, stale_before=due_before
+                )
                 _health.record_success(repriced, considered, scheduled=True)
                 logger.info(
                     "Re-pricing sweep done: %s of %s hats changed price", repriced, considered
@@ -399,7 +430,7 @@ async def _loop(session_factory=None) -> None:
                 logger.error("Re-pricing sweep failed: %s", exc)
             finally:
                 # `finally`, not the happy path: CancelledError is a
-                # BaseException and re-raised above, and a cancelled scheduler
+                # BaseException and re-raised above, and a canceled scheduler
                 # that kept the slot would refuse every later press.
                 release_full_sweep()
         await asyncio.sleep(interval)

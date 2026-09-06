@@ -23,11 +23,10 @@ from dataclasses import dataclass
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
-from headroom.models.case import Case
 from headroom.models.hat import Hat
-from headroom.services.vocabulary import _fold
+from headroom.services.hat_service import hat_loads
+from headroom.services.vocabulary import fold
 
 # A group whose members agree on every identity field we have. Reported first.
 EXACT = "exact"
@@ -46,7 +45,7 @@ class DuplicateGroup:
 
 def _norm(value: str | None) -> str:
     """Fold a field for comparison. Empty for anything not stated."""
-    return _fold(value) if value else ""
+    return fold(value) if value else ""
 
 
 def _identity(hat: Hat) -> tuple[str, str, str, str, str]:
@@ -85,7 +84,7 @@ async def find_duplicates(db: AsyncSession) -> list[DuplicateGroup]:
         (
             await db.execute(
                 select(Hat)
-                .options(selectinload(Hat.case).selectinload(Case.room))
+                .options(*hat_loads())
                 .where(Hat.disposed_at.is_(None))
                 .order_by(Hat.id)
             )

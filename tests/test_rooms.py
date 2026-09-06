@@ -196,7 +196,9 @@ async def test_boot_reattaches_cases_whose_room_vanished(client):
 
     # Point the case at a room that does not exist, exactly as the old client did.
     async with test_session_factory() as db:
-        await db.execute(text(f"UPDATE cases SET room_id = 99999 WHERE display_id = '{display_id}'"))
+        await db.execute(
+            text("UPDATE cases SET room_id = 99999 WHERE display_id = :d"), {"d": display_id}
+        )
         await db.commit()
 
     detail = await client.get(f"/api/cases/{display_id}")
@@ -207,6 +209,9 @@ async def test_boot_reattaches_cases_whose_room_vanished(client):
 
     repaired = await client.get(f"/api/cases/{display_id}")
     assert repaired.json()["room_name"] != "Unknown"
-    # And it now counts towards the room that adopted it.
-    rooms = {r["name"]: r["case_count"] for r in (await client.get("/api/rooms")).json()}
-    assert sum(rooms.values()) >= 1
+    # And it now counts towards the room that adopted it — the DEFAULT room,
+    # specifically, not merely some room.
+    rooms = (await client.get("/api/rooms")).json()
+    default = next(r for r in rooms if r["is_default"])
+    assert default["case_count"] >= 1, rooms
+    assert repaired.json()["room_name"] == default["name"]

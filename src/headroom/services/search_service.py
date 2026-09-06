@@ -2,13 +2,14 @@ from dataclasses import dataclass
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from headroom.models.case import Case
 from headroom.models.hat import Hat
 from headroom.models.hat_color import HatColor
 from headroom.models.room import Room
+from headroom.services.hat_service import hat_loads
 from headroom.services.color_extraction import (
+    families_of_lab,
     is_same_color,
     lab_distance,
     lab_of,
@@ -73,11 +74,6 @@ COLOR_SCOPES = ("major", "accent", "all")
 #: paging, so anything past this is simply unfindable.
 SEARCH_LIMIT = 50
 
-#: The limit used for guest search. Higher because the guest view has no
-#: paging either AND reports the result count as the number of matches — a
-#: truncated list would make that count a lie, which is the `len()`-of-a-capped
-#: -list mistake this codebase has now made twice.
-GUEST_SEARCH_LIMIT = 500
 
 
 async def search_hats(
@@ -88,7 +84,7 @@ async def search_hats(
     room_id: int | None = None,
     public_fields_only: bool = False,
     color_scope: str = "major",
-    limit: int = SEARCH_LIMIT,
+    limit: int | None = SEARCH_LIMIT,
 ) -> list[Hat]:
     """Multi-term AND search across hat fields and color names.
 
@@ -96,17 +92,16 @@ async def search_hats(
     a color name/general_color, or room name).
 
     When exact_colors is False (default), color terms match against
-    general_color (e.g. "red", "dark gray"). When True, matches against
-    the specific CSS3 color_name (e.g. "darkslategray", "silver").
+    general_color — the curated palette name the hex was snapped to (e.g.
+    "red", "dark gray"). When True, matches against the stored `color_name`,
+    which is whatever the analyzer called it ("charcoal heather", "bone").
     """
     terms = query.strip().split()
     if not terms:
         return []
 
     stmt = select(Hat).options(
-        selectinload(Hat.case).selectinload(Case.room),
-        selectinload(Hat.direct_room),
-        selectinload(Hat.colors),
+        *hat_loads(),
     )
 
     # Disposed hats can't be "found" — they're not in any case anymore.
@@ -179,7 +174,16 @@ async def search_hats(
                 clauses.append(Hat.hydro.is_(True))
         stmt = stmt.where(or_(*clauses))
 
-    stmt = stmt.order_by(Hat.id).limit(limit)
+    stmt = stmt.order_by(Hat.id)
+    # `None` means uncapped. The guest view passes it: its response reports
+    # `len()` as the match count, and a capped list makes that count a lie —
+    # the mistake this codebase has made three times over (colorway catalog,
+    # analysis `pending_count`, and the guest search itself, first at 50 and
+    # then at 500). The guest's BROWSE path already returns the whole active
+    # collection uncapped, so a search, which can only return a subset of it,
+    # gains nothing from a ceiling the browse does not have.
+    if limit is not None:
+        stmt = stmt.limit(limit)
     result = await db.execute(stmt)
     return list(result.scalars().all())
 
@@ -201,10 +205,10 @@ async def search_hats(
 #
 # Additive rather than multiplicative, because a multiplier leaves an exact
 # accent match at 0.0 and changes nothing about the tie it needs to break.
-# The penalty doubles as a per-rank distance budget once the cutoff is
-# applied: a secondary must land within 14 of the target to appear at all, an
-# accent within 8. "Find the hat with the pink brim" still works, but it has
-# to be that pink and it never outranks a hat that IS pink.
+# The per-rank distance BUDGET lives in `_RANK_DISTANCE_BUDGET` just below
+# (secondary within 18, deeper within 12); these penalties only ORDER what
+# passes it. "Find the hat with the pink brim" still works, but it has to be
+# that pink and it never outranks a hat that IS pink.
 _RANK_PENALTY: dict[int, float] = {1: 0.0, 2: 8.0, 3: 14.0}
 _DEEPER_RANK_PENALTY = 18.0
 
@@ -274,7 +278,7 @@ async def search_hats_by_color(
     Membership is decided by COLOR FAMILY, not by distance — a hat is
     returned when one of its swatches is the same color as the target, in
     the plain-speech sense the curated palette names. Distance cannot decide
-    whether a grey hat is purple, and no threshold ever could: within-family
+    whether a gray hat is purple, and no threshold ever could: within-family
     distances reach ΔE 55.8 while cross-family ones start at 15.4, so the two
     ranges invert. Distance ranks what is already the right color.
 
@@ -284,9 +288,7 @@ async def search_hats_by_color(
     stmt = (
         select(Hat)
         .options(
-            selectinload(Hat.case).selectinload(Case.room),
-            selectinload(Hat.direct_room),
-            selectinload(Hat.colors),
+            *hat_loads(),
         )
         .where(Hat.disposed_at.is_(None))
     )
@@ -299,7 +301,7 @@ async def search_hats_by_color(
     target_lab = lab_of(hex_value)
     if target_lab is None:
         return []
-
+    target_families = families_of_lab(target_lab)
 
     ranked: list[ColorMatch] = []
     for hat in result.scalars().all():
@@ -310,14 +312,16 @@ async def search_hats_by_color(
             swatch_lab = lab_of(color.hex_value)
             if swatch_lab is None:
                 continue
-            # MEMBERSHIP IS CATEGORICAL. A grey hat is not a dark purple and
+            # MEMBERSHIP IS CATEGORICAL. A gray hat is not a dark purple and
             # a navy one is not black, at any distance — they are not near
             # each other by a lot or a little, they are different colors.
             #
             # Prefer the stored palette name, which is what the hat is
             # recorded as being; fall back to snapping the hex for swatches
             # that predate color normalization.
-            if not is_same_color(target_lab, swatch_lab, color.general_color):
+            if not is_same_color(
+                target_lab, swatch_lab, color.general_color, target_families=target_families
+            ):
                 continue
             rank = color.dominance_rank
             # A per-rank DISTANCE BUDGET, stated directly rather than emerging

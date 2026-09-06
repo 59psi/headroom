@@ -1,9 +1,18 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from headroom.schemas.hat import ColorTag
 
 
 class SearchResult(BaseModel):
+    """A hat as the Search and Duplicates pages render it.
+
+    `from_attributes=True`, like `HatRead`: every field here is a column or a
+    `@property` on `Hat` (`display_id`, `case_display_id`, `room_id`,
+    `room_name`), and `ColorTag` already validates from the ORM row. The route
+    used to hand-copy fifteen attributes into a dict — the one thing CLAUDE.md
+    says this codebase deliberately has none of.
+    """
+
     id: int
     display_id: str | None
     case_display_id: str | None
@@ -24,7 +33,7 @@ class SearchResult(BaseModel):
     room_id: int | None
     room_name: str | None
 
-    model_config = {"protected_namespaces": ()}
+    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
 
 
 class ColorSearchResult(SearchResult):
@@ -46,8 +55,10 @@ class DuplicateGroupRead(BaseModel):
     """A set of hats that look like the same hat entered more than once.
 
     `confidence` is "exact" when every identity field agrees, "likely" when the
-    model and size match but the colorway doesn't — usually a twin that hasn't
-    been analyzed yet, so it has no colorway to compare.
+    model and size match and the colorway is MISSING on one side — usually a
+    twin that hasn't been analyzed yet, so it has no colorway to compare.
+    Colorways that actively disagree are never grouped, or every normal shelf
+    (one line in three colors) would read as a mistake.
     """
 
     key: str

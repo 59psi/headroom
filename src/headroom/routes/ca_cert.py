@@ -104,7 +104,7 @@ def _unavailable_detail() -> str:
 CA_MEDIA_TYPE = "application/x-x509-ca-cert"
 
 
-@router.get("/ca-certificate")
+@router.get("/ca-certificate", response_class=FileResponse)
 async def ca_certificate():
     """Caddy's root CA, for trusting `https://headroom.local` on this device.
 

@@ -176,7 +176,10 @@ def _type_bitmap(types: tuple[int, ...]) -> bytes:
 
 
 def nsec_payload(hostname: str) -> bytes:
-    """A response whose single answer is "this name has only A and AAAA"."""
+    """A response whose single answer is "this name has only these types" —
+    the address types actually advertised (`_held_types()`: A, plus AAAA when
+    the host has a routable v6), so a v4-only host does not assert an AAAA it
+    will never answer."""
     owner = _encode_name(hostname)
     rdata = owner + _type_bitmap(_held_types())
     header = struct.pack(">HHHHHH", 0, 0x8400, 0, 1, 0, 0)  # QR + AA, 1 answer
@@ -411,8 +414,12 @@ async def start_mdns() -> None:
     host, port = mdns_hostname(), mdns_port()
     aiozc = None
     try:
-        from zeroconf import IPVersion, ServiceInfo
-        from zeroconf.asyncio import AsyncZeroconf
+        # Imported here, not at the top: zeroconf is only ever needed when
+        # advertising is enabled, and importing it opens no sockets — but
+        # keeping it off the boot path means a disabled install (the tests, a
+        # bare-metal dev server) never loads it at all.
+        from zeroconf import IPVersion, ServiceInfo  # noqa: PLC0415 — off the boot path when disabled
+        from zeroconf.asyncio import AsyncZeroconf  # noqa: PLC0415 — same
 
         # Publish every family the host actually has. Advertising IPv4 alone
         # is what made every lookup stall for the client's full resolver

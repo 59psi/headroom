@@ -11,7 +11,7 @@ import { getModel, setModel, clearModel } from '../../api/settings';
 // with its id in a free-text box. They still work; they're just superseded.
 // "Other…" covers anything not here, including models newer than this build.
 const CURRENT_MODELS: { id: string; label: string }[] = [
-  { id: 'claude-sonnet-5', label: 'Sonnet 5 — balanced (default)' },
+  { id: 'claude-sonnet-5', label: 'Sonnet 5 — balanced' },
   { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5 — fastest, cheapest' },
   { id: 'claude-opus-5', label: 'Opus 5 — more capable, pricier' },
   { id: 'claude-fable-5', label: 'Fable 5 — most capable, priciest' },
@@ -92,12 +92,16 @@ export function ClaudeModelCard() {
         >
           <optgroup label="Current">
             {CURRENT_MODELS.map(m => (
-              <option key={m.id} value={m.id}>{m.label}</option>
+              <option key={m.id} value={m.id}>
+                {m.label}{m.id === modelStatus?.default_model_id ? ' (default)' : ''}
+              </option>
             ))}
           </optgroup>
           <optgroup label="Legacy — still available, superseded">
             {LEGACY_MODELS.map(m => (
-              <option key={m.id} value={m.id}>{m.label}</option>
+              <option key={m.id} value={m.id}>
+                {m.label}{m.id === modelStatus?.default_model_id ? ' (default)' : ''}
+              </option>
             ))}
           </optgroup>
           <option value={OTHER}>Other (enter custom ID)…</option>

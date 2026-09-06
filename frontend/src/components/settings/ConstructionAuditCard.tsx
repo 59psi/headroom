@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { auditConstructions, clearConstruction } from '../../api/settings';
 import type { ConstructionClearResult } from '../../types';
+import { invalidateHatVocabulary } from '../../lib/invalidate';
 
 /**
  * Review constructions and undo ones analysis guessed.
@@ -36,6 +37,8 @@ export function ConstructionAuditCard() {
       qc.invalidateQueries({ queryKey: ['admin', 'construction-audit'] });
       qc.invalidateQueries({ queryKey: ['hats'] });
       qc.invalidateQueries({ queryKey: ['hat'] });
+      // A cleared or renamed construction changes what the picker suggests.
+      invalidateHatVocabulary(qc);
     },
   });
 
@@ -132,7 +135,7 @@ export function ConstructionAuditCard() {
                 className="btn btn-danger btn-sm"
                 disabled={apply.isPending || preview.hats_cleared === 0}
                 onClick={() => apply.mutate(preview.construction)}
-              >{apply.isPending ? 'Clearing…' : 'Clear them'}</button>
+              >{apply.isPending ? (preview.to ? 'Changing…' : 'Clearing…') : (preview.to ? 'Change them' : 'Clear them')}</button>
               <button
                 type="button"
                 className="btn btn-outline-secondary btn-sm"

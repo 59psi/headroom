@@ -196,13 +196,13 @@ async def test_the_rank_penalty_is_a_distance_budget_not_just_a_tiebreak(
     assert [r["id"] for r in results] == [its_main_color]
 
 
-async def test_a_grey_hat_is_never_a_purple_hat(client, db_session):
+async def test_a_gray_hat_is_never_a_purple_hat(client, db_session):
     """The bug that survived two cutoff tunings.
 
-    Searching purple returned 22 of 22 hats, every one matched on a grey
+    Searching purple returned 22 of 22 hats, every one matched on a gray
     swatch at Δ13–19. CIEDE2000 divides the chroma difference by
     S_C = 1 + 0.045·C̄, which is right for judging two samples of a dye and
-    wrong for "is this hat purple": a mid grey and a saturated purple differ
+    wrong for "is this hat purple": a mid gray and a saturated purple differ
     by 55 units of chroma, that divisor compresses the gap to ~22, and when
     the lightness agrees the pair scores ~17 — NEARER than two genuinely
     different purples sit to each other.
@@ -213,7 +213,7 @@ async def test_a_grey_hat_is_never_a_purple_hat(client, db_session):
     Note which chips this asserts over. Emphatically chromatic ones must come
     back empty. TEAL is deliberately absent: it is itself only C=27, barely
     over `CHROMATIC_CHROMA`, and a slate at C=9 holds a third of that. A
-    blue-grey hat surfacing for teal is a fair answer — teal IS a desaturated
+    blue-gray hat surfacing for teal is a fair answer — teal IS a desaturated
     blue-green and those are its real neighbors — where a charcoal hat
     surfacing for purple never was. Claiming otherwise here would be asserting
     a behavior the rule does not have and should not.
@@ -223,18 +223,18 @@ async def test_a_grey_hat_is_never_a_purple_hat(client, db_session):
 
     for chip in ("7341a0", "e682aa", "c82828", "eb7d23", "325abe", "378746"):
         hits = (await client.get("/api/search/color", params={"hex": chip})).json()
-        assert hits == [], f"a grey hat came back for #{chip}"
+        assert hits == [], f"a gray hat came back for #{chip}"
 
 
 async def test_the_guard_is_about_hue_not_the_size_of_the_chroma_gap(
     client, db_session
 ):
-    """Navy and blue differ by MORE chroma than grey and teal, and must match.
+    """Navy and blue differ by MORE chroma than gray and teal, and must match.
 
     The first fix attempted here was a penalty on the chroma difference, which
-    killed grey-vs-purple correctly and killed navy-vs-blue and red-vs-maroon
+    killed gray-vs-purple correctly and killed navy-vs-blue and red-vs-maroon
     along with it — those are the dark and bright versions of one hue, exactly
-    what a color search should find. What makes grey different is not the
+    what a color search should find. What makes gray different is not the
     size of the gap but that it has no hue at all to be a darker version of.
     """
     navy = await _hat(client)
@@ -242,7 +242,7 @@ async def test_the_guard_is_about_hue_not_the_size_of_the_chroma_gap(
     await _set_colors(db_session, navy, [("navy", "navy", "#1c2541")])
     await _set_colors(db_session, maroon, [("maroon", "maroon", "#6e202a")])
 
-    # Chroma gap navy->blue is 41; grey->teal is only 27 and is rejected.
+    # Chroma gap navy->blue is 41; gray->teal is only 27 and is rejected.
     blue_hits = (await client.get("/api/search/color", params={"hex": "325abe"})).json()
     assert navy in [r["id"] for r in blue_hits], "a navy hat is a blue hat"
 
@@ -255,9 +255,9 @@ async def test_a_muted_color_is_still_that_color(client, db_session):
 
     "How much color counts as some color" depends on the color. Teal is
     itself only C=27 where red is C=73, so a slate teal at C=10.5 holds a real
-    share of teal's chroma — 39% — while the blue-grey that must NOT match
+    share of teal's chroma — 39% — while the blue-gray that must NOT match
     purple holds 20% of its C=59. An absolute floor cannot tell those apart:
-    set low enough to keep this hat findable it lets blue-grey match purple,
+    set low enough to keep this hat findable it lets blue-gray match purple,
     set high enough to stop that it throws away every dark teal and forest
     green in a collection full of them. Hence the ratio.
     """
@@ -277,7 +277,7 @@ async def test_a_muted_color_is_still_that_color(client, db_session):
 async def test_neutral_searches_still_work_in_both_directions(client, db_session):
     """The guard must not cut the neutrals off from each other.
 
-    Black, charcoal, grey, silver and white are all near-achromatic, so a rule
+    Black, charcoal, gray, silver and white are all near-achromatic, so a rule
     phrased carelessly ("reject low-chroma swatches") would refuse to match
     any of them against any other — breaking search for most of this
     collection, which is overwhelmingly exactly these colors.
@@ -299,26 +299,26 @@ async def test_a_neutral_search_no_longer_matches_the_entire_collection(
 ):
     """CIEDE2000 puts a low-chroma neutral moderately near everything.
 
-    Every hat here owns a grey swatch, so at the old cutoff of 30 a grey was
+    Every hat here owns a gray swatch, so at the old cutoff of 30 a gray was
     within range of 17 of the 25 other palette colors — red, orange, purple
     and pink included — and every color search returned every hat, bunched at
     distances that made them all look equally relevant.
 
-    Searching pink must not return grey hats. Searching grey still must.
+    Searching pink must not return gray hats. Searching gray still must.
     """
-    grey = await _hat(client)
+    gray = await _hat(client)
     charcoal = await _hat(client)
-    await _set_colors(db_session, grey, [("grey", "gray", "#6b7078")])
+    await _set_colors(db_session, gray, [("grey", "gray", "#6b7078")])
     await _set_colors(db_session, charcoal, [("charcoal", "charcoal", "#3a3f45")])
 
     pink_hits = (await client.get("/api/search/color", params={"hex": "c86fa8"})).json()
-    assert pink_hits == [], "a grey hat is not a pink hat"
+    assert pink_hits == [], "a gray hat is not a pink hat"
 
-    # Both come back, nearest first: a charcoal hat IS a dark grey hat, and
+    # Both come back, nearest first: a charcoal hat IS a dark gray hat, and
     # keeping that pair together is why the cutoff went back up to 26 once
     # `is_neutral_mismatch` took over the job it had been mis-tuned to do.
-    grey_hits = (await client.get("/api/search/color", params={"hex": "808080"})).json()
-    assert [r["id"] for r in grey_hits] == [grey, charcoal]
+    gray_hits = (await client.get("/api/search/color", params={"hex": "808080"})).json()
+    assert [r["id"] for r in gray_hits] == [gray, charcoal]
 
 
 async def test_color_search_excludes_disposed_and_validates_hex(client, db_session):
@@ -408,6 +408,28 @@ async def test_case_capacity_override(client):
     )
     assert resp.status_code == 409
     assert "capacity (3)" in resp.json()["detail"]
+
+
+async def test_a_capacity_override_can_be_cleared_again(client):
+    """`PUT {"capacity": null}` restores the type default; OMITTING the field
+    leaves an override alone. Both go through one `CaseUpdate` whose default
+    is None, so the service has to read `model_fields_set` — `is not None`
+    treated a sent null as "leave it" and an override could never be removed
+    from the Edit form, whose empty placeholder promises the default."""
+    case = await client.post("/api/cases", json={"case_type": "archive", "capacity": 2})
+    display_id = case.json()["display_id"]
+
+    # Omitting the field keeps the override.
+    resp = await client.put(f"/api/cases/{display_id}", json={"case_type": "archive"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["capacity"] == 2
+
+    # An explicit null clears it — the same body the Edit form sends for an
+    # emptied box.
+    resp = await client.put(f"/api/cases/{display_id}", json={"capacity": None})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["capacity"] is None
+    assert resp.json()["nominal_capacity"] == 3  # back to the type default
 
 
 async def test_case_capacity_default_unchanged(client):
@@ -505,7 +527,7 @@ async def test_navy_shades_read_as_closer_than_navy_to_slate():
 
     ΔE*76 over-weights differences among saturated blues, which is most of
     this collection. Two navies a person would call the same shade scored
-    further apart than a navy and a grey-blue; CIEDE2000's chroma and
+    further apart than a navy and a gray-blue; CIEDE2000's chroma and
     hue-rotation terms are what fix it.
     """
     navy, other_navy, slate = "#1c2541", "#1d2947", "#4a5a78"

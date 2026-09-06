@@ -139,9 +139,10 @@ async def test_hats_priced_by_hand_are_left_alone(client, db_session):
 
 
 async def test_the_missing_colorway_count_is_the_actionable_half(client, db_session):
-    """A missing colorway is what prevents naming a product, and the one thing
-    only the owner can supply — it cannot be inferred from the photo (measured
-    at 12% precision) nor from an unmatched receipt."""
+    """A missing colorway is what prevents naming a product. It cannot be
+    inferred from the photo (measured at 12% precision); the two sources that
+    can supply it are the owner and an already-imported order that matching
+    has not been re-run against (`unclaimed_from_purchases`)."""
     for i in range(6):
         await _price(
             db_session, await _hat(client), 85.0, "src",

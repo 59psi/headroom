@@ -1,3 +1,5 @@
+import type * as S from '../api/settings';
+import { sweepProgressFixture } from '../test/fixtures';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -8,7 +10,23 @@ import { ClaudeModelCard } from '../components/settings/ClaudeModelCard';
 import * as settingsApi from '../api/settings';
 import type { ApiKeyStatus } from '../types';
 
-vi.mock('../api/settings', () => ({
+// Every export of the real module is mocked — the ones below with a payload
+// of the real shape, everything else as a bare `vi.fn()`. The mock used to be
+// an explicit object, so any NEW export a mounted card called failed with
+// `No "<name>" export is defined on the mock` — it caught `auditSharedPrices`,
+// `getUnclaimedFromPurchases` and `runRepricingAll` in three consecutive
+// releases, and at 2.77.3 three more were missing (`retryFailedAnalysis`,
+// `getAnalysisJob`, `refreshColorwayCatalog`), each one click away from a
+// crash in a test that never clicked. Filling from the real module's keys
+// makes adding a card two edits, not three.
+vi.mock('../api/settings', async (importOriginal) => {
+  const real = await importOriginal<typeof S>();
+  const everything = Object.fromEntries(Object.keys(real).map(k => [k, vi.fn()]));
+  return { ...everything, ...explicit() };
+});
+
+function explicit() {
+  return {
   getLogo: vi.fn(async () => ({ logo_path: null })),
   uploadLogo: vi.fn(), deleteLogo: vi.fn(),
   getApiKeyStatus: vi.fn(async () => ({ configured: true, source: 'database', masked: 'sk-an…wxyz' })),
@@ -16,7 +34,9 @@ vi.mock('../api/settings', () => ({
   testApiKey: vi.fn(async () => ({ ok: true, detail: 'Reachable.' })),
   getGoogleVisionKeyStatus: vi.fn(async () => ({ configured: false, source: null, masked: null })),
   setGoogleVisionKey: vi.fn(), deleteGoogleVisionKey: vi.fn(),
-  getModel: vi.fn(async () => ({ model_id: 'claude-sonnet-5', source: 'default' })),
+  getModel: vi.fn<typeof S.getModel>(async () => ({
+    model_id: 'claude-sonnet-5', source: 'default', default_model_id: 'claude-sonnet-5',
+  })),
   setModel: vi.fn(), clearModel: vi.fn(),
   getMdnsStatus: vi.fn(async () => ({
     enabled: true, advertising: true, hostname: 'headroom.local', port: 8000,
@@ -26,11 +46,14 @@ vi.mock('../api/settings', () => ({
   // Mock the real payload shape: pydantic serializes every field, including
   // the ones with defaults, so a partial literal here would be a fiction the
   // component is never handed in production.
-  getTlsStatus: vi.fn(async () => ({
+  caCertificateAvailable: vi.fn(async () => false),
+  getTlsStatus: vi.fn<typeof S.getTlsStatus>(async () => ({
     applicable: true, host: 'headroom.local', port: 443,
     not_before: '2026-08-23T22:44:33Z', not_after: '2026-08-24T10:44:33Z',
     days_remaining: 0.5, expired: false, needs_attention: false,
     hostname_ok: true, ca_sha256: 'CB:08:88:5B:FD:B7:F7:DD', error: null,
+    ca_changed: false, ca_expected_sha256: 'CB:08:88:5B:FD:B7:F7:DD',
+    issuer_not_after: '2034-11-12T00:00:00Z', clamped_by_issuer: false,
   })),
   getRecentErrors: vi.fn(async () => []),
   getAnalysisFailures: vi.fn(async () => []),
@@ -49,10 +72,19 @@ vi.mock('../api/settings', () => ({
     last_error: null, last_skip_reason: null, consecutive_failures: 0,
   })),
   backupDownloadUrl: vi.fn(() => '/api/admin/backup'),
-  getBackupUpload: vi.fn(async () => ({
+  getBackupUpload: vi.fn<typeof S.getBackupUpload>(async () => ({
     configured: false, provider: null, destination: null, from_environment: false,
-    available_providers: ['rclone'], last_upload_at: null, last_upload_ok: null,
-    last_upload_error: null, upload_successes: 0, upload_failures: 0,
+    // Providers are OBJECTS. This mock sent `['rclone']` (strings), so
+    // `providers.find(p => p.name === provider)` never matched and the card's
+    // `<option key={p.name}>` got `undefined` — a fiction tsc could not see
+    // through an untyped `vi.fn(async () => ({…}))`.
+    available_providers: [{
+      name: 'rclone', label: 'rclone', destination_hint: 'remote:path',
+      example: 'box:Headroom-Backups', setup: ['Install rclone'], secret_env: null,
+      binary: 'rclone', binary_available: true,
+    }],
+    binary_available: null, last_upload_at: null, last_upload_ok: null,
+    last_upload_error: null, last_upload_name: null, upload_successes: 0, upload_failures: 0,
   })),
   setBackupUpload: vi.fn(), clearBackupUpload: vi.fn(), testBackupUpload: vi.fn(),
   getActivityLog: vi.fn(async () => []),
@@ -63,18 +95,22 @@ vi.mock('../api/settings', () => ({
       last_error: null, consecutive_failures: 0, last_result: 0,
     },
   })),
-  getEbayCreds: vi.fn(async () => ({ configured: false, marketplace: 'EBAY_US' })),
+  getEbayCreds: vi.fn<typeof S.getEbayCreds>(async () => ({
+    configured: false, app_id_masked: null, marketplace: 'EBAY_US', detected_env: null,
+  })),
   setEbayCreds: vi.fn(), deleteEbayCreds: vi.fn(), testEbayCreds: vi.fn(),
   inventoryReportUrl: vi.fn(() => '/api/admin/inventory-report'),
   collectionExportUrl: vi.fn(() => '/api/admin/collection-export'),
-  getColorwayStatus: vi.fn(async () => ({
+  getColorwayStatus: vi.fn<typeof S.getColorwayStatus>(async () => ({
     entries: 988, models: 146, colorways: 402, last_harvest: null, in_flight: false,
+    progress: sweepProgressFixture(),
   })),
   // Mock the real payload shape: pydantic serializes every field, defaults
   // included, so a partial literal is a fiction the component never receives.
-  getRepricing: vi.fn(async () => ({
+  getRepricing: vi.fn<typeof S.getRepricing>(async () => ({
     enabled: true, interval_hours: 24, last_run_at: null, last_success_at: null,
     last_error: null, consecutive_failures: 0, last_repriced: 0, last_considered: 0,
+    progress: sweepProgressFixture(),
   })),
   runRepricing: vi.fn(),
   // Deliberately NOT the mDNS host: the assertions below identify each card
@@ -98,7 +134,8 @@ vi.mock('../api/settings', () => ({
     { colorways: 0, prices: 0, ambiguous: 0 })),
   releaseFrozenPrices: vi.fn(),
   runRepricingAll: vi.fn(),
-}));
+  };
+}
 
 vi.mock('../api/auth', () => ({
   // The real payload: `/me` no longer carries `api_token`. Reading it is a
@@ -113,15 +150,12 @@ vi.mock('../api/auth', () => ({
   createShareLink: vi.fn(), revokeShareLink: vi.fn(),
 }));
 
-// The CA-certificate probe must FAIL here: `TrustCertCard` renders only when
-// a local CA exists, which is the LAN-HTTPS overlay only. A blanket-success
-// `apiFetch` made the card's appearance a race against the section assertions
-// below — it passed only because 'Account' resolved first.
+// The CA-certificate probe must answer FALSE here: `TrustCertCard` renders only
+// when a local CA exists, which is the LAN-HTTPS overlay only. (The probe is
+// `caCertificateAvailable` in `api/settings`, mocked above; it is a plain
+// `fetch`, not `apiFetch`, because the endpoint serves a PEM file.)
 vi.mock('../api/client', () => ({
-  apiFetch: vi.fn(async (path: string) => {
-    if (path.includes('ca-certificate')) throw new Error('404');
-    return [];
-  }),
+  apiFetch: vi.fn(async () => []),
   // Both exports, or a card reaching `api/hats` (which imports this one to
   // read `X-Total-Count`) gets `undefined` and fails on call rather than here.
   apiFetchWithHeaders: vi.fn(async () => ({ data: [], headers: new Headers() })),
@@ -309,7 +343,7 @@ describe('AnthropicKeyCard loading guard', () => {
     expect(await screen.findByText(/Reachable\./)).toBeInTheDocument();
 
     // Simulate the Model card saving a different model.
-    vi.mocked(settingsApi.getModel).mockResolvedValue({ model_id: 'claude-opus-5', source: 'database' });
+    vi.mocked(settingsApi.getModel).mockResolvedValue({ model_id: 'claude-opus-5', source: 'database', default_model_id: 'claude-sonnet-5' });
     await client.invalidateQueries({ queryKey: ['settings', 'model'] });
 
     await waitFor(() => {
@@ -320,7 +354,7 @@ describe('AnthropicKeyCard loading guard', () => {
 
 describe('ClaudeModelCard', () => {
   async function renderWithStoredModel(model_id: string) {
-    vi.mocked(settingsApi.getModel).mockResolvedValue({ model_id, source: 'database' });
+    vi.mocked(settingsApi.getModel).mockResolvedValue({ model_id, source: 'database', default_model_id: 'claude-sonnet-5' });
     renderWithProviders(<ClaudeModelCard />);
     await screen.findByText(model_id);
     return screen.getByLabelText('Model') as HTMLSelectElement;

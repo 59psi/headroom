@@ -16,6 +16,7 @@ crisp at any print size).
 
 from __future__ import annotations
 
+import asyncio
 import io
 from html import escape
 
@@ -46,6 +47,18 @@ def _label(url: str, body: str) -> str:
             <div class="url">{escape(url)}</div>
           </div>
         </div>"""
+
+
+async def _render_labels(pairs: list[tuple[str, str]]) -> list[str]:
+    """Build every label OFF the event loop.
+
+    `qrcode` encodes and rasterizes to SVG in pure Python — tens of
+    milliseconds per code, and a sheet is dozens of codes — so building them
+    inline in the async renderers stalled every other request for the whole
+    sheet. Callers collect `(url, body)` pairs (plain strings, no ORM access)
+    and hand them here, so the thread never touches a session.
+    """
+    return await asyncio.to_thread(lambda: [_label(url, body) for url, body in pairs])
 
 
 def _sheet(title: str, hint: str, labels: list[str]) -> str:
@@ -111,21 +124,19 @@ async def render_case_labels(db: AsyncSession, base_url: str) -> str:
             used, nominal, kind = beanies, fit.max_beanie, "beanies"
         else:
             used, nominal, kind = regular, fit.max_regular, "hats"
-        labels.append(
-            _label(
-                url,
-                f"""
+        labels.append((
+            url,
+            f"""
             <div class="ident">{escape(c.display_id)}</div>
             <div class="sub">{escape(c.room.name if c.room else "")}</div>
             <div class="sub">{used}/{nominal} {kind}</div>""",
-            )
-        )
+        ))
 
     return _sheet(
         "Case Labels",
         f"Print this page (⌘P), cut along the dashed borders, stick on cases. "
         f"Scanning a QR opens that case in Headroom. {len(cases)} labels.",
-        labels,
+        await _render_labels(labels),
     )
 
 
@@ -164,15 +175,13 @@ async def render_hat_labels(
         url = tag_service.tag_url(base_url, tag_service.HAT, h.id)
         name = h.model_name or "Unidentified"
         detail = " · ".join(x for x in (h.colorway, h.size) if x)
-        labels.append(
-            _label(
-                url,
-                f"""
+        labels.append((
+            url,
+            f"""
             <div class="ident">{escape(h.display_id or "unassigned")}</div>
             <div class="name">{escape(name)}</div>
             <div class="sub">{escape(detail)}</div>""",
-            )
-        )
+        ))
 
     scope = f"case {case_display_id}" if case_display_id else "the whole collection"
     return _sheet(
@@ -180,5 +189,5 @@ async def render_hat_labels(
         f"Print this page (⌘P), cut out, and stick each label inside its hat's "
         f"sweatband. Scanning a QR opens that hat's quick-wear screen — one tap "
         f"to log that you wore it. {len(labels)} labels for {escape(scope)}.",
-        labels,
+        await _render_labels(labels),
     )

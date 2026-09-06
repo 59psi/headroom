@@ -15,7 +15,8 @@ class CaseCreate(BaseModel):
     # case_service.create_case. Was a hardcoded 1, which pinned new cases to a
     # room that can now be deleted.
     room_id: int | None = None
-    # Per-case hat capacity; None → type default (3 regular / 6 beanie). The
+    # Per-case hat capacity; None → type default (`capacity.MAX_REGULAR` /
+    # `capacity.MAX_BEANIE`, not restated here). The
     # regular default carries one hat of overfill latitude; the beanie default
     # carries none, and neither does a number stated here — a stated capacity
     # is exact.
@@ -25,6 +26,9 @@ class CaseCreate(BaseModel):
 class CaseUpdate(BaseModel):
     case_type: CaseType | None = None
     room_id: int | None = None
+    # `null` means "back to the type default"; OMITTED means "leave it". The
+    # service tells the two apart with `model_fields_set` — before it did,
+    # a per-case override could be set but never removed from the UI.
     capacity: int | None = Field(None, ge=1, le=50)
 
 
@@ -46,7 +50,10 @@ class CaseRead(BaseModel):
     case_type: CaseType
     sequence_number: int
     display_id: str
-    photo_path: str | None
+    # No `photo_path`: there is no case-photo feature (cases show a collage of
+    # their hats). The column still exists on the model — dropping it is a
+    # migration — but publishing a field no client reads is a promise about a
+    # feature that does not exist.
     capacity: int | None
     hat_count: int
     # What the physical case cost new. Not a column: every case is the
@@ -58,12 +65,12 @@ class CaseRead(BaseModel):
     room_id: int
     room_name: str
     # Computed server-side from `services/capacity`, the same rule the write
-    # path enforces. Sent so the case picker can grey out a case that would
+    # path enforces. Sent so the case picker can gray out a case that would
     # 409 on save rather than letting you pick it and fail — at 40-60 cases
     # you cannot eyeball which are full or hold the wrong hat type.
     # Photo paths of the hats inside, newest-first-ish (id order), capped at
     # four. The Cases grid renders these as a collage: a photo of the case
-    # itself is the same grey box for every case, where the hats are the thing
+    # itself is the same gray box for every case, where the hats are the thing
     # you are actually looking for.
     hat_thumbs: list[str] = []
     accepts_regular: bool = True

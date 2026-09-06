@@ -16,6 +16,18 @@ from headroom.utils import disk
 pytestmark = pytest.mark.anyio
 
 
+@pytest.fixture(autouse=True)
+def _fresh_backup_health():
+    """Two tests below mutate the process-local `BackupHealth`; every other
+    backup test module carries this reset and this one did not, so a failing
+    assertion here leaked `last_success_at` into whatever ran next."""
+    from headroom.services import backup_service
+
+    backup_service._health = backup_service.BackupHealth()
+    yield
+    backup_service._health = backup_service.BackupHealth()
+
+
 # ---- free space ------------------------------------------------------- #
 
 
@@ -111,9 +123,11 @@ async def test_readiness_fails_when_an_expected_worker_is_dead(
 ):
     """This is the check that lets the container go unhealthy.
 
-    Before it, `restart: unless-stopped` — the only automated recovery in the
-    system — was structurally blind to a dead worker, because worker liveness
-    was authenticated-only detail and the healthcheck is anonymous.
+    Before it, the container's health could not reflect a dead worker at all,
+    because worker liveness was authenticated-only detail and the healthcheck
+    is anonymous. (Docker's `restart: unless-stopped` never acts on health —
+    only the host watchdog and the autoheal overlay do — which is why an
+    accurate `unhealthy` matters: it is the signal they restart on.)
     """
     monkeypatch.setenv("HEADROOM_ANALYSIS_WORKER_ENABLED", "1")
     assert analysis_queue.worker_alive() is False  # ...but expected to be
@@ -302,6 +316,42 @@ async def test_a_typo_shows_up_as_the_default_it_silently_became(client, monkeyp
     body = (await client.get("/api/admin/config")).json()
 
     assert body["backups"]["keep"] == 5  # not "five", and not a 500
+
+
+async def test_the_config_endpoint_reports_the_model_the_code_will_use(client):
+    """EFFECTIVE means resolved. The endpoint reported the environment default
+    while every caller resolves the model through the DB-first lookup, so a
+    model chosen in Settings made this endpoint name the wrong one."""
+    before = (await client.get("/api/admin/config")).json()
+    assert before["model_source"] in ("default", "environment", "env")
+
+    assert (
+        await client.put("/api/settings/model", json={"model_id": "claude-opus-5"})
+    ).status_code == 200
+
+    after = (await client.get("/api/admin/config")).json()
+    assert after["model"] == "claude-opus-5"
+    assert after["model_source"] == "database"
+
+
+async def test_the_config_endpoint_sees_an_upload_provider_configured_in_the_ui(client, monkeypatch):
+    """`off_box_upload_configured` counted only the env command and ignored a
+    provider set up in Settings — so the one endpoint meant to say "is there a
+    copy of my data leaving this card" said no to a working configuration."""
+    monkeypatch.delenv("HEADROOM_BACKUP_UPLOAD_CMD", raising=False)
+    assert (await client.get("/api/admin/config")).json()["backups"][
+        "off_box_upload_configured"
+    ] is False
+
+    resp = await client.put(
+        "/api/admin/backups/upload",
+        json={"provider": "rsync", "destination": "pi@nas.local:/volume1/headroom"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    assert (await client.get("/api/admin/config")).json()["backups"][
+        "off_box_upload_configured"
+    ] is True
 
 
 async def test_the_config_endpoint_leaks_no_secrets(client):

@@ -1,7 +1,10 @@
+import re
 from datetime import date, datetime
 from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+
+_NON_WORD = re.compile(r"[^a-z0-9]+")
 
 
 class HatCondition(StrEnum):
@@ -55,7 +58,8 @@ class HatStyle(StrEnum):
 #: Every style that is physically a beanie.
 #:
 #: `Hat.is_beanie` is a real column — search filters query it and case capacity
-#: depends on it (6 beanies per case vs 3 regular hats) — but it is DERIVED
+#: depends on it (`capacity.MAX_BEANIE` vs `capacity.MAX_REGULAR` to a case,
+#: figures that live there and nowhere else) — but it is DERIVED
 #: from style. This set is the single definition of that derivation, for the
 #: same reason `Hat.set_construction` is the only writer of hydro/hydrolite:
 #: the two can silently disagree otherwise.
@@ -105,6 +109,54 @@ KNOWN_CONSTRUCTIONS: tuple[str, ...] = (
     "Suede",
     "Wool Blend",
 )
+
+
+def _construction_tokens(text: str | None) -> frozenset[str]:
+    """Words of `text`, lowercased, punctuation and hyphens treated as spaces —
+    the same bag `melin_recap.model_tokens` and `catalog_service._model_tokens`
+    build, so a construction found here is found by the matcher too."""
+    return frozenset(_NON_WORD.sub(" ", (text or "").lower()).split())
+
+
+#: Every word of every known construction, for token-bag arithmetic (strip the
+#: construction words out of a model name, or test two bags for a contradiction).
+CONSTRUCTION_TOKENS: frozenset[str] = frozenset(
+    t for known in KNOWN_CONSTRUCTIONS for t in _construction_tokens(known)
+)
+
+
+def constructions_in(text: str | None) -> frozenset[str]:
+    """The known constructions `text` names — each as its canonical spelling.
+
+    Token-SUBSET, so `Wool Blend` needs both words and `HYDROLite` is its own
+    token rather than a HYDRO with a suffix (the substring confusion CLAUDE.md
+    warns about repeatedly). Four modules used to answer this question with
+    four tokenizations of their own; this is the one they share.
+    """
+    have = _construction_tokens(text)
+    if not have:
+        return frozenset()
+    return frozenset(c for c in KNOWN_CONSTRUCTIONS if _construction_tokens(c) <= have)
+
+
+def strip_constructions(text: str | None, *, keep: str | None = None) -> str | None:
+    """Remove every known construction phrase from a display string.
+
+    Word-boundary, case-insensitive, whitespace re-normalized; `keep` (the
+    construction the owner stated) survives. Returns None when nothing is left
+    — "Hydro" strips to nothing, and an empty name is worse than none. Used by
+    the analysis pipeline (a name must not assert a construction nobody
+    stated) and the construction audit (undo one that was written).
+    """
+    if not text:
+        return text
+    keep_key = (keep or "").casefold()
+    cleaned = text
+    for known in KNOWN_CONSTRUCTIONS:
+        if keep_key and known.casefold() == keep_key:
+            continue
+        cleaned = re.sub(rf"\b{re.escape(known)}\b", " ", cleaned, flags=re.IGNORECASE)
+    return " ".join(cleaned.split()) or None
 
 
 # What a hat gets when the caller doesn't say. Three entry points create hats
@@ -233,8 +285,10 @@ class HatUpdate(BaseModel):
 
 # Populated straight off the ORM object via `HatRead.model_validate(hat)` —
 # every field below is either a Hat column or one of the derived properties on
-# the model, so adding a column means editing the model and this class, and
-# nothing else. (Kept as a comment, not a docstring: docstrings surface in the
+# the model, so there is no hand-written mapper to keep in step. Adding a column
+# is still FOUR edits — the model, `database._HAT_COLUMN_DDL`, this class and
+# `frontend/src/types/index.ts` — and skipping one is silent (CLAUDE.md, "Adding
+# a Hat column"). (Kept as a comment, not a docstring: docstrings surface in the
 # public OpenAPI schema, and this is an internal note.)
 class HatRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -326,8 +380,21 @@ class HatRead(BaseModel):
         return self
 
 
+class DisposedVia(StrEnum):
+    """How a hat left the collection — the one closed vocabulary on a hat that
+    was a bare `str` validated by hand (a 400 where every other enum answers
+    422 at the schema). Style, size and condition are all `StrEnum`s; this is
+    the same shape for the same reason."""
+
+    SOLD = "sold"
+    GIFTED = "gifted"
+    LOST = "lost"
+    TRASHED = "trashed"
+    TRADE = "trade"
+
+
 class HatDispose(BaseModel):
-    via: str  # sold | gifted | lost | trashed | trade
+    via: DisposedVia
     price: float | None = None
     to: str | None = None
     notes: str | None = None

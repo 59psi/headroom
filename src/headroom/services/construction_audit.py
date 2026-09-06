@@ -28,17 +28,17 @@ Clearing a construction also clears what was derived FROM it:
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.models.hat import Hat
-from headroom.schemas.hat import KNOWN_CONSTRUCTIONS
-from headroom.services import retail_pricing
+from headroom.schemas.hat import KNOWN_CONSTRUCTIONS, strip_constructions
+from headroom.services import retail_pricing, vocabulary
 
 
+from headroom.models.activity_log import ActivityLog
 @dataclass
 class ConstructionCount:
     construction: str
@@ -87,7 +87,6 @@ async def owner_set_hat_ids(db: AsyncSession) -> set[int]:
     is definitely yours", never "this one is definitely not". Which is exactly
     the right asymmetry for skipping — it only ever protects more, never less.
     """
-    from headroom.models.activity_log import ActivityLog
 
     rows = (
         await db.execute(
@@ -102,16 +101,6 @@ async def owner_set_hat_ids(db: AsyncSession) -> set[int]:
         )
     ).scalars().all()
     return {r for r in rows if r is not None}
-
-
-def _strip_constructions(model_name: str | None) -> str | None:
-    """Remove every known construction word from a model name."""
-    if not model_name:
-        return model_name
-    cleaned = model_name
-    for known in KNOWN_CONSTRUCTIONS:
-        cleaned = re.sub(rf"\b{re.escape(known)}\b", " ", cleaned, flags=re.IGNORECASE)
-    return " ".join(cleaned.split()) or None
 
 
 async def audit(db: AsyncSession) -> list[ConstructionCount]:
@@ -167,6 +156,15 @@ async def clear_construction(
     if not target:
         return report
 
+    # A typed replacement goes through the vocabulary like every other
+    # construction write (`hat_service`, the pipeline): `to="hydro"` stamped
+    # dozens of rows with a spelling the record already held as `HYDRO`, which
+    # is exactly the five-spellings-of-one-thing split `canonicalize` exists
+    # to prevent — and this is the one writer that touches a whole shelf.
+    if to:
+        to = await vocabulary.canonicalize(db, Hat.construction, to, known=KNOWN_CONSTRUCTIONS)
+        report.to = to
+
     protected = await owner_set_hat_ids(db) if skip_owner_set else set()
     hats = (await db.execute(select(Hat).where(Hat.disposed_at.is_(None)))).scalars().all()
 
@@ -186,7 +184,7 @@ async def clear_construction(
         # given the name is left less specific rather than rewritten, because
         # "A-Game HYDRO" would be inventing the product name back — the same
         # remove-don't-substitute rule the pipeline follows.
-        corrected = _strip_constructions(hat.model_name)
+        corrected = strip_constructions(hat.model_name)
         if corrected != hat.model_name:
             report.model_names_corrected += 1
 

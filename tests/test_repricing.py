@@ -509,6 +509,60 @@ async def test_a_second_press_does_not_start_a_second_sweep(client, monkeypatch)
     assert calls == 1, "the shelf was swept once, not twice"
 
 
+async def test_the_scheduler_only_sweeps_what_is_due(db_session, monkeypatch):
+    """A restart must not re-price a shelf that was priced minutes ago.
+
+    The loop ran `reprice_once` unconditionally at boot, so a restart loop
+    meant the whole collection against the marketplace, at 1 s spacing, every
+    time — for prices `resale_checked_at` already said were fresh. The loop now
+    passes `stale_before = now - interval`; the buttons still pass nothing,
+    because a person pressing "Re-price now" is asking for exactly that.
+    Driven through `_loop` itself so what is pinned is the WIRING of the gate,
+    not just the query's ability to take one.
+    """
+    import contextlib
+
+    fresh = _hat(model_name="Fresh", resale_checked_at=datetime.now(timezone.utc))
+    stale = _hat(model_name="Stale", resale_checked_at=datetime(2026, 1, 1))
+    never = _hat(model_name="Never", resale_checked_at=None)
+    for h in (fresh, stale, never):
+        db_session.add(h)
+    await db_session.commit()
+
+    swept: list[str] = []
+    done = asyncio.Event()
+
+    async def _record(hat):
+        swept.append(hat.model_name)
+
+    async def _sweep_and_signal(db, hats, delay):
+        try:
+            return await original_sweep(db, hats, delay)
+        finally:
+            done.set()
+
+    original_sweep = repricing._sweep
+    monkeypatch.setattr(
+        "headroom.services.hat_analysis_pipeline.refresh_melin_resale", _record
+    )
+    monkeypatch.setattr(repricing, "_sweep", _sweep_and_signal)
+
+    loop_task = asyncio.create_task(repricing._loop(_factory(db_session)))
+    try:
+        await asyncio.wait_for(done.wait(), timeout=5)
+    finally:
+        loop_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await loop_task
+
+    assert sorted(swept) == ["Never", "Stale"], swept
+
+    # The buttons are ungated: a person asking for a sweep gets the shelf.
+    swept.clear()
+    await repricing.reprice_once(_factory(db_session))
+    assert sorted(swept) == ["Fresh", "Never", "Stale"], swept
+
+
 async def test_the_scheduled_sweep_holds_the_slot_the_buttons_check(
     client, monkeypatch
 ):
@@ -554,7 +608,7 @@ async def test_the_scheduled_sweep_holds_the_slot_the_buttons_check(
         with contextlib.suppress(asyncio.CancelledError):
             await loop_task
 
-    # A cancelled scheduler must release, or shutdown leaves the slot held and
+    # A canceled scheduler must release, or shutdown leaves the slot held and
     # every later press is refused for the life of the process.
     assert not repricing.full_sweep_in_flight()
 
@@ -615,6 +669,9 @@ async def test_a_failed_background_sweep_is_recorded_not_swallowed(
 
     resp = await client.post("/api/admin/repricing/run-all")
     assert resp.status_code == 202
+    # Await the task the 202 handed off — reading the status before it ran was
+    # the timing assumption `_drain_sweeps`'s own docstring warns about.
+    await _drain_sweeps()
 
     status = (await client.get("/api/admin/repricing")).json()
     assert "the whole sweep died" in (status["last_error"] or "")

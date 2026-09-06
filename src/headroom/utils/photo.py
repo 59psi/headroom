@@ -1,8 +1,11 @@
 import asyncio
+import logging
 import uuid
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageOps
+
+logger = logging.getLogger(__name__)
 
 MAX_DIMENSION = 1200
 
@@ -56,15 +59,21 @@ def process_image(input_path: Path, output_path: Path) -> Path:
     except ImportError:
         pass
 
-    img = Image.open(input_path)
-    if img.mode != "RGB":
-        img = img.convert("RGB")
+    # Context manager, like the two encoders below (this one held its handle
+    # until GC). `exif_transpose` FIRST: a phone shoots portrait with the
+    # sensor sideways and records Orientation 6/8 in EXIF; `.convert("RGB")`
+    # + JPEG save drops that tag without honoring it, so the stored photo — and
+    # the cutout, the thumbnail and everything Claude sees — was on its side.
+    with Image.open(input_path) as opened:
+        img = ImageOps.exif_transpose(opened) or opened
+        if img.mode != "RGB":
+            img = img.convert("RGB")
 
-    if max(img.size) > MAX_DIMENSION:
-        img.thumbnail((MAX_DIMENSION, MAX_DIMENSION), Image.LANCZOS)
+        if max(img.size) > MAX_DIMENSION:
+            img.thumbnail((MAX_DIMENSION, MAX_DIMENSION), Image.LANCZOS)
 
-    final_path = output_path.with_suffix(".jpg")
-    img.save(final_path, "JPEG", quality=85, optimize=True)
+        final_path = output_path.with_suffix(".jpg")
+        img.save(final_path, "JPEG", quality=85, optimize=True)
     return final_path
 
 
@@ -89,7 +98,11 @@ def make_thumbnail(source_path: Path, dest_path: Path) -> Path | None:
             final = dest_path.with_suffix(".webp")
             img.save(final, "WEBP", quality=80, method=4)
         return final
-    except Exception:  # noqa: BLE001 — a missing thumbnail must never fail an upload
+    except Exception as exc:  # noqa: BLE001 — a missing thumbnail must never fail an upload
+        # Best-effort still gets a voice. This returned None with no record, so
+        # a thumbnail pipeline failing on every hat (disk full, a Pillow build
+        # without WebP) was indistinguishable from "already existed".
+        logger.warning("Thumbnail failed for %s: %s", source_path, exc)
         return None
 
 
@@ -126,7 +139,8 @@ def make_export_image(source_path: Path, dest_path: Path) -> Path | None:
             # bytes are what someone downloads.
             img.save(final, "WEBP", quality=EXPORT_QUALITY, method=6)
         return final
-    except Exception:  # noqa: BLE001 — one bad photo must not fail an export
+    except Exception as exc:  # noqa: BLE001 — one bad photo must not fail an export
+        logger.warning("Export image failed for %s: %s", source_path, exc)
         return None
 
 

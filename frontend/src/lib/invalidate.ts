@@ -36,19 +36,36 @@ export function invalidateHatViews(qc: QueryClient, hatId?: number) {
 }
 
 /**
+ * The free-text vocabularies a hat save can EXTEND.
+ *
+ * `GET /api/meta/constructions` and `/collections` suggest what is already in
+ * use, so a construction or collection typed for the first time belongs in the
+ * next form's picker — and did not appear there until the 30s `staleTime` ran
+ * out, which on the Add page (save, tap Add again) reads as the value having
+ * not been kept. Sibling keys of nothing above; called by both hat forms and
+ * by the construction audit, which rewrites the values wholesale.
+ */
+export function invalidateHatVocabulary(qc: QueryClient) {
+  qc.invalidateQueries({ queryKey: ['meta', 'constructions'] });
+  qc.invalidateQueries({ queryKey: ['meta', 'collections'] });
+}
+
+/**
  * Keys DERIVED from purchase→hat matching, which live on other cards.
  *
- * Matching is run from three places in the Purchases card (import, re-run
- * matching, unlink all) and every one of them changes what the shared-price
- * report and the "unclaimed colorways" offer are describing — matching writes
- * colorways and prices, which is exactly what those two group and count.
+ * Matching is run from four places — three in the Purchases card (import,
+ * re-run matching, unlink all) and the "Fill from purchase history" offer on
+ * the shared-prices card — and every one of them changes what the
+ * shared-price report and the "unclaimed colorways" offer are describing:
+ * matching writes colorways and prices, which is exactly what those two group
+ * and count.
  *
  * They are SIBLING keys, covered by nothing the Purchases card already
  * invalidates. Left alone, the offer went on advertising "Fill 17 from
  * purchase history" straight after the button that consumed the backlog — the
  * same class as the `['admin','recent-errors']` / `-count` trap CLAUDE.md
- * names. One helper because three call sites cannot be relied on to keep the
- * list in step.
+ * names. One helper because four call sites cannot be relied on to keep the
+ * list in step — the fourth hand-rolled the same two lines until 2.78.
  */
 export function invalidatePurchaseDerived(qc: QueryClient) {
   qc.invalidateQueries({ queryKey: ['admin', 'unclaimed-purchases'] });

@@ -2,11 +2,8 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { getRoom } from '../api/rooms';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
-import { ConditionBadge } from '../components/common/ConditionBadge';
-import { ColorSwatches } from '../components/common/ColorSwatch';
-import { CaseCollage } from '../components/cases/CaseCollage';
-import { tileSrc } from '../lib/photo';
-import type { CaseRead, HatRead } from '../types';
+import { CaseTile } from '../components/cases/CaseTile';
+import { HatRow } from '../components/hats/HatRow';
 
 /**
  * What is actually in a room.
@@ -21,55 +18,6 @@ import type { CaseRead, HatRead } from '../types';
  * also the truthful order for a physical room — the things sitting out are
  * what you see when you walk in.
  */
-function LooseHatRow({ hat }: { hat: HatRead }) {
-  return (
-    <Link to={`/hats/${hat.id}`} className="card mb-2 text-decoration-none">
-      <div className="card-body d-flex gap-3 align-items-center">
-        {hat.photo_path ? (
-          <img src={tileSrc(hat)} alt="" className="hr-thumb flex-shrink-0" style={{ width: 64, height: 64 }} />
-        ) : (
-          <div
-            className="rounded flex-shrink-0"
-            style={{ width: 64, height: 64, background: 'rgba(0,0,0,0.3)', border: '1px dashed var(--border)' }}
-          />
-        )}
-        <div className="flex-grow-1" style={{ minWidth: 0 }}>
-          <div className="d-flex justify-content-between align-items-start gap-2">
-            <div style={{ minWidth: 0 }}>
-              <div className="fw-bold" style={{ color: 'var(--neon-cyan)' }}>
-                {hat.model_name || `#${hat.id}`}
-              </div>
-              <div className="text-muted small">
-                {hat.style.replace(/_/g, ' ')} · {hat.size.replace(/_/g, ' ')}
-                {hat.colorway && <> · {hat.colorway}</>}
-              </div>
-            </div>
-            <ConditionBadge condition={hat.condition} />
-          </div>
-          <ColorSwatches colors={hat.colors} showLabels={false} />
-        </div>
-      </div>
-    </Link>
-  );
-}
-
-function CaseCard({ c }: { c: CaseRead }) {
-  const countLabel = c.beanie_count > 0
-    ? `${c.beanie_count} beanie${c.beanie_count !== 1 ? 's' : ''}`
-    : `${c.regular_count} hat${c.regular_count !== 1 ? 's' : ''}`;
-  return (
-    <Link to={`/cases/${c.display_id}`} className="card text-decoration-none h-100">
-      <CaseCollage thumbs={c.hat_thumbs} label={c.display_id} />
-      <div className="card-body d-flex justify-content-between align-items-center gap-2">
-        <div className="font-mono fw-bold" style={{ color: 'var(--neon-cyan)' }}>{c.display_id}</div>
-        <div className="font-mono small" style={{ color: 'var(--neon-pink)' }}>
-          {c.hat_count === 0 ? 'Empty' : countLabel}
-        </div>
-      </div>
-    </Link>
-  );
-}
-
 export function RoomDetailPage() {
   const { roomId } = useParams();
   const id = Number(roomId);
@@ -108,7 +56,7 @@ export function RoomDetailPage() {
               {loose.length} hat{loose.length === 1 ? '' : 's'}, no case
             </span>
           </div>
-          {loose.map(h => <LooseHatRow key={h.id} hat={h} />)}
+          {loose.map(h => <HatRow key={h.id} hat={h} showRoom={false} thumb={64} />)}
         </section>
       )}
 
@@ -125,7 +73,7 @@ export function RoomDetailPage() {
           </p>
         ) : (
           <div className="row row-cols-2 row-cols-md-3 g-3">
-            {cases.map(c => <div className="col" key={c.id}><CaseCard c={c} /></div>)}
+            {cases.map(c => <div className="col" key={c.id}><CaseTile c={c} showRoom={false} /></div>)}
           </div>
         )}
       </section>

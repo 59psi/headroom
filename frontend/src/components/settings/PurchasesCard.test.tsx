@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../../test/utils';
@@ -36,6 +36,10 @@ async function pick(file: File) {
   // that is how a control ships unlabeled.
   await userEvent.upload(screen.getByLabelText('Purchase history JSON file'), file);
 }
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe('PurchasesCard', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -177,7 +181,11 @@ describe('PurchasesCard', () => {
     // already had a JSON file, which nothing in the app produces.
     const user = userEvent.setup();
     const writeText = vi.fn().mockResolvedValue(undefined);
-    // jsdom exposes navigator.clipboard as a getter-only property.
+    // jsdom exposes navigator.clipboard as a getter-only property — and does
+    // not claim a secure context, which `lib/clipboard.copyText` requires
+    // before it will touch the async clipboard (over plain HTTP it falls back
+    // to selection). Claim one here so this test exercises the async path.
+    vi.stubGlobal('isSecureContext', true);
     Object.defineProperty(navigator, 'clipboard', {
       value: { writeText }, configurable: true,
     });
@@ -203,6 +211,7 @@ describe('PurchasesCard', () => {
     // is exactly how this app is served on a LAN without the TLS overlay. The
     // prompt is on screen and selectable either way.
     const user = userEvent.setup();
+    vi.stubGlobal('isSecureContext', true);
     Object.defineProperty(navigator, 'clipboard', {
       value: { writeText: vi.fn().mockRejectedValue(new Error('denied')) },
       configurable: true,

@@ -37,10 +37,37 @@ export async function apiFetchWithHeaders<T>(
   }
   if (!resp.ok) {
     const body = await resp.json().catch(() => ({ detail: resp.statusText }));
-    throw new Error(body.detail || `API error ${resp.status}`);
+    throw new Error(errorMessage(body.detail, resp.status));
   }
   if (resp.status === 204) return { data: undefined as T, headers: resp.headers };
   return { data: await resp.json(), headers: resp.headers };
+}
+
+/**
+ * One readable sentence from an error body.
+ *
+ * A 422 arrives as `{"detail": [{loc, msg, type}, …]}` — FastAPI's validation
+ * shape, which the server strips of `input`/`ctx`/`url` — and `new Error(body.detail)`
+ * on that array produced the literal message "[object Object]" in every alert
+ * that rendered it. The field name and the reason are what make a 422 useful,
+ * so both are kept.
+ */
+export function errorMessage(detail: unknown, status: number): string {
+  if (Array.isArray(detail)) {
+    const parts = detail.map(d => {
+      if (d && typeof d === 'object' && 'msg' in d) {
+        const loc = Array.isArray((d as { loc?: unknown[] }).loc)
+          ? (d as { loc: unknown[] }).loc.filter(x => x !== 'body').join('.')
+          : '';
+        const msg = String((d as { msg: unknown }).msg);
+        return loc ? `${loc}: ${msg}` : msg;
+      }
+      return String(d);
+    });
+    if (parts.length) return parts.join('; ');
+  }
+  if (typeof detail === 'string' && detail) return detail;
+  return `API error ${status}`;
 }
 
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {

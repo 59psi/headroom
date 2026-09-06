@@ -1,6 +1,7 @@
-import { useState, useRef, useEffect, useId } from 'react';
+import { useState, useRef, useId } from 'react';
 import { usePickerOpen } from './usePickerOpen';
 import { AnchoredList } from './AnchoredList';
+import { useClickOutside } from './useClickOutside';
 
 /**
  * Matches for `query`, best first: exact, then prefix, then anywhere.
@@ -82,21 +83,8 @@ export function Combobox({
   const query = value.trim().toLowerCase();
   const shown = !query || !typing ? options : rank(options, query);
 
-  // A click anywhere else closes the list. Pointerdown rather than click so the
-  // list is gone before a tap on another control lands.
-  useEffect(() => {
-    if (!open) return;
-    function onDocDown(e: PointerEvent) {
-      const target = e.target as HTMLElement;
-      // The list is portalled into <body>, so it is no longer a descendant of
-      // the wrapper — without this second check, pointerdown on an option
-      // closes the list before the option's own mousedown can land.
-      if (wrapRef.current?.contains(target) || target.closest('.hr-combobox-list')) return;
-      setOpen(false);
-    }
-    document.addEventListener('pointerdown', onDocDown);
-    return () => document.removeEventListener('pointerdown', onDocDown);
-  }, [open]);
+  // A click anywhere else closes the list.
+  useClickOutside(open, wrapRef, () => setOpen(false));
 
   usePickerOpen(open);
 
@@ -145,6 +133,7 @@ export function Combobox({
         aria-expanded={open}
         aria-controls={listId}
         aria-autocomplete="list"
+        aria-activedescendant={open && active >= 0 && active < shown.length ? `${listId}-opt-${active}` : undefined}
         autoComplete="off"
         onChange={e => { onChange(e.target.value); setOpen(true); setActive(-1); setTyping(true); }}
         // Focusing an already-filled field shows everything: you are reopening
@@ -171,6 +160,7 @@ export function Combobox({
               <li key={option}>
                 <button
                   type="button"
+                  id={`${listId}-opt-${i}`}
                   role="option"
                   aria-selected={selected}
                   className={

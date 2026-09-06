@@ -28,7 +28,7 @@ services:
     image: willfarrell/autoheal:1.2.0
     restart: unless-stopped
     environment:
-      # Only containers explicitly labelled below — never "every unhealthy
+      # Only containers explicitly labeled below — never "every unhealthy
       # container on the host", which is autoheal's default and would let this
       # file reach outside the deployment it ships with.
       AUTOHEAL_CONTAINER_LABEL: headroom.autoheal

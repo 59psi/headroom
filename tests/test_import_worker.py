@@ -1,7 +1,7 @@
 """The bulk-import worker's durability claims, as tests rather than prose.
 
 `import_service` documents three promises — the loop survives ANY per-item
-exception, the boot sweep heals crash-stranded state, and a cancelled job is
+exception, the boot sweep heals crash-stranded state, and a canceled job is
 never resurrected — and until this file existed it was the least-covered
 module in the codebase at 46%, with `_process_item`, `_worker_loop` and
 `_recover_on_boot` entirely unexercised. Every existing import test drives the
@@ -50,7 +50,7 @@ def stub_claude(monkeypatch):
     async def _key(_db):
         return "sk-ant-test", "database"
 
-    async def _analyze(_path, _key, model=None, selected_style=None, **_kw):  # noqa: ARG001
+    async def _analyze(_path, _key, model=None, selected_style=None, **_kw):
         return HatAnalysis(
             brand="Melin", model_name="A-Game Hydro", model_confidence="high",
             style_descriptor="snapback", design_notes="fixture",
@@ -135,6 +135,73 @@ async def test_a_processed_item_becomes_a_hat(client, stub_claude, isolated_uplo
     assert not staged.exists(), "the staged file was not cleaned up"
 
 
+async def test_a_file_that_is_not_an_image_leaves_no_hat_behind(client, isolated_upload_dir):
+    """A failed import must not add a hat to the collection.
+
+    The worker used to create (and commit) the hat FIRST and decode the photo
+    second, so a file Pillow could not open — a video, a text file with a
+    .jpg name, an undecodable HEIC — marked the item `error` and left a
+    photo-less hat with default style/size/condition on the shelf forever,
+    occupying the job's case slot if it named one. The decode now runs before
+    the row exists, and a hat created by an attempt that fails afterwards is
+    removed if it never received a photo.
+    """
+    from headroom.config import settings
+    from headroom.models.hat import Hat
+    from sqlalchemy import func, select
+
+    async def _hat_count():
+        async with session_factory() as db:
+            return (await db.execute(select(func.count(Hat.id)))).scalar()
+
+    before = await _hat_count()
+    job_id = await _job()
+    staged = settings.upload_dir / ".import-staging" / "not-a-photo.jpg"
+    staged.parent.mkdir(parents=True, exist_ok=True)
+    staged.write_text("this is a text file wearing a .jpg extension")
+    item_id = await _item(job_id, staged_path=staged, filename="not-a-photo.jpg")
+
+    await import_service._process_item(item_id)
+
+    item = await _read_item(item_id)
+    assert item.status == "error"
+    assert item.hat_id is None
+    assert await _hat_count() == before, "a failed import created a hat"
+
+
+async def test_a_hat_created_by_an_attempt_that_then_fails_is_removed(
+    client, isolated_upload_dir, monkeypatch
+):
+    """The other half: the decode succeeds, the hat is created, and THEN the
+    pipeline blows up before the photo is committed. Reordering alone cannot
+    cover this — the row already exists — so the error path deletes a hat it
+    created that never received a photo."""
+    from headroom.config import settings
+    from headroom.models.hat import Hat
+    from sqlalchemy import func, select
+
+    async def _boom(db, hat, path):
+        raise RuntimeError("rembg exploded")
+
+    monkeypatch.setattr(import_service, "finalize_hat_photo", _boom)
+
+    async def _hat_count():
+        async with session_factory() as db:
+            return (await db.execute(select(func.count(Hat.id)))).scalar()
+
+    before = await _hat_count()
+    job_id = await _job()
+    staged = _jpeg(settings.upload_dir / ".import-staging" / "b.jpg")
+    item_id = await _item(job_id, staged_path=staged, filename="b.jpg")
+
+    await import_service._process_item(item_id)
+
+    item = await _read_item(item_id)
+    assert item.status == "error"
+    assert "rembg exploded" in (item.error or "")
+    assert await _hat_count() == before, "a photo-less hat survived its failed import"
+
+
 async def test_a_missing_staged_file_errors_the_item_not_the_worker():
     """The commonest real failure: the file vanished between queue and run.
 
@@ -167,8 +234,8 @@ async def test_a_failure_still_bumps_the_counter_so_the_job_can_finish():
     assert job.finished_at is not None
 
 
-async def test_an_item_of_a_cancelled_job_is_left_alone():
-    job_id = await _job(status="cancelled")
+async def test_an_item_of_a_canceled_job_is_left_alone():
+    job_id = await _job(status="canceled")
     item_id = await _item(job_id, staged_path="/nonexistent/x.jpg")
 
     await import_service._process_item(item_id)
@@ -207,13 +274,13 @@ async def test_the_error_counter_name_skew_is_handled():
     assert job.status == "done"
 
 
-async def test_a_cancelled_job_is_never_resurrected():
+async def test_a_canceled_job_is_never_resurrected():
     """In-flight items keep finishing after a cancel; they must not reopen it."""
-    job_id = await _job(total=1, status="cancelled")
+    job_id = await _job(total=1, status="canceled")
 
     await import_service._bump_job_counter(job_id, "done")
 
-    assert (await _read_job(job_id)).status == "cancelled"
+    assert (await _read_job(job_id)).status == "canceled"
 
 
 async def test_an_unknown_status_bumps_nothing():
@@ -293,14 +360,14 @@ async def test_items_stranded_in_processing_are_requeued():
     assert (await _read_item(item_id)).status == "queued"
 
 
-async def test_a_cancelled_jobs_stranded_item_is_cancelled_not_requeued():
+async def test_a_canceled_jobs_stranded_item_is_canceled_not_requeued():
     """Re-queuing it would restart work the owner explicitly stopped."""
-    job_id = await _job(total=1, status="cancelled")
+    job_id = await _job(total=1, status="canceled")
     item_id = await _item(job_id, status="processing")
 
     await import_service._recover_on_boot()
 
-    assert (await _read_item(item_id)).status == "cancelled"
+    assert (await _read_item(item_id)).status == "canceled"
 
 
 async def test_a_job_whose_items_are_all_terminal_is_closed():
@@ -379,17 +446,30 @@ async def test_the_loop_survives_an_item_that_blows_up(monkeypatch, caplog):
     assert seen == [1, 2], "the loop stopped after the failing item"
 
 
-async def test_the_loop_marks_the_queue_task_done_even_when_it_fails():
+async def test_the_loop_marks_the_queue_task_done_even_when_it_fails(monkeypatch):
     """`task_done()` is in a `finally` for a reason.
 
     Miss it and `queue.join()` never returns, so a clean shutdown hangs
-    forever on a queue that is actually empty.
+    forever on a queue that is actually empty. Proven by BEHAVIOR — `join()`
+    returns, under a timeout, after an item that raised — not by parsing the
+    loop's source for the word `finally`, which is what this test did before
+    and which a `try/except/task_done()` rewrite would have satisfied while
+    hanging shutdown on the exception path.
     """
-    import inspect
+    async def _boom(item_id):
+        raise RuntimeError("every item fails")
 
-    source = inspect.getsource(import_service._worker_loop)
-    assert "finally:" in source
-    assert source.index("finally:") < source.index("task_done")
+    monkeypatch.setattr(import_service, "_process_item", _boom)
+    monkeypatch.setattr(import_service, "_queue", asyncio.Queue())
+    import_service._queue.put_nowait(1)
+
+    task = asyncio.create_task(import_service._worker_loop())
+    try:
+        await asyncio.wait_for(import_service._queue.join(), timeout=2)
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
 
 # ---- stop_worker ------------------------------------------------------ #

@@ -101,7 +101,8 @@ async def test_a_disposed_hat_is_not_a_duplicate_of_the_one_you_kept(client):
     await client.post(f"/api/hats/{b['id']}/dispose", json={"via": "sold"})
 
     assert await _groups(client) == [], "a disposed hat was still counted"
-    assert a["id"]
+    # The survivor is still an ordinary, active hat — nothing about it changed.
+    assert (await client.get(f"/api/hats/{a['id']}")).json()["disposed_at"] is None
 
 
 async def test_three_of_the_same_hat_come_back_as_one_group(client):

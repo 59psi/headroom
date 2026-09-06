@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from headroom.config import env_flag, settings
 from headroom.database import async_session, checkpoint_wal, engine, init_db
 from headroom.routes import api_router
+from headroom.utils import branding
 from headroom.utils.paths import safe_join
 from headroom.utils.redaction import redact_share_tokens
 from headroom.services import (
@@ -27,6 +28,15 @@ from headroom.services import (
     repricing,
     tls_health,
 )
+from headroom.services import auth_service, hat_service, settings_service
+from headroom.models.hat import Hat
+from headroom.schemas.hat import KNOWN_CONSTRUCTIONS
+from headroom.services import vocabulary
+from headroom.services import retail_pricing
+from headroom.services import hat_analysis_pipeline
+from headroom.auth import AuthGateMiddleware, SecurityHeadersMiddleware
+from headroom.error_handler import log_unhandled, validation_error
+from headroom.limits import BodySizeLimitMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +89,15 @@ def _configure_logging() -> None:
 
     if logging.getLogger().handlers:
         return
-    level = os.environ.get("HEADROOM_LOG_LEVEL", "INFO").upper()
+    level = (os.environ.get("HEADROOM_LOG_LEVEL") or "INFO").strip().upper()
+    if not isinstance(logging.getLevelNamesMapping().get(level), int):
+        # `basicConfig(level="BOGUS")` raises and the process never starts; a
+        # misspelled log level is not worth an outage. Empty (the compose
+        # passthrough's default) means INFO.
+        logging.getLogger(__name__).warning(
+            "Unknown HEADROOM_LOG_LEVEL=%r; using INFO", level
+        )
+        level = "INFO"
     logging.basicConfig(
         level=level,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -102,9 +120,7 @@ def _seed_branding(target: Path) -> None:
         if dest.exists():
             continue
         # Don't seed if a logo of *any* extension is already present
-        if src.stem == "logo" and any(
-            (target / f"logo{ext}").exists() for ext in (".png", ".jpg", ".jpeg", ".webp")
-        ):
+        if src.stem == branding.LOGO_STEM and branding.find_logo() is not None:
             continue
         shutil.copy2(src, dest)
 
@@ -160,7 +176,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # One-time data fix: normalize general_color onto the curated palette so
     # color filter chips behave consistently (guarded by a settings flag).
-    from headroom.services import auth_service, hat_service, settings_service
 
     async with factory() as db:
         # One-time: collapse case/whitespace variants of the free-text
@@ -168,9 +183,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # Canonicalization only covers writes, so values that predate it, or
         # arrived by import, need this once.
         if await settings_service.get_setting(db, "vocabulary_merged_v1") is None:
-            from headroom.models.hat import Hat
-            from headroom.schemas.hat import KNOWN_CONSTRUCTIONS
-            from headroom.services import vocabulary
 
             merged = await vocabulary.merge_case_variants(
                 db, Hat.construction, known=KNOWN_CONSTRUCTIONS
@@ -180,7 +192,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             if merged:
                 logger.info("Merged %d case-variant vocabulary value(s)", merged)
         if await settings_service.get_setting(db, "retail_prices_v2") is None:
-            from headroom.services import retail_pricing
 
             repriced = await retail_pricing.backfill_retail_prices(db)
             await settings_service.set_setting(db, "retail_prices_v2", "done")
@@ -190,7 +201,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     "(the old prompt anchors were years stale)", repriced,
                 )
         if await settings_service.get_setting(db, "model_names_split_v1") is None:
-            from headroom.services import hat_analysis_pipeline
 
             split = await hat_analysis_pipeline.backfill_split_model_names(db)
             await settings_service.set_setting(db, "model_names_split_v1", "done")
@@ -397,7 +407,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     tls_task = asyncio.create_task(_tls_watch_loop())
 
     # The one-shot boot work, published so a test that boots the real lifespan
-    # can await it before shutting down. Not cosmetic: cancelling a task in the
+    # can await it before shutting down. Not cosmetic: canceling a task in the
     # middle of an aiosqlite call invalidates its connection, and on the test
     # suite's in-memory `StaticPool` that single connection IS the database —
     # a boot-then-exit test that did not wait saw every table vanish at exit.
@@ -461,9 +471,6 @@ def _safe_spa_path(full_path: str) -> Path | None:
 
 
 def create_app() -> FastAPI:
-    from headroom.auth import AuthGateMiddleware, SecurityHeadersMiddleware
-    from headroom.error_handler import log_unhandled, validation_error
-    from headroom.limits import BodySizeLimitMiddleware
 
     app = FastAPI(title="Headroom", lifespan=lifespan)
 
@@ -529,7 +536,7 @@ def create_app() -> FastAPI:
         # the filename changes on every build so stale entries are inert.
         SPA_HEADERS = {"Cache-Control": "no-cache, must-revalidate"}
 
-        @app.get("/{full_path:path}")
+        @app.get("/{full_path:path}", response_class=FileResponse, include_in_schema=False)
         async def serve_spa(request: Request, full_path: str):
             # Confine the lookup to the frontend bundle — see _safe_spa_path docstring.
             safe = _safe_spa_path(full_path)

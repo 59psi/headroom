@@ -10,7 +10,14 @@ def env_flag(name: str, default: bool = True) -> bool:
     Read live at call time — unlike Settings, which is frozen at import — so
     tests can flip feature flags per-test via monkeypatch.
     """
-    raw = os.environ.get(name, "true" if default else "false")
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        # Empty means UNSET, not false. `docker-compose.yml` forwards every
+        # operator knob as `${VAR:-}` — an empty string when `.env` does not
+        # set it — and the old `"" in ("1", "true", "yes")` read that as False,
+        # which would have switched off mDNS, backups and both workers on every
+        # install that had not opted in to each by name.
+        return default
     return raw.lower() in ("1", "true", "yes")
 
 
@@ -72,7 +79,10 @@ class Settings(BaseSettings):
     # Retired: HEADROOM_ADMIN_TOKEN. Real accounts replaced the optional
     # bearer guard in v1.0; the env var is ignored if still set.
 
-    model_config = {"env_prefix": "HEADROOM_"}
+    # `env_ignore_empty`: the compose passthroughs forward unset knobs as empty
+    # strings, and without this pydantic-settings would take `HEADROOM_ANTHROPIC_
+    # MODEL=""` as the model name rather than falling through to the default.
+    model_config = {"env_prefix": "HEADROOM_", "env_ignore_empty": True}
 
 
 settings = Settings()

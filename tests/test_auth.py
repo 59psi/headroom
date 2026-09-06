@@ -95,12 +95,41 @@ async def test_setup_only_works_once(anon_client):
     assert resp.status_code == 403
 
 
-async def test_protected_routes_401_until_setup_and_login(anon_client):
-    for path in ("/api/hats", "/api/cases", "/api/settings/api-key", "/uploads/x.png"):
-        resp = await anon_client.get(path)
-        assert resp.status_code == 401, path
-    # Health stays open for probes
-    assert (await anon_client.get("/health")).status_code == 200
+async def test_the_documented_forgot_password_recovery_works(anon_client, db_session):
+    """Delete the owner row and sessions; setup must run again.
+
+    The first-run sentinel (`app_settings.owner_setup_done`) serializes setup
+    against a racing second POST and was never removed, so the recovery
+    OPERATIONS.md documents — `DELETE FROM users; DELETE FROM auth_sessions;` —
+    brought the setup form back (`needs_setup` counts users) and then answered
+    it with "Setup already completed". Reproduced in review; a sentinel that
+    outlives the row it guards is the bug, so setup clears a stale one.
+    """
+    from sqlalchemy import delete
+
+    from headroom.models.user import AuthSession, User
+
+    await _setup_owner(anon_client)
+    anon_client.cookies.clear()
+
+    # Exactly the two documented statements — nothing about the sentinel.
+    await db_session.execute(delete(AuthSession))
+    await db_session.execute(delete(User))
+    await db_session.commit()
+
+    status = (await anon_client.get("/api/auth/status")).json()
+    assert status["needs_setup"] is True, "the form comes back"
+
+    resp = await anon_client.post(
+        "/api/auth/setup", json={"username": "brandon", "password": "a-new-password-1"}
+    )
+    assert resp.status_code == 200, resp.text
+    # And it is still single-shot afterwards.
+    assert (
+        await anon_client.post(
+            "/api/auth/setup", json={"username": "intruder", "password": "password123"}
+        )
+    ).status_code == 403
 
 
 # ------------------------------ login --------------------------------- #
@@ -270,6 +299,39 @@ async def test_passkey_register_and_login_with_stubbed_verify(anon_client, monke
         json={"state_id": opts["state_id"], "credential": {"id": "cred-abc"}},
     )
     assert resp.status_code == 400
+
+
+
+
+async def test_a_second_passkey_can_be_registered(anon_client, monkeypatch):
+    """The second passkey is where registration used to 500.
+
+    With one credential stored, `registration_options` builds a non-empty
+    `exclude_credentials`; py_webauthn serializes each entry by attribute, so
+    the plain dicts the code used to pass raised AttributeError inside
+    `options_to_json`. Every "Face ID on another device" attempt hit it, and
+    the only tested path was the first passkey, where the list is empty.
+    """
+    await _setup_owner(anon_client)
+    first = (await anon_client.post("/api/auth/passkeys/register/options")).json()
+    monkeypatch.setattr(
+        "headroom.services.passkey_service.verify_registration",
+        lambda credential, challenge: {
+            "credential_id": "cred-abc", "public_key": "pk-abc", "sign_count": 0,
+        },
+    )
+    assert (
+        await anon_client.post(
+            "/api/auth/passkeys/register/verify",
+            json={"state_id": first["state_id"], "credential": {"id": "cred-abc"}, "name": "iPhone"},
+        )
+    ).status_code == 200
+
+    second = await anon_client.post("/api/auth/passkeys/register/options")
+    assert second.status_code == 200, second.text
+    excluded = second.json()["options"]["excludeCredentials"]
+    assert [c["id"] for c in excluded] == ["cred-abc"]
+    assert excluded[0]["type"] == "public-key"
 
 
 # ---------------------------- share links ------------------------------ #

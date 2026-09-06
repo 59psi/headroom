@@ -9,7 +9,10 @@ readable without opening the transport layer.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, model_serializer, Field
+from datetime import datetime
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, model_serializer
 
 # Argon2id makes long passwords cheap to verify, so the ceiling exists only to
 # bound what gets hashed, not to constrain the user.
@@ -92,3 +95,39 @@ class PasskeyRegisterVerify(BaseModel):
 class PasskeyLoginVerify(BaseModel):
     state_id: str
     credential: dict
+
+
+class MeRead(BaseModel):
+    """`GET /api/auth/me`. Profile only — `token_set` says the field exists so
+    the Account card can render its controls; the token itself needs the
+    password (`ApiTokenRead`)."""
+
+    username: str
+    token_set: bool
+
+
+class ApiTokenRead(BaseModel):
+    """The long-lived bearer token, returned only by the two password-gated routes."""
+
+    api_token: str
+
+
+class PasskeyRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    created_at: datetime
+
+
+class PasskeyCeremonyOptions(BaseModel):
+    """A WebAuthn ceremony: the server-side state id plus the options blob the
+    browser hands to `navigator.credentials`. The blob's shape is the
+    library's, so it stays an open dict."""
+
+    state_id: str
+    options: dict[str, Any]
+
+
+class OkRead(BaseModel):
+    ok: bool = True

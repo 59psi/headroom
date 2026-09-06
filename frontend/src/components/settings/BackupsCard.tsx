@@ -1,24 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { listBackups, backupDownloadUrl, getBackupHealth } from '../../api/settings';
 import type { BackupHealth } from '../../types';
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 ** 2) return `${(n / 1024).toFixed(1)} KB`;
-  if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(1)} MB`;
-  return `${(n / 1024 ** 3).toFixed(2)} GB`;
-}
-
-function formatWhen(iso: string | null): string {
-  if (!iso) return 'never';
-  const then = new Date(iso).getTime();
-  const mins = Math.round((Date.now() - then) / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins} min ago`;
-  const hours = Math.round(mins / 60);
-  if (hours < 48) return `${hours} h ago`;
-  return `${Math.round(hours / 24)} days ago`;
-}
+import { formatBytes, timeAgo } from '../../lib/format';
 
 /**
  * Is the scheduler working — which the file list cannot answer.
@@ -47,10 +30,10 @@ function SchedulerStatus({ h }: { h: BackupHealth }) {
 
   return (
     <div className="mb-3">
-      <p className="small mb-1" style={{ color: problem ? 'var(--hr-pink, #ff4fa3)' : undefined }}>
+      <p className="small mb-1" style={{ color: problem ? 'var(--neon-pink)' : undefined }}>
         {problem ?? 'Scheduler healthy.'}{' '}
         <span className="text-secondary">
-          Last backup {formatWhen(h.last_success_at)}
+          Last backup {timeAgo(h.last_success_at)}
           {/* Derived means a file exists, not that a run was recorded — the
               in-memory record is process-local and a restart clears it. */}
           {h.last_success_derived && ' (from the file on disk — this process has not run one yet)'}
@@ -100,7 +83,7 @@ export function BackupsCard() {
           </a>
         </div>
         <p className="text-muted small mb-3" style={{ fontSize: '0.75rem' }}>
-          <strong>Full</strong> = SQLite DB + every uploaded photo (hats, cases, branding).
+          <strong>Full</strong> = SQLite DB + every uploaded photo (hats and the site logo).
           Restore by dropping the extracted <code>data/</code> back into <code>/data/</code>.
           <br/>
           <strong>DB only</strong> = just <code>headroom.db</code>. All hat metadata, cases,

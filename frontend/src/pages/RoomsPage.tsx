@@ -168,9 +168,10 @@ export function RoomsPage() {
       {editingId && (
         <div className="card mb-3 border-primary">
           <div className="card-body">
-            <label className="form-label">Rename Room</label>
+            <label className="form-label" htmlFor="rename-room">Rename Room</label>
             <div className="d-flex gap-2 flex-wrap">
               <input
+                id="rename-room"
                 type="text"
                 className="form-control flex-grow-1"
                 style={{ minWidth: 200 }}
@@ -200,9 +201,10 @@ export function RoomsPage() {
 
       <div className="card mt-3">
         <div className="card-body">
-          <label className="form-label">Add Room</label>
+          <label className="form-label" htmlFor="add-room">Add Room</label>
           <div className="d-flex gap-2 flex-wrap">
             <input
+              id="add-room"
               type="text"
               className="form-control flex-grow-1"
               style={{ minWidth: 200 }}

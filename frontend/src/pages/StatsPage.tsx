@@ -23,7 +23,7 @@ import {
   costOf, type ValueBasis,
   CONDITION_LABEL,
 } from '../lib/valuation';
-import { tileSrc } from '../lib/photo';
+import { RankedHatList } from '../components/hats/RankedHatList';
 import type { CaseRead, HatRead } from '../types';
 
 const CONDITION_COLOR: Record<string, string> = {
@@ -109,54 +109,6 @@ function monthlySeries(
     });
   }
   return out;
-}
-
-/** A ranked hat list with photo — used for every "top N" block. */
-function HatRank({
-  hats,
-  valueFor,
-  emptyText,
-}: {
-  hats: HatRead[];
-  valueFor: (h: HatRead) => string;
-  emptyText: string;
-}) {
-  if (!hats.length) return <p className="text-muted small mb-0">{emptyText}</p>;
-  return (
-    <div>
-      {hats.map((h, i) => (
-        <Link
-          key={h.id}
-          to={`/hats/${h.id}`}
-          className="hr-color-row text-decoration-none"
-          style={{ paddingTop: '0.5rem' }}
-        >
-          <div className="font-mono fw-bold" style={{ color: 'var(--neon-purple)', minWidth: 22 }}>
-            {i + 1}.
-          </div>
-          {h.photo_path ? (
-            <img src={tileSrc(h)} alt="" className="hr-thumb flex-shrink-0" style={{ width: 40, height: 40 }} />
-          ) : (
-            <div className="rounded flex-shrink-0" style={{ width: 40, height: 40, background: 'rgba(0,0,0,0.3)' }} />
-          )}
-          <div className="flex-grow-1" style={{ minWidth: 0 }}>
-            <div className="font-mono small" style={{ color: 'var(--neon-cyan)' }}>
-              {h.display_id || `Hat #${h.id}`}
-            </div>
-            <div
-              className="text-secondary small"
-              style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
-            >
-              {h.brand || prettify(h.style)}{h.model_name && ` · ${h.model_name}`}
-            </div>
-          </div>
-          <div className="font-mono fw-bold flex-shrink-0" style={{ color: 'var(--neon-pink)' }}>
-            {valueFor(h)}
-          </div>
-        </Link>
-      ))}
-    </div>
-  );
 }
 
 export function StatsPage() {
@@ -445,32 +397,32 @@ export function StatsPage() {
 
       {/* ===== Leaderboards ===== */}
       <ChartCard title="Most valuable">
-        <HatRank
+        <RankedHatList
           hats={[...hats]
             .filter(h => valueHat(h).value != null)
             .sort((a, b) => (valueHat(b).value ?? 0) - (valueHat(a).value ?? 0))
             .slice(0, 10)}
           valueFor={h => money(valueHat(h).value ?? 0)}
-          emptyText="No hats have a value estimate yet."
+          empty="No hats have a value estimate yet."
         />
       </ChartCard>
 
       <ChartCard title="Most expensive (paid)">
-        <HatRank
+        <RankedHatList
           hats={[...hats]
             .filter(h => costOf(h) != null)
             .sort((a, b) => (costOf(b) ?? 0) - (costOf(a) ?? 0))
             .slice(0, 10)}
           valueFor={h => money(costOf(h) ?? 0)}
-          emptyText="No purchase prices recorded yet."
+          empty="No purchase prices recorded yet."
         />
       </ChartCard>
 
       <ChartCard title="Most worn">
-        <HatRank
+        <RankedHatList
           hats={wear.mostWorn}
           valueFor={h => `${h.wear_count}×`}
-          emptyText="No wears logged yet — tap “Wearing this today” on a hat."
+          empty="No wears logged yet — tap “Wearing this today” on a hat."
         />
       </ChartCard>
 
@@ -478,13 +430,13 @@ export function StatsPage() {
         title="Best cost per wear"
         subtitle="What you paid, divided by how often you've worn it. Needs both numbers."
       >
-        <HatRank
+        <RankedHatList
           hats={wear.costPerWear.slice(0, 10).map(x => x.h)}
           valueFor={h => {
             const cost = costOf(h) ?? 0;
             return `${moneyPrecise(cost / (h.wear_count || 1))}/wear`;
           }}
-          emptyText="Needs a purchase price and at least one logged wear."
+          empty="Needs a purchase price and at least one logged wear."
         />
       </ChartCard>
     </>

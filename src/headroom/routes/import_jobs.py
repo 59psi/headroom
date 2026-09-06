@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.database import get_db
@@ -19,12 +19,6 @@ from headroom.utils.photo import validate_image_content_type
 from headroom.utils.upload import copy_upload_truncating
 
 router = APIRouter(prefix="/api/hats/import", tags=["bulk-import"])
-
-# Ceiling on the total bytes accepted for one request. Files are spooled to
-# disk as they arrive rather than buffered, so this now bounds disk and job
-# size rather than RAM. Phone photos are a few MB, so this is
-# generous for real use while blocking the pathological case (S9/R6 — docs/AUDIT-HISTORY.md).
-_MAX_TOTAL_UPLOAD_BYTES = 750 * 1024 * 1024
 
 
 
@@ -41,8 +35,8 @@ async def create_import_job(
     """Multipart upload of N photo files. Returns the job ID immediately."""
     if not photos:
         raise HTTPException(status_code=400, detail="No photos provided")
-    # Reject an over-count batch BEFORE reading any bytes (create_job also
-    # checks, but only after everything is in memory).
+    # Reject an over-count batch BEFORE reading any bytes (`create_job` checks
+    # too, but by then every file has been spooled to disk).
     if len(photos) > import_service.MAX_FILES_PER_JOB:
         raise HTTPException(
             status_code=413,
@@ -54,7 +48,7 @@ async def create_import_job(
     # loop, so a full batch was resident at once — up to the 750MB cap, which
     # is well over the container's memory limit, on the box whose OOM kill this
     # release exists to prevent. Peak is now one file (20MB), not the batch.
-    staging = Path(tempfile.mkdtemp(prefix="headroom-upload-"))
+    staging = Path(tempfile.mkdtemp(prefix="upload-", dir=import_service.spool_dir()))
     files: list[tuple[str, Path]] = []
     total = 0
     try:
@@ -70,11 +64,11 @@ async def create_import_job(
                     copy_upload_truncating, p, fh, import_service.MAX_BYTES_PER_FILE
                 )
             total += written
-            if total > _MAX_TOTAL_UPLOAD_BYTES:
+            if total > import_service.MAX_TOTAL_UPLOAD_BYTES:
                 raise HTTPException(
                     status_code=413,
                     detail=(
-                        f"Upload batch exceeds {_MAX_TOTAL_UPLOAD_BYTES // 1024 // 1024} MB "
+                        f"Upload batch exceeds {import_service.MAX_TOTAL_UPLOAD_BYTES // 1024 // 1024} MB "
                         "in total — split it into smaller batches."
                     ),
                 )
@@ -89,8 +83,8 @@ async def create_import_job(
         job = await import_service.create_job(db, files=files, defaults=defaults)
         return ImportJobCreated(id=job.id, total=job.total, status=job.status)
     finally:
-        # `create_job` copies what it keeps into the job's own staging dir, so
-        # this temp copy is always disposable — including on the 413/400 paths,
+        # `create_job` MOVES what it keeps into the job's own staging dir, so
+        # this spool dir is always disposable — including on the 413/400 paths,
         # where leaving it would strand a batch of photos until reboot.
         shutil.rmtree(staging, ignore_errors=True)
 
@@ -104,7 +98,9 @@ async def get_import_job(job_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("", response_model=list[ImportJobRead])
-async def list_import_jobs(limit: int = 20, db: AsyncSession = Depends(get_db)):
+async def list_import_jobs(
+    limit: int = Query(20, ge=1, le=200), db: AsyncSession = Depends(get_db)
+):
     return await import_service.list_recent_jobs(db, limit=limit)
 
 

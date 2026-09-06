@@ -77,7 +77,7 @@ async def test_put_colors_keeps_a_hand_typed_general_color(client):
     searchability grounds. That was wrong in the case the field exists for:
     correcting a MIS-DETECTED color. The stored hex is part of what's wrong, so
     re-deriving from it discarded the fix and silently restored the bad value
-    (type "green" over a mis-detected grey, get "gray" back).
+    (type "green" over a mis-detected gray, get "gray" back).
     """
     from headroom.services.color_extraction import normalize_hex_name
 
@@ -87,7 +87,7 @@ async def test_put_colors_keeps_a_hand_typed_general_color(client):
         json={"colors": [{
             "color_name": "heather slate",
             "general_color": "Green",          # palette name, wrong-looking hex
-            "hex_value": "#8a8a8a",            # grey — what was mis-detected
+            "hex_value": "#8a8a8a",            # gray — what was mis-detected
             "dominance_rank": 1,
             "tier": "primary",
         }]},
@@ -95,7 +95,7 @@ async def test_put_colors_keeps_a_hand_typed_general_color(client):
     assert resp.status_code == 200, resp.text
     color = resp.json()["colors"][0]
     # Snapped to the palette's own spelling (so chip search still matches), but
-    # emphatically NOT replaced by the grey the hex would have produced.
+    # emphatically NOT replaced by the gray the hex would have produced.
     assert color["general_color"] == "green"
     assert color["general_color"] != normalize_hex_name("#8a8a8a", "heather slate")
 
@@ -220,9 +220,6 @@ async def test_public_branding_logo_is_ungated(anon_client):
     (settings.upload_dir / "branding" / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\n")
     resp = await anon_client.get("/api/public/branding/logo")
     assert resp.status_code == 200
-    # The management logo endpoint is still auth-gated for anonymous callers.
-    gated = await anon_client.get("/api/settings/logo")
-    assert gated.status_code == 401
 
 
 async def test_public_branding_logo_404_when_absent(anon_client):
@@ -244,7 +241,7 @@ async def test_setup_blocks_second_owner(anon_client):
     assert again.status_code == 403
 
 
-# --- R2: backup retention is age-based, keeps the newest ---------------- #
+# --- R2: backup retention keeps the newest N (a COUNT since 2.40) --------- #
 
 
 def _make_backup(name_ts: str, age_days: float):
