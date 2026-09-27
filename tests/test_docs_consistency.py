@@ -102,7 +102,7 @@ async def test_the_prompt_agrees_with_the_price_table():
 
 
 async def test_the_npm_pin_is_one_number_in_three_files():
-    """`npm 12.0.2` lives in the Dockerfile (`ARG NPM_VERSION`), the CI job that
+    """`npm 12.1.0` lives in the Dockerfile (`ARG NPM_VERSION`), the CI job that
     builds the SPA, and `setup.sh` (`NPM_INSTALL`). Each carries prose asking to
     be kept in step with the others; nothing checked that they were. Pinning
     npm in the Dockerfile alone once left CI and setup on npm 11, so the

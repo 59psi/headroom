@@ -121,7 +121,7 @@ node_ok() {
 # does — the exact drift this script exists to prevent. Keep NPM_MIN_MAJOR and
 # NPM_INSTALL in step with the Dockerfile when either moves.
 NPM_MIN_MAJOR=12
-NPM_INSTALL="12.0.2"
+NPM_INSTALL="12.1.0"
 
 npm_ok() {
   [[ $(npm --version 2>/dev/null) =~ ^([0-9]+) ]] || return 1

@@ -6,8 +6,22 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.79.1] — 2026-09-27
+
+Dependency and toolchain refresh. No behavior changes, no migration.
+
 ### Changed
 
+- Backend dependencies refreshed to the latest releases past the lock's 7-day
+  cooldown, including `anthropic` 1.7.0 (now the declared floor), `rembg`
+  2.0.85, `uvicorn` 0.53.0, `sqlalchemy` 2.0.54, `onnxruntime` 1.30.0 and
+  `urllib3` 2.8.0. `requirements.txt` is re-exported from the new `uv.lock`,
+  so the image installs exactly what the tests ran against.
+- Frontend dependencies refreshed: React 19.3, react-router 8.4, Vite 8.3,
+  TanStack Query 5.102.8, and `@types/node` 26 to match the Node 26 build.
+- Toolchain pins: the image's `uv` goes to 0.12.19 and `npm` to 12.1.0 (the
+  Dockerfile, CI and `scripts/setup.sh` move together); CI's `setup-uv` action
+  goes to 10.1.0.
 - Internal engineering notes and security-review records are no longer tracked
   in this public repository. `CLAUDE.md`, the `docs/CODE-REVIEW-*.md` files and
   `docs/AUDIT-HISTORY.md` are now local-only and gitignored. Nothing in the
