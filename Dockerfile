@@ -11,13 +11,13 @@
 # Stage 1 — Frontend bundle
 # ============================================================ #
 # Declared first so Dependabot sees it (see the note where it is COPYed in).
-FROM ghcr.io/astral-sh/uv:0.12.11 AS uv
+FROM ghcr.io/astral-sh/uv:0.12.19 AS uv
 
 FROM node:26-trixie-slim AS frontend
 # node:26 bundles npm 11.x, which prints a "New major version available" notice
 # on every build. Pin the npm we actually want rather than living with the
 # nag — same convention as the uv pin below. Bump this alongside the base image.
-ARG NPM_VERSION=12.0.2
+ARG NPM_VERSION=12.1.0
 RUN npm install -g "npm@${NPM_VERSION}"
 # npm 12 logs a "notice" line for every script it runs. Warnings and errors
 # still print — this only drops the informational chatter, so a real problem
