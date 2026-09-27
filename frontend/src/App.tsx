@@ -23,6 +23,8 @@ import { SharePage } from './pages/SharePage';
 import { GuestPage } from './pages/GuestPage';
 import { GuestHatPage } from './pages/GuestHatPage';
 import { TagLandingPage } from './pages/TagLandingPage';
+import { ToastProvider } from './components/ui/Toast';
+import { DialogProvider } from './components/ui/Dialogs';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -43,6 +45,8 @@ function CaseTagRedirect() {
 export function App() {
   return (
     <QueryClientProvider client={queryClient}>
+      <ToastProvider>
+      <DialogProvider>
       <BrowserRouter>
         <Routes>
           {/* Public routes — no auth, no app shell */}
@@ -79,6 +83,8 @@ export function App() {
           </Route>
         </Routes>
       </BrowserRouter>
+      </DialogProvider>
+      </ToastProvider>
     </QueryClientProvider>
   );
 }

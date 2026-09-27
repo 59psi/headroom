@@ -181,31 +181,31 @@ vi.mock('../lib/webauthn', () => ({
  */
 const SECTION_CARDS: Record<string, string[]> = {
   analysis: [
-    'Claude API Key',
-    'Claude Model',
-    'Google Vision Key (fallback)',
-    'Analysis Queue',
-    'Recent Analysis Errors',
+    'Claude API key',
+    'Claude model',
+    'Google Vision key',
+    'Analysis queue',
+    'Recent analysis errors',
   ],
   data: [
     'Construction audit',
     'Re-pricing',
     'Frozen prices',
     'Prices shared by many hats',
-    'Colorway Catalog',
-    'Purchase History',
-    'eBay Comparable Listings (optional)',
+    'Colorway catalog',
+    'Purchase history',
+    'eBay comparable listings',
   ],
   sharing: [
     'Guest browsing',
-    'Share Links',
+    'Share links',
     'Share the collection',
-    'Inventory Report',
+    'Inventory report',
     'Tags & labels',
-    'Share Photos to Headroom',
+    'Share photos to Headroom',
   ],
-  device: ['Account', 'LAN Discovery (mDNS)', 'Site Logo'],
-  maintenance: ['Backups', 'Off-site backup', 'Recent Activity'],
+  device: ['Account', 'LAN discovery (mDNS)', 'Site logo'],
+  maintenance: ['Backups', 'Off-site backup', 'Recent activity'],
 };
 
 /**
@@ -219,12 +219,15 @@ const SECTION_CARDS: Record<string, string[]> = {
  * has to be accounted for — it just is not accounted for by rendering.
  */
 const MOUNTED_BUT_HIDDEN: Record<string, number> = { device: 1 };
+const HIDDEN_NAMES = new Set(['Trust this device']);
 
-/** Cards visible in a section, scoped to `.card-title` — card *bodies* mention
+/** Cards visible in a section, by their panel titles — card *bodies* mention
  *  other cards by name (ShareTargetCard points at "Account"), so a bare text
- *  query would be ambiguous. */
+ *  query would be ambiguous. Scoped to the settings panel so the page's own
+ *  section heading is not counted as a card. */
 function renderedCards(container: HTMLElement): string[] {
-  return [...container.querySelectorAll('.card-title')].map(el => el.textContent?.trim() ?? '');
+  return [...container.querySelectorAll('.hr-settings-panel .card-title')]
+    .map(el => el.textContent?.trim() ?? '');
 }
 
 beforeEach(() => { vi.clearAllMocks(); });
@@ -264,9 +267,21 @@ describe('SettingsPage', () => {
     }
   });
 
+  it("names every entry exactly as its card titles itself, so search finds what you see", () => {
+    // Search matches the `name` in the section table, not the rendered DOM
+    // (it has to find cards in sections that are not mounted). A card retitled
+    // without its entry would be unfindable under the words on its own header.
+    for (const section of SECTIONS) {
+      const names = section.cards.map(c => c.name).filter(n => !HIDDEN_NAMES.has(n));
+      expect(names).toEqual(SECTION_CARDS[section.id]);
+    }
+    const all = SECTIONS.flatMap(s => s.cards.map(c => c.name));
+    expect(new Set(all).size).toBe(all.length); // names are also the React keys
+  });
+
   it('defaults to the first section when no tab is named', async () => {
     const { container } = renderWithProviders(<SettingsPage />);
-    await screen.findByText('Claude API Key');
+    await screen.findByText('Claude API key');
     expect(renderedCards(container)).toEqual(SECTION_CARDS.analysis);
   });
 
@@ -275,14 +290,41 @@ describe('SettingsPage', () => {
     const { container } = renderWithProviders(<SettingsPage />, {
       route: '/settings?tab=nonsense',
     });
-    await screen.findByText('Claude API Key');
+    await screen.findByText('Claude API key');
+    expect(renderedCards(container)).toEqual(SECTION_CARDS.analysis);
+  });
+
+  it('finds cards across every section by name or by a word on the card', async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<SettingsPage />);
+    await screen.findByText('Claude API key');
+
+    // "restore" is nowhere in a title — it is one of the Backups keywords.
+    await user.type(screen.getByRole('searchbox', { name: 'Search settings' }), 'restore');
+    expect(await screen.findByRole('heading', { name: 'Upkeep' })).toBeInTheDocument();
+    expect(renderedCards(container)).toEqual(['Backups']);
+    // No tab claims to be selected while results from any section are shown.
+    expect(screen.queryByRole('tab', { selected: true })).not.toBeInTheDocument();
+  });
+
+  it('says so when nothing matches, and Escape clears the search', async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<SettingsPage />);
+    await screen.findByText('Claude API key');
+    const box = screen.getByRole('searchbox', { name: 'Search settings' });
+
+    await user.type(box, 'zzzz');
+    expect(screen.getByText(/No settings match/)).toBeInTheDocument();
+
+    await user.keyboard('{Escape}');
+    expect(box).toHaveValue('');
     expect(renderedCards(container)).toEqual(SECTION_CARDS.analysis);
   });
 
   it('switches section on tab press', async () => {
     const user = userEvent.setup();
     const { container } = renderWithProviders(<SettingsPage />);
-    await screen.findByText('Claude API Key');
+    await screen.findByText('Claude API key');
 
     await user.click(screen.getByRole('tab', { name: 'Upkeep' }));
 

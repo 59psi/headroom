@@ -20,9 +20,13 @@ export function useDialogKeys(open: boolean, onClose: () => void, dialogRef: Rea
     if (!open) return;
     const opener = document.activeElement as HTMLElement | null;
     const dialog = dialogRef.current;
-    // Initial focus: the first control, else the dialog itself.
+    // Initial focus: a control that asked for it (`data-autofocus` — the text
+    // field of a prompt, the safe button of a destructive confirm), else the
+    // first control, else the dialog itself. Without the opt-in the first
+    // control is always the header's close button.
+    const preferred = dialog?.querySelector<HTMLElement>('[data-autofocus]');
     const first = dialog?.querySelector<HTMLElement>(FOCUSABLE);
-    (first ?? dialog)?.focus();
+    (preferred ?? first ?? dialog)?.focus();
 
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') {

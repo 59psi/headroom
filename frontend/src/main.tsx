@@ -21,6 +21,18 @@ import '@fontsource-variable/orbitron/wght.css';
 import '@fontsource-variable/jetbrains-mono/wght.css';
 import './styles/tokens.css';
 import './styles/app.css';
+// After app.css: the primitives compose its base classes (`.card`, `.btn`).
+import './styles/ui.css';
+// One file per area of the app, each owned by that area's components.
+import './styles/areas/settings-analysis.css';
+import './styles/areas/settings-data.css';
+import './styles/areas/settings-sharing.css';
+import './styles/areas/settings-device.css';
+import './styles/areas/settings-upkeep.css';
+import './styles/areas/hat-pages.css';
+import './styles/areas/collection-pages.css';
+import './styles/areas/cases-rooms.css';
+import './styles/areas/shell.css';
 
 // Last-ditch: if even React mount fails, paint a diagnostic instead of staying blank.
 // Uses safe DOM APIs (textContent, no innerHTML) so the error message can't inject markup.
