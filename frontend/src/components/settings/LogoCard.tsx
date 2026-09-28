@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getLogo, uploadLogo, deleteLogo } from '../../api/settings';
-import { uploadUrl } from '../../lib/photo';
+import { logoSrc } from '../../lib/photo';
 import { ErrorNote } from '../common/ErrorNote';
 import { useConfirm } from '../ui/Dialogs';
 import { Panel } from '../ui/Panel';
@@ -9,7 +9,7 @@ import { Skeleton } from '../ui/Skeleton';
 import { StatusPill } from '../ui/StatusPill';
 import { useToast } from '../ui/Toast';
 
-type LogoStatus = { logo_path: string | null };
+import type { LogoStatus } from '../../types';
 
 const LOGO_KEY = ['settings', 'logo'] as const;
 
@@ -24,19 +24,17 @@ export function LogoCard() {
   // the card answers the tap instead of sitting unchanged for the seconds the
   // server spends decoding and resizing. Replaced by the server's copy after.
   const [preview, setPreview] = useState<string | null>(null);
-  // The server always writes `branding/logo.png`, so a replaced logo has the
-  // SAME url as the old one: the <img> never re-requested it and the card
-  // went on showing the logo you had just replaced. Bumped per upload.
-  const [version, setVersion] = useState(0);
   const [dragging, setDragging] = useState(false);
 
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
 
   const uploadMut = useMutation({
     mutationFn: (file: File) => uploadLogo(file),
+    // The response carries the new file's `version`, so writing it into the
+    // shared query re-points every logo on the page (this card, the navbar,
+    // the home hero) at the new image — the path itself never changes.
     onSuccess: res => {
       qc.setQueryData<LogoStatus>(LOGO_KEY, res);
-      setVersion(Date.now());
       toast.success('Logo updated');
     },
     // The refetch is not awaited (not returned): the upload's own answer is
@@ -99,7 +97,7 @@ export function LogoCard() {
   }
 
   const path = logo.data?.logo_path ?? null;
-  const shown = preview ?? (path ? `${uploadUrl(path)}${version ? `?v=${version}` : ''}` : null);
+  const shown = preview ?? logoSrc(logo.data);
   const uploading = uploadMut.isPending;
 
   const status = uploading

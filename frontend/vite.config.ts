@@ -39,6 +39,15 @@ export default defineConfig({
     __APP_VERSION__: JSON.stringify(pkg.version),
     __BUILD_SHA__: JSON.stringify(buildSha()),
   },
+  build: {
+    // Never inline a font. Vite inlines any asset under 4 KiB as a `data:` URL,
+    // and one @fontsource subset is small enough to qualify — but the app's
+    // CSP is `font-src 'self'`, which a `data:` font is not, so the browser
+    // refused it on every page (a console error each load, and that subset's
+    // glyphs fell back to a system face). Served as a file it is same-origin.
+    // Everything else keeps the default size rule.
+    assetsInlineLimit: filePath => (/\.(woff2?|ttf|otf|eot)$/i.test(filePath) ? false : undefined),
+  },
   server: {
     proxy: {
       '/api': 'http://localhost:8000',

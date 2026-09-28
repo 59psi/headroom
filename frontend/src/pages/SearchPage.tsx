@@ -9,6 +9,7 @@ import { ConditionBadge } from '../components/common/ConditionBadge';
 import { Switch } from '../components/ui/Switch';
 import { tileSrc } from '../lib/photo';
 import { useDebouncedValue } from '../lib/useDebouncedValue';
+import { useHatLabels } from '../lib/labels';
 import {
   useHatFilters, HatFilterBar, FilterToggleButton, ActiveFilterChips, useMirrorToUrl,
   collectGeneralColors, matchesHatFilters,
@@ -77,6 +78,7 @@ function ResultsSkeleton() {
 }
 
 function ResultRow({ hat }: { hat: SearchResult | ColorSearchResult }) {
+  const labels = useHatLabels();
   return (
     <Link to={`/hats/${hat.id}`} className="card hr-cp-row">
       <div className="card-body hr-cp-row-body">
@@ -96,9 +98,9 @@ function ResultRow({ hat }: { hat: SearchResult | ColorSearchResult }) {
             </div>
           )}
           <div className="hr-cp-row-meta">
-            {hat.style.replace(/_/g, ' ')} · {hat.size.replace(/_/g, ' ')}
+            {labels.style(hat.style)} · {labels.size(hat.size)}
             {(hat.case_display_id || hat.room_name) && (
-              <> · 📍 {[hat.case_display_id && `Case ${hat.case_display_id}`, hat.room_name].filter(Boolean).join(' · ')}</>
+              <> · {[hat.case_display_id && `Case ${hat.case_display_id}`, hat.room_name].filter(Boolean).join(' · ')}</>
             )}
           </div>
           <ColorSwatches colors={hat.colors} showLabels={false} />

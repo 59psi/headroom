@@ -365,7 +365,7 @@ not just any TLS):
   **Trusted Root Certification Authorities**.
 
 **4. Verify**: open **https://headroom.local** — you should see a padlock
-and no warning. The Settings page's **LAN Discovery** card shows the exact
+and no warning. The Settings page's **LAN discovery (mDNS)** card shows the exact
 URL being advertised. Then add a passkey under **Settings → Account** and
 sign in with Face ID.
 
@@ -402,7 +402,7 @@ uvicorn directly, bypassing Caddy. Plain HTTP, so no padlock and no passkeys.
   outage. Add the address to `HEADROOM_SITE_ADDRESSES` (above), or use
   `http://<ip>:8000` to bypass Caddy entirely.
 - *Name doesn't resolve* — Linux clients need `avahi-daemon` + `libnss-mdns`;
-  everything else resolves `.local` natively. Check the LAN Discovery card
+  everything else resolves `.local` natively. Check the LAN discovery (mDNS) card
   (or `docker compose logs | grep -i mdns`) to confirm the app is advertising.
 - *Still a certificate warning* — on iOS the profile install alone isn't
   enough; the Certificate Trust Settings toggle in step 3 must be on.
@@ -484,7 +484,7 @@ applies inline SQLite migrations (`ALTER TABLE` for new columns, `CREATE
 TABLE` for new tables), so an old database upgrades itself the first time
 the new version starts. There's no separate migrate step — but there's no
 downgrade path either, so **take a backup before major upgrades**
-(Settings → Upkeep → Backups → *↓ Full Backup*, or grab the latest scheduled tarball from
+(Settings → Upkeep → Backups → *Download full backup*, or grab the latest scheduled tarball from
 `/data/backups/`). Your data always survives a rebuild: the database and
 photos live in the `headroom-data` volume, not the image.
 
@@ -520,7 +520,7 @@ let users override it from the UI.
 
 | Source | When | Set via |
 |---|---|---|
-| **Database** (preferred) | Set from the Settings page; persists across restarts | UI: Settings → Claude API Key |
+| **Database** (preferred) | Set from the Settings page; persists across restarts | UI: Settings → Analysis → Claude API key |
 | **Environment** (fallback) | Useful as a default for fresh installs | `HEADROOM_ANTHROPIC_API_KEY` |
 
 ### No Claude key? The fallback
@@ -534,7 +534,7 @@ a basic fallback runs instead and the hat gets `analysis_status = "fallback"`:
 - **Brand — optional, via Google Cloud Vision logo detection.** Create an API
   key at [console.cloud.google.com](https://console.cloud.google.com/apis/library/vision.googleapis.com)
   (enable the *Cloud Vision API*, then *Credentials → Create API key*) and
-  paste it in **Settings → Google Vision Key**. Free tier is 1,000
+  paste it in **Settings → Analysis → Google Vision key**. Free tier is 1,000
   requests/month — plenty.
 
 Model name, price estimate, and design notes stay empty in fallback mode —

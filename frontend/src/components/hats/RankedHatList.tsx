@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 import type { HatRead } from '../../types';
 import { tileSrc } from '../../lib/photo';
+import { useHatLabels } from '../../lib/labels';
 
 /**
  * A ranked "top N" list of hats — number, thumbnail, id, name, one figure.
@@ -36,6 +37,8 @@ export function RankedHatList({
   /** `accent` for a figure worth reading (a price), `muted` for a date or a note. */
   valueTone?: 'accent' | 'muted';
 }) {
+  // Above the early return: a hook must run on every render.
+  const labels = useHatLabels();
   if (!hats.length) {
     return typeof empty === 'string' ? <p className="text-muted small mb-0">{empty}</p> : <>{empty ?? null}</>;
   }
@@ -58,7 +61,7 @@ export function RankedHatList({
             <span className="hr-cp-rank-main">
               <span className="hr-cp-rank-id">{h.display_id || `Hat #${h.id}`}</span>
               <span className="hr-cp-rank-name">
-                {h.brand || h.style.replace(/_/g, ' ')}{h.model_name && ` · ${h.model_name}`}
+                {h.brand || labels.style(h.style)}{h.model_name && ` · ${h.model_name}`}
               </span>
             </span>
             <span className={`hr-cp-rank-value${valueTone === 'muted' ? ' is-muted' : ''}`}>

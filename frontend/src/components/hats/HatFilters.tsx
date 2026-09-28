@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { getStyles, getSizes, getConditions, getConstructions } from '../../api/hats';
+import { optionLabel } from '../../lib/labels';
 import { getRoomOptions } from '../../api/rooms';
 import type { ColorTag } from '../../types';
 
@@ -281,11 +282,6 @@ export interface ExtraFilterChip {
   /** "Brand: melin" */
   label: string;
   onRemove: () => void;
-}
-
-/** "A-Game" for `a_game`, from the option list when it has loaded. */
-function optionLabel(opts: ReadonlyArray<{ value: string | number; label: string }> | undefined, value: string): string {
-  return opts?.find(o => String(o.value) === value)?.label ?? value.replace(/_/g, ' ');
 }
 
 /**

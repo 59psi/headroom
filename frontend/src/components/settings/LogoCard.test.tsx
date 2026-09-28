@@ -21,7 +21,7 @@ vi.mock('../../api/settings', async (importOriginal) => {
 });
 
 const mocked = vi.mocked(api);
-const SET = { logo_path: 'branding/logo.png' };
+const SET = { logo_path: 'branding/logo.png', version: 1 };
 const NONE = { logo_path: null };
 
 function png(name = 'logo.png') {
@@ -65,7 +65,7 @@ describe('LogoCard', () => {
     renderWithProviders(<LogoCard />);
 
     const img = await screen.findByRole('img', { name: 'Current logo' });
-    expect(img).toHaveAttribute('src', '/uploads/branding/logo.png');
+    expect(img).toHaveAttribute('src', '/uploads/branding/logo.png?v=1');
     expect(screen.getByText('Set')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Replace logo' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Remove' })).toBeInTheDocument();
@@ -81,14 +81,17 @@ describe('LogoCard', () => {
     expect(screen.queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument();
   });
 
-  it('uploads the picked file and re-requests the image, whose URL never changes', async () => {
+  it('uploads the picked file and re-requests the image, whose path never changes', async () => {
     // The server always writes `branding/logo.png`. With the same src the
     // <img> never reloaded, so the card went on showing the logo you had
-    // just replaced until the page was reloaded.
+    // just replaced until the page was reloaded. The server's `version`
+    // changes with the file, and it is what the URL now carries.
     const user = userEvent.setup();
-    mocked.uploadLogo.mockResolvedValue(SET);
+    const REPLACED = { logo_path: 'branding/logo.png', version: 2 };
+    mocked.uploadLogo.mockResolvedValue(REPLACED);
     const { container } = renderWithProviders(<LogoCard />);
     await screen.findByRole('img', { name: 'Current logo' });
+    mocked.getLogo.mockResolvedValue(REPLACED);
 
     const file = png();
     await user.upload(fileInput(container), file);
@@ -96,8 +99,8 @@ describe('LogoCard', () => {
     expect(mocked.uploadLogo).toHaveBeenCalledWith(file);
     expect(await screen.findByText('Logo updated')).toBeInTheDocument();
     await waitFor(() =>
-      expect(screen.getByRole('img', { name: 'Current logo' }).getAttribute('src'))
-        .toMatch(/^\/uploads\/branding\/logo\.png\?v=\d+$/));
+      expect(screen.getByRole('img', { name: 'Current logo' }))
+        .toHaveAttribute('src', '/uploads/branding/logo.png?v=2'));
   });
 
   it('shows the picked file at once while the upload runs', async () => {
@@ -131,7 +134,7 @@ describe('LogoCard', () => {
     await user.upload(fileInput(container), png('notes.png'));
 
     expect(await screen.findByText('Invalid image type')).toBeInTheDocument();
-    expect(screen.getByRole('img', { name: 'Current logo' })).toHaveAttribute('src', '/uploads/branding/logo.png');
+    expect(screen.getByRole('img', { name: 'Current logo' })).toHaveAttribute('src', '/uploads/branding/logo.png?v=1');
     expect(screen.queryByText('Logo updated')).not.toBeInTheDocument();
   });
 

@@ -19,19 +19,21 @@ doing immediately from **Settings → Account**:
 
 Then configure the integrations in **Settings**:
 
-1. **Claude API Key** — paste an Anthropic key
-   ([console.anthropic.com](https://console.anthropic.com/)) and hit *Test
-   connection*. This powers full hat identification: brand, specific model,
-   colorway, colors and design notes. (Retail price comes from a lookup
-   table of melin's real list prices first; Claude's estimate fills in only
-   where the table has no row.)
-2. **Google Vision Key (fallback)** — fallback brand detection for whenever
-   Claude is unavailable. Colors fall back automatically without any key.
-3. **eBay Comparable Listings (optional)** — a Production App ID + Cert ID enables
+1. **Claude API key** — paste an Anthropic key
+   ([console.anthropic.com](https://console.anthropic.com/)) and save; the
+   connection is tested as it saves, and the card's status reads
+   *Connected* once it passes (*Test connection* re-runs it later). This
+   powers full hat identification: brand, specific model, colorway, colors
+   and design notes. (Retail price comes from a lookup table of melin's real
+   list prices first; Claude's estimate fills in only where the table has no
+   row.)
+2. **Google Vision key** — fallback brand detection for whenever Claude is
+   unavailable. Colors fall back automatically without any key.
+3. **eBay comparable listings (optional)** — a Production App ID + Cert ID enables
    the *eBay ask* tile: the median of live asking prices for comparable
    listings (eBay publishes no sold history to this API).
-4. **Site Logo** — upload your own; it replaces the default in the
-   header and home page.
+4. **Site logo** (Device tab) — upload your own; it replaces the default in
+   the header and home page.
 
 Settings is five tabs, grouped by errand rather than by subsystem —
 **Analysis** (the two keys above, the Claude model picker, the analysis
@@ -41,6 +43,16 @@ prices, shared prices, colorway catalog, purchase history, eBay),
 report, tags, share-to-Headroom), **Device** (trust this device, account,
 LAN discovery, logo) and **Upkeep** (backups, off-site copy, activity log).
 The tab is in the URL (`/settings?tab=data`), so a section can be linked to.
+**Search settings** (above the tabs) finds a card in any section by its name
+or by a word you might use for it — "restore" finds Backups, "anthropic"
+finds the Claude key.
+
+Every card leads with a one-word status (*Connected*, *Not set*, *Running*,
+*Nothing to do*) so the thing that needs attention stands out; the long
+explanation of each is folded under **How this works**. Switches and
+pickers apply the moment you change them — there is no separate Save — and
+a short notice in the corner confirms each change. Anything destructive
+asks first, in the app, and says what it will do.
 
 Nothing is mandatory: with zero keys, photos still upload, backgrounds are
 still removed, and fallback color swatches still appear.
@@ -71,7 +83,7 @@ still removed, and fallback color swatches still appear.
 
 Three ways, fastest first:
 
-1. **One at a time** — *Hats → + New*. Pick or shoot a photo; a crop/rotate
+1. **One at a time** — *Hats → Add hat*. Pick or shoot a photo; a crop/rotate
    modal pops before saving. ~10 seconds per hat.
 2. **Bulk import** — *Hats → ⇪* (or `/hats/import`). Select up to 100
    photos; a background worker processes them one at a time through the
@@ -82,7 +94,7 @@ Three ways, fastest first:
      *Install app*); "Share to Headroom" then appears in the system share
      sheet. Multi-select works and drops straight into a bulk-import job.
    - **iOS**: Apple doesn't support web share targets, so open *Settings →
-     Share Photos to Headroom* for a one-time Shortcut recipe. Afterwards,
+     Share photos to Headroom* for a one-time Shortcut recipe. Afterwards,
      Photos → Share → *Add to Headroom*.
 
 ## 4. What happens to a photo
@@ -108,7 +120,7 @@ the existing photo — use it after adding/fixing a key. It upgrades fallback
 hats to full identification when a Claude key exists. **✂ Redo cutout**
 re-runs only the background removal from the original photo, for a bill the
 model clipped, without spending a Claude call. For the whole collection,
-Settings → Analysis → *Analysis Queue* has **Re-analyze every hat**, a
+Settings → Analysis → *Analysis queue* has **Re-analyze every hat**, a
 per-cause **Retry** for hats a transient error knocked over (an overload is
 worth retrying; a photo that has gone is not, and the card says which), and
 a *Recent runs* list where each run expands into its own hat-by-hat log.
@@ -118,13 +130,13 @@ files.
 
 ## 4½. Names & colorways
 
-Melin retires colorways constantly, so **Settings → Colorway Catalog → Refresh from Melin
+Melin retires colorways constantly, so **Settings → Data → Colorway catalog → Refresh from Melin
 Recap** harvests every model + colorway name currently circulating on the
 melinrecap resale market (hundreds of entries, including long-sold-out
 drops). After that, the Edit Hat form autocompletes both the model name and
 the colorway ("Heather Ocean", "Sand Camo", …).
 
-**Purchase history** (Settings → Data → Purchase History) stores order line
+**Purchase history** (Settings → Data → Purchase history) stores order line
 items from your Melin emails; matched purchases automatically set a hat's
 colorway and its **cost basis** — the price you actually paid, plus the
 order date. Nothing in the app can read your mailbox, so the card ships a
@@ -298,11 +310,11 @@ room, unassigned otherwise.
 
 ## 9. Reports & backups
 
-- **Inventory report** — Settings → Sharing → *Inventory Report* renders a
+- **Inventory report** — Settings → Sharing → *Inventory report* renders a
   printer-friendly HTML report (thumbnails, totals, best-available value
   per hat). Use the browser's Print → *Save as PDF* for an insurance rider.
 - **Backup** — Settings → Upkeep → *Backups* downloads a `tar.gz` of the
-  database + photos on demand (**↓ Full Backup**, or **↓ DB Only**);
+  database + photos on demand (**Download full backup**, or **Database only**);
   scheduled backups run server-side, and the *Off-site backup* card beside it
   ships each one to a NAS or cloud remote (see
   [OPERATIONS.md §4](OPERATIONS.md#4-backups--restore)).
@@ -318,7 +330,7 @@ Headroom is a PWA designed mobile-first:
 
 ## 10½. Wear tracking & QR labels
 
-Tap **🧢 Wearing this today** on a hat's page — that's the whole workflow.
+Tap **Wearing this today** on a hat's page — that's the whole workflow.
 Wear count, last-worn date, and **cost-per-wear** (what you paid ÷ wears)
 show under the photo; the Valuation page's *Wear rotation* card lists the
 five hats that have gone longest without sun. Mis-taps: hit *undo*.
@@ -356,7 +368,7 @@ silently open a *different* hat.
 
 ## 11. Showing off: share links
 
-**Settings → Sharing → Share Links** creates read-only links
+**Settings → Sharing → Share links** creates read-only links
 (`/share/<token>`) you can send to anyone — they see the gallery (photos,
 names, colors, where each hat lives) without logging in, and can't change
 anything. Links **expire after 30 days** unless you pick a different span
@@ -381,7 +393,7 @@ internet.
 
 - **Title** — whatever you want on the front of it.
 - **Include estimated values** — **off by default.** This is the version you
-  send a friend; the Inventory Report above it is the one with the money in it.
+  send a friend; the Inventory report above it is the one with the money in it.
 - **Include hats you no longer own** — off by default.
 
 Images are re-encoded to 800px for the export, so it looks right on a laptop
@@ -395,8 +407,9 @@ the collection has moved on.
 
 ## 11¾. Your own notes
 
-Every hat has a **Your notes** box on its page: where you got it, who you wore
-it with, why you kept it.
+Every hat has a **Notes** box on its page: where you got it, who you wore
+it with, why you kept it. It saves as you type (a small *Saving… / Saved*
+beside it says when), and ⌘/Ctrl + Enter saves at once.
 
 It is the one free-text field on a hat that **nothing automatic ever writes**.
 Re-analyzing a hat rewrites its colors, model name and design notes; it never

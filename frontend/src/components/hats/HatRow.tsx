@@ -3,6 +3,7 @@ import type { HatRead } from '../../types';
 import { ConditionBadge } from '../common/ConditionBadge';
 import { ColorSwatches } from '../common/ColorSwatch';
 import { tileSrc } from '../../lib/photo';
+import { useHatLabels } from '../../lib/labels';
 
 /**
  * One hat as a list row: thumbnail, headline, a line of facts, its colors.
@@ -27,6 +28,7 @@ export function HatRow({
   showRoom?: boolean;
   thumb?: number;
 }) {
+  const labels = useHatLabels();
   const headline = hat.display_id || hat.model_name || `#${hat.id}`;
   const modelInSub = hat.model_name && hat.model_name !== headline;
   // Size is data (callers pass 64 in a room, 80 on the Hats tab), so it stays
@@ -55,7 +57,7 @@ export function HatRow({
             <ConditionBadge condition={hat.condition} />
           </div>
           <div className="hr-cp-row-meta">
-            {hat.style.replace(/_/g, ' ')} · {hat.size.replace(/_/g, ' ')}
+            {labels.style(hat.style)} · {labels.size(hat.size)}
             {hat.colorway && <> · {hat.colorway}</>}
             {showRoom && hat.room_name && <> · {hat.room_name}</>}
           </div>

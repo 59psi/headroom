@@ -450,6 +450,13 @@
 
 .hr-field-row > .btn { flex: none; }
 
+/* An icon inside a button, sized to the label's cap height. */
+.hr-btn-icon {
+  width: 1.1em;
+  height: 1.1em;
+  flex: none;
+}
+
 /* `ui/CopyButton`. Wide enough for "Copied", so the label change does not
    nudge the value beside it. */
 .hr-copy-btn {

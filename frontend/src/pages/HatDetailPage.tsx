@@ -14,6 +14,7 @@ import { StatusPill } from '../components/ui/StatusPill';
 import { Skeleton } from '../components/ui/Skeleton';
 import { useToast } from '../components/ui/Toast';
 import { useConfirm } from '../components/ui/Dialogs';
+import { useHatLabels } from '../lib/labels';
 import { useState } from 'react';
 import { invalidateHatViews } from '../lib/invalidate';
 import { ErrorNote } from '../components/common/ErrorNote';
@@ -127,6 +128,7 @@ export function HatDetailPage() {
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
+  const labels = useHatLabels();
   const [disposeOpen, setDisposeOpen] = useState(false);
   // null = closed, -1 = adding, >= 1 = editing that dominance_rank
   const [colorEditOpen, setColorEditOpen] = useState<number | null>(null);
@@ -406,7 +408,16 @@ export function HatDetailPage() {
                     disabled={wearMut.isPending}
                     title="Log a wear for today"
                   >
-                    {wearMut.isPending ? 'Logging…' : '🧢 Wearing this today'}
+                    {/* The bottom nav's line-art cap rather than the 🧢 emoji:
+                        an emoji renders in whatever color font the device has
+                        (or as a tofu box where it has none), the one element
+                        on the page the stylesheet could not match. */}
+                    {!wearMut.isPending && (
+                      <svg className="hr-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M12 2C6.5 2 2 6 2 10c0 2 1 4 3 5v3h14v-3c2-1 3-3 3-5 0-4-4.5-8-10-8z" /><path d="M2 15h20" />
+                      </svg>
+                    )}
+                    {wearMut.isPending ? 'Logging…' : 'Wearing this today'}
                   </button>
                 )}
                 {data.photo_path && (
@@ -679,9 +690,9 @@ export function HatDetailPage() {
                 whole job is filling it in. */}
             <div className="hr-metric-grid">
               {([
-                ['Style', data.style.replace(/_/g, ' ')],
+                ['Style', labels.style(data.style)],
                 ['Limited edition', data.limited_edition ? 'Yes' : null],
-                ['Size', data.size.replace(/_/g, ' ')],
+                ['Size', labels.size(data.size)],
                 ['Construction', data.construction],
                 ['Colorway', data.colorway],
                 ['Collection', data.artist_series],
