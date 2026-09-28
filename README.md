@@ -503,29 +503,31 @@ cd frontend && npm run dev
 ## Updating
 
 ```bash
-git pull
-# Docker — with the SAME -f flags you deploy with (here, the LAN-HTTPS overlay):
-docker compose -f docker-compose.yml -f docker-compose.https-lan.yml up --build -d
+./scripts/upgrade.sh --tz America/Los_Angeles   # Docker; --tz once, it is remembered
 # — or —
 ./scripts/setup.sh --no-docker   # bare metal: re-sync deps + rebuild SPA, then restart uvicorn
 ```
 
-Only the default single-host setup upgrades with a bare
-`docker compose up --build -d`. On any overlay host that command is a switch
-back to the base config, not an upgrade (see the note under
-[Run it](#run-it)): the app is recreated without the overlay's settings —
-back on Docker's bridge network at `:8000`, and on the HTTPS overlays with the
-passkey identity reverted to `localhost`, so Face ID stops offering your
-passkey until you run the full command again.
+`upgrade.sh` does the whole checklist: it remembers your compose overlays in
+`.env` (so neither it nor a bare `docker compose` ever drops them), sets the
+time zone, pulls, rebuilds, waits until the app reports healthy, and restarts
+Caddy if its config changed. Details in
+[OPERATIONS.md §5](docs/OPERATIONS.md#5-upgrades).
 
-**Schema changes are handled automatically** — on every boot, `init_db()`
-applies inline SQLite migrations (`ALTER TABLE` for new columns, `CREATE
-TABLE` for new tables), so an old database upgrades itself the first time
-the new version starts. There's no separate migrate step — but there's no
-downgrade path either, so **take a backup before major upgrades**
-(Settings → Upkeep → Backups → *Download full backup*, or grab the latest scheduled tarball from
-`/data/backups/`). Your data always survives a rebuild: the database and
-photos live in the `headroom-data` volume, not the image.
+Upgrading by hand, use the SAME `-f` flags you deploy with. On any overlay
+host a bare `docker compose up --build -d` is a switch back to the base
+config, not an upgrade (see the note under [Run it](#run-it)): the app is
+recreated without the overlay's settings — back on Docker's bridge network at
+`:8000`, and on the HTTPS overlays with the passkey identity reverted to
+`localhost`, so Face ID stops offering your passkey until you run the full
+command again.
+
+**Schema changes are handled automatically, and backed up first.** The first
+boot of a new version copies the database to
+`/data/backups/pre-upgrade-<from>-to-<to>-<time>.db`, then `init_db()` applies
+inline SQLite migrations. There's no separate migrate step and no downgrade
+path — the snapshot is how you go back. Your data always survives a rebuild:
+the database and photos live in the `headroom-data` volume, not the image.
 
 The footer shows the running version — compare against the
 [CHANGELOG](CHANGELOG.md). Details in

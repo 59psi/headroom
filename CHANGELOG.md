@@ -6,6 +6,33 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.82.0] — 2026-09-28
+
+Upgrades without a checklist.
+
+### Added
+
+- **The app backs itself up before it migrates.** The first boot of a new
+  version copies the database, exactly as the previous version left it, to
+  `/data/backups/pre-upgrade-<from>-to-<to>-<time>.db` before any migration
+  runs; the last three are kept. "Take a backup first" is no longer a step for
+  you. See OPERATIONS §5 for going back.
+- **`scripts/upgrade.sh`** — the whole Docker upgrade in one command. It
+  remembers your compose overlays in `.env` (`COMPOSE_FILE`), so neither it nor
+  a bare `docker compose` can drop them again; sets `TZ` (`--tz Area/City`
+  once, or from the host when the host is not on UTC); moves an existing
+  rclone config into the directory the rclone overlay now mounts; pulls,
+  rebuilds and waits for the app to report healthy; and restarts Caddy only
+  when the config it is serving is out of date. `--prune-build-cache` frees
+  old Docker build cache (several GB per release on a Pi).
+
+### Upgrade notes
+
+- Upgrade with `./scripts/upgrade.sh --tz Area/City` (for example
+  `--tz America/Los_Angeles`). The 2.81.0 notes about backing up, the rclone
+  directory, `TZ` and overlay flags are all handled by it; the rsync/Synology
+  destination-is-a-folder change still needs your destination to be a folder.
+
 ## [2.81.0] — 2026-09-28
 
 A whole-project review pass: every documented behavior was checked against

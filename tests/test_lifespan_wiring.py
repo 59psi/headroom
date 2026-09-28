@@ -54,6 +54,7 @@ from headroom.services import (
     auth_service,
     import_service,
     repricing,
+    upgrade_guard,
 )
 from headroom.services.task_health import TaskHealth
 
@@ -779,3 +780,75 @@ async def test_the_tls_watch_reports_a_served_chain_from_another_authority(
     async with await _boot(app):
         await _wait_for(_reported, what="the TLS watch to report the foreign chain")
         await _settled(app)
+
+
+# --------------------------------------------------------------------------
+# the pre-upgrade snapshot: taken before migrations, version recorded last
+# --------------------------------------------------------------------------
+
+
+def _pre_upgrade_snapshots():
+    from headroom.services import backup_service
+
+    return sorted(backup_service._backup_dir().glob(f"{upgrade_guard.SNAPSHOT_PREFIX}*.db"))
+
+
+async def _recorded_version(factory):
+    async with factory() as db:
+        row = await db.get(AppSetting, upgrade_guard.LAST_BOOTED_KEY)
+        return row.value if row else None
+
+
+async def test_an_upgrade_boot_snapshots_the_database_before_migrating(app, boot_db, monkeypatch):
+    """"Take a backup first" is the app's job, not a line in the release notes."""
+    _, factory = boot_db
+    monkeypatch.setattr(upgrade_guard, "running_version", lambda: "2.81.0")
+    async with await _boot(app):
+        await _settled(app)
+    first = _pre_upgrade_snapshots()
+    assert len(first) == 1 and first[0].name.startswith("pre-upgrade-unknown-to-2.81.0-")
+    assert await _recorded_version(factory) == "2.81.0"
+
+    # A restart on the same version is not an upgrade: no second copy.
+    async with await _boot(app):
+        await _settled(app)
+    assert _pre_upgrade_snapshots() == first
+
+    # The next release's first boot copies the database the old one left.
+    monkeypatch.setattr(upgrade_guard, "running_version", lambda: "2.81.1")
+    async with await _boot(app):
+        await _settled(app)
+    names = [p.name for p in _pre_upgrade_snapshots()]
+    assert any(n.startswith("pre-upgrade-2.81.0-to-2.81.1-") for n in names)
+    assert await _recorded_version(factory) == "2.81.1"
+
+
+async def test_a_boot_that_fails_to_migrate_is_not_recorded_as_upgraded(app, boot_db, monkeypatch):
+    """Recorded any earlier, the retry after a failed migration would find the
+    new version already stamped and skip the snapshot it needs most."""
+    _, factory = boot_db
+    monkeypatch.setattr(upgrade_guard, "running_version", lambda: "9.9.9")
+
+    async def broken_migration(**_kw):
+        raise RuntimeError("migration failed")
+
+    monkeypatch.setattr(database, "init_db", broken_migration)
+    with pytest.raises(RuntimeError, match="migration failed"):
+        async with await _boot(app):
+            pass
+    assert len(_pre_upgrade_snapshots()) == 1  # the copy was taken first
+    assert await _recorded_version(factory) is None
+
+
+async def test_a_failed_snapshot_is_logged_and_the_boot_goes_on(app, boot_db, monkeypatch, caplog):
+    _, factory = boot_db
+    monkeypatch.setattr(upgrade_guard, "running_version", lambda: "9.9.9")
+
+    def full_disk(*_a, **_kw):
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr(upgrade_guard, "snapshot_before_upgrade", full_disk)
+    async with await _boot(app):
+        await _settled(app)
+    assert "Could not snapshot the database before upgrading to 9.9.9" in caplog.text
+    assert await _recorded_version(factory) == "9.9.9"
