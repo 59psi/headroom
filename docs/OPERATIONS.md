@@ -725,8 +725,11 @@ to remember between releases. It:
 7. restarts a Caddy container whose served Caddyfile no longer matches the
    file on disk (a pull replaces the file's inode, and a bind-mounted file
    keeps the old one until restart);
-8. with `--prune-build-cache`, drops Docker build cache older than a week —
-   worth it on a Pi's SD card, where it grows by a few GB per release.
+8. with `--prune-build-cache`, caps Docker's build cache at 6 GB
+   (`HEADROOM_BUILD_CACHE_CAP`), keeping the newest layers the next build
+   reuses — worth it on a Pi's SD card, where it grows by a few GB per
+   release. (An age limit does not work there: a box that upgrades weekly has
+   no cache older than a week.)
 
 `--no-pull` rebuilds the current checkout without pulling.
 

@@ -6,6 +6,21 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.82.2] — 2026-09-28
+
+### Fixed
+
+- **LAN-HTTPS installs: the TLS card could never read the certificate.** Its
+  daily check connected to the `.local` site name, which the container cannot
+  resolve, so it logged "Name or service not known" instead of reporting
+  expiry and chain health. The LAN-HTTPS overlay now sets
+  `HEADROOM_TLS_PROBE_ADDRESS=127.0.0.1`: the check dials Caddy on the shared
+  host network and still asks for, and verifies, the `.local` name. Other
+  setups are unchanged.
+- `scripts/upgrade.sh --prune-build-cache` now caps Docker's build cache at
+  6 GB (`HEADROOM_BUILD_CACHE_CAP`) instead of removing only cache older than
+  a week, which freed nothing on a box that upgrades weekly.
+
 ## [2.82.1] — 2026-09-28
 
 Dependency refresh. No behavior changes, no migration.

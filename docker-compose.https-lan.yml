@@ -26,6 +26,11 @@ services:
       # overlay's certificate and passkeys do not match.
       HEADROOM_RP_ID: "${HEADROOM_MDNS_HOSTNAME:-headroom}.local"
       HEADROOM_ORIGIN: "https://${HEADROOM_MDNS_HOSTNAME:-headroom}.local"
+      # The TLS watch reads the certificate Caddy serves for that name. The
+      # container can't resolve a `.local` name (no mDNS resolver in the
+      # image), but it shares the host network with Caddy, so it dials the
+      # loopback and still asks for — and checks — the `.local` name.
+      HEADROOM_TLS_PROBE_ADDRESS: "127.0.0.1"
       # No HEADROOM_CORS_ORIGINS: the SPA is served from this same origin, and
       # a CORS grant to the app's own origin grants nothing.
       # Caddy reaches uvicorn over loopback on the shared host stack; :8000

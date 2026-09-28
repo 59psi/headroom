@@ -128,8 +128,15 @@ def front_door() -> tuple[str, int] | None:
     return parsed.hostname, parsed.port or 443
 
 
-def _fetch_peer_chain(host: str, port: int, timeout: float) -> tuple[list[bytes], bool]:
+def _fetch_peer_chain(
+    host: str, port: int, timeout: float, connect_to: str | None = None,
+) -> tuple[list[bytes], bool]:
     """The chain as served, leaf first, with verification deliberately OFF.
+
+    `connect_to` is the address dialed (`HEADROOM_TLS_PROBE_ADDRESS`); `host`
+    is always the name asked for in the handshake, so the certificate read is
+    the one Caddy serves for that name — what a browser gets — however the
+    connection reached it.
 
     Returns `(chain, complete)`. `complete` is False only on an interpreter
     without `SSLSocket.get_unverified_chain` (Python < 3.13), where the leaf is
@@ -154,7 +161,7 @@ def _fetch_peer_chain(host: str, port: int, timeout: float) -> tuple[list[bytes]
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
-    with socket.create_connection((host, port), timeout=timeout) as raw:
+    with socket.create_connection((connect_to or host, port), timeout=timeout) as raw:
         with ctx.wrap_socket(raw, server_hostname=host) as tls:
             der = tls.getpeercert(binary_form=True)
             read_chain = getattr(tls, "get_unverified_chain", None)
@@ -283,7 +290,9 @@ def check_certificate(timeout: float = DEFAULT_TIMEOUT) -> TlsStatus:
         return TlsStatus(applicable=False, ca_sha256=ca_sha256)
     host, port = target
     try:
-        chain_der, complete = _fetch_peer_chain(host, port, timeout)
+        chain_der, complete = _fetch_peer_chain(
+            host, port, timeout, connect_to=(config.settings.tls_probe_address or "").strip() or None,
+        )
         served = [x509.load_der_x509_certificate(der) for der in chain_der]
     except Exception as exc:  # noqa: BLE001 — a report, not a control path
         logger.warning("Could not read the TLS certificate for %s:%s: %s", host, port, exc)

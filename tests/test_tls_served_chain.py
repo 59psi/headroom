@@ -19,6 +19,7 @@ import ssl
 import sys
 import threading
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 from cryptography import x509
@@ -150,6 +151,31 @@ async def test_a_chain_from_another_authority_is_caught(serving):
     assert status.chain_matches_ca is False, (
         "the served chain leads to a different root than the one devices install"
     )
+
+
+async def test_an_unresolvable_site_name_is_read_through_the_probe_address(serving, monkeypatch):
+    """The LAN-HTTPS install: the site is `headroom.local`, which the container
+    cannot resolve, while Caddy answers on the shared host network. Dialing the
+    probe address and asking for the site name reads the real certificate;
+    dialing the name itself fails every time."""
+    authority = _Authority()
+    server = serving(authority, exported=authority)
+    monkeypatch.setattr(config.settings, "origin", f"https://headroom.invalid:{server.port}")
+
+    monkeypatch.setattr(config.settings, "tls_probe_address", None)
+    unreachable = tls_health.check_certificate()
+    assert unreachable.error, "without a probe address the .invalid name cannot resolve"
+
+    monkeypatch.setattr(config.settings, "tls_probe_address", "127.0.0.1")
+    status = tls_health.check_certificate()
+    assert status.error is None
+    assert status.host == "headroom.invalid"  # reported and checked by the site name
+    assert status.not_after is not None
+
+
+async def test_the_lan_https_overlay_sets_the_probe_address():
+    text = (Path(__file__).resolve().parents[1] / "docker-compose.https-lan.yml").read_text()
+    assert 'HEADROOM_TLS_PROBE_ADDRESS: "127.0.0.1"' in text
 
 
 @needs_chain_api

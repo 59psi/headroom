@@ -221,6 +221,15 @@ class Settings(BaseSettings):
     rp_id: str = "localhost"
     origin: str = "http://localhost:8000"
 
+    # Where the TLS watch CONNECTS to read the served certificate; the origin's
+    # hostname is still what it asks for (SNI) and checks the certificate
+    # against. Unset, it connects to that hostname. The LAN-HTTPS overlay sets
+    # 127.0.0.1: its hostname is a `.local` mDNS name the container cannot
+    # resolve (no mDNS resolver inside the image), so the watch failed every
+    # day with "Name or service not known" while Caddy was answering on the
+    # same host network all along.
+    tls_probe_address: str | None = None
+
     # Retired: HEADROOM_ADMIN_TOKEN. Real accounts replaced the optional
     # bearer guard in v1.0; the env var is ignored if still set.
 
