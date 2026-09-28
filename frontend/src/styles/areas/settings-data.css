@@ -1,2 +1,283 @@
 /* Area styles: settings-data. Owned by the components in this area; shared
-   primitives live in ui.css, global elements in app.css. */
+   primitives live in ui.css, global elements in app.css.
+
+   The Data cards are mostly REPORTS — counts, lists of hats, previews of a
+   bulk change — so the work here is making a report read calmly: numbers in
+   tiles, lists as quiet rows with hairline separators, and color kept for the
+   one thing in a row that needs a look (a warning, a link). */
+
+/* ----- Metric tiles as a definition list ----------------------------- */
+/* `<dl>` so each figure is announced with its label ("Purchases, 12") rather
+   than as two unrelated strings. Reset the browser's list indents; the tile
+   look itself is `.hr-metric`. */
+.hr-sd-metrics { margin: 0; }
+
+.hr-sd-metrics dd { margin: 0; }
+
+.hr-sd-metric-note {
+  margin-top: 0.3rem;
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+/* ----- Small print ---------------------------------------------------- */
+/* Source sentences, footnotes, "Failed at:" — the 0.72rem text these cards
+   used to set with inline styles, one spelling per card. */
+.hr-sd-legend {
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+/* A note that belongs to the footer's buttons but must sit on its own line
+   under them ("12 of 50 hats changed price…"). The footer is a wrapping flex
+   row, so a full-basis item is how it breaks. */
+.hr-sd-foot-note {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+/* The scheduler's last error: readable, not alarming — the pill in the
+   header already carries the alarm. */
+.hr-sd-error-line {
+  margin: 0.75rem 0 0;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  color: #ff8aa3;
+  overflow-wrap: anywhere;
+}
+
+/* ----- Inputs --------------------------------------------------------- */
+/* Short values (a construction name): a full-width box on a phone, but not a
+   field that runs the width of a desktop card for eight characters. */
+@media (min-width: 576px) {
+  .hr-sd-narrow { max-width: 22rem; }
+}
+
+/* ----- Two-line row text (construction audit) ------------------------- */
+.hr-sd-row-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+/* ----- Preview / callout panels --------------------------------------- */
+/* An inset block for "here is what this would do" — the dry-run results of
+   the construction audit and the purchase import. Inset rather than a loud
+   alert fill: it is a plan to read, and the destructive button inside it is
+   what carries the color. */
+.hr-sd-preview {
+  padding: 0.85rem 1rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--neon-cyan);
+  background: var(--surface-inset);
+  font-size: var(--fs-sm);
+}
+
+.hr-sd-preview.is-warn { border-left-color: var(--neon-yellow); }
+
+.hr-sd-preview-list {
+  margin: 0 0 0.75rem;
+  padding-left: 1.1rem;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.hr-sd-samples,
+.hr-sd-filename { overflow-wrap: anywhere; }
+
+.hr-sd-warn-text { color: var(--neon-yellow); }
+
+/* An offer the card is making (fill colorways from order history). Same
+   shape as the preview, cyan-edged: an opportunity, not a warning. */
+.hr-sd-callout {
+  padding: 0.85rem 1rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(0, 240, 255, 0.28);
+  border-left: 3px solid var(--neon-cyan);
+  background: rgba(0, 240, 255, 0.05);
+  color: var(--text);
+}
+
+/* ----- Frozen prices checklist --------------------------------------- */
+/* The whole row is the label, so the tap target is the row (≥44px), not an
+   18px checkbox beside a line of small text. */
+.hr-sd-checklist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.hr-sd-checklist > li {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 44px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.hr-sd-checklist > li:first-child { border-top: 0; }
+
+.hr-sd-checklist .form-check-input { flex: none; margin: 0; }
+
+.hr-sd-checklist label {
+  flex: 1;
+  min-width: 0;
+  padding: 0.6rem 0;
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+/* ----- Shared-price groups ------------------------------------------- */
+.hr-sd-groups {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.hr-sd-groups > li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.8rem 0;
+  border-top: 1px solid var(--border-soft);
+}
+
+.hr-sd-groups > li:first-child { border-top: 0; padding-top: 0; }
+
+.hr-sd-group-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.hr-sd-group-price {
+  font-size: 1.05rem;
+  font-weight: 650;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.hr-sd-group-hats { line-height: 1.7; }
+
+/* A shelf id is one token: "A-004-00" broke at its hyphens and wrapped as
+   "A-" / "004-00", which reads as two hats. */
+.hr-sd-group-hats a { white-space: nowrap; }
+
+/* ----- Purchase rows -------------------------------------------------- */
+.hr-sd-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.hr-sd-rows > li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-height: 44px;
+  padding: 0.35rem 0;
+  border-top: 1px solid var(--border-soft);
+  font-size: var(--fs-sm);
+}
+
+.hr-sd-rows > li:first-child { border-top: 0; }
+
+.hr-sd-row-title {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
+/* One line, ellipsized: the full title is the link's text and the Unlink
+   button's accessible name, so nothing is lost to the truncation. */
+.hr-sd-row-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hr-sd-row-aside {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex: none;
+}
+
+/* Linked or not, as a dot: a filled green one for a purchase tied to a hat,
+   a hollow one for a purchase still in the pool. The words are there too,
+   visually hidden, so the state is never color-only. */
+.hr-sd-link-dot {
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  border: 1.5px solid var(--text-muted);
+}
+
+.hr-sd-link-dot.is-linked {
+  border-color: transparent;
+  background: var(--neon-green);
+  box-shadow: 0 0 6px rgba(57, 255, 20, 0.7);
+}
+
+/* ----- eBay credentials ---------------------------------------------- */
+.hr-sd-cred-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.75rem;
+  margin-bottom: 0.35rem;
+}
+
+/* ----- Colorway catalog ---------------------------------------------- */
+/* `SweepProgressBar` renders nothing while idle; its slot should then take
+   no room either, or the card carries a gap where a bar once was. */
+.hr-sd-progress-slot:empty { display: none; }
+
+/* ----- Purchase email prompt ----------------------------------------- */
+/* Same chevron as the panel's "How this works", so the two disclosures on
+   this card read as the same kind of control — without it the summary was a
+   line of gray text with nothing saying it opened. */
+.hr-sd-disclosure > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 44px;
+  list-style: none;
+  font-weight: 550;
+}
+
+.hr-sd-disclosure > summary::-webkit-details-marker { display: none; }
+
+.hr-sd-disclosure > summary::before {
+  content: '';
+  width: 0.4rem;
+  height: 0.4rem;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform var(--dur) var(--ease-out);
+}
+
+.hr-sd-disclosure[open] > summary::before { transform: rotate(45deg); }
+
+.hr-sd-disclosure > summary:focus-visible {
+  outline: 2px solid var(--neon-cyan);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}

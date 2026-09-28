@@ -13,6 +13,10 @@ import { tileSrc } from '../../lib/photo';
  * from case + position), so the headline falls through to the model name and
  * then the row id. `showRoom` is off inside a room, where every row would
  * repeat the room you are looking at.
+ *
+ * The id is the row's one neon accent. The brand used to be pink as well, so
+ * each row carried two competing highlights; it now reads as ordinary text
+ * under the id, which is what it is.
  */
 export function HatRow({
   hat,
@@ -25,24 +29,24 @@ export function HatRow({
 }) {
   const headline = hat.display_id || hat.model_name || `#${hat.id}`;
   const modelInSub = hat.model_name && hat.model_name !== headline;
+  // Size is data (callers pass 64 in a room, 80 on the Hats tab), so it stays
+  // inline; everything else about the thumbnail lives in the stylesheet.
+  const box = { width: thumb, height: thumb };
   return (
-    <Link to={`/hats/${hat.id}`} className="card mb-2 text-decoration-none">
-      <div className="card-body d-flex gap-3 align-items-center">
+    <Link to={`/hats/${hat.id}`} className="card hr-cp-row">
+      <div className="card-body hr-cp-row-body">
         {hat.photo_path ? (
-          <img src={tileSrc(hat)} alt="" className="hr-thumb flex-shrink-0" style={{ width: thumb, height: thumb }} />
+          <img src={tileSrc(hat)} alt="" className="hr-thumb hr-cp-row-thumb" style={box} />
         ) : (
-          <div
-            className="rounded flex-shrink-0"
-            style={{ width: thumb, height: thumb, background: 'rgba(0,0,0,0.3)', border: '1px dashed var(--border)' }}
-          />
+          <div className="hr-cp-row-thumb hr-cp-thumb-empty" style={box} aria-hidden="true" />
         )}
-        <div className="flex-grow-1" style={{ minWidth: 0 }}>
-          <div className="d-flex justify-content-between align-items-start gap-2">
-            <div style={{ minWidth: 0 }}>
-              <div className="fw-bold font-mono" style={{ color: 'var(--neon-cyan)' }}>{headline}</div>
+        <div className="hr-cp-row-main">
+          <div className="hr-cp-row-top">
+            <div className="hr-cp-row-heading">
+              <div className="hr-cp-row-id">{headline}</div>
               {(hat.brand || modelInSub) && (
-                <div className="text-secondary small">
-                  {hat.brand && <span style={{ color: 'var(--neon-pink)' }}>{hat.brand}</span>}
+                <div className="hr-cp-row-name">
+                  {hat.brand}
                   {hat.brand && modelInSub && ' · '}
                   {modelInSub && hat.model_name}
                 </div>
@@ -50,7 +54,7 @@ export function HatRow({
             </div>
             <ConditionBadge condition={hat.condition} />
           </div>
-          <div className="text-muted small mb-1" style={{ marginTop: 4 }}>
+          <div className="hr-cp-row-meta">
             {hat.style.replace(/_/g, ' ')} · {hat.size.replace(/_/g, ' ')}
             {hat.colorway && <> · {hat.colorway}</>}
             {showRoom && hat.room_name && <> · {hat.room_name}</>}

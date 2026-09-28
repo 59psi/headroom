@@ -39,9 +39,19 @@ export function ErrorNote({
   const failed = (Array.isArray(of) ? of : [of]).find(x => x.isError);
   if (!failed) return null;
   return (
-    <div className={`alert alert-danger small mb-0 ${className}`} role="alert">
-      {what ? <><strong>{what}</strong> — </> : null}
-      {describeError(failed.error)}
+    <div className={`alert alert-danger small mb-0 hr-error-note ${className}`} role="alert">
+      {/* An icon, not a glyph in the text: the message is what gets read
+          out and what a test (or a bug report) quotes, so nothing decorative
+          goes into its text content. */}
+      <svg className="hr-error-note-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 7.5v5.5" />
+        <path d="M12 16.5h.01" />
+      </svg>
+      <span className="hr-error-note-msg">
+        {what ? <><strong>{what}</strong> — </> : null}
+        {describeError(failed.error)}
+      </span>
     </div>
   );
 }

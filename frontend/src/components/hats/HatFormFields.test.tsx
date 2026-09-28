@@ -92,7 +92,7 @@ describe('HatBasicsCard', () => {
     await user.selectOptions(screen.getByLabelText('Style'), 'beanie');
     expect(onChange).toHaveBeenLastCalledWith('style', 'beanie');
 
-    await user.click(screen.getByLabelText('Case Assignment'));
+    await user.click(screen.getByLabelText('Case assignment'));
     await user.click(await screen.findByRole('option', { name: /A-001/ }));
     expect(onChange).toHaveBeenCalledWith('caseId', '4');
     // Picking a case also clears any room, so this is no longer the LAST call.
@@ -100,7 +100,7 @@ describe('HatBasicsCard', () => {
     // stale room selected underneath would show a placement the save drops.
     expect(onChange).toHaveBeenCalledWith('roomId', '');
 
-    await user.type(screen.getByLabelText('Date Last Worn'), '2026-08-04');
+    await user.type(screen.getByLabelText('Date last worn'), '2026-08-04');
     expect(onChange).toHaveBeenLastCalledWith('dateLastWorn', '2026-08-04');
   });
 
@@ -112,8 +112,8 @@ describe('HatBasicsCard', () => {
     const onCreateCase = vi.fn();
     renderWithProviders(<Harness onChange={onChange} onCreateCase={onCreateCase} />);
 
-    await user.click(screen.getByLabelText('Case Assignment'));
-    await user.click(await screen.findByRole('option', { name: /Create New Case/ }));
+    await user.click(screen.getByLabelText('Case assignment'));
+    await user.click(await screen.findByRole('option', { name: /Create new case/ }));
 
     expect(onCreateCase).toHaveBeenCalledOnce();
     expect(onChange).not.toHaveBeenCalledWith('caseId', NEW_CASE_VALUE);
@@ -124,7 +124,7 @@ describe('HatBasicsCard', () => {
     const user = userEvent.setup();
     renderWithProviders(<Harness onChange={vi.fn()} onCreateCase={vi.fn()} />);
 
-    await user.click(screen.getByLabelText('Case Assignment'));
+    await user.click(screen.getByLabelText('Case assignment'));
 
     const option = await screen.findByRole('option', { name: /A-001/ });
     expect(option).toHaveTextContent('Archive');
@@ -139,7 +139,7 @@ describe('HatBasicsCard', () => {
     const user = userEvent.setup();
     renderWithProviders(<Harness onChange={vi.fn()} onCreateCase={vi.fn()} />);
 
-    await user.click(screen.getByLabelText('Case Assignment'));
+    await user.click(screen.getByLabelText('Case assignment'));
     await screen.findByRole('option', { name: /A-001/ });
 
     expect(screen.getByText('Recently added')).toBeInTheDocument();
@@ -148,7 +148,7 @@ describe('HatBasicsCard', () => {
 
     // Once you're searching you've said what you want; the pinned block would
     // just be noise in front of the answer.
-    await user.type(screen.getByLabelText('Case Assignment'), 'closet');
+    await user.type(screen.getByLabelText('Case assignment'), 'closet');
     expect(screen.queryByText('Recently added')).not.toBeInTheDocument();
     expect(screen.getByText('Closet')).toBeInTheDocument();
   });
@@ -157,7 +157,7 @@ describe('HatBasicsCard', () => {
     const user = userEvent.setup();
     renderWithProviders(<Harness onChange={vi.fn()} onCreateCase={vi.fn()} />);
 
-    const field = screen.getByLabelText('Case Assignment');
+    const field = screen.getByLabelText('Case assignment');
     await user.click(field);
     await screen.findByRole('option', { name: /A-001/ });
 
@@ -179,7 +179,7 @@ describe('HatBasicsCard', () => {
       <Harness onChange={onChange} onCreateCase={vi.fn()} values={{ ...BASICS, style: 'beanie' }} />,
     );
 
-    await user.click(screen.getByLabelText('Case Assignment'));
+    await user.click(screen.getByLabelText('Case assignment'));
     const option = await screen.findByRole('option', { name: /A-001/ });
 
     expect(option).toBeDisabled();
@@ -194,12 +194,32 @@ describe('HatBasicsCard', () => {
       <Harness
         onChange={vi.fn()}
         onCreateCase={vi.fn()}
-        caseLabel="Assign to Case (optional)"
-        dateLabel="Date Last Worn (optional)"
+        caseLabel="Assign to case (optional)"
+        dateLabel="Date last worn (optional)"
       />,
     );
-    expect(screen.getByLabelText('Assign to Case (optional)')).toBeInTheDocument();
-    expect(screen.getByLabelText('Date Last Worn (optional)')).toBeInTheDocument();
+    expect(screen.getByLabelText('Assign to case (optional)')).toBeInTheDocument();
+    expect(screen.getByLabelText('Date last worn (optional)')).toBeInTheDocument();
+  });
+
+  it('flips limited edition with a switch, reporting the new value', async () => {
+    // A switch now, not a checkbox — but it is still just a form field: it
+    // reports the flip to the page and the page's Save commits it.
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    renderWithProviders(<Harness onChange={onChange} onCreateCase={vi.fn()} />);
+
+    const toggle = screen.getByRole('switch', { name: 'Limited edition' });
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
+    await user.click(toggle);
+    expect(onChange).toHaveBeenLastCalledWith('limitedEdition', true);
+  });
+
+  it('shows limited edition as on when the hat is', () => {
+    renderWithProviders(
+      <Harness onChange={vi.fn()} onCreateCase={vi.fn()} values={{ ...BASICS, limitedEdition: true }} />,
+    );
+    expect(screen.getByRole('switch', { name: 'Limited edition' })).toHaveAttribute('aria-checked', 'true');
   });
 
   it('reflects the values it is given (controlled, not internal state)', async () => {
@@ -213,7 +233,7 @@ describe('HatBasicsCard', () => {
     await waitFor(() => screen.getByRole('option', { name: 'Beanie (unspecified)' }));
     expect(screen.getByLabelText('Style')).toHaveValue('beanie');
     // Closed, the field reads as the selection rather than the raw id.
-    expect(screen.getByLabelText('Case Assignment')).toHaveValue('A-001 · Closet');
-    expect(screen.getByLabelText('Date Last Worn')).toHaveValue('2026-01-02');
+    expect(screen.getByLabelText('Case assignment')).toHaveValue('A-001 · Closet');
+    expect(screen.getByLabelText('Date last worn')).toHaveValue('2026-01-02');
   });
 });

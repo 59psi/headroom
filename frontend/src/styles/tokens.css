@@ -129,6 +129,11 @@
   --radius-pill: 999px;
   --nav-height: 68px;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
+  /* The top counterpart: zero in a browser tab, the status bar's height in
+     the installed iOS app, which draws under a translucent status bar
+     (`black-translucent` + `viewport-fit=cover`). Anything sticky at the top
+     of the viewport offsets by it, or it slides under the clock. */
+  --safe-top: env(safe-area-inset-top, 0px);
 }
 
 /* ===== Base ======================================================= */

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getStyles, getSizes, getConditions, getConstructions, getCollections } from '../../api/hats';
 import { listCases } from '../../api/cases';
@@ -6,6 +6,9 @@ import { getRoomOptions } from '../../api/rooms';
 import { PhotoCapture } from '../photos/PhotoCapture';
 import { ErrorNote } from '../common/ErrorNote';
 import { Combobox } from '../common/Combobox';
+import { Panel } from '../ui/Panel';
+import { Skeleton } from '../ui/Skeleton';
+import { Switch } from '../ui/Switch';
 import { CasePicker } from './CasePicker';
 
 /** The fields the Add and Edit hat forms share verbatim. */
@@ -123,11 +126,50 @@ export function PhotoCard({ onCapture, previewUrl }: {
   previewUrl: string | null;
 }) {
   return (
-    <div className="card mb-3">
-      <div className="card-body">
-        <div className="card-title">Photo</div>
-        <PhotoCapture onCapture={onCapture} previewUrl={previewUrl} />
+    <Panel title="Photo">
+      <PhotoCapture onCapture={onCapture} previewUrl={previewUrl} />
+    </Panel>
+  );
+}
+
+/**
+ * The hat forms while their option lists load: the page title stays put and
+ * the cards hold roughly their final shape, so the page settles once instead
+ * of a spinner being replaced by a form three screens tall.
+ */
+export function HatFormSkeleton() {
+  return (
+    <>
+      <div className="card hr-panel">
+        <div className="card-body">
+          <Skeleton height={220} />
+        </div>
       </div>
+      <div className="card hr-panel">
+        <div className="card-body">
+          {/* Shape only: the photo block above already says "Loading…". */}
+          <Skeleton lines={6} decorative />
+        </div>
+      </div>
+    </>
+  );
+}
+
+/**
+ * The form's submit row, pinned to the bottom of the screen while the form
+ * scrolls under it.
+ *
+ * Both hat forms are several screens tall on a phone, and Save lived at the
+ * very end — so correcting one field near the top meant scrolling past every
+ * other field to commit it. Sticky, so it rides just above the bottom nav
+ * (and simply sits at the end of the form while the keyboard is up; see
+ * hat-pages.css).
+ */
+export function HatFormActions({ children, error }: { children: ReactNode; error?: ReactNode }) {
+  return (
+    <div className="hr-form-actions">
+      {error}
+      <div className="hr-form-actions-row">{children}</div>
     </div>
   );
 }
@@ -136,7 +178,7 @@ interface BasicsCardProps {
   values: HatBasics;
   onChange: <K extends keyof HatBasics>(key: K, value: HatBasics[K]) => void;
   options: ReturnType<typeof useHatFormOptions>;
-  /** Invoked when the user picks "+ Create New Case…". */
+  /** Invoked when the user picks "+ Create new case…". */
   onCreateCase: () => void;
   caseLabel?: string;
   dateLabel?: string;
@@ -145,214 +187,208 @@ interface BasicsCardProps {
 /** The fields every hat has — style, size, condition, construction, series, case or room, dates, price — identical on both forms. */
 export function HatBasicsCard({
   values, onChange, options, onCreateCase,
-  caseLabel = 'Case Assignment',
-  dateLabel = 'Date Last Worn',
+  caseLabel = 'Case assignment',
+  dateLabel = 'Date last worn',
 }: BasicsCardProps) {
   return (
-    <div className="card mb-3">
-      <div className="card-body">
-        <div className="card-title">Details</div>
-        <ErrorNote of={{ isError: !!options.error, error: options.error }}
-          what="Some options could not be loaded" className="mb-2" />
+    <Panel title="Details">
+      <ErrorNote of={{ isError: !!options.error, error: options.error }}
+        what="Some options could not be loaded" className="mb-2" />
 
-        <div className="mb-3">
-          <label className="form-label">Style</label>
-          <select aria-label="Style" className="form-select" value={values.style} onChange={e => onChange('style', e.target.value)}>
+      {/* The three short picks side by side where there is room: Style on
+          its own line on a phone (its labels are the long ones —
+          "Beanie (unspecified)"), Size and Condition two-up beneath it. */}
+      <div className="hr-form-grid mb-3">
+        <div className="hr-form-grid-wide">
+          <label className="form-label" htmlFor="hat-style">Style</label>
+          <select id="hat-style" className="form-select" value={values.style} onChange={e => onChange('style', e.target.value)}>
             {options.styles.data?.map(s => (
               <option key={s.value} value={s.value}>{s.label}</option>
             ))}
           </select>
         </div>
 
-        <div className="mb-3">
-          <label className="form-label">Size</label>
-          <select aria-label="Size" className="form-select" value={values.size} onChange={e => onChange('size', e.target.value)}>
+        <div>
+          <label className="form-label" htmlFor="hat-size">Size</label>
+          <select id="hat-size" className="form-select" value={values.size} onChange={e => onChange('size', e.target.value)}>
             {options.sizes.data?.map(s => (
               <option key={s.value} value={s.value}>{s.label}</option>
             ))}
           </select>
         </div>
 
-        <div className="mb-3">
-          <label className="form-label">Condition</label>
-          <select aria-label="Condition" className="form-select" value={values.condition} onChange={e => onChange('condition', e.target.value)}>
+        <div>
+          <label className="form-label" htmlFor="hat-condition">Condition</label>
+          <select id="hat-condition" className="form-select" value={values.condition} onChange={e => onChange('condition', e.target.value)}>
             {options.conditions.data?.map(c => (
               <option key={c.value} value={c.value}>{c.label}</option>
             ))}
           </select>
         </div>
+      </div>
 
-        {/* Beside Style rather than inside it: these are constructions melin
-            offers ACROSS models, so a hat is "a Coronado, in HYDROLite", never
-            "a HYDROLite instead of a Coronado".
+      {/* Beside Style rather than inside it: these are constructions melin
+          offers ACROSS models, so a hat is "a Coronado, in HYDROLite", never
+          "a HYDROLite instead of a Coronado".
 
-            A combobox and not a <select>: melin ships specialty fabrics in
-            seasonal and collab drops, so any closed list is wrong by next
-            season. The known builds are visible, tappable rows that filter as
-            you type, and anything else you type is still accepted. The options
-            come from the server, which merges the curated list with every
-            value already in use — so a fabric typed once is a suggestion after
-            that, and the free-form half doesn't fill up with five spellings of
-            the same material. */}
+          A combobox and not a <select>: melin ships specialty fabrics in
+          seasonal and collab drops, so any closed list is wrong by next
+          season. The known builds are visible, tappable rows that filter as
+          you type, and anything else you type is still accepted. The options
+          come from the server, which merges the curated list with every
+          value already in use — so a fabric typed once is a suggestion after
+          that, and the free-form half doesn't fill up with five spellings of
+          the same material. */}
+      <div className="mb-3">
+        <Combobox
+          id="hat-construction"
+          label="Construction"
+          value={values.construction}
+          onChange={v => onChange('construction', v)}
+          options={options.constructions.data ?? []}
+          placeholder="HYDRO, HYDROLite, Thermal…"
+          help={
+            <>Tap a known build or type the fabric. Leave it blank if you
+            don&rsquo;t know — analysis never sets this (a photo can&rsquo;t
+            tell HYDRO from HYDROLite reliably, and it moves the price), so a
+            blank is an honest &ldquo;nobody has looked&rdquo;.</>
+          }
+        />
+      </div>
+
+      {/* Editable at ADD time, not only on the Edit form. A collection or
+          collaboration name is printed on the box and the hang tag, and is
+          frequently invisible in a photo of the hat itself — so the owner
+          standing there with it knows something the analyzer cannot see, and
+          making them save first and edit second meant either a second trip
+          or hoping Claude guessed. Analysis leaves a filled-in value alone. */}
+      <div className="mb-3">
+        <Combobox
+          id="hat-artist-series"
+          label="Collection or collaboration"
+          value={values.artistSeries}
+          onChange={v => onChange('artistSeries', v)}
+          options={options.collections.data ?? []}
+          placeholder="Piña, Skye Walker, melin x OluKai…"
+          help={
+            <>Signature collaborations, artist series and named collections.
+            Pick an existing one to keep them from splitting into
+            &ldquo;Neon&rdquo;, &ldquo;NEON&rdquo; and &ldquo;neon&rdquo; —
+            and if you type one anyway, it snaps to the spelling already on
+            record. Analysis fills this in when it recognizes one; anything
+            you type survives a re-analysis.</>
+          }
+        />
+      </div>
+
+      <div className="mb-3">
+        <CasePicker
+          label={caseLabel}
+          value={values.caseId}
+          onChange={v => {
+            onChange('caseId', v);
+            // A case and a room are mutually exclusive server-side, so the
+            // form must not leave a stale room selected underneath a case —
+            // the save would drop it and the screen would still show it.
+            if (v) onChange('roomId', '');
+          }}
+          cases={options.cases.data ?? []}
+          // Which cases can take this hat depends on what it IS — a beanie
+          // and a regular hat see different availability in the same case.
+          isBeanie={
+            options.styles.data?.find(o => o.value === values.style)?.is_beanie ?? false
+          }
+          onCreateCase={onCreateCase}
+        />
+      </div>
+
+      {/* Only offered when there's no case. Caddies and Aviators don't fit a
+          three-hat travel case, special editions get displayed rather than
+          packed, and plenty of hats are simply out on a shelf — but a hat in
+          a case already has a room, via the case. */}
+      {!values.caseId && (
         <div className="mb-3">
-          <Combobox
-            id="hat-construction"
-            label="Construction"
-            value={values.construction}
-            onChange={v => onChange('construction', v)}
-            options={options.constructions.data ?? []}
-            placeholder="HYDRO, HYDROLite, Thermal…"
-            help={
-              <>Tap a known build or type the fabric. Leave it blank if you
-              don&rsquo;t know — analysis never sets this (a photo can&rsquo;t
-              tell HYDRO from HYDROLite reliably, and it moves the price), so a
-              blank is an honest &ldquo;nobody has looked&rdquo;.</>
-            }
-          />
-        </div>
-
-        {/* Editable at ADD time, not only on the Edit form. A collection or
-            collaboration name is printed on the box and the hang tag, and is
-            frequently invisible in a photo of the hat itself — so the owner
-            standing there with it knows something the analyzer cannot see, and
-            making them save first and edit second meant either a second trip
-            or hoping Claude guessed. Analysis leaves a filled-in value alone. */}
-        <div className="mb-3">
-          <Combobox
-            id="hat-artist-series"
-            label="Collection or collaboration"
-            value={values.artistSeries}
-            onChange={v => onChange('artistSeries', v)}
-            options={options.collections.data ?? []}
-            placeholder="Piña, Skye Walker, melin x OluKai…"
-            help={
-              <>Signature collaborations, artist series and named collections.
-              Pick an existing one to keep them from splitting into
-              &ldquo;Neon&rdquo;, &ldquo;NEON&rdquo; and &ldquo;neon&rdquo; —
-              and if you type one anyway, it snaps to the spelling already on
-              record. Analysis fills this in when it recognizes one; anything
-              you type survives a re-analysis.</>
-            }
-          />
-        </div>
-
-        <div className="mb-3">
-          <CasePicker
-            label={caseLabel}
-            value={values.caseId}
-            onChange={v => {
-              onChange('caseId', v);
-              // A case and a room are mutually exclusive server-side, so the
-              // form must not leave a stale room selected underneath a case —
-              // the save would drop it and the screen would still show it.
-              if (v) onChange('roomId', '');
-            }}
-            cases={options.cases.data ?? []}
-            // Which cases can take this hat depends on what it IS — a beanie
-            // and a regular hat see different availability in the same case.
-            isBeanie={
-              options.styles.data?.find(o => o.value === values.style)?.is_beanie ?? false
-            }
-            onCreateCase={onCreateCase}
-          />
-        </div>
-
-        {/* Only offered when there's no case. Caddies and Aviators don't fit a
-            three-hat travel case, special editions get displayed rather than
-            packed, and plenty of hats are simply out on a shelf — but a hat in
-            a case already has a room, via the case. */}
-        {!values.caseId && (
-          <div className="mb-3">
-            <label className="form-label" htmlFor="hat-room">Room (no case)</label>
-            <select
-              id="hat-room"
-              aria-label="Room (no case)"
-              className="form-select"
-              value={values.roomId}
-              onChange={e => onChange('roomId', e.target.value)}
-            >
-              <option value="">Not in a room</option>
-              {options.rooms.data?.map(r => (
-                <option key={r.value} value={r.value}>{r.label}</option>
-              ))}
-            </select>
-            <div className="form-text">
-              Where this hat lives when it isn't in a case — a shelf, a hook, a
-              stand.
-            </div>
-          </div>
-        )}
-
-        <div className="mb-3 form-check">
-          <input
-            id="hat-limited-edition"
-            aria-label="Limited edition"
-            className="form-check-input"
-            type="checkbox"
-            checked={values.limitedEdition}
-            onChange={e => onChange('limitedEdition', e.target.checked)}
-          />
-          <label className="form-check-label" htmlFor="hat-limited-edition">
-            Limited edition
-          </label>
+          <label className="form-label" htmlFor="hat-room">Room (no case)</label>
+          <select
+            id="hat-room"
+            className="form-select"
+            value={values.roomId}
+            onChange={e => onChange('roomId', e.target.value)}
+          >
+            <option value="">Not in a room</option>
+            {options.rooms.data?.map(r => (
+              <option key={r.value} value={r.value}>{r.label}</option>
+            ))}
+          </select>
           <div className="form-text">
-            A special or limited run. Nothing can work this out from a photo —
-            a hat is limited because the drop was.
+            Where this hat lives when it isn't in a case — a shelf, a hook, a
+            stand.
           </div>
         </div>
+      )}
 
-        {/* Cost basis, at add time for the same reason as the collection name
-            above: the receipt is in hand now. It is also the only figure in
-            the app that is a fact rather than an estimate, and nothing else
-            can derive it — a hat bought secondhand or on sale has no other
-            route to a price except the order-history import, which won't have
-            covered it. */}
-        <div className="row g-2 mb-3">
-          <div className="col-7">
-            <label className="form-label" htmlFor="hat-purchase-price">Price paid</label>
-            <input
-              id="hat-purchase-price"
-              type="number"
-              inputMode="decimal"
-              step="0.01"
-              min="0"
-              aria-label="Price paid"
-              className="form-control"
-              placeholder="optional"
-              value={values.purchasePrice}
-              onChange={e => onChange('purchasePrice', e.target.value)}
-            />
-          </div>
-          <div className="col-5">
-            <label className="form-label" htmlFor="hat-purchased-at">Bought on</label>
-            <input
-              id="hat-purchased-at"
-              type="date"
-              aria-label="Bought on"
-              className="form-control"
-              value={values.purchasedAt}
-              onChange={e => onChange('purchasedAt', e.target.value)}
-            />
-          </div>
-          <div className="col-12">
-            <div className="form-text">
-              Drives cost-per-wear and the collection's cost basis. Leave blank
-              if you'd rather import it from your order history in Settings.
-            </div>
-          </div>
-        </div>
+      {/* A switch, not a checkbox: an on/off fact about the hat, and the
+          same control every other on/off setting in the app uses now. It
+          only flips the form's value — the form's Save still commits it. */}
+      <div className="mb-3">
+        <Switch
+          id="hat-limited-edition"
+          checked={values.limitedEdition}
+          onChange={v => onChange('limitedEdition', v)}
+          label="Limited edition"
+          hint="A special or limited run. Nothing can work this out from a photo — a hat is limited because the drop was."
+        />
+      </div>
 
-        <div className="mb-3">
-          <label className="form-label">{dateLabel}</label>
+      {/* Cost basis, at add time for the same reason as the collection name
+          above: the receipt is in hand now. It is also the only figure in
+          the app that is a fact rather than an estimate, and nothing else
+          can derive it — a hat bought secondhand or on sale has no other
+          route to a price except the order-history import, which won't have
+          covered it. */}
+      <div className="row g-2 mb-3">
+        <div className="col-7">
+          <label className="form-label" htmlFor="hat-purchase-price">Price paid</label>
           <input
-            type="date"
-            aria-label={dateLabel}
+            id="hat-purchase-price"
+            type="number"
+            inputMode="decimal"
+            step="0.01"
+            min="0"
             className="form-control"
-            value={values.dateLastWorn}
-            onChange={e => onChange('dateLastWorn', e.target.value)}
+            placeholder="optional"
+            value={values.purchasePrice}
+            onChange={e => onChange('purchasePrice', e.target.value)}
           />
+        </div>
+        <div className="col-5">
+          <label className="form-label" htmlFor="hat-purchased-at">Bought on</label>
+          <input
+            id="hat-purchased-at"
+            type="date"
+            className="form-control"
+            value={values.purchasedAt}
+            onChange={e => onChange('purchasedAt', e.target.value)}
+          />
+        </div>
+        <div className="col-12">
+          <div className="form-text">
+            Drives cost-per-wear and the collection's cost basis. Leave blank
+            if you'd rather import it from your order history in Settings.
+          </div>
         </div>
       </div>
-    </div>
+
+      <div>
+        <label className="form-label" htmlFor="hat-date-last-worn">{dateLabel}</label>
+        <input
+          id="hat-date-last-worn"
+          type="date"
+          className="form-control"
+          value={values.dateLastWorn}
+          onChange={e => onChange('dateLastWorn', e.target.value)}
+        />
+      </div>
+    </Panel>
   );
 }

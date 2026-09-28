@@ -71,6 +71,21 @@ describe('GuestHatPage', () => {
   it('handles a hat that is not available', async () => {
     render(new Error('Not found'));
     expect(await screen.findByText(/isn't available/i)).toBeInTheDocument();
+    // The notice's one action says where it goes in words — it is the only
+    // thing on the page, so a bare "← Collection" chip is too little.
+    expect(screen.getByRole('link', { name: 'Back to the collection' })).toHaveAttribute('href', '/guest');
+  });
+
+  it('lets a guest open the photo full size', async () => {
+    render(hat({ photo_url: '/api/public/guest/hats/7/photo' }));
+    expect(await screen.findByRole('button', { name: 'View Melin Coronado full size' })).toBeInTheDocument();
+  });
+
+  it('lists the colors by name', async () => {
+    render(hat({ colors: [{ name: 'Navy', hex: '#001f3f' }, { name: 'White', hex: null }] }));
+    const colors = await screen.findByRole('heading', { name: 'Colors' });
+    expect(colors).toBeInTheDocument();
+    expect(screen.getAllByRole('listitem').map(li => li.textContent)).toEqual(['Navy', 'White']);
   });
 
   it('does not call the API for a non-numeric id', async () => {

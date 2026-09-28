@@ -1,9 +1,15 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { auditConstructions, clearConstruction } from '../../api/settings';
 import type { ConstructionClearResult } from '../../types';
 import { invalidateHatVocabulary } from '../../lib/invalidate';
 import { ErrorNote } from '../common/ErrorNote';
+import { Panel } from '../ui/Panel';
+import { StatusPill } from '../ui/StatusPill';
+import { Skeleton } from '../ui/Skeleton';
+import { useToast } from '../ui/Toast';
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /**
  * Review constructions and undo ones analysis guessed.
@@ -17,6 +23,7 @@ import { ErrorNote } from '../common/ErrorNote';
  */
 export function ConstructionAuditCard() {
   const qc = useQueryClient();
+  const toast = useToast();
   const audit = useQuery({
     queryKey: ['admin', 'construction-audit'],
     queryFn: auditConstructions,
@@ -27,15 +34,36 @@ export function ConstructionAuditCard() {
   // not "I don't know" but "these are all actually HYDRO", and clearing would
   // discard a correction the owner already knows how to make.
   const [target, setTarget] = useState('');
+  // Bumped on every edit of the target box. Clearing `preview` on an edit
+  // only retires a preview that is already UP; a dry run still in flight
+  // would land a moment later with a plan for the old target — "Clear
+  // “HYDROLite”…?" under a box that now says HYDRO. Each dry run carries the
+  // count it started under, and a result from before the latest edit is
+  // dropped rather than shown.
+  const edits = useRef(0);
 
   const dryRun = useMutation({
-    mutationFn: (value: string) => clearConstruction(value, true, target || null),
-    onSuccess: setPreview,
+    // `to` arrives as a variable, fixed at the press, rather than read from
+    // the box inside the request — the same rule as `apply` below. It is
+    // trimmed there: a whitespace-only target is truthy, so it used to be sent
+    // as a `to` of "  " rather than read as the blank that means "clear".
+    mutationFn: ({ value, to }: { value: string; to: string | null; edit: number }) =>
+      clearConstruction(value, true, to),
+    onSuccess: (result, { edit }) => {
+      if (edit === edits.current) setPreview(result);
+    },
   });
   const apply = useMutation({
-    mutationFn: (value: string) => clearConstruction(value, false, target || null),
-    onSuccess: () => {
+    // Applies exactly what the preview showed — the construction AND the
+    // target the server echoed back (already canonicalized) — rather than
+    // re-reading the text box. Reading the box let an edit made after the
+    // preview apply a value nobody had previewed.
+    mutationFn: (p: ConstructionClearResult) => clearConstruction(p.construction, false, p.to),
+    onSuccess: result => {
       setPreview(null);
+      toast.success(result.to
+        ? `Changed “${result.construction}” to “${result.to}” on ${plural(result.hats_cleared, 'hat')}`
+        : `Cleared “${result.construction}” from ${plural(result.hats_cleared, 'hat')}`);
       qc.invalidateQueries({ queryKey: ['admin', 'construction-audit'] });
       qc.invalidateQueries({ queryKey: ['hats'] });
       qc.invalidateQueries({ queryKey: ['hat'] });
@@ -44,112 +72,141 @@ export function ConstructionAuditCard() {
     },
   });
 
+  const totalHats = (data ?? []).reduce((n, row) => n + row.hat_count, 0);
+  const verb = target.trim() ? 'Change' : 'Clear';
+
   return (
-    <div className="card mb-3">
-      <div className="card-body">
-        <h5 className="card-title">Construction audit</h5>
-        <p className="text-secondary small">
-          Analysis used to fill this field from the photo, and it reads HYDRO vs
-          HYDROLite unreliably — the tells don't survive a front-on shot. It no
-          longer writes the field at all, but values it already wrote are still
-          here, and nothing recorded which came from you. Clearing one also
-          removes the model-name suffix and any price the table derived from it.
-        </p>
-
-        <div className="mb-3">
-          <label className="form-label small" htmlFor="construction-target">
-            Change them to
-          </label>
-          <input
-            id="construction-target"
-            aria-label="Change them to"
-            className="form-control form-control-sm font-mono"
-            placeholder="HYDRO — or leave blank to clear the field"
-            value={target}
-            onChange={e => setTarget(e.target.value)}
-            style={{ maxWidth: 320 }}
-          />
+    <Panel
+      title="Construction audit"
+      status={audit.isSuccess && (data?.length
+        ? <StatusPill tone="info">{plural(totalHats, 'hat')}</StatusPill>
+        : <StatusPill tone="ok">Nothing to do</StatusPill>)}
+      description="Undo construction values analysis guessed from photos — it can't tell HYDRO from HYDROLite front-on."
+      help={
+        <>
+          <p>
+            Analysis used to fill this field from the photo, and it reads HYDRO vs
+            HYDROLite unreliably — the tells (bonded seams, a gel-welded logo, a
+            sweatband) don&rsquo;t survive a front-on shot. It no longer writes the
+            field at all, but values it already wrote are still here, and nothing
+            recorded which came from you.
+          </p>
+          <p>
+            Clearing one also removes the model-name suffix and any price the table
+            derived from it. Type a value in <em>Change them to</em> to rewrite them
+            instead of clearing. Every change is previewed first, and hats you set
+            yourself are left alone.
+          </p>
+        </>
+      }
+    >
+      <div className="mb-3">
+        <label className="form-label" htmlFor="construction-target">
+          Change them to
+        </label>
+        {/* The "or leave blank" half used to be the tail of the placeholder,
+            which a phone-width mono field cut off mid-word. */}
+        <input
+          id="construction-target"
+          className="form-control font-mono hr-sd-narrow"
+          placeholder="HYDRO"
+          aria-describedby="construction-target-hint"
+          value={target}
+          onChange={e => {
+            edits.current += 1;
+            setTarget(e.target.value);
+            // A preview describes the target it was run with. Leaving it up
+            // while the box says something else shows one plan and labels the
+            // button with another.
+            setPreview(null);
+          }}
+          autoComplete="off"
+        />
+        <div id="construction-target-hint" className="hr-sd-legend mt-1">
+          What the hats become. Leave blank to clear the field instead.
         </div>
-
-        <ErrorNote of={[audit, dryRun, apply]} className="mb-2" />
-        {audit.isSuccess && !data?.length && (
-          <p className="text-secondary small mb-0">No constructions recorded.</p>
-        )}
-
-        {!!data?.length && (
-          <div className="table-responsive">
-            <table className="table table-sm align-middle mb-0">
-              <thead>
-                <tr>
-                  <th>Construction</th>
-                  <th className="text-end">Hats</th>
-                  <th className="text-end">Priced from it</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {data.map(row => (
-                  <tr key={row.construction}>
-                    <td className="font-mono">{row.construction}</td>
-                    <td className="text-end">{row.hat_count}</td>
-                    <td className="text-end">{row.priced_from_table}</td>
-                    <td className="text-end">
-                      <button
-                        type="button"
-                        className="btn btn-outline-danger btn-sm"
-                        disabled={dryRun.isPending}
-                        onClick={() => dryRun.mutate(row.construction)}
-                      >Clear…</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {preview && (
-          <div className="alert alert-warning mt-3 small">
-            <div className="fw-semibold mb-1">
-              {preview.to
-                ? <>Change “{preview.construction}” to “{preview.to}” on </>
-                : <>Clear “{preview.construction}” from </>}
-              {preview.hats_cleared} hat{preview.hats_cleared === 1 ? '' : 's'}?
-            </div>
-            <ul className="mb-2">
-              <li>{preview.model_names_corrected} model name(s) lose the suffix</li>
-              <li>
-                {preview.prices_cleared} price(s){' '}
-                {preview.to ? 're-looked-up from the new value' : 'cleared'}
-              </li>
-              <li>{preview.manual_prices_kept} price(s) you entered are kept</li>
-              <li>
-                <strong>{preview.owner_set_skipped}</strong> left alone because
-                you set them yourself
-              </li>
-            </ul>
-            {!!preview.samples.length && (
-              <div className="text-secondary mb-2 font-mono">
-                {preview.samples.join(', ')}
-                {preview.hats_cleared > preview.samples.length && ' …'}
-              </div>
-            )}
-            <div className="d-flex gap-2">
-              <button
-                type="button"
-                className="btn btn-danger btn-sm"
-                disabled={apply.isPending || preview.hats_cleared === 0}
-                onClick={() => apply.mutate(preview.construction)}
-              >{apply.isPending ? (preview.to ? 'Changing…' : 'Clearing…') : (preview.to ? 'Change them' : 'Clear them')}</button>
-              <button
-                type="button"
-                className="btn btn-outline-secondary btn-sm"
-                onClick={() => setPreview(null)}
-              >Cancel</button>
-            </div>
-          </div>
-        )}
       </div>
-    </div>
+
+      {audit.isLoading && <Skeleton lines={3} />}
+      <ErrorNote of={[audit, dryRun, apply]} className="mb-2" />
+      {audit.isSuccess && !data?.length && (
+        <p className="text-secondary small mb-0">No constructions recorded.</p>
+      )}
+
+      {/* Rows, not a four-column table: at phone width the table scrolled
+          sideways and clipped the one button in each row. The counts ride
+          under the value as one line, which is how they are read anyway. */}
+      {!!data?.length && (
+        <ul className="hr-sd-rows">
+          {data.map(row => {
+            const checking = dryRun.isPending && dryRun.variables?.value === row.construction;
+            return (
+              <li key={row.construction}>
+                <span className="hr-sd-row-stack">
+                  <span className="font-mono">{row.construction}</span>
+                  <span className="hr-sd-legend">
+                    {plural(row.hat_count, 'hat')} · {row.priced_from_table} priced from it
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-outline-danger btn-sm"
+                  aria-label={`${verb} ${row.construction}…`}
+                  disabled={dryRun.isPending}
+                  onClick={() => dryRun.mutate({
+                    value: row.construction,
+                    to: target.trim() || null,
+                    edit: edits.current,
+                  })}
+                >{checking ? 'Checking…' : `${verb}…`}</button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {preview && (
+        <div className="hr-sd-preview is-warn mt-3" role="region" aria-label="Preview">
+          <div className="fw-semibold mb-2">
+            {preview.to
+              ? <>Change “{preview.construction}” to “{preview.to}” on </>
+              : <>Clear “{preview.construction}” from </>}
+            {preview.hats_cleared} hat{preview.hats_cleared === 1 ? '' : 's'}?
+          </div>
+          <ul className="hr-sd-preview-list">
+            <li>{preview.model_names_corrected} model name(s) lose the suffix</li>
+            <li>
+              {preview.prices_cleared} price(s){' '}
+              {preview.to ? 're-looked-up from the new value' : 'cleared'}
+            </li>
+            <li>{preview.manual_prices_kept} price(s) you entered are kept</li>
+            <li>
+              <strong>{preview.owner_set_skipped}</strong> left alone because
+              you set them yourself
+            </li>
+          </ul>
+          {!!preview.samples.length && (
+            <div className="text-secondary small mb-2 font-mono hr-sd-samples">
+              {preview.samples.join(', ')}
+              {preview.hats_cleared > preview.samples.length && ' …'}
+            </div>
+          )}
+          <div className="d-flex gap-2 flex-wrap">
+            <button
+              type="button"
+              className="btn btn-danger btn-sm"
+              disabled={apply.isPending || preview.hats_cleared === 0}
+              onClick={() => apply.mutate(preview)}
+            >{apply.isPending ? (preview.to ? 'Changing…' : 'Clearing…') : (preview.to ? 'Change them' : 'Clear them')}</button>
+            <button
+              type="button"
+              className="btn btn-outline-secondary btn-sm"
+              disabled={apply.isPending}
+              onClick={() => setPreview(null)}
+            >Cancel</button>
+          </div>
+        </div>
+      )}
+    </Panel>
   );
 }

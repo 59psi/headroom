@@ -68,12 +68,28 @@ describe('EditHatPage — Collection / collab', () => {
     const field = await screen.findByLabelText('Collection or collaboration');
     await user.clear(field);
     await user.type(field, 'melin x OluKai');
-    await user.click(screen.getByRole('button', { name: 'Save Changes' }));
+    await user.click(screen.getByRole('button', { name: 'Save changes' }));
 
     await waitFor(() => expect(hatsApi.updateHat).toHaveBeenCalled());
     expect(vi.mocked(hatsApi.updateHat).mock.calls[0][1]).toMatchObject({
       artist_series: 'melin x OluKai',
     });
+    // Acknowledged where the eye lands next — the toast outlives the
+    // navigation back to the hat page.
+    expect(await screen.findByText('Changes saved')).toBeInTheDocument();
+  });
+
+  it('says why a save failed, in place, and stays on the form', async () => {
+    const user = userEvent.setup();
+    vi.mocked(hatsApi.updateHat).mockRejectedValueOnce(new Error('Case A-001 is full'));
+    renderWithProviders(<EditHatPage />);
+
+    await screen.findByLabelText('Collection or collaboration');
+    await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    expect(await screen.findByText(/Case A-001 is full/)).toBeInTheDocument();
+    expect(screen.queryByText('Changes saved')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeEnabled();
   });
 
   it('clears the field to null rather than an empty string', async () => {
@@ -81,7 +97,7 @@ describe('EditHatPage — Collection / collab', () => {
     renderWithProviders(<EditHatPage />);
 
     await user.clear(await screen.findByLabelText('Collection or collaboration'));
-    await user.click(screen.getByRole('button', { name: 'Save Changes' }));
+    await user.click(screen.getByRole('button', { name: 'Save changes' }));
 
     await waitFor(() => expect(hatsApi.updateHat).toHaveBeenCalled());
     expect(vi.mocked(hatsApi.updateHat).mock.calls[0][1]).toMatchObject({
@@ -125,7 +141,7 @@ describe('EditHatPage — a price becomes "manual" only when you actually edit i
     const field = await screen.findByLabelText('Collection or collaboration');
     await user.clear(field);
     await user.type(field, 'melin x Hydro Flask');
-    await user.click(screen.getByRole('button', { name: 'Save Changes' }));
+    await user.click(screen.getByRole('button', { name: 'Save changes' }));
 
     await waitFor(() => expect(hatsApi.updateHat).toHaveBeenCalled());
     const payload = vi.mocked(hatsApi.updateHat).mock.calls[0][1];
@@ -143,7 +159,7 @@ describe('EditHatPage — a price becomes "manual" only when you actually edit i
     const resale = await screen.findByLabelText('Resale ($)');
     await user.clear(resale);
     await user.type(resale, '60');
-    await user.click(screen.getByRole('button', { name: 'Save Changes' }));
+    await user.click(screen.getByRole('button', { name: 'Save changes' }));
 
     await waitFor(() => expect(hatsApi.updateHat).toHaveBeenCalled());
     const payload = vi.mocked(hatsApi.updateHat).mock.calls[0][1];
@@ -157,7 +173,7 @@ describe('EditHatPage — a price becomes "manual" only when you actually edit i
     renderWithProviders(<EditHatPage />);
 
     await user.clear(await screen.findByLabelText('Resale ($)'));
-    await user.click(screen.getByRole('button', { name: 'Save Changes' }));
+    await user.click(screen.getByRole('button', { name: 'Save changes' }));
 
     await waitFor(() => expect(hatsApi.updateHat).toHaveBeenCalled());
     // Clearing hands the hat back to the live market feed, which the server
@@ -215,7 +231,7 @@ describe('EditHatPage — the price guard cannot be defeated by a refetch or a t
 
     await user.clear(field);
     await user.type(field, 'melin x Hydro Flask');
-    await user.click(screen.getByRole('button', { name: 'Save Changes' }));
+    await user.click(screen.getByRole('button', { name: 'Save changes' }));
 
     await waitFor(() => expect(hatsApi.updateHat).toHaveBeenCalled());
     expect(vi.mocked(hatsApi.updateHat).mock.calls[0][1]).not.toHaveProperty('resale_price');
@@ -235,7 +251,7 @@ describe('EditHatPage — the price guard cannot be defeated by a refetch or a t
       configurable: true,
       value: { badInput: true },
     });
-    await user.click(screen.getByRole('button', { name: 'Save Changes' }));
+    await user.click(screen.getByRole('button', { name: 'Save changes' }));
 
     await waitFor(() => expect(hatsApi.updateHat).toHaveBeenCalled());
     expect(vi.mocked(hatsApi.updateHat).mock.calls[0][1]).not.toHaveProperty('resale_price');

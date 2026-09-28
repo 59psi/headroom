@@ -1,12 +1,20 @@
+/**
+ * A page-level "working on it": a neon ring and a word.
+ *
+ * Both are held back for a moment by the stylesheet (`.hr-loading` fades in
+ * after a short delay), so a load the Pi answers in a blink never flashes a
+ * spinner at all — the page just appears. The status text is in the DOM from
+ * the first frame regardless, so assistive tech hears it immediately.
+ *
+ * The visible label IS the status message. It used to be printed twice — a
+ * visually-hidden copy inside the ring for screen readers and a visible
+ * uppercase copy under it — so a screen reader read it out twice.
+ */
 export function LoadingSpinner({ label = 'Loading' }: { label?: string }) {
   return (
-    <div className="d-flex flex-column align-items-center justify-content-center py-5 gap-3">
-      <div className="spinner-border" role="status">
-        <span className="visually-hidden">{label}…</span>
-      </div>
-      <div className="text-secondary small font-mono" style={{ letterSpacing: '0.16em', textTransform: 'uppercase' }}>
-        {label}…
-      </div>
+    <div className="hr-loading" role="status">
+      <span className="hr-loading-ring" aria-hidden="true" />
+      <span className="hr-loading-label">{label}…</span>
     </div>
   );
 }

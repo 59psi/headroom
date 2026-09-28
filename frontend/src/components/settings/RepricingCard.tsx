@@ -1,9 +1,31 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getRepricing, runRepricing, runRepricingAll } from '../../api/settings';
+import type { RepricingStatus } from '../../types';
 import { ErrorNote } from '../common/ErrorNote';
 import { invalidateHatViews } from '../../lib/invalidate';
 import { SweepProgressBar } from '../common/SweepProgressBar';
+import { Panel } from '../ui/Panel';
+import { StatusPill } from '../ui/StatusPill';
+import { Skeleton } from '../ui/Skeleton';
+import { useToast } from '../ui/Toast';
+
+/**
+ * The card's state in one word.
+ *
+ * Order matters: a sweep in flight outranks everything (it is the live
+ * answer), and a FAILING schedule outranks "Scheduled" — `consecutive_failures`
+ * is the scheduler's own alarm, which a manual run deliberately does not
+ * clear, so a dead background loop cannot hide behind one good button press.
+ */
+function statusPill(s: RepricingStatus) {
+  if (s.progress?.running) return <StatusPill tone="busy">Sweeping</StatusPill>;
+  if (s.consecutive_failures > 0) {
+    return <StatusPill tone="error" title={s.last_error ?? undefined}>Failing</StatusPill>;
+  }
+  if (s.enabled) return <StatusPill tone="ok">Scheduled</StatusPill>;
+  return <StatusPill tone="off">Off</StatusPill>;
+}
 
 /**
  * Periodic re-pricing.
@@ -18,6 +40,7 @@ import { SweepProgressBar } from '../common/SweepProgressBar';
  */
 export function RepricingCard() {
   const qc = useQueryClient();
+  const toast = useToast();
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const status = useQuery({
     queryKey: ['admin', 'repricing'],
@@ -44,8 +67,12 @@ export function RepricingCard() {
     mutationFn: runRepricingAll,
     onSuccess: result => {
       // Only opens the polling window when a sweep actually started; a refused
-      // press (one already running) must not restart the grace timer.
-      if (result.started) setStartedAt(Date.now());
+      // press (one already running) must not restart the grace timer — and
+      // must not be toasted as a start either. The refusal is said in place.
+      if (result.started) {
+        setStartedAt(Date.now());
+        toast.success('Sweep started');
+      }
       qc.invalidateQueries({ queryKey: ['admin', 'repricing'] });
     },
   });
@@ -59,6 +86,10 @@ export function RepricingCard() {
       qc.invalidateQueries({ queryKey: ['admin', 'repricing'] });
     },
     onSuccess: () => {
+      // The acknowledgement only. The numbers ("12 of 50 changed, 30 still to
+      // sweep") stay in the footer, because "press again" is an instruction
+      // that must outlive a toast.
+      toast.success('Re-price finished');
       qc.invalidateQueries({ queryKey: ['admin', 'repricing'] });
       // A SIBLING key, not covered by the one above: a sweep rewrites the very
       // (price, source) pairs the shared-price report groups on, so leaving it
@@ -92,48 +123,30 @@ export function RepricingCard() {
   }, [sweeping, qc]);
 
   return (
-    <div className="card mb-3">
-      <div className="card-body">
-        <div className="card-title">Re-pricing</div>
-        <ErrorNote of={[status, run, runAll]} className="mb-3" />
-        <p className="text-secondary small mb-3">
-          Refreshes resale values from the marketplace on a schedule. Independent of
-          photo analysis — a median is looked up from details already on the hat, so
-          it needs no Claude call and keeps working when analysis can&rsquo;t.
-          Prices you entered yourself are never touched.
-        </p>
-
-        <SweepProgressBar progress={s?.progress} />
-
-        {s && (
-          <div className="hr-metric mb-3">
-            <div className="hr-metric-label">
-              {s.enabled
-                ? `Every ${s.interval_hours} hours`
-                : 'Scheduled sweeps off — run one below'}
-            </div>
-            <div className="hr-metric-value font-mono">
-              {s.last_success_at
-                ? `${s.last_repriced} of ${s.last_considered} changed`
-                : 'No sweep yet'}
-            </div>
-            {s.last_success_at && (
-              <div className="text-secondary small">
-                Last swept {new Date(s.last_success_at).toLocaleString()}
-              </div>
-            )}
-            {s.last_error && (
-              <div className="text-muted small font-mono" style={{ fontSize: '0.72rem' }}>
-                {s.last_error}
-              </div>
-            )}
-          </div>
-        )}
-
-        <div className="d-flex gap-2 flex-wrap">
+    <Panel
+      title="Re-pricing"
+      status={s && statusPill(s)}
+      description="Refreshes resale values from the marketplace on a schedule. Prices you entered yourself are never touched."
+      help={
+        <>
+          <p>
+            Independent of photo analysis — a median is looked up from details
+            already on the hat, so it needs no Claude call and keeps working when
+            analysis can&rsquo;t.
+          </p>
+          <p>
+            <strong>Re-price now</strong> refreshes a bounded batch while you wait
+            and tells you how many changed; press it again to continue.{' '}
+            <strong>Re-price all</strong> sweeps the whole collection in the
+            background and reports through the progress bar here.
+          </p>
+        </>
+      }
+      footer={
+        <>
           <button
             type="button"
-            className="btn btn-outline-primary btn-sm"
+            className="btn btn-primary"
             onClick={() => run.mutate()}
             disabled={run.isPending || sweeping}
           >
@@ -146,42 +159,78 @@ export function RepricingCard() {
               runs in the background and reports through the progress bar. */}
           <button
             type="button"
-            className="btn btn-outline-secondary btn-sm"
+            className="btn btn-outline-secondary"
             onClick={() => runAll.mutate()}
             disabled={runAll.isPending || sweeping || run.isPending}
           >
             {sweeping ? 'Sweeping…' : 'Re-price all'}
           </button>
-        </div>
-        {runAll.data?.already_running && (
-          <p className="text-secondary small mb-0 mt-2">
-            A sweep is already running — watch the bar above.
-          </p>
-        )}
-        {runAll.isError && (
-          <p className="small mb-0 mt-2" style={{ color: 'var(--neon-pink)' }}>
-            {(runAll.error as Error).message}
-          </p>
-        )}
-        {run.isSuccess && (
-          <p className="text-secondary small mb-0 mt-2">
-            {run.data.repriced} of {run.data.considered} hats changed price.
-            {/* `remaining` is what is still DUE after this run (2.76.0), not
-                "eligible at all" — so the test is "any left", never a comparison
-                with `considered`. Under the old `remaining > considered` the last
-                page of a bounded sweep (50 swept, 30 due) said nothing and read
-                as finished. */}
-            {run.data.remaining > 0 && (
-              <> {run.data.remaining} still to sweep &mdash; press again to continue.</>
-            )}
-          </p>
-        )}
-        {run.isError && (
-          <p className="small mb-0 mt-2" style={{ color: 'var(--neon-pink)' }}>
-            {(run.error as Error).message}
-          </p>
-        )}
-      </div>
-    </div>
+          {runAll.data?.already_running && (
+            <p className="hr-sd-foot-note">
+              A sweep is already running — watch the bar above.
+            </p>
+          )}
+          {run.isSuccess && (
+            <p className="hr-sd-foot-note">
+              {run.data.repriced} of {run.data.considered} hats changed price.
+              {/* `remaining` is what is still DUE after this run (2.76.0), not
+                  "eligible at all" — so the test is "any left", never a comparison
+                  with `considered`. Under the old `remaining > considered` the last
+                  page of a bounded sweep (50 swept, 30 due) said nothing and read
+                  as finished. */}
+              {run.data.remaining > 0 && (
+                <> {run.data.remaining} still to sweep &mdash; press again to continue.</>
+              )}
+            </p>
+          )}
+          {/* One note for both buttons. Each used to print its own message in
+              a hand-colored paragraph as well, under an ErrorNote that was
+              already showing the same text — every failure said twice. */}
+          <ErrorNote of={[run, runAll]} className="w-100" />
+        </>
+      }
+    >
+      <SweepProgressBar progress={s?.progress} />
+
+      {status.isLoading && <Skeleton height={72} />}
+      <ErrorNote of={status} what="Could not load re-pricing status" className="mb-0" />
+
+      {s && (
+        <>
+          <dl className="hr-metric-grid hr-sd-metrics">
+            <div className="hr-metric">
+              <dt className="hr-metric-label">Schedule</dt>
+              <dd className="hr-metric-value">
+                {s.enabled ? `Every ${s.interval_hours} hours` : 'Off'}
+              </dd>
+              {!s.enabled && (
+                <dd className="hr-sd-metric-note">Scheduled sweeps off — run one below</dd>
+              )}
+            </div>
+            <div className="hr-metric">
+              <dt className="hr-metric-label">Last sweep</dt>
+              <dd className="hr-metric-value">
+                {s.last_success_at
+                  ? `${s.last_repriced} of ${s.last_considered} changed`
+                  : 'No sweep yet'}
+              </dd>
+              {s.last_success_at && (
+                <dd className="hr-sd-metric-note">
+                  Last swept {new Date(s.last_success_at).toLocaleString()}
+                </dd>
+              )}
+            </div>
+          </dl>
+          {s.last_error && (
+            <p className="hr-sd-error-line">
+              {s.consecutive_failures > 0 && (
+                <>Scheduled sweep failed {s.consecutive_failures} time{s.consecutive_failures === 1 ? '' : 's'} in a row:{' '}</>
+              )}
+              <span className="font-mono">{s.last_error}</span>
+            </p>
+          )}
+        </>
+      )}
+    </Panel>
   );
 }

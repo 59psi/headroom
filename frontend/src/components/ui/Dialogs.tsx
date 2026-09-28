@@ -37,9 +37,17 @@ export interface PromptOptions {
   confirmLabel?: string;
 }
 
-type Request =
+type RequestBody =
   | { kind: 'confirm'; options: ConfirmOptions; resolve: (ok: boolean) => void }
   | { kind: 'prompt'; options: PromptOptions; resolve: (value: string | null) => void };
+
+/**
+ * `id` keys the rendered dialog. Two requests of the same kind render the
+ * same component at the same spot, so without a key React keeps the first
+ * one's instance for the second — and a prompt opened over another prompt
+ * showed the first one's half-typed text instead of its own default.
+ */
+type Request = RequestBody & { id: number };
 
 interface DialogApi {
   confirm: (options: ConfirmOptions) => Promise<boolean>;
@@ -53,14 +61,28 @@ const DialogContext = createContext<DialogApi | null>(null);
  * rendered bare (an isolated unit test, a future page mounted outside the app
  * root) still asks before it destroys anything. Asking in the wrong style is
  * a cosmetic bug; not asking is a data-loss one.
+ *
+ * The message carries the body too: call sites moved their warning text
+ * ("Its hats become unassigned") out of `window.confirm('…')` and into
+ * `body`, and a fallback that sent only the title asked the bare question
+ * without the consequences it used to state. A title that is markup (no
+ * text to extract without rendering) still asks something, never a blank.
  */
 const FALLBACK: DialogApi = {
-  confirm: async o => window.confirm(plain(o.title)),
-  prompt: async o => window.prompt(plain(o.title), o.defaultValue),
+  confirm: async o => window.confirm(message(o.title, o.body) || 'Are you sure?'),
+  prompt: async o => window.prompt(message(o.title, o.body) || o.label, o.defaultValue),
 };
 
+function message(title: ReactNode, body: ReactNode): string {
+  return [plain(title), plain(body)].filter(Boolean).join('\n\n');
+}
+
+/** The text of a string-ish node; '' for elements, which need a render to read. */
 function plain(node: ReactNode): string {
-  return typeof node === 'string' || typeof node === 'number' ? String(node) : '';
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  // `{'Delete '}{name}{'?'}` arrives as an array of strings.
+  if (Array.isArray(node)) return node.map(plain).join('');
+  return '';
 }
 
 export function useConfirm() {
@@ -76,13 +98,15 @@ export function DialogProvider({ children }: { children: ReactNode }) {
   // A second request while one is open cancels the first rather than
   // stacking two modals; in practice it cannot happen (the first is modal).
   const pending = useRef<Request | null>(null);
+  const seq = useRef(0);
 
-  const open = useCallback((next: Request) => {
+  const open = useCallback((body: RequestBody) => {
     const prev = pending.current;
     if (prev) {
       if (prev.kind === 'confirm') prev.resolve(false);
       else prev.resolve(null);
     }
+    const next: Request = { ...body, id: ++seq.current };
     pending.current = next;
     setRequest(next);
   }, []);
@@ -101,14 +125,19 @@ export function DialogProvider({ children }: { children: ReactNode }) {
     else r.resolve(typeof value === 'string' ? value : null);
   }, []);
 
+  // `settle` itself, never a fresh arrow per render: the dialogs derive
+  // their close handler from it and the modal's focus effect keys on that
+  // handler, so a new identity on any provider re-render re-ran the effect
+  // and threw focus back to the autofocus button — off the destructive
+  // action the person had deliberately tabbed to, onto Cancel.
   return (
     <DialogContext.Provider value={api}>
       {children}
       {request?.kind === 'confirm' && (
-        <ConfirmDialog options={request.options} onSettle={ok => settle(ok)} />
+        <ConfirmDialog key={request.id} options={request.options} onSettle={settle} />
       )}
       {request?.kind === 'prompt' && (
-        <PromptDialog options={request.options} onSettle={v => settle(v)} />
+        <PromptDialog key={request.id} options={request.options} onSettle={settle} />
       )}
     </DialogContext.Provider>
   );
@@ -117,11 +146,19 @@ export function DialogProvider({ children }: { children: ReactNode }) {
 function ConfirmDialog({ options, onSettle }: { options: ConfirmOptions; onSettle: (ok: boolean) => void }) {
   const danger = options.tone === 'danger';
   const cancel = useCallback(() => onSettle(false), [onSettle]);
+  // "This can't be undone" is only true of a destructive action. Said under
+  // every confirm, it told the person "Re-analyze every hat?" was
+  // irreversible, and a warning on everything is a warning on nothing.
+  const body = options.body ?? (danger ? 'This can’t be undone.' : null);
   return (
     <Modal
       title={options.title}
       onClose={cancel}
       maxWidth={420}
+      // The body IS the message: read it with the title, or a screen reader
+      // hears "Remove this key? Cancel" and never the consequences.
+      describeBody={body !== null}
+      alert={danger}
       footer={
         <>
           {/* Destructive: focus starts on Cancel, so a reflexive Enter is the
@@ -145,9 +182,7 @@ function ConfirmDialog({ options, onSettle }: { options: ConfirmOptions; onSettl
         </>
       }
     >
-      {options.body
-        ? <div className="text-secondary hr-dialog-body">{options.body}</div>
-        : <p className="text-secondary mb-0 hr-dialog-body">This can’t be undone.</p>}
+      {body !== null && <div className="text-secondary hr-dialog-body">{body}</div>}
     </Modal>
   );
 }

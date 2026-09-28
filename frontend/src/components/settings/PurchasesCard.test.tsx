@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../../test/utils';
 import { PurchasesCard } from './PurchasesCard';
@@ -34,6 +34,13 @@ function route(handlers: Record<string, unknown>) {
 /** jsdom's File has .text(), which is what the card reads. */
 function jsonFile(body: unknown, name = 'melin-purchases.json') {
   return new File([JSON.stringify(body)], name, { type: 'application/json' });
+}
+
+/** The figure under a metric tile's label — the tiles are a `<dl>`, so the
+ *  value is the `<dd>` that follows the `<dt>`. */
+async function metric(label: string): Promise<string> {
+  const term = await screen.findByText(label, { selector: 'dt' });
+  return term.nextElementSibling?.textContent ?? '';
 }
 
 async function pick(file: File) {
@@ -85,7 +92,9 @@ describe('PurchasesCard', () => {
         expect.objectContaining({ method: 'POST' }),
       ),
     );
-    expect(await screen.findByText(/imported 12, matched 9 to hats/)).toBeInTheDocument();
+    // The outcome is a toast now (the tiles are the lasting record), so it
+    // reads in sentence case — the same counts, the same words.
+    expect(await screen.findByText(/imported 12, matched 9 to hats/i)).toBeInTheDocument();
   });
 
   it('sends the file contents, unwrapping an {items: [...]} envelope', async () => {
@@ -169,7 +178,9 @@ describe('PurchasesCard', () => {
     });
 
     const { unmount } = renderWithProviders(<PurchasesCard />);
-    expect(await screen.findByText(/1 purchases · 0 linked/)).toBeInTheDocument();
+    // The counts used to be one "1 purchases · 0 linked" line; they are tiles.
+    expect(await metric('Purchases')).toBe('1');
+    expect(await metric('Linked to hats')).toBe('0');
     expect(screen.queryByRole('button', { name: 'Unlink all' })).toBeNull();
     unmount();
 
@@ -230,5 +241,119 @@ describe('PurchasesCard', () => {
 
     // No crash, no false "Copied".
     expect(await screen.findByRole('button', { name: 'Copy prompt' })).toBeInTheDocument();
+  });
+});
+
+const LINKED = [
+  { id: 1, order_ref: 'A', order_date: null, item_title: 'Trenches Hydro', price: 79, hat_id: 7 },
+  { id: 2, order_ref: 'B', order_date: null, item_title: 'Travel case', price: 40, hat_id: null },
+];
+
+describe('PurchasesCard — status and loading', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('names the state in the header: none, some unlinked, all linked', async () => {
+    route({ '/api/admin/purchases': [] });
+    const first = renderWithProviders(<PurchasesCard />);
+    expect(await screen.findByText('None imported')).toBeInTheDocument();
+    first.unmount();
+
+    route({ '/api/admin/purchases': LINKED });
+    const second = renderWithProviders(<PurchasesCard />);
+    // The travel case never links — "1 unlinked", not a claim that all are.
+    expect(await screen.findByText('1 unlinked')).toBeInTheDocument();
+    second.unmount();
+
+    route({ '/api/admin/purchases': [LINKED[0]] });
+    renderWithProviders(<PurchasesCard />);
+    expect(await screen.findByText('All linked')).toBeInTheDocument();
+  });
+
+  it('does not flash "0 purchases" while the list is loading', async () => {
+    // The old one-line summary rendered from `data ?? []`, so every visit
+    // opened on "0 purchases · 0 linked" — a claim, not a placeholder.
+    fetchMock.mockImplementation(() => new Promise(() => {}) as never);
+    renderWithProviders(<PurchasesCard />);
+    expect(screen.getByText('Loading…')).toBeInTheDocument();
+    expect(screen.queryByText('Purchases', { selector: 'dt' })).toBeNull();
+    expect(screen.queryByText('None imported')).toBeNull();
+  });
+});
+
+describe('PurchasesCard — Unlink all asks first', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const unlinkAllCalled = () =>
+    fetchMock.mock.calls.some(([p]) => String(p).includes('/unmatch-all'));
+
+  it('does nothing when the dialog is canceled', async () => {
+    const user = userEvent.setup();
+    route({ '/api/admin/purchases': LINKED });
+    renderWithProviders(<PurchasesCard />);
+
+    await user.click(await screen.findByRole('button', { name: 'Unlink all' }));
+    const dialog = await screen.findByRole('alertdialog');
+    // The consequences are stated before anything happens.
+    expect(dialog).toHaveTextContent(/colorway, cost basis and purchase date/);
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(unlinkAllCalled()).toBe(false);
+  });
+
+  it('unlinks only once the dialog is confirmed, then says what it did', async () => {
+    const user = userEvent.setup();
+    route({
+      '/unmatch-all': { unmatched: 1, fields_cleared: 2 },
+      '/api/admin/purchases': LINKED,
+    });
+    renderWithProviders(<PurchasesCard />);
+
+    await user.click(await screen.findByRole('button', { name: 'Unlink all' }));
+    expect(unlinkAllCalled()).toBe(false);
+
+    const dialog = await screen.findByRole('alertdialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Unlink all' }));
+
+    await waitFor(() => expect(unlinkAllCalled()).toBe(true));
+    expect(await screen.findByText(/Unlinked 1, cleared 2 fields/)).toBeInTheDocument();
+  });
+});
+
+describe('PurchasesCard — single unlink is optimistic', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('drops the link the moment it is pressed, before the server answers', async () => {
+    const user = userEvent.setup();
+    fetchMock.mockImplementation((path: string) => {
+      // The unlink never answers: whatever the card shows now, it shows
+      // without the server's help.
+      if (path.includes('/unmatch')) return new Promise(() => {}) as never;
+      return Promise.resolve(LINKED) as never;
+    });
+    renderWithProviders(<PurchasesCard />);
+
+    await user.click(await screen.findByRole('button', { name: 'Unlink Trenches Hydro from its hat' }));
+
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Unlink Trenches Hydro from its hat' })).toBeNull(),
+    );
+    expect(await metric('Linked to hats')).toBe('0');
+  });
+
+  it('puts the link back when the server refuses, and says why', async () => {
+    const user = userEvent.setup();
+    fetchMock.mockImplementation((path: string) => {
+      if (path.includes('/unmatch')) return Promise.reject(new Error('Purchase not found')) as never;
+      return Promise.resolve(LINKED) as never;
+    });
+    renderWithProviders(<PurchasesCard />);
+
+    await user.click(await screen.findByRole('button', { name: 'Unlink Trenches Hydro from its hat' }));
+
+    expect(await screen.findByText(/Purchase not found/)).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Unlink Trenches Hydro from its hat' }))
+      .toBeInTheDocument();
+    expect(await metric('Linked to hats')).toBe('1');
   });
 });

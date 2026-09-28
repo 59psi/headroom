@@ -104,16 +104,16 @@ export function PhotoCropper({ imageUrl, filename, onCancel, onUseOriginal, onCr
   }
 
   return (
-    <Modal title="Crop Photo" onClose={onCancel} maxWidth={600} bodyStyle={{ padding: 0 }}
+    <Modal title="Crop photo" onClose={onCancel} maxWidth={600} bodyStyle={{ padding: 0 }}
       footer={(
         <>
           {/* Three distinct intents, three buttons. "Use Original" used to be
               wired to Cancel, so dismissing the cropper — including a stray
               tap on the backdrop — uploaded the photo anyway. On the hat page
               that replaced the picture and re-ran the whole pipeline. */}
-          <button type="button" className="btn btn-outline-secondary" onClick={onCancel}>Cancel</button>
+          <button type="button" className="btn btn-outline-secondary hr-modal-foot-start" onClick={onCancel}>Cancel</button>
           <button type="button" className="btn btn-outline-secondary" onClick={onUseOriginal}>
-            Use Original
+            Use original
           </button>
           <button
             type="button"
@@ -121,7 +121,7 @@ export function PhotoCropper({ imageUrl, filename, onCancel, onUseOriginal, onCr
             onClick={applyCrop}
             disabled={!croppedArea || working}
           >
-            {working ? 'Cropping…' : 'Use This'}
+            {working ? 'Cropping…' : 'Use crop'}
           </button>
           <ErrorNote
             of={{ isError: cropError != null, error: cropError }}
@@ -132,7 +132,7 @@ export function PhotoCropper({ imageUrl, filename, onCancel, onUseOriginal, onCr
       )}
     >
 
-      <div style={{ position: 'relative', width: '100%', height: 360, background: '#000' }}>
+      <div className="hr-cropper-stage">
         <Cropper
           image={imageUrl}
           crop={crop}
@@ -146,27 +146,29 @@ export function PhotoCropper({ imageUrl, filename, onCancel, onUseOriginal, onCr
           onCropComplete={onCropComplete}
         />
       </div>
-      <div style={{ padding: '1rem 1.25rem' }}>
+      <div className="hr-cropper-controls">
         <label className="form-label" htmlFor="crop-zoom">Zoom</label>
         <input
           id="crop-zoom"
           type="range"
+          className="hr-range"
           min={1}
           max={3}
           step={0.05}
           value={zoom}
           onChange={e => setZoom(Number(e.target.value))}
-          style={{ width: '100%' }}
         />
         <div className="d-flex gap-2 mt-2 flex-wrap">
           <button
             type="button"
             className="btn btn-outline-secondary btn-sm"
+            aria-label="Rotate left 90°"
             onClick={() => setRotation(r => (r + 270) % 360)}
           >↶ 90°</button>
           <button
             type="button"
             className="btn btn-outline-secondary btn-sm"
+            aria-label="Rotate right 90°"
             onClick={() => setRotation(r => (r + 90) % 360)}
           >↷ 90°</button>
           <button
@@ -179,3 +181,4 @@ export function PhotoCropper({ imageUrl, filename, onCancel, onUseOriginal, onCr
     </Modal>
   );
 }
+

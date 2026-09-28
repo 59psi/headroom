@@ -1,15 +1,19 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate, Link } from 'react-router';
 import { getHat, deleteHat, uploadHatPhoto, reanalyzeHat, recutHat, refreshEbayForHat, undisposeHat, updateHatColors, logWear, undoLatestWear } from '../api/hats';
-import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ConditionBadge } from '../components/common/ConditionBadge';
 import { ImageLightbox } from '../components/common/ImageLightbox';
 import { PhotoCapture } from '../components/photos/PhotoCapture';
-import { DisposeModal } from '../components/common/DisposeModal';
+import { DisposeModal, dispositionLabel } from '../components/common/DisposeModal';
 import { ColorEditModal } from '../components/common/ColorEditModal';
 import { AnalysisStatus } from '../components/hats/AnalysisStatus';
 import { HatNotesCard } from '../components/hats/HatNotesCard';
 import { TagUrlRow } from '../components/common/TagUrlRow';
+import { Panel } from '../components/ui/Panel';
+import { StatusPill } from '../components/ui/StatusPill';
+import { Skeleton } from '../components/ui/Skeleton';
+import { useToast } from '../components/ui/Toast';
+import { useConfirm } from '../components/ui/Dialogs';
 import { useState } from 'react';
 import { invalidateHatViews } from '../lib/invalidate';
 import { ErrorNote } from '../components/common/ErrorNote';
@@ -27,12 +31,14 @@ const CONSTRUCTION_TITLES: Record<string, string> = {
   HYDRO: 'melin HYDRO water-resistant construction',
 };
 
+const CONFIDENCE_TONE = { high: 'info', medium: 'warn', low: 'off' } as const;
+
 /**
  * The hat's ID heading, with the case part of it linking to that case.
  *
  * `A-029-01` reads as "hat 01 of case A-029" and people tap the case part
  * expecting to land there — it looks like a breadcrumb because it is one. The
- * "View Case" button further down the page did already exist, but it is below
+ * "View case" button further down the page did already exist, but it is below
  * the identification card, the photo and the specs, which is a lot of
  * scrolling to get back to where you came from.
  *
@@ -50,11 +56,7 @@ export function HatHeadingId({ hat }: { hat: HatRead }) {
   }
   return (
     <>
-      <Link
-        to={`/cases/${caseId}`}
-        style={{ color: 'inherit', textDecoration: 'underline', textUnderlineOffset: '0.2em' }}
-        title={`Back to case ${caseId}`}
-      >
+      <Link to={`/cases/${caseId}`} className="hr-crumb-link" title={`Back to case ${caseId}`}>
         {caseId}
       </Link>
       {hat.display_id.slice(caseId.length)}
@@ -69,12 +71,53 @@ function PriceTile({ label, value, source }: { label: string; value: number | nu
       {value !== null && value !== undefined ? (
         <>
           <div className="hr-metric-value hr-price">${value.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
-          {source && <div className="text-muted" style={{ fontSize: '0.65rem', marginTop: 2 }}>{source}</div>}
+          {source && <div className="hr-metric-source">{source}</div>}
         </>
       ) : (
-        <div className="hr-metric-value text-muted" style={{ fontSize: '0.95rem' }}>—</div>
+        <div className="hr-metric-value hr-metric-empty">—</div>
       )}
     </div>
+  );
+}
+
+/**
+ * A write's response, when it is this hat's fresh row.
+ *
+ * Most writes here answer with the updated `HatRead`. Putting it straight
+ * into the cache shows the result now — a new photo's "Analyzing" badge, a
+ * restored hat's case — instead of after the invalidation's refetch lands.
+ * It is the server's answer, not a guess at one, so nothing needs rolling
+ * back. Checked rather than trusted: two API wrappers type their result
+ * `unknown`, and a test double may return nothing.
+ */
+function freshHat(res: unknown, id: number): HatRead | null {
+  return res && typeof res === 'object' && (res as { id?: unknown }).id === id ? res as HatRead : null;
+}
+
+/** The page's shape while the hat loads: photo, then two cards of text. */
+function HatDetailSkeleton() {
+  return (
+    <>
+      {/* One announcement for the page; the other three are shape only. */}
+      <div className="hr-hat-head">
+        <Skeleton height={34} width={180} label="Loading hat…" />
+      </div>
+      <div className="hr-hat-layout">
+        <div className="hr-hat-aside">
+          <div className="card hr-panel">
+            <div className="card-body"><Skeleton height={300} decorative /></div>
+          </div>
+        </div>
+        <div className="hr-hat-main">
+          <div className="card hr-panel">
+            <div className="card-body"><Skeleton lines={4} decorative /></div>
+          </div>
+          <div className="card hr-panel">
+            <div className="card-body"><Skeleton lines={3} decorative /></div>
+          </div>
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -82,6 +125,8 @@ export function HatDetailPage() {
   const { hatId } = useParams<{ hatId: string }>();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const toast = useToast();
+  const confirm = useConfirm();
   const [disposeOpen, setDisposeOpen] = useState(false);
   // null = closed, -1 = adding, >= 1 = editing that dominance_rank
   const [colorEditOpen, setColorEditOpen] = useState<number | null>(null);
@@ -99,22 +144,42 @@ export function HatDetailPage() {
       query.state.data?.analysis_status === 'pending' ? 2000 : false,
   });
 
+  /**
+   * Show the server's fresh row now, then refresh everywhere else it shows.
+   * `hatId` defaults to the page's hat; the wear mutations pass the hat they
+   * were started for (see `undoWearMut`).
+   */
+  function settle(res: unknown, hatId = id) {
+    const hat = freshHat(res, hatId);
+    if (hat) qc.setQueryData(['hat', hatId], hat);
+    return invalidateHatViews(qc, hatId);
+  }
+
   const removeMutation = useMutation({
     mutationFn: () => deleteHat(id),
     onSuccess: () => {
       invalidateHatViews(qc, id);
+      toast.success('Hat deleted');
       navigate('/hats');
     },
   });
 
   const recutMut = useMutation({
     mutationFn: () => recutHat(id),
-    onSuccess: () => invalidateHatViews(qc, id),
+    onSuccess: res => {
+      settle(res);
+      toast.info('Redoing the cutout from the original photo');
+    },
   });
 
   const reanalyzeMut = useMutation({
     mutationFn: () => reanalyzeHat(id),
-    onSuccess: () => invalidateHatViews(qc, id),
+    onSuccess: res => {
+      settle(res);
+      // With a key the work is queued and the badge takes over; without one
+      // the fallback ran inline and this response IS the result.
+      toast.info(freshHat(res, id)?.analysis_status === 'pending' ? 'Reanalysis started' : 'Reanalysis finished');
+    },
   });
 
   // Every write on this page goes through `useMutation` and renders `.error`.
@@ -125,69 +190,170 @@ export function HatDetailPage() {
   // un-pressed itself.
   const uploadMut = useMutation({
     mutationFn: (file: File) => uploadHatPhoto(id, file),
-    onSuccess: () => invalidateHatViews(qc, id),
+    onSuccess: res => {
+      settle(res);
+      toast.success('Photo uploaded');
+    },
   });
   const ebayMut = useMutation({
     mutationFn: () => refreshEbayForHat(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['hat', id] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['hat', id] });
+      toast.success('eBay prices refreshed');
+    },
   });
   const undisposeMut = useMutation({
     mutationFn: () => undisposeHat(id),
-    onSuccess: () => invalidateHatViews(qc, id),
+    onSuccess: res => {
+      settle(res);
+      toast.success('Hat restored to active');
+    },
   });
 
   // Wipe the whole palette in one call — PUT /colors replaces the set, so an
   // empty list IS the delete-all. Beats removing swatches one modal at a time
   // after a bad analysis.
+  //
+  // Optimistic: the answer to "replace the colors with none" is no colors,
+  // so the palette empties the moment you confirm. A failure puts the old
+  // palette back and says so under the card's header.
   const clearColorsMutation = useMutation({
     mutationFn: () => updateHatColors(id, []),
-    onSuccess: () => {
-      invalidateHatViews(qc, id);
+    onMutate: async () => {
+      // A poll landing mid-flight would repaint the old palette over the
+      // optimistic one.
+      await qc.cancelQueries({ queryKey: ['hat', id] });
+      const previous = qc.getQueryData<HatRead>(['hat', id]);
+      if (previous) qc.setQueryData<HatRead>(['hat', id], { ...previous, colors: [] });
+      return { previous };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.previous) qc.setQueryData(['hat', id], ctx.previous);
+    },
+    onSuccess: () => toast.success('Colors cleared'),
+    // Not returned: TanStack holds a mutation's error/success state until a
+    // returned `onSettled` promise resolves, which would keep "Clearing…" up
+    // and the failure unsaid until every list had refetched. The optimistic
+    // state already shows the outcome.
+    onSettled: () => { void invalidateHatViews(qc, id); },
+  });
+
+  // Both wear mutations take the hat as their argument instead of closing
+  // over `id`. The "Wear logged" toast lives at the app root and outlives
+  // this page — and React Router keeps this component mounted from one hat's
+  // page to the next (Back from hat 13 lands on hat 12 with the same
+  // instance), where TanStack hands a mutation the LATEST render's options.
+  // A closure over `id` therefore undid a wear on whichever hat was on screen
+  // when the toast was tapped, not the one it was logged for.
+  const undoWearMut = useMutation({
+    mutationFn: (hatId: number) => undoLatestWear(hatId),
+    onSuccess: (res, hatId) => {
+      settle(res, hatId);
+      toast.success('Last wear removed');
     },
   });
 
   const wearMut = useMutation({
-    mutationFn: () => logWear(id),
-    onSuccess: () => invalidateHatViews(qc, id),
+    mutationFn: (hatId: number) => logWear(hatId),
+    onSuccess: (res, hatId) => {
+      // The server logs one wear per hat per (UTC) day and treats a second
+      // tap as a no-op, so the count is compared rather than assumed — and
+      // only a wear that was actually added offers an Undo, since undoing a
+      // no-op would delete the earlier, real entry.
+      const before = qc.getQueryData<HatRead>(['hat', hatId])?.wear_count;
+      const after = freshHat(res, hatId)?.wear_count;
+      settle(res, hatId);
+      if (before != null && after != null && after === before) {
+        toast.info('Already logged for today');
+        return;
+      }
+      toast.success('Wear logged', {
+        action: {
+          label: 'Undo',
+          // The server's undo is "delete the LATEST wear", not "delete this
+          // one". Once this wear is gone — the inline Undo beside the count
+          // took it back — the toast's Undo would delete an earlier, real
+          // wear, so it only acts while the count is still the one this wear
+          // produced. (Either count unknown — the page's cache already
+          // dropped, or the response was not a hat row — still undoes:
+          // there is nothing to check against.)
+          onClick: () => {
+            const now = qc.getQueryData<HatRead>(['hat', hatId])?.wear_count;
+            if (after === undefined || now === undefined || now === after) undoWearMut.mutate(hatId);
+          },
+        },
+      });
+    },
   });
 
-  const undoWearMut = useMutation({
-    mutationFn: () => undoLatestWear(id),
-    onSuccess: () => invalidateHatViews(qc, id),
-  });
+  async function confirmDelete() {
+    const ok = await confirm({
+      title: 'Delete this hat?',
+      body: (
+        <p>
+          This permanently deletes it. If it was sold, given away or lost,
+          mark it disposed instead — that keeps its record, frees its case
+          slot, and can be undone.
+        </p>
+      ),
+      confirmLabel: 'Delete hat',
+      tone: 'danger',
+    });
+    if (ok) removeMutation.mutate();
+  }
 
-  if (isLoading) return <LoadingSpinner />;
+  async function confirmClearColors(count: number) {
+    const ok = await confirm({
+      title: `Remove all ${count} colors from this hat?`,
+      body: 'You can add them back by hand, or reanalyze to rebuild the palette from the photo.',
+      confirmLabel: 'Clear colors',
+      tone: 'danger',
+    });
+    if (ok) clearColorsMutation.mutate();
+  }
+
+  async function confirmRestore() {
+    const ok = await confirm({
+      title: 'Restore this hat to active inventory?',
+      body: 'It goes back to its case — or to unassigned, if that case has filled up since.',
+      confirmLabel: 'Restore',
+    });
+    if (ok) undisposeMut.mutate();
+  }
+
+  if (isLoading) return <HatDetailSkeleton />;
   // Only a 404 is "not found". A locked database or a dead server used to
   // render the same "may have been deleted" copy — the opposite of the truth.
   if (error && !isNotFound(error)) return (
     <div className="py-4">
       <ErrorNote of={{ isError: true, error }} what="Could not load this hat" />
-      <Link to="/hats" className="btn btn-outline-primary mt-3">← Back to Hats</Link>
+      <Link to="/hats" className="btn btn-outline-secondary mt-3">← Back to hats</Link>
     </div>
   );
   if (!data) return (
     <div className="text-center py-5">
-      <h5 className="mb-2">Hat not found</h5>
+      <h1 className="hr-empty-title">Hat not found</h1>
       <p className="text-secondary small mb-3">This hat may have been deleted or doesn't exist.</p>
-      <Link to="/hats" className="btn btn-outline-primary">← Back to Hats</Link>
+      <Link to="/hats" className="btn btn-outline-secondary">← Back to hats</Link>
     </div>
   );
 
-  const caseTypeLabel = data.case_type === 'archive' ? 'Archive' : data.case_type === 'daily_wear' ? 'Daily Wear' : null;
+  const caseTypeLabel = data.case_type === 'archive' ? 'Archive' : data.case_type === 'daily_wear' ? 'Daily wear' : null;
   // Plain call, not a hook — it's pure and cheap, and putting it here keeps it
   // below the `!data` guard without needing a null-safe variant.
   const hatValue = valueHat(data);
+  const placed = Boolean(data.case_display_id || data.direct_room_id);
 
   return (
     <>
-      <div className="d-flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
-        <h1 className="font-mono" style={{ color: 'var(--neon-cyan)' }}>
+      <div className="hr-hat-head">
+        <h1 className="hr-hat-title">
           <HatHeadingId hat={data} />
         </h1>
         {/* `flex-wrap` so the row breaks onto a second line instead of
             overflowing the viewport on a phone — this is the row that a
             long badge used to push out of shape. */}
-        <div className="d-flex gap-2 align-items-center flex-wrap">
+        <div className="hr-hat-badges">
           {/* Renders whatever the construction says, rather than one badge per
               known flag. A hat in a specialty fabric used to show no badge at
               all: the two booleans could only describe HYDRO and HYDROLite. */}
@@ -201,74 +367,51 @@ export function HatDetailPage() {
         </div>
       </div>
 
-      {data.brand && (
-        <div className="card hr-feature mb-3">
-          <div className="card-body">
-            <div className="card-title">Identification</div>
-            <div className="d-flex justify-content-between align-items-start gap-2 flex-wrap">
-              <div>
-                <div className="font-display" style={{ fontSize: '1.5rem', color: 'var(--neon-pink)', letterSpacing: '0.04em' }}>
-                  {data.brand}
-                </div>
-                {data.model_name && (
-                  <div className="font-mono fs-5" style={{ color: 'var(--text)', marginTop: 2 }}>
-                    {data.model_name}
-                  </div>
-                )}
-                {data.style_descriptor && (
-                  <div className="text-secondary small" style={{ marginTop: 4 }}>
-                    {data.style_descriptor}
-                  </div>
-                )}
-                {data.artist_series && (
-                  <div
-                    className="font-mono small"
-                    style={{ marginTop: 6, color: 'var(--neon-cyan)' }}
-                    title="Signature collaboration / artist series"
-                  >
-                    ✦ {data.artist_series}
-                  </div>
-                )}
-                {data.logo_detected && (
-                  <div
-                    className="text-secondary small"
-                    style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6 }}
-                    title="A mark was actually visible in the photo — this is evidence, not an inference from shape or colorway"
-                  >
-                    <span aria-hidden="true">◉</span>
-                    <span>Logo: {data.logo_detected}</span>
-                  </div>
-                )}
-              </div>
-              {data.model_confidence && (
-                <span className={`badge ${data.model_confidence === 'high' ? 'bg-info' : data.model_confidence === 'medium' ? 'bg-warning' : 'bg-secondary'}`}>
-                  {data.model_confidence} conf
-                </span>
+      {/* Photo first — it is how you know you are on the right hat — then
+          what the hat is and what it is worth, then everything else. On a
+          wide screen the photo sits beside the rest, and stays in view where
+          the screen is tall enough to hold it (see hat-pages.css); on a
+          phone it is simply the top of the page. */}
+      <div className="hr-hat-layout">
+        <div className="hr-hat-aside">
+          <section className="card hr-panel hr-hat-hero" aria-label="Photo and quick actions">
+            <div className="card-body">
+              {data.photo_path ? (
+                <ImageLightbox src={`/uploads/${data.photo_path}`} alt={data.display_id || 'Hat photo'} hat />
+              ) : (
+                <PhotoCapture onCapture={file => uploadMut.mutate(file)} previewUrl={null} />
               )}
-            </div>
-            {data.design_notes && (
-              <p className="text-secondary mt-3 mb-0" style={{ fontStyle: 'italic', lineHeight: 1.5 }}>
-                "{data.design_notes}"
-              </p>
-            )}
-          </div>
-        </div>
-      )}
+              {uploadMut.isPending && (
+                <div className="hr-upload-note" role="status">
+                  {/* Since 2.6.0 the POST only saves the photo and queues the
+                      rest, so claiming to remove backgrounds and call Claude here
+                      is a description of what the *worker* does afterwards. The
+                      Analyzing… badge covers that part. */}
+                  ↑ Uploading photo…
+                </div>
+              )}
+              <ErrorNote of={uploadMut} className="mt-2 mb-0" />
 
-      {/* Keyed on the hat so navigating between hats REMOUNTS the card.
-          Without this the component instance is reused and only `notes` is
-          reset by its own effect — the mutation's error and "Saved" state are
-          not, so one failed save on hat 12 left a red "Couldn't save" sitting
-          under hats 13, 14 and 15's untouched, empty boxes. */}
-      <HatNotesCard key={data.id} hat={data} />
-
-      <div className="card mb-3">
-        <div className="card-body">
-          {data.photo_path ? (
-            <>
-              <ImageLightbox src={`/uploads/${data.photo_path}`} alt={data.display_id || 'Hat photo'} hat />
-              <div className="mt-3 d-flex gap-2 flex-wrap">
-                <PhotoCapture onCapture={file => uploadMut.mutate(file)} hidePreview />
+              {/* The day-to-day actions, under the photo where the thumb is.
+                  Logging a wear is the app's primary daily action, so it is
+                  the one filled button on the page; the rest are quiet. The
+                  wear button and Edit used to exist only once a photo did —
+                  neither needs one. */}
+              <div className="hr-hero-actions">
+                {!data.disposed_at && (
+                  <button
+                    type="button"
+                    className="btn btn-primary hr-hero-primary"
+                    onClick={() => wearMut.mutate(data.id)}
+                    disabled={wearMut.isPending}
+                    title="Log a wear for today"
+                  >
+                    {wearMut.isPending ? 'Logging…' : '🧢 Wearing this today'}
+                  </button>
+                )}
+                {data.photo_path && (
+                  <PhotoCapture onCapture={file => uploadMut.mutate(file)} hidePreview />
+                )}
                 {/* Up here with the other primary actions, not only at the foot
                     of the page. Correcting a misidentification is the most
                     common thing you do right after reading one, and the copy of
@@ -308,21 +451,11 @@ export function HatDetailPage() {
                     {recutMut.isPending ? '✂ Re-cutting…' : '✂ Redo cutout'}
                   </button>
                 )}
-                {!data.disposed_at && (
-                  <button
-                    type="button"
-                    className="btn btn-outline-primary"
-                    onClick={() => wearMut.mutate()}
-                    disabled={wearMut.isPending}
-                    title="Log a wear for today"
-                  >
-                    🧢 Wearing this today
-                  </button>
-                )}
               </div>
-              <div className="text-secondary small mt-2 d-flex gap-3 flex-wrap">
+
+              <div className="hr-wear-line">
                 <span>Worn <strong>{data.wear_count}×</strong></span>
-                {data.date_last_worn && <span>last: {data.date_last_worn}</span>}
+                {data.date_last_worn && <span>last {data.date_last_worn}</span>}
                 {/* Cost per wear needs what was PAID. It used to fall back to
                     the estimated retail price, which answers a different
                     question — a hat bought half-price showed a cost per wear
@@ -335,8 +468,15 @@ export function HatDetailPage() {
                   </span>
                 )}
                 {data.wear_count > 0 && (
-                  <button type="button" className="btn btn-link btn-sm p-0" style={{ fontSize: 'inherit' }}
-                    onClick={() => undoWearMut.mutate()}>undo</button>
+                  <button
+                    type="button"
+                    className="btn btn-link btn-sm hr-wear-undo"
+                    aria-label="Undo the last logged wear"
+                    onClick={() => undoWearMut.mutate(data.id)}
+                    disabled={undoWearMut.isPending}
+                  >
+                    Undo
+                  </button>
                 )}
               </div>
               {/* The app's primary daily action, and until now the one whose
@@ -345,35 +485,95 @@ export function HatDetailPage() {
               <ErrorNote of={[wearMut, undoWearMut]} what="Wear not logged" />
               <ErrorNote of={recutMut} className="mt-2 mb-0" />
               <ErrorNote of={reanalyzeMut} className="mt-2 mb-0" />
-            </>
-          ) : (
-            <PhotoCapture onCapture={file => uploadMut.mutate(file)} previewUrl={null} />
-          )}
-          <ErrorNote of={uploadMut} className="mt-2 mb-0" />
-          {uploadMut.isPending && (
-            <div className="text-secondary small mt-2 font-mono" style={{ letterSpacing: '0.08em' }}>
-              {/* Since 2.6.0 the POST only saves the photo and queues the
-                  rest, so claiming to remove backgrounds and call Claude here
-                  is a description of what the *worker* does afterwards. The
-                  Analyzing… badge covers that part. */}
-              ↑ Uploading photo…
+            </div>
+          </section>
+        </div>
+
+        <div className="hr-hat-main">
+          {/* The analysis banners sit above what the analysis produced, so the
+              reason a card is thin is read before the thin card. */}
+          {data.analysis_status === 'skipped' && (
+            <div className="alert alert-info mb-3">
+              Configure your Anthropic API key in <Link to="/settings?tab=analysis" className="hr-alert-link">Settings</Link> to enable AI brand, color and price detection.
             </div>
           )}
-        </div>
-      </div>
 
-      {/* Pricing. Shown when ANY figure exists — `resale_price` and the eBay
-          median were missing from this gate, so a hat whose only number was
-          the resale price the owner had just typed showed no Valuation card
-          at all, and the figure the totals use was nowhere on its own page. */}
-      {(data.estimated_new_price != null || data.purchase_price != null
-        || data.resale_price != null || data.ebay_median_price != null
-        || data.resale_price_url || data.ebay_search_url) && (
-        <div className="card mb-3">
-          <div className="card-body">
-            <div className="d-flex justify-content-between align-items-center mb-2">
-              <div className="card-title mb-0">Valuation</div>
-              {data.brand && data.model_name && (
+          {/* Fallback means "Claude did not answer", which has two very different
+              causes, and this banner used to assert the wrong one. It said "add a
+              Claude API key" unconditionally — so when the Anthropic account ran
+              out of CREDIT, every hat in the collection told its owner to add the
+              key that was already there and plainly working. The real reason was
+              sitting in `analysis_error` the whole time and only the `error`
+              status ever rendered it. Show it here too. */}
+          {data.analysis_status === 'fallback' && (
+            <div className="alert alert-info mb-3 small">
+              Basic fallback ID only (colors from the photo cutout{data.brand ? ', brand from logo detection' : ''}).
+              {data.analysis_error ? (
+                <>
+                  {' '}<strong>Why:</strong> {data.analysis_error}
+                </>
+              ) : (
+                <>
+                  {' '}Add a Claude API key in{' '}
+                  <Link to="/settings?tab=analysis" className="hr-alert-link">Settings</Link>
+                  {' '}and hit Reanalyze for full model + price identification.
+                </>
+              )}
+            </div>
+          )}
+
+          {data.analysis_status === 'error' && data.analysis_error && (
+            <div className="alert alert-danger mb-3 small">
+              Analysis error: {data.analysis_error}
+            </div>
+          )}
+
+          {data.brand && (
+            <Panel
+              title="Identification"
+              featured
+              status={data.model_confidence && (
+                <StatusPill
+                  tone={CONFIDENCE_TONE[data.model_confidence as keyof typeof CONFIDENCE_TONE] ?? 'off'}
+                  title="How sure the analysis is of the model"
+                >
+                  {data.model_confidence.charAt(0).toUpperCase() + data.model_confidence.slice(1)} confidence
+                </StatusPill>
+              )}
+            >
+              <div className="hr-id-brand">{data.brand}</div>
+              {data.model_name && <div className="hr-id-model">{data.model_name}</div>}
+              {data.style_descriptor && <div className="hr-id-style">{data.style_descriptor}</div>}
+              {data.artist_series && (
+                <div className="hr-id-series" title="Signature collaboration / artist series">
+                  ✦ {data.artist_series}
+                </div>
+              )}
+              {data.logo_detected && (
+                <div
+                  className="hr-id-logo"
+                  title="A mark was actually visible in the photo — this is evidence, not an inference from shape or colorway"
+                >
+                  <span aria-hidden="true">◉</span>
+                  <span>Logo: {data.logo_detected}</span>
+                </div>
+              )}
+              {data.design_notes && (
+                <p className="hr-id-notes">“{data.design_notes}”</p>
+              )}
+            </Panel>
+          )}
+
+          {/* Pricing. Shown when ANY figure exists — `resale_price` and the eBay
+              median were missing from this gate, so a hat whose only number was
+              the resale price the owner had just typed showed no Valuation card
+              at all, and the figure the totals use was nowhere on its own page. */}
+          {(data.estimated_new_price != null || data.purchase_price != null
+            || data.resale_price != null || data.ebay_median_price != null
+            || data.resale_price_url || data.ebay_search_url) && (
+            <Panel
+              title="Valuation"
+              actions={data.brand && data.model_name && (
                 <button
                   type="button"
                   className="btn btn-outline-secondary btn-sm"
@@ -381,23 +581,56 @@ export function HatDetailPage() {
                   disabled={ebayMut.isPending}
                   title="Refresh eBay comparable-listings prices"
                 >
-                  {ebayMut.isPending ? '↻ eBay…' : '↻ eBay'}
+                  {ebayMut.isPending ? '↻ Refreshing…' : '↻ Refresh eBay'}
                 </button>
               )}
-            </div>
-            <ErrorNote of={ebayMut} className="mt-2 mb-0" />
-            {/* Two-up rather than three-across: at 375px the old row gave each
-                tile ~110px, which a four-digit price and a source line don't
-                fit into. */}
-            <div className="row g-2">
-              <div className="col-6">
+              footer={(data.ebay_search_url || data.resale_price_url) && (
+                <>
+                  {data.ebay_search_url && (
+                    <a
+                      href={data.ebay_search_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn btn-outline-secondary btn-sm"
+                    >
+                      Browse eBay →
+                    </a>
+                  )}
+                  {data.resale_price_url && (
+                    <a
+                      href={data.resale_price_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn btn-outline-secondary btn-sm"
+                    >
+                      Browse {data.resale_price_source || 'resale'} →
+                    </a>
+                  )}
+                </>
+              )}
+            >
+              <ErrorNote of={ebayMut} className="mb-3" />
+              {/* The figure the collection totals actually use, first — it is
+                  the answer — with the raw inputs under it so the two can be
+                  reconciled on one screen. */}
+              <div className="hr-value-hero">
+                <div className="hr-metric-label">Est. sale value</div>
+                <div className="hr-price hr-price-large">
+                  {hatValue.value != null ? money(hatValue.value) : '—'}
+                </div>
+                <div className="hr-value-why">{hatValue.explanation}</div>
+              </div>
+              {/* A reflowing grid rather than three-across: at 375px the old
+                  row gave each tile ~110px, which a four-digit price and a
+                  source line don't fit into. Two-up on a phone and in the
+                  two-column layout, four across the single column between
+                  (see hat-pages.css). */}
+              <div className="hr-metric-grid hr-price-grid">
                 <PriceTile
-                  label="New Retail"
+                  label="New retail"
                   value={data.estimated_new_price ?? null}
                   source={data.estimated_new_price_source}
                 />
-              </div>
-              <div className="col-6">
                 <PriceTile
                   label="Paid"
                   value={data.purchase_price ?? null}
@@ -405,8 +638,6 @@ export function HatDetailPage() {
                     ? new Date(data.purchased_at).toLocaleDateString()
                     : 'not recorded'}
                 />
-              </div>
-              <div className="col-6">
                 <PriceTile
                   label="eBay ask"
                   value={data.ebay_median_price ?? null}
@@ -414,8 +645,6 @@ export function HatDetailPage() {
                     ? `median of ${data.ebay_listing_count} live listings`
                     : 'configure eBay key'}
                 />
-              </div>
-              <div className="col-6">
                 {/* Was labeled "Resale (manual)" while holding a scraped
                     median for all but the rare hand-entered price — the label
                     named the exception. */}
@@ -425,309 +654,229 @@ export function HatDetailPage() {
                   source={data.resale_price_source}
                 />
               </div>
-            </div>
-            {/* The figure the collection totals actually use, shown next to
-                the raw inputs so the two can be reconciled on one screen. */}
-            <div className="hr-metric mt-2">
-              <div className="hr-metric-label">Est. sale value</div>
-              <div className="hr-metric-value hr-price hr-price-large">
-                {hatValue.value != null ? money(hatValue.value) : '—'}
-              </div>
-              <div className="text-muted mt-1" style={{ fontSize: '0.7rem', lineHeight: 1.45 }}>
-                {hatValue.explanation}
-              </div>
-            </div>
-            <div className="d-flex gap-2 flex-wrap mt-3">
-              {data.ebay_search_url && (
-                <a
-                  href={data.ebay_search_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="btn btn-outline-primary btn-sm flex-fill"
-                >
-                  Browse eBay →
-                </a>
-              )}
-              {data.resale_price_url && (
-                <a
-                  href={data.resale_price_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="btn btn-outline-primary btn-sm flex-fill"
-                >
-                  Browse {data.resale_price_source || 'Resale'} →
-                </a>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+            </Panel>
+          )}
 
-      {/* Disposition */}
-      <div className="card mb-3">
-        <div className="card-body">
-          <div className="card-title">Disposition</div>
-          {data.disposed_at ? (
-            <>
-              <div className="hr-metric mb-2">
-                <div className="hr-metric-label">{data.disposed_via?.toUpperCase()} on {new Date(data.disposed_at).toLocaleDateString()}</div>
-                {data.disposed_price != null && (
-                  <div className="hr-metric-value hr-price">
-                    ${data.disposed_price.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                  </div>
-                )}
-                {data.disposed_to && (
-                  <div className="text-secondary small" style={{ marginTop: 4 }}>
-                    {data.disposed_to}
-                  </div>
-                )}
-                {data.disposed_notes && (
-                  <div className="text-muted small" style={{ marginTop: 4, fontStyle: 'italic' }}>
-                    "{data.disposed_notes}"
-                  </div>
-                )}
+          {/* Keyed on the hat so navigating between hats REMOUNTS the card.
+              Without this the component instance is reused and only `notes` is
+              reset by its own effect — the save error and "Saved" state are
+              not, so one failed save on hat 12 left a red "Couldn't save"
+              sitting under hats 13, 14 and 15's untouched, empty boxes. The
+              remount is also what flushes a pending autosave to the hat it was
+              typed for, not the next one. */}
+          <HatNotesCard key={data.id} hat={data} />
+
+          <Panel title="Specs">
+            {/* "Type" used to sit here showing Beanie or Regular — which is
+                derived entirely from Style directly above it (`is_beanie` is
+                set from the style on every write), so the sheet spent a quarter
+                of itself printing one fact twice.
+
+                Construction and colorway are what actually separate two hats
+                of the same style, and neither was here: construction appeared
+                only as a badge by the title, and colorway appeared nowhere on
+                this page at all, despite a catalog and a purchase matcher whose
+                whole job is filling it in. */}
+            <div className="hr-metric-grid">
+              {([
+                ['Style', data.style.replace(/_/g, ' ')],
+                ['Limited edition', data.limited_edition ? 'Yes' : null],
+                ['Size', data.size.replace(/_/g, ' ')],
+                ['Construction', data.construction],
+                ['Colorway', data.colorway],
+                ['Collection', data.artist_series],
+                ['Last worn', data.date_last_worn],
+              ] as const).map(([label, value]) => (
+                <div className="hr-metric" key={label}>
+                  <div className="hr-metric-label">{label}</div>
+                  <div className="hr-metric-value hr-spec-value">{value || '—'}</div>
+                </div>
+              ))}
+            </div>
+          </Panel>
+
+          <Panel
+            title="Case"
+            className={placed ? '' : 'border-warning'}
+            status={!placed && <StatusPill tone="warn">Unplaced</StatusPill>}
+          >
+            {data.case_display_id ? (
+              <div className="hr-case-summary">
+                <div className="hr-case-summary-what">
+                  <span className="hr-case-code">{data.case_display_id}</span>
+                  {caseTypeLabel && (
+                    <span className={`badge ${data.case_type === 'archive' ? 'bg-secondary' : 'bg-info'}`}>
+                      {caseTypeLabel}
+                    </span>
+                  )}
+                  {data.room_name && (
+                    <span className="badge bg-info">{data.room_name}</span>
+                  )}
+                </div>
+                <Link to={`/cases/${data.case_display_id}`} className="btn btn-outline-secondary btn-sm">View case</Link>
               </div>
+            ) : data.direct_room_id ? (
+              /* In a room with no case — a shelf, a hook, a stand. Not a
+                 warning state: it is where the hat lives. Caddies and Aviators
+                 don't fit a travel case at all. */
+              <div className="hr-case-summary">
+                <div>
+                  <span className="badge bg-info">{data.room_name}</span>
+                  <div className="text-secondary small mt-1">Kept here, not in a case</div>
+                </div>
+                <Link to={`/hats/${data.id}/edit`} className="btn btn-outline-secondary btn-sm">Move</Link>
+              </div>
+            ) : (
+              <div className="hr-case-summary">
+                <div className="hr-case-unplaced">Not in a case or a room</div>
+                <Link to={`/hats/${data.id}/edit`} className="btn btn-outline-warning btn-sm">Assign</Link>
+              </div>
+            )}
+          </Panel>
+
+          {/* Colors — tap any row to edit */}
+          <Panel
+            title="Color palette"
+            actions={(
+              <>
+                {data.colors.length > 0 && (
+                  <button
+                    type="button"
+                    className="btn btn-outline-danger btn-sm"
+                    onClick={() => { void confirmClearColors(data.colors.length); }}
+                    disabled={clearColorsMutation.isPending}
+                  >
+                    {clearColorsMutation.isPending ? 'Clearing…' : 'Clear all'}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="btn btn-outline-secondary btn-sm"
+                  onClick={() => setColorEditOpen(-1)}
+                >
+                  + Add color
+                </button>
+              </>
+            )}
+          >
+            <ErrorNote of={clearColorsMutation} what="Colors not cleared" className="mb-2" />
+            {data.colors.length === 0 ? (
+              <p className="text-muted small mb-0">
+                No colors yet — tap “Add color” to seed the palette manually, or run Reanalyze.
+              </p>
+            ) : (
+              data.colors.map(c => (
+                <button
+                  key={c.dominance_rank}
+                  type="button"
+                  className="hr-color-row hr-color-row-btn"
+                  onClick={() => setColorEditOpen(c.dominance_rank)}
+                  title="Tap to edit"
+                >
+                  <span
+                    className="color-swatch hr-color-row-swatch"
+                    style={{ backgroundColor: c.hex_value, color: c.hex_value }}
+                  />
+                  <span className="flex-grow-1">
+                    <span className="hr-color-row-name">{c.general_color || c.color_name}</span>
+                    {c.color_name && c.color_name !== c.general_color && (
+                      <span className="hr-color-row-sub font-mono">{c.color_name}</span>
+                    )}
+                  </span>
+                  <span className="text-end">
+                    <span className="hr-tier-label">{c.tier || 'primary'}</span>
+                    <span className="hr-color-row-sub font-mono">{c.hex_value}</span>
+                  </span>
+                </button>
+              ))
+            )}
+          </Panel>
+
+          <Panel
+            title="Disposition"
+            status={data.disposed_at
+              ? <StatusPill tone="warn">{dispositionLabel(data.disposed_via)}</StatusPill>
+              : <StatusPill tone="ok">Active</StatusPill>}
+            description={data.disposed_at
+              ? undefined
+              : 'Mark this hat as sold, gifted, traded, lost, or trashed. Soft-delete only — undoable.'}
+            footer={data.disposed_at ? (
               <button
                 type="button"
                 className="btn btn-outline-secondary btn-sm"
-                onClick={() => {
-                  if (confirm('Restore this hat to active inventory?')) undisposeMut.mutate();
-                }}
+                onClick={() => { void confirmRestore(); }}
                 disabled={undisposeMut.isPending}
               >
-                Undo — restore to active
+                {undisposeMut.isPending ? 'Restoring…' : 'Undo — restore to active'}
               </button>
-              <ErrorNote of={undisposeMut} className="mt-2 mb-0" />
-            </>
-          ) : (
-            <>
-              <p className="text-secondary small mb-2">
-                Mark this hat as sold, gifted, traded, lost, or trashed. Soft-delete only — undoable.
-              </p>
+            ) : (
               <button
                 type="button"
-                className="btn btn-outline-primary btn-sm"
+                className="btn btn-outline-secondary btn-sm"
                 onClick={() => setDisposeOpen(true)}
               >
-                Mark as Disposed
+                Mark as disposed
               </button>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Specs */}
-      <div className="card mb-3">
-        <div className="card-body">
-          <div className="card-title">Specs</div>
-          {/* "Type" used to sit here showing Beanie or Regular — which is
-              derived entirely from Style directly above it (`is_beanie` is
-              set from the style on every write), so the sheet spent a quarter
-              of itself printing one fact twice.
-
-              Construction and colorway are what actually separate two hats
-              of the same style, and neither was here: construction appeared
-              only as a badge by the title, and colorway appeared nowhere on
-              this page at all, despite a catalog and a purchase matcher whose
-              whole job is filling it in. */}
-          <div className="row g-2">
-            {([
-              ['Style', data.style.replace(/_/g, ' ')],
-              ['Limited edition', data.limited_edition ? 'Yes' : null],
-              ['Size', data.size.replace(/_/g, ' ')],
-              ['Construction', data.construction],
-              ['Colorway', data.colorway],
-              ['Collection', data.artist_series],
-              ['Last Worn', data.date_last_worn],
-            ] as const).map(([label, value]) => (
-              <div className="col-6" key={label}>
+            )}
+          >
+            {data.disposed_at && (
+              <>
                 <div className="hr-metric">
-                  <div className="hr-metric-label">{label}</div>
-                  <div
-                    className="hr-metric-value"
-                    style={{ fontSize: '0.95rem', overflowWrap: 'anywhere' }}
-                  >
-                    {value || '—'}
+                  <div className="hr-metric-label">
+                    {dispositionLabel(data.disposed_via)} on {new Date(data.disposed_at).toLocaleDateString()}
                   </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Case info */}
-      <div className={`card mb-3 ${!data.case_display_id ? 'border-warning' : ''}`}>
-        <div className="card-body">
-          <div className="card-title">Case</div>
-          {data.case_display_id ? (
-            <div className="d-flex justify-content-between align-items-center gap-2 flex-wrap">
-              <div className="d-flex align-items-center gap-2 flex-wrap">
-                <span className="font-mono fs-5" style={{ color: 'var(--neon-cyan)' }}>{data.case_display_id}</span>
-                {caseTypeLabel && (
-                  <span className={`badge ${data.case_type === 'archive' ? 'bg-secondary' : 'bg-info'}`}>
-                    {caseTypeLabel}
-                  </span>
-                )}
-                {data.room_name && (
-                  <span className="badge bg-info">{data.room_name}</span>
-                )}
-              </div>
-              <Link to={`/cases/${data.case_display_id}`} className="btn btn-outline-primary btn-sm">View Case</Link>
-            </div>
-          ) : data.direct_room_id ? (
-            /* In a room with no case — a shelf, a hook, a stand. Not a
-               warning state: it is where the hat lives. Caddies and Aviators
-               don't fit a travel case at all. */
-            <div className="d-flex justify-content-between align-items-center gap-2 flex-wrap">
-              <div>
-                <span className="badge bg-info">{data.room_name}</span>
-                <div className="text-secondary small mt-1">Kept here, not in a case</div>
-              </div>
-              <Link to={`/hats/${data.id}/edit`} className="btn btn-outline-secondary btn-sm">Move</Link>
-            </div>
-          ) : (
-            <div className="d-flex justify-content-between align-items-center gap-2 flex-wrap">
-              <div style={{ color: 'var(--neon-yellow)' }}>Not in a case or a room</div>
-              <Link to={`/hats/${data.id}/edit`} className="btn btn-outline-warning btn-sm">Assign</Link>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Colors — tap any row to edit */}
-      <div className="card mb-3">
-        <div className="card-body">
-          <div className="d-flex justify-content-between align-items-center mb-2">
-            <div className="card-title mb-0">Color Palette</div>
-            <div className="d-flex gap-2">
-              {data.colors.length > 0 && (
-                <button
-                  type="button"
-                  className="btn btn-outline-danger btn-sm"
-                  onClick={() => {
-                    if (confirm(`Remove all ${data.colors.length} colors from this hat?`)) {
-                      clearColorsMutation.mutate();
-                    }
-                  }}
-                  disabled={clearColorsMutation.isPending}
-                >
-                  {clearColorsMutation.isPending ? 'Clearing…' : 'Clear All'}
-                </button>
-              )}
-              <button
-                type="button"
-                className="btn btn-outline-primary btn-sm"
-                onClick={() => setColorEditOpen(-1)}
-              >
-                + Add Color
-              </button>
-            </div>
-          </div>
-          <ErrorNote of={clearColorsMutation} className="small" />
-          {data.colors.length === 0 ? (
-            <p className="text-muted small mb-0">
-              No colors yet — tap "Add Color" to seed the palette manually, or run Reanalyze.
-            </p>
-          ) : (
-            data.colors.map(c => (
-              <button
-                key={c.dominance_rank}
-                type="button"
-                className="hr-color-row"
-                onClick={() => setColorEditOpen(c.dominance_rank)}
-                style={{
-                  width: '100%', background: 'transparent', border: 0,
-                  textAlign: 'left', cursor: 'pointer',
-                }}
-                title="Tap to edit"
-              >
-                <div
-                  className="color-swatch"
-                  style={{ width: 32, height: 32, backgroundColor: c.hex_value, color: c.hex_value }}
-                />
-                <div className="flex-grow-1">
-                  <div className="fw-semibold">{c.general_color || c.color_name}</div>
-                  {c.color_name && c.color_name !== c.general_color && (
-                    <div className="text-muted small font-mono">{c.color_name}</div>
+                  {data.disposed_price != null && (
+                    <div className="hr-metric-value hr-price">
+                      ${data.disposed_price.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                    </div>
+                  )}
+                  {data.disposed_to && (
+                    <div className="text-secondary small mt-1">{data.disposed_to}</div>
+                  )}
+                  {data.disposed_notes && (
+                    <div className="hr-dispose-notes">“{data.disposed_notes}”</div>
                   )}
                 </div>
-                <div className="text-end">
-                  <div className="hr-tier-label">{c.tier || 'primary'}</div>
-                  <div className="text-muted font-mono small">{c.hex_value}</div>
-                </div>
-              </button>
-            ))
-          )}
+                <ErrorNote of={undisposeMut} className="mt-2 mb-0" />
+              </>
+            )}
+          </Panel>
+
+          {/* Physical tag. Sits on the hat's own page because that is where you
+              are standing when you tag it — holding this hat, with a blank NFC
+              sticker and a tag writer open. */}
+          <Panel
+            title="Tag this hat"
+            description={(
+              <>
+                Write this to an NFC sticker, or print a QR from{' '}
+                <Link to="/settings?tab=sharing">Settings</Link>. Scanning it opens a one-tap
+                “wore it today” screen.
+              </>
+            )}
+          >
+            <TagUrlRow kind="h" ident={data.id} />
+          </Panel>
+
+          {/* One row, one weight each: adding the next hat, editing this one,
+              deleting it. Delete used to be a full-width solid red button
+              beside a small outlined Edit — the loudest control on the page
+              was the one you almost never want. */}
+          <div className="hr-hat-foot-actions">
+            <Link to="/hats/new" className="btn btn-outline-primary">+ Add another hat</Link>
+            <Link to={`/hats/${data.id}/edit`} className="btn btn-outline-secondary">Edit</Link>
+            <button
+              type="button"
+              className="btn btn-outline-danger"
+              onClick={() => { void confirmDelete(); }}
+              disabled={removeMutation.isPending}
+            >
+              {removeMutation.isPending ? 'Deleting…' : 'Delete'}
+            </button>
+          </div>
+          <ErrorNote of={removeMutation} className="mt-2 mb-0" />
         </div>
       </div>
-
-      {data.analysis_status === 'skipped' && (
-        <div className="alert alert-info mb-3">
-          Configure your Anthropic API key in <Link to="/settings?tab=analysis" style={{ color: 'inherit', textDecoration: 'underline' }}>Settings</Link> to enable AI brand/color/price detection.
-        </div>
-      )}
-
-      {/* Fallback means "Claude did not answer", which has two very different
-          causes, and this banner used to assert the wrong one. It said "add a
-          Claude API key" unconditionally — so when the Anthropic account ran
-          out of CREDIT, every hat in the collection told its owner to add the
-          key that was already there and plainly working. The real reason was
-          sitting in `analysis_error` the whole time and only the `error`
-          status ever rendered it. Show it here too. */}
-      {data.analysis_status === 'fallback' && (
-        <div className="alert alert-info mb-3 small">
-          Basic fallback ID only (colors from the photo cutout{data.brand ? ', brand from logo detection' : ''}).
-          {data.analysis_error ? (
-            <>
-              {' '}<strong>Why:</strong> {data.analysis_error}
-            </>
-          ) : (
-            <>
-              {' '}Add a Claude API key in{' '}
-              <Link to="/settings?tab=analysis" style={{ color: 'inherit', textDecoration: 'underline' }}>Settings</Link>
-              {' '}and hit Reanalyze for full model + price identification.
-            </>
-          )}
-        </div>
-      )}
-
-      {data.analysis_status === 'error' && data.analysis_error && (
-        <div className="alert alert-danger mb-3 small">
-          Analysis error: {data.analysis_error}
-        </div>
-      )}
-
-      {/* Physical tag. Sits on the hat's own page because that is where you
-          are standing when you tag it — holding this hat, with a blank NFC
-          sticker and a tag writer open. */}
-      <div className="card mb-3">
-        <div className="card-body">
-          <div className="card-title">Tag this hat</div>
-          <p className="text-secondary small">
-            Write this to an NFC sticker, or print a QR from{' '}
-            <Link to="/settings?tab=sharing">Settings</Link>. Scanning it opens a one-tap
-            “wore it today” screen.
-          </p>
-          <TagUrlRow kind="h" ident={data.id} />
-        </div>
-      </div>
-
-      <Link to="/hats/new" className="btn btn-primary w-100 mb-2">+ Add Another Hat</Link>
-
-      <div className="d-flex gap-2">
-        <Link to={`/hats/${data.id}/edit`} className="btn btn-outline-secondary flex-fill">Edit</Link>
-        <button
-          className="btn btn-danger flex-fill"
-          onClick={() => {
-            if (confirm('Delete this hat?')) removeMutation.mutate();
-          }}
-          disabled={removeMutation.isPending}
-        >
-          Delete
-        </button>
-      </div>
-      <ErrorNote of={removeMutation} className="mt-2 mb-0" />
 
       <DisposeModal hatId={data.id} show={disposeOpen} onClose={() => setDisposeOpen(false)} />
       {colorEditOpen !== null && (

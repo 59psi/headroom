@@ -3,9 +3,9 @@ import { isNotFound } from '../api/client';
 import { ErrorNote } from '../components/common/ErrorNote';
 import { Link, useParams } from 'react-router';
 import { getRoom } from '../api/rooms';
-import { LoadingSpinner } from '../components/common/LoadingSpinner';
-import { CaseTile } from '../components/cases/CaseTile';
+import { CaseGridSkeleton, CaseTile } from '../components/cases/CaseTile';
 import { HatRow } from '../components/hats/HatRow';
+import { StatusPill } from '../components/ui/StatusPill';
 
 /**
  * What is actually in a room.
@@ -19,6 +19,10 @@ import { HatRow } from '../components/hats/HatRow';
  * findable three other ways; a loose one is findable here and in search. It is
  * also the truthful order for a physical room — the things sitting out are
  * what you see when you walk in.
+ *
+ * The two lists are page SECTIONS (a heading over a run of cards), not
+ * `Panel`s: every item in them is already a card, and a card of cards is one
+ * border too many.
  */
 export function RoomDetailPage() {
   const { roomId } = useParams();
@@ -33,36 +37,58 @@ export function RoomDetailPage() {
     return (
       <div className="py-4">
         <ErrorNote of={{ isError: true, error }} what="Could not load this room" />
-        <Link to="/rooms" className="btn btn-outline-primary mt-3">← All rooms</Link>
+        <Link to="/rooms" className="btn btn-outline-secondary mt-3">← All rooms</Link>
       </div>
     );
   }
   if (!Number.isFinite(id) || error) {
     return (
-      <div className="text-center py-5">
-        <h5 className="mb-2">Room not found</h5>
-        <Link to="/rooms" className="btn btn-outline-primary">← All rooms</Link>
+      <div className="hr-cr-empty mt-3">
+        <p className="hr-cr-empty-title">Room not found</p>
+        <Link to="/rooms" className="btn btn-outline-secondary">← All rooms</Link>
       </div>
     );
   }
-  if (isLoading || !data) return <LoadingSpinner />;
+  if (isLoading || !data) {
+    return (
+      <>
+        <header className="hr-cr-head">
+          <div className="hr-cr-title">
+            <Link to="/rooms" className="hr-cr-back">Rooms</Link>
+            <span className="hr-skeleton hr-skeleton-line hr-room-skel-title" aria-hidden="true" />
+          </div>
+        </header>
+        <CaseGridSkeleton count={4} label="Loading room…" />
+      </>
+    );
+  }
 
   const loose = data.loose_hats ?? [];
   const cases = data.cases ?? [];
+  const summary = [
+    `${cases.length} case${cases.length === 1 ? '' : 's'}`,
+    loose.length > 0 && `${loose.length} loose hat${loose.length === 1 ? '' : 's'}`,
+  ].filter(Boolean).join(' · ');
 
   return (
     <>
-      <div className="d-flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
-        <h1 className="mb-0">{data.name}</h1>
-        <Link to="/rooms" className="btn btn-outline-secondary btn-sm">← Rooms</Link>
-      </div>
+      <header className="hr-cr-head">
+        <div className="hr-cr-title">
+          <Link to="/rooms" className="hr-cr-back">Rooms</Link>
+          <h1>{data.name}</h1>
+          <p className="hr-cr-sub">
+            <span>{summary}</span>
+            {data.is_default && <StatusPill tone="info">Default</StatusPill>}
+          </p>
+        </div>
+      </header>
 
       {/* Out on the shelf, first. See the module docstring. */}
       {loose.length > 0 && (
-        <section className="mb-4">
-          <div className="d-flex justify-content-between align-items-baseline mb-2">
-            <h2 className="h6 mb-0">Out in this room</h2>
-            <span className="text-secondary small">
+        <section className="hr-cr-section" aria-labelledby="room-loose-title">
+          <div className="hr-cr-section-head">
+            <h2 id="room-loose-title">Out in this room</h2>
+            <span className="hr-cr-section-count">
               {loose.length} hat{loose.length === 1 ? '' : 's'}, no case
             </span>
           </div>
@@ -70,26 +96,26 @@ export function RoomDetailPage() {
         </section>
       )}
 
-      <section>
-        <div className="d-flex justify-content-between align-items-baseline mb-2">
-          <h2 className="h6 mb-0">Cases</h2>
-          <span className="text-secondary small">
+      <section className="hr-cr-section" aria-labelledby="room-cases-title">
+        <div className="hr-cr-section-head">
+          <h2 id="room-cases-title">Cases</h2>
+          <span className="hr-cr-section-count">
             {cases.length} case{cases.length === 1 ? '' : 's'}
           </span>
         </div>
         {cases.length === 0 ? (
-          <p className="text-secondary small">
+          <p className="hr-cr-note">
             No cases in this room{loose.length > 0 ? '.' : ' yet.'}
           </p>
         ) : (
-          <div className="row row-cols-2 row-cols-md-3 g-3">
-            {cases.map(c => <div className="col" key={c.id}><CaseTile c={c} showRoom={false} /></div>)}
+          <div className="hr-case-grid">
+            {cases.map(c => <CaseTile key={c.id} c={c} showRoom={false} />)}
           </div>
         )}
       </section>
 
       {loose.length === 0 && cases.length === 0 && (
-        <p className="text-secondary small mt-3">
+        <p className="hr-cr-note">
           This room is empty. Hats can be kept here without a case — a Caddy or
           an Aviator doesn't fit a travel case at all.
         </p>

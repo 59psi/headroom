@@ -1841,23 +1841,6 @@ kbd {
   box-shadow: 0 0 6px currentColor;
 }
 
-/* ===== Sticky search/filter bars =============================== */
-.hr-sticky-bar {
-  position: sticky;
-  top: var(--nav-height);
-  z-index: 20;
-  background: rgba(15, 5, 36, 0.92);
-  backdrop-filter: blur(12px);
-  margin-left: -16px;
-  margin-right: -16px;
-  padding: 0.75rem 16px;
-  border-bottom: 1px solid var(--border);
-}
-
-@media (max-width: 991.98px) {
-  .hr-sticky-bar { top: 0; }
-}
-
 /* ===== Bootstrap utilities passthrough fillers ================= */
 .d-flex { display: flex !important; }
 .d-block { display: block !important; }

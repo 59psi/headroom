@@ -12,8 +12,9 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import { listAllHats, listDisposedHats } from '../api/hats';
 import { listCases } from '../api/cases';
-import { LoadingSpinner } from '../components/common/LoadingSpinner';
-import { BarList, ChartCard, StatTiles } from '../components/charts/Charts';
+import { BarList, ChartCard, StatTiles, StatTilesSkeleton } from '../components/charts/Charts';
+import { Panel } from '../components/ui/Panel';
+import { Skeleton } from '../components/ui/Skeleton';
 import {
   BASIS_LABEL, CASH_PAYOUT, CREDIT_PAYOUT, RETAIL_RETENTION,
   costOf, money, realizedTotals, valueCases, valueCollection, valueHat,
@@ -54,38 +55,53 @@ function bucketize(
   return Array.from(map.values()).sort((a, b) => b.value - a.value || b.count - a.count);
 }
 
-function BucketTable({ title, buckets }: { title: string; buckets: Bucket[] }) {
+/**
+ * One breakdown as a small table: what, how many, paid, worth.
+ *
+ * A table rather than the stacked "paid $x / worth $y" rows it replaced, so
+ * the figures line up in columns and "which brand is worth the most" is read
+ * down one edge instead of hunted for row by row. `—` where no hat in the
+ * bucket has that figure, never `$0`.
+ */
+function BucketTable({ title, column, buckets }: { title: string; column: string; buckets: Bucket[] }) {
   if (buckets.length === 0) return null;
   return (
     <ChartCard title={title}>
-      {buckets.map(b => (
-        <div key={b.key} className="hr-color-row" style={{ paddingTop: '0.5rem' }}>
-          <div className="flex-grow-1" style={{ minWidth: 0 }}>
-            <div
-              className="fw-semibold"
-              style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
-            >{b.label}</div>
-            <div className="text-muted small font-mono">
-              {b.count} hat{b.count === 1 ? '' : 's'}
-            </div>
-          </div>
-          <div className="text-end">
-            <div className="font-mono small">
-              <span className="text-secondary">paid </span>
-              <span style={{ color: 'var(--neon-purple)' }}>
-                {b.paidCount > 0 ? money(b.paid) : '—'}
-              </span>
-            </div>
-            <div className="font-mono small">
-              <span className="text-secondary">worth </span>
-              <span style={{ color: 'var(--neon-pink)' }}>
-                {b.valuedCount > 0 ? money(b.value) : '—'}
-              </span>
-            </div>
-          </div>
-        </div>
-      ))}
+      <table className="hr-cp-table">
+        <thead>
+          <tr>
+            <th scope="col">{column}</th>
+            <th scope="col" className="hr-cp-col-num">Hats</th>
+            <th scope="col" className="hr-cp-col-money">Paid</th>
+            <th scope="col" className="hr-cp-col-money">Worth</th>
+          </tr>
+        </thead>
+        <tbody>
+          {buckets.map(b => (
+            <tr key={b.key}>
+              <th scope="row"><span className="hr-cp-table-label" title={b.label}>{b.label}</span></th>
+              <td className="hr-cp-col-num">{b.count}</td>
+              <td className="hr-cp-col-money hr-cp-fig-paid">{b.paidCount > 0 ? money(b.paid) : '—'}</td>
+              <td className="hr-cp-col-money hr-cp-fig-worth">{b.valuedCount > 0 ? money(b.value) : '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </ChartCard>
+  );
+}
+
+function PageHead() {
+  return (
+    <header className="hr-cp-head">
+      <div className="hr-cp-head-title">
+        <h1>Valuation</h1>
+      </div>
+      <div className="hr-cp-head-actions">
+        <Link to="/stats" className="btn btn-outline-secondary btn-sm">Stats →</Link>
+        <Link to="/" className="btn btn-outline-secondary btn-sm">← Home</Link>
+      </div>
+    </header>
   );
 }
 
@@ -149,133 +165,159 @@ export function ValuationPage() {
   // wrong answer — the exact thing `valueHat` returns `null` rather than 0 to
   // avoid. Errors are shown, not averaged in.
   if (hatsQ.isError || disposedQ.isError || casesQ.isError) {
+    const retrying = hatsQ.isFetching || disposedQ.isFetching || casesQ.isFetching;
     return (
-      <div className="alert alert-danger" role="alert">
-        Couldn&rsquo;t load the collection, so no totals are shown — a partial
-        valuation would be worse than none. Reload to try again.
-      </div>
+      <>
+        <PageHead />
+        <div className="alert alert-danger hr-cp-error" role="alert">
+          <span>
+            Couldn&rsquo;t load the collection, so no totals are shown — a partial
+            valuation would be worse than none.
+          </span>
+          <button
+            type="button"
+            className="btn btn-sm btn-outline-secondary"
+            onClick={() => { void hatsQ.refetch(); void disposedQ.refetch(); void casesQ.refetch(); }}
+            disabled={retrying}
+          >{retrying ? 'Retrying…' : 'Try again'}</button>
+        </div>
+      </>
     );
   }
-  if (hatsQ.isLoading) return <LoadingSpinner />;
+  // All three, not just the hats: rendering before the cases or the disposed
+  // hats arrive showed a total without its cases line, then grew one — a
+  // figure that changes under you is the same confident wrong answer as the
+  // error case above, only briefer.
+  if (hatsQ.isLoading || disposedQ.isLoading || casesQ.isLoading) {
+    return (
+      <>
+        <PageHead />
+        <Panel title="Collection totals" featured>
+          <StatTilesSkeleton count={4} label="Loading the valuation…" />
+        </Panel>
+        <Panel title="How the sale estimate is worked out">
+          <Skeleton lines={3} />
+        </Panel>
+      </>
+    );
+  }
 
   const avgPaid = totals.spentCount > 0 ? totals.spentTotal / totals.spentCount : 0;
 
   return (
     <>
-      <div className="d-flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
-        <h1>Valuation</h1>
-        <div className="d-flex gap-2">
-          <Link to="/stats" className="btn btn-outline-primary btn-sm">Stats →</Link>
-          <Link to="/" className="btn btn-outline-secondary btn-sm">← Home</Link>
-        </div>
-      </div>
+      <PageHead />
 
-      <div className="card hr-feature mb-3">
-        <div className="card-body">
-          <div className="card-title mb-2">Collection totals</div>
-          <StatTiles tiles={[
-            {
-              label: 'Paid',
-              value: money(totals.spentTotal),
-              tone: 'purple',
-              sub: `${totals.spentCount} of ${totals.total} hats priced`,
-            },
-            {
-              label: 'Retail value',
-              value: money(totals.retailTotal),
-              tone: 'cyan',
-              sub: `${totals.retailCount} appraised`,
-            },
-            {
-              label: 'Est. sale value',
-              value: money(totals.marketTotal),
-              tone: 'pink',
-              sub: totals.retentionPct != null ? `${totals.retentionPct}% of retail` : undefined,
-            },
-            {
-              label: 'vs. paid',
-              value: totals.unrealizedGain != null
-                ? `${totals.unrealizedGain >= 0 ? '+' : '−'}${money(Math.abs(totals.unrealizedGain))}`
-                : '—',
-              tone: totals.unrealizedGain != null && totals.unrealizedGain >= 0 ? 'cyan' : 'muted',
-              sub: totals.unrealizedGain != null
-                ? 'hats with both figures'
-                : 'needs purchase prices',
-            },
-          ]} />
-          {totals.unvalued > 0 && (
-            <p className="text-muted small mb-0 mt-3" style={{ fontSize: '0.72rem' }}>
-              {totals.unvalued} hat{totals.unvalued === 1 ? ' has' : 's have'} no
-              price data at all and {totals.unvalued === 1 ? 'is' : 'are'} left out
-              of every figure above rather than counted as $0.
-            </p>
-          )}
+      <Panel title="Collection totals" featured>
+        <StatTiles tiles={[
+          {
+            label: 'Paid',
+            value: money(totals.spentTotal),
+            tone: 'purple',
+            sub: `${totals.spentCount} of ${totals.total} hats priced`,
+          },
+          {
+            label: 'Retail value',
+            value: money(totals.retailTotal),
+            tone: 'cyan',
+            sub: `${totals.retailCount} appraised`,
+          },
+          {
+            label: 'Est. sale value',
+            value: money(totals.marketTotal),
+            tone: 'pink',
+            sub: totals.retentionPct != null ? `${totals.retentionPct}% of retail` : undefined,
+          },
+          {
+            label: 'vs. paid',
+            value: totals.unrealizedGain != null
+              ? `${totals.unrealizedGain >= 0 ? '+' : '−'}${money(Math.abs(totals.unrealizedGain))}`
+              : '—',
+            tone: totals.unrealizedGain != null && totals.unrealizedGain >= 0 ? 'cyan' : 'muted',
+            sub: totals.unrealizedGain != null
+              ? 'hats with both figures'
+              : 'needs purchase prices',
+          },
+        ]} />
+        {totals.unvalued > 0 && (
+          <p className="hr-cp-note">
+            {totals.unvalued} hat{totals.unvalued === 1 ? ' has' : 's have'} no
+            price data at all and {totals.unvalued === 1 ? 'is' : 'are'} left out
+            of every figure above rather than counted as $0.
+          </p>
+        )}
 
-          {/* Kept as its own line rather than folded into the tiles above:
-              cases are valued at replacement cost, hats at market, and adding
-              two different KINDS of number together silently would make every
-              comparison on this page — retention, gain, cost per hat — wrong
-              in a way nobody could see. */}
-          {caseValue.count > 0 && (
-            <div className="hr-case-total mt-3">
-              <div className="d-flex justify-content-between align-items-baseline">
-                <span className="text-secondary small">
-                  + {caseValue.count} case{caseValue.count === 1 ? '' : 's'} at
-                  replacement cost
-                </span>
-                <span className="font-mono">{money(caseValue.retailTotal)}</span>
-              </div>
-              <div className="d-flex justify-content-between align-items-baseline mt-1">
-                <strong className="small">Everything, together</strong>
-                <strong className="font-mono" style={{ color: 'var(--neon-cyan)' }}>
-                  {money(totals.marketTotal + caseValue.retailTotal)}
-                </strong>
-              </div>
-              <p className="text-muted mb-0 mt-1" style={{ fontSize: '0.72rem' }}>
-                Hats at estimated sale value plus cases at what they cost to
-                replace — cases have no resale market to price them against.
-              </p>
+        {/* Kept as its own line rather than folded into the tiles above:
+            cases are valued at replacement cost, hats at market, and adding
+            two different KINDS of number together silently would make every
+            comparison on this page — retention, gain, cost per hat — wrong
+            in a way nobody could see. */}
+        {caseValue.count > 0 && (
+          <div className="hr-case-total mt-3">
+            <div className="hr-cp-case-line">
+              <span className="text-secondary small">
+                + {caseValue.count} case{caseValue.count === 1 ? '' : 's'} at
+                replacement cost
+              </span>
+              <span className="font-mono">{money(caseValue.retailTotal)}</span>
             </div>
-          )}
-        </div>
-      </div>
+            <div className="hr-cp-case-line mt-1">
+              <strong className="small">Everything, together</strong>
+              <strong className="font-mono hr-cp-case-grand">
+                {money(totals.marketTotal + caseValue.retailTotal)}
+              </strong>
+            </div>
+            <p className="hr-cp-note mt-1">
+              Hats at estimated sale value plus cases at what they cost to
+              replace — cases have no resale market to price them against.
+            </p>
+          </div>
+        )}
+      </Panel>
 
-      {/* ===== The method, stated ===== */}
+      {/* ===== The method, stated =====
+          The chart of bases stays in view; the four paragraphs behind it are
+          one tap away rather than a wall of text between the totals and the
+          rest of the page. Nothing was cut — this is the only place the
+          method is written down. */}
       <ChartCard
         title="How the sale estimate is worked out"
         subtitle="Each hat uses the best signal it has. Stronger bases first."
+        helpLabel="The method in detail"
+        help={
+          <>
+            <p className="mb-2">
+              <strong>On melinrecap the listed price is the sale price.</strong>{' '}
+              It's a fixed-price marketplace with automatic drops — a buyer clicks
+              buy at the number shown — so nothing is discounted off it. What
+              makes a median comparable is <em>filtering</em>: each hat is priced
+              against live listings matching its own model, condition and size,
+              narrowing to something broader only when the market has too few of
+              the exact thing.
+            </p>
+            <p className="mb-2">
+              This replaced a pair of invented factors — a 15% ask-to-sale
+              haircut and a guessed condition multiplier. Measured against 706
+              live listings the guesses were wrong (new-without-tags sells at 95%
+              of new-with-tags, not 92%; worn at 82%, not 78%), and they were
+              never needed when the real number is in the feed.
+            </p>
+            <p className="mb-2">
+              With no listings to compare against, the estimate falls back to a
+              share of new retail: {Object.entries(RETAIL_RETENTION)
+                .map(([k, v]) => `${CONDITION_LABEL[k] ?? k} ${Math.round(v * 100)}%`)
+                .join(' · ')}.
+            </p>
+            <p className="mb-0">
+              <strong>{BASIS_LABEL.category}</strong> is the weak one: no listings
+              matched the model, so it borrows the median across the whole style
+              category — the going rate for a hat of that shape, not a valuation
+              of this hat.
+            </p>
+          </>
+        }
       >
         <BarList data={basisRows} colorize />
-        <div className="text-secondary small mt-3" style={{ fontSize: '0.78rem', lineHeight: 1.6 }}>
-          <p className="mb-2">
-            <strong>On melinrecap the listed price is the sale price.</strong>{' '}
-            It's a fixed-price marketplace with automatic drops — a buyer clicks
-            buy at the number shown — so nothing is discounted off it. What
-            makes a median comparable is <em>filtering</em>: each hat is priced
-            against live listings matching its own model, condition and size,
-            narrowing to something broader only when the market has too few of
-            the exact thing.
-          </p>
-          <p className="mb-2">
-            This replaced a pair of invented factors — a 15% ask-to-sale
-            haircut and a guessed condition multiplier. Measured against 706
-            live listings the guesses were wrong (new-without-tags sells at 95%
-            of new-with-tags, not 92%; worn at 82%, not 78%), and they were
-            never needed when the real number is in the feed.
-          </p>
-          <p className="mb-2">
-            With no listings to compare against, the estimate falls back to a
-            share of new retail: {Object.entries(RETAIL_RETENTION)
-              .map(([k, v]) => `${CONDITION_LABEL[k] ?? k} ${Math.round(v * 100)}%`)
-              .join(' · ')}.
-          </p>
-          <p className="mb-0">
-            <strong>{BASIS_LABEL.category}</strong> is the weak one: no listings
-            matched the model, so it borrows the median across the whole style
-            category — the going rate for a hat of that shape, not a valuation
-            of this hat.
-          </p>
-        </div>
       </ChartCard>
 
       <ChartCard
@@ -308,7 +350,7 @@ export function ValuationPage() {
             sub: 'spendable at melin only',
           },
         ]} />
-        <p className="text-muted small mb-0 mt-3" style={{ fontSize: '0.72rem' }}>
+        <p className="hr-cp-note">
           Rates come from the marketplace itself — every listing carries them.
           Selling the whole collection at once is not a realistic event; this is
           a scale, not a plan.
@@ -327,7 +369,7 @@ export function ValuationPage() {
         }
         action={
           totals.costUnknown > 0
-            ? <Link to="/settings?tab=data" className="btn btn-outline-primary btn-sm flex-shrink-0">Import</Link>
+            ? <Link to="/settings?tab=data" className="btn btn-outline-secondary btn-sm">Import prices</Link>
             : undefined
         }
       >
@@ -351,10 +393,10 @@ export function ValuationPage() {
         ]} />
         {missingCost.length > 0 && (
           <>
-            <div className="hr-tier-label mt-3 mb-2">Missing a price</div>
+            <div className="hr-eyebrow mt-3">Missing a price</div>
             <RankedHatList hats={missingCost} valueFor={() => 'set price'} />
             {totals.costUnknown > missingCost.length && (
-              <p className="text-muted small mb-0 mt-2">
+              <p className="hr-cp-note mt-2">
                 …and {totals.costUnknown - missingCost.length} more.
               </p>
             )}
@@ -362,33 +404,35 @@ export function ValuationPage() {
         )}
       </ChartCard>
 
-      <BucketTable title="By condition" buckets={buckets.condition} />
-      <BucketTable title="By brand" buckets={buckets.brand} />
-      <BucketTable title="By style" buckets={buckets.style} />
-      <BucketTable title="By room" buckets={buckets.room} />
+      <div className="hr-cp-grid">
+        <BucketTable title="By condition" column="Condition" buckets={buckets.condition} />
+        <BucketTable title="By brand" column="Brand" buckets={buckets.brand} />
+        <BucketTable title="By style" column="Style" buckets={buckets.style} />
+        <BucketTable title="By room" column="Room" buckets={buckets.room} />
 
-      <ChartCard title="Most valuable">
-        <RankedHatList
-          hats={topValued}
-          valueFor={h => money(valueHat(h).value ?? 0)}
-          empty={(
-            <p className="text-muted small mb-0">
-              No hats have a value estimate yet. Add a Claude API key in{' '}
-              <Link to="/settings?tab=analysis">Settings</Link> and analyze a photo, or enter
-              prices by hand.
-            </p>
-          )}
-        />
-      </ChartCard>
+        <ChartCard title="Most valuable">
+          <RankedHatList
+            hats={topValued}
+            valueFor={h => money(valueHat(h).value ?? 0)}
+            empty={(
+              <p className="text-muted small mb-0">
+                No hats have a value estimate yet. Add a Claude API key in{' '}
+                <Link to="/settings?tab=analysis">Settings</Link> and analyze a photo, or enter
+                prices by hand.
+              </p>
+            )}
+          />
+        </ChartCard>
 
-      <ChartCard title="Wear rotation" subtitle="Longest since last worn — give these some sun.">
-        <RankedHatList
-          hats={neglected}
-          numbered={false}
-          valueTone="muted"
-          valueFor={h => h.date_last_worn ?? 'never worn'}
-        />
-      </ChartCard>
+        <ChartCard title="Wear rotation" subtitle="Longest since last worn — give these some sun.">
+          <RankedHatList
+            hats={neglected}
+            numbered={false}
+            valueTone="muted"
+            valueFor={h => h.date_last_worn ?? 'never worn'}
+          />
+        </ChartCard>
+      </div>
     </>
   );
 }

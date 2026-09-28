@@ -1,13 +1,24 @@
 import { copyText } from '../../lib/clipboard';
 import { useRef, useState } from 'react';
+import { Link } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   importPurchases, listPurchases, previewImport, rematchPurchases, unmatchAllPurchases,
   unmatchPurchase,
 } from '../../api/purchases';
-import type { ImportPreview } from '../../types';
+import type { ImportPreview, PurchaseRow } from '../../types';
 import { invalidateHatViews, invalidatePurchaseDerived } from '../../lib/invalidate';
 import { ErrorNote } from '../common/ErrorNote';
+import { Panel } from '../ui/Panel';
+import { StatusPill } from '../ui/StatusPill';
+import { Skeleton } from '../ui/Skeleton';
+import { useToast } from '../ui/Toast';
+import { useConfirm } from '../ui/Dialogs';
+
+const KEY = ['admin', 'purchases'] as const;
+
+/** How many purchase rows to list inline; the rest are counted, not hidden. */
+const ROW_LIMIT = 8;
 
 /** Accepts either a bare array of line items or `{items: [...]}`. */
 function readItems(text: string): Record<string, unknown>[] {
@@ -72,7 +83,7 @@ function EmailPromptDisclosure() {
   }
 
   return (
-    <details className="hr-prompt-details mb-3">
+    <details className="hr-prompt-details hr-sd-disclosure">
       <summary className="text-secondary small">
         No JSON yet? Get one from your email
       </summary>
@@ -83,7 +94,7 @@ function EmailPromptDisclosure() {
         </p>
         <button
           type="button"
-          className="btn btn-outline-primary btn-sm mb-2"
+          className="btn btn-outline-secondary btn-sm mb-2"
           onClick={copy}
         >
           {copied ? 'Copied' : 'Copy prompt'}
@@ -96,6 +107,8 @@ function EmailPromptDisclosure() {
 
 export function PurchasesCard() {
   const qc = useQueryClient();
+  const toast = useToast();
+  const confirm = useConfirm();
   const fileRef = useRef<HTMLInputElement>(null);
   // The parsed file is held here until it is either imported or discarded.
   // Re-reading it on confirm would mean the preview and the import could see
@@ -105,7 +118,7 @@ export function PurchasesCard() {
   const [readError, setReadError] = useState<string | null>(null);
 
   const purchases = useQuery({
-    queryKey: ['admin', 'purchases'],
+    queryKey: KEY,
     queryFn: listPurchases,
   });
 
@@ -124,10 +137,14 @@ export function PurchasesCard() {
     onSuccess: setPreview,
   });
 
+  // Outcomes are toasts; the tiles above are the lasting record. Each of these
+  // used to leave a "✓ imported 12, matched 9" line behind that sat on the
+  // card, beside tiles that already said the same thing, until a reload.
   const importMut = useMutation({
     mutationFn: importPurchases,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['admin', 'purchases'] });
+    onSuccess: result => {
+      toast.success(`Imported ${result.imported}, matched ${result.matched} to hats`);
+      qc.invalidateQueries({ queryKey: KEY });
       invalidatePurchaseDerived(qc);
       invalidateHatViews(qc);
       reset();
@@ -136,8 +153,9 @@ export function PurchasesCard() {
 
   const rematchMut = useMutation({
     mutationFn: rematchPurchases,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['admin', 'purchases'] });
+    onSuccess: result => {
+      toast.success(`Matched ${result.matched}, ${result.unmatched} still unmatched`);
+      qc.invalidateQueries({ queryKey: KEY });
       invalidatePurchaseDerived(qc);
       invalidateHatViews(qc);
     },
@@ -145,8 +163,9 @@ export function PurchasesCard() {
 
   const unmatchMut = useMutation({
     mutationFn: unmatchAllPurchases,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['admin', 'purchases'] });
+    onSuccess: result => {
+      toast.success(`Unlinked ${result.unmatched}, cleared ${result.fields_cleared} fields`);
+      qc.invalidateQueries({ queryKey: KEY });
       invalidatePurchaseDerived(qc);
       invalidateHatViews(qc);
     },
@@ -155,12 +174,31 @@ export function PurchasesCard() {
   // One row at a time — the undo a single wrong link needs. `unmatch-all`
   // was the only undo the card offered, so fixing one row meant unlinking
   // every purchase and re-running the matcher over the whole collection.
+  //
+  // Optimistic: the row drops its link the instant it is pressed. The server's
+  // answer is predictable (it unlinks exactly that purchase), and a failure
+  // restores the cached list. The hat id is captured BEFORE the optimistic
+  // write, because afterwards the cache no longer knows which hat it was.
   const unmatchOneMut = useMutation({
     mutationFn: unmatchPurchase,
-    onSuccess: (_result, purchaseId) => {
-      qc.invalidateQueries({ queryKey: ['admin', 'purchases'] });
+    onMutate: async (purchaseId: number) => {
+      await qc.cancelQueries({ queryKey: KEY });
+      const previous = qc.getQueryData<PurchaseRow[]>(KEY);
+      const hatId = previous?.find(r => r.id === purchaseId)?.hat_id ?? undefined;
+      qc.setQueryData<PurchaseRow[]>(KEY, list =>
+        list?.map(r => (r.id === purchaseId ? { ...r, hat_id: null } : r)));
+      return { previous, hatId };
+    },
+    onError: (_err, _id, ctx) => {
+      if (ctx?.previous) qc.setQueryData(KEY, ctx.previous);
+    },
+    onSuccess: (result, _id, ctx) => {
+      toast.success('Purchase unlinked');
       invalidatePurchaseDerived(qc);
-      invalidateHatViews(qc, rows.find(r => r.id === purchaseId)?.hat_id ?? undefined);
+      invalidateHatViews(qc, result.hat_id ?? ctx?.hatId);
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: KEY });
     },
   });
 
@@ -179,32 +217,72 @@ export function PurchasesCard() {
     }
   };
 
+  // Unlinking everything reverts what matching wrote onto every linked hat,
+  // and the matcher is the only way back — so it asks first, in-app. It used
+  // to fire on the first tap, one button along from "Re-run matching".
+  //
+  // The body is a plain string on purpose: outside a DialogProvider `confirm`
+  // falls back to `window.confirm`, which can only carry text — markup there
+  // is dropped, and the question would be asked without its consequences.
+  const unlinkAll = async () => {
+    const ok = await confirm({
+      title: 'Unlink every purchase?',
+      body:
+        'Every purchase is unlinked from its hat, and the colorway, cost basis and '
+        + 'purchase date that matching wrote are cleared — unless you have edited '
+        + 'them since. The purchases themselves are kept; “Re-run matching” links '
+        + 'them again.',
+      confirmLabel: 'Unlink all',
+      tone: 'danger',
+    });
+    if (ok) unmatchMut.mutate();
+  };
+
   const rows = purchases.data ?? [];
   const linked = rows.filter(r => r.hat_id != null).length;
+  const unlinked = rows.length - linked;
   const busy = previewMut.isPending || importMut.isPending;
+  // The one primary action per card: picking a file, until a preview is up —
+  // then confirming that preview is the thing to do, and picking another file
+  // steps back to secondary.
+  const reviewing = !!(staged && preview);
 
   return (
-    <div className="card mb-3">
-      <div className="card-body">
-        <div className="card-title">Purchase History</div>
-        <p className="text-secondary small mb-3">
-          Order line items from your Melin order emails. Matching sets a hat's colorway
-          and cost basis — what you actually paid — so the valuation can show a real
-          gain rather than a guess.
-        </p>
-
-        <EmailPromptDisclosure />
-
-        <div className="d-flex gap-2 align-items-center flex-wrap mb-2">
-          <span className="text-secondary small font-mono">
-            {rows.length} purchases · {linked} linked to hats
-          </span>
-        </div>
-
-        <div className="d-flex gap-2 flex-wrap mb-2">
+    <Panel
+      title="Purchase history"
+      status={purchases.isSuccess && (
+        rows.length === 0
+          ? <StatusPill tone="off">None imported</StatusPill>
+          : unlinked === 0
+            ? <StatusPill tone="ok">All linked</StatusPill>
+            : <StatusPill tone="info">{unlinked} unlinked</StatusPill>
+      )}
+      description="Order lines from your melin receipts. Matching gives hats their colorway and what you paid, so valuation shows a real gain."
+      help={
+        <>
+          <p>
+            Order line items from your Melin order emails. Matching sets a
+            hat&rsquo;s colorway and cost basis — what you actually paid — so the
+            valuation can show a real gain rather than a guess.
+          </p>
+          <p>
+            Import a JSON array of line items — each needs <code>item_title</code>,
+            and may carry <code>order_ref</code>, <code>order_date</code>,{' '}
+            <code>price</code>, <code>quantity</code> and <code>size</code>. Nothing
+            is written until you confirm the preview.
+          </p>
+          <p>
+            Importing re-runs matching over every unmatched purchase, not just the
+            new file&rsquo;s. <em>Unlink</em> on a row undoes one match;{' '}
+            <em>Unlink all</em> undoes them all.
+          </p>
+        </>
+      }
+      footer={
+        <>
           <button
             type="button"
-            className="btn btn-outline-primary btn-sm"
+            className={`btn ${reviewing ? 'btn-outline-secondary' : 'btn-primary'}`}
             onClick={() => fileRef.current?.click()}
             disabled={busy}
           >
@@ -213,7 +291,7 @@ export function PurchasesCard() {
           {rows.length > 0 && (
             <button
               type="button"
-              className="btn btn-outline-secondary btn-sm"
+              className="btn btn-outline-secondary"
               onClick={() => rematchMut.mutate()}
               disabled={rematchMut.isPending}
             >
@@ -223,151 +301,171 @@ export function PurchasesCard() {
           {linked > 0 && (
             <button
               type="button"
-              className="btn btn-outline-danger btn-sm"
-              onClick={() => unmatchMut.mutate()}
+              className="btn btn-outline-danger"
+              onClick={unlinkAll}
               disabled={unmatchMut.isPending}
             >
-              Unlink all
+              {unmatchMut.isPending ? 'Unlinking…' : 'Unlink all'}
             </button>
           )}
-        </div>
+        </>
+      }
+    >
+      <input
+        ref={fileRef}
+        type="file"
+        aria-label="Purchase history JSON file"
+        accept="application/json,.json"
+        onChange={handleFile}
+        hidden
+      />
 
-        <input
-          ref={fileRef}
-          type="file"
-          aria-label="Purchase history JSON file"
-          accept="application/json,.json"
-          onChange={handleFile}
-          hidden
-        />
+      {purchases.isLoading ? (
+        <Skeleton height={72} />
+      ) : (
+        purchases.isSuccess && (
+          <dl className="hr-metric-grid hr-sd-metrics">
+            <div className="hr-metric">
+              <dt className="hr-metric-label">Purchases</dt>
+              <dd className="hr-metric-value">{rows.length}</dd>
+            </div>
+            <div className="hr-metric">
+              <dt className="hr-metric-label">Linked to hats</dt>
+              <dd className="hr-metric-value">{linked}</dd>
+            </div>
+          </dl>
+        )
+      )}
 
-        <p className="text-muted small mb-3">
-          A JSON array of line items — each needs <code>item_title</code>, and may carry{' '}
-          <code>order_ref</code>, <code>order_date</code>, <code>price</code>,{' '}
-          <code>quantity</code> and <code>size</code>. Nothing is written until you
-          confirm the preview.
-        </p>
+      {readError && <div className="alert alert-danger mt-3 mb-0 small" role="alert">{readError}</div>}
 
-        {readError && <div className="alert alert-danger mt-3 mb-3 small">{readError}</div>}
+      {previewMut.isPending && (
+        <p className="text-secondary small mt-3 mb-0" role="status">Checking that file…</p>
+      )}
 
-        {staged && preview && (
-          <div className="mb-3">
-            <div className="text-secondary small mb-1 font-mono">{staged.name}</div>
-            {preview.would_import === 0 ? (
-              <p className="small mb-2">
-                Nothing new to import — all {preview.duplicates} line
-                {preview.duplicates === 1 ? '' : 's'} are already on record.
-              </p>
-            ) : (
-              <p className="small mb-2">
-                <strong>{preview.would_import}</strong> to import
-                {preview.duplicates > 0 && <> · {preview.duplicates} already on record</>}
-                {preview.unusable > 0 && <> · {preview.unusable} unusable</>}
-                <br />
-                <strong>{preview.would_match}</strong> would match a hat
-                {preview.would_not_match > 0 && <> · {preview.would_not_match} would not</>}
-                {preview.ambiguous > 0 && <> · {preview.ambiguous} ambiguous</>}
-                {preview.likely_accessories > 0 && (
-                  <>
-                    <br />
-                    <span className="text-muted">
-                      {preview.likely_accessories} look like accessories (travel cases,
-                      gift cards) — imported, but they will not match a hat.
-                    </span>
-                  </>
-                )}
-              </p>
-            )}
-            {/*
-              The backlog is the part nobody asked for. Importing runs the
-              matcher over EVERY unmatched purchase, not just this file's, so
-              one click can write prices onto hats the file never mentioned.
-              Stated in hats rather than rows because hats are what changes.
-            */}
-            {preview.would_match_backlog > 0 && (
-              <p className="small mb-2">
-                <strong>Also matches {preview.would_match_backlog} purchase
-                {preview.would_match_backlog === 1 ? '' : 's'} already on record.</strong>{' '}
-                Importing re-runs matching over everything unmatched, so this writes a
-                colorway and cost basis onto {preview.would_match_total} hat
-                {preview.would_match_total === 1 ? '' : 's'} in total. Unlink all is the
-                only undo.
-              </p>
-            )}
-            <div className="d-flex gap-2 flex-wrap">
-              {preview.would_import > 0 && (
-                <button
-                  type="button"
-                  className="btn btn-primary btn-sm"
-                  onClick={() => importMut.mutate(staged.items)}
-                  disabled={busy}
-                >
-                  {importMut.isPending
-                    ? 'Importing…'
-                    : `Import ${preview.would_import} and match`}
-                </button>
+      {staged && preview && (
+        <div className="hr-sd-preview mt-3" role="region" aria-label="Import preview">
+          <div className="text-secondary small mb-1 font-mono hr-sd-filename">{staged.name}</div>
+          {preview.would_import === 0 ? (
+            <p className="small mb-2">
+              Nothing new to import — all {preview.duplicates} line
+              {preview.duplicates === 1 ? '' : 's'} are already on record.
+            </p>
+          ) : (
+            <p className="small mb-2">
+              <strong>{preview.would_import}</strong> to import
+              {preview.duplicates > 0 && <> · {preview.duplicates} already on record</>}
+              {preview.unusable > 0 && <> · {preview.unusable} unusable</>}
+              <br />
+              <strong>{preview.would_match}</strong> would match a hat
+              {preview.would_not_match > 0 && <> · {preview.would_not_match} would not</>}
+              {preview.ambiguous > 0 && <> · {preview.ambiguous} ambiguous</>}
+              {preview.likely_accessories > 0 && (
+                <>
+                  <br />
+                  <span className="text-muted">
+                    {preview.likely_accessories} look like accessories (travel cases,
+                    gift cards) — imported, but they will not match a hat.
+                  </span>
+                </>
               )}
+            </p>
+          )}
+          {/*
+            The backlog is the part nobody asked for. Importing runs the
+            matcher over EVERY unmatched purchase, not just this file's, so
+            one click can write prices onto hats the file never mentioned.
+            Stated in hats rather than rows because hats are what changes.
+          */}
+          {preview.would_match_backlog > 0 && (
+            <p className="small mb-2 hr-sd-warn-text">
+              <strong>Also matches {preview.would_match_backlog} purchase
+              {preview.would_match_backlog === 1 ? '' : 's'} already on record.</strong>{' '}
+              Importing re-runs matching over everything unmatched, so this writes a
+              colorway and cost basis onto {preview.would_match_total} hat
+              {preview.would_match_total === 1 ? '' : 's'} in total. Unlink all is the
+              only undo.
+            </p>
+          )}
+          <div className="d-flex gap-2 flex-wrap">
+            {preview.would_import > 0 && (
               <button
                 type="button"
-                className="btn btn-outline-secondary btn-sm"
-                onClick={reset}
+                className="btn btn-primary btn-sm"
+                onClick={() => importMut.mutate(staged.items)}
                 disabled={busy}
               >
-                Cancel
+                {importMut.isPending
+                  ? 'Importing…'
+                  : `Import ${preview.would_import} and match`}
               </button>
-            </div>
+            )}
+            <button
+              type="button"
+              className="btn btn-outline-secondary btn-sm"
+              onClick={reset}
+              disabled={busy}
+            >
+              Cancel
+            </button>
           </div>
-        )}
+        </div>
+      )}
 
-        {previewMut.isPending && (
-          <div className="text-secondary small mb-2">Checking that file…</div>
-        )}
+      <ErrorNote
+        className="mt-3"
+        of={[purchases, previewMut, importMut, rematchMut, unmatchMut, unmatchOneMut]}
+      />
 
-        {importMut.data && (
-          <div className="small text-secondary mb-2">
-            ✓ imported {importMut.data.imported}, matched {importMut.data.matched} to hats
-          </div>
-        )}
-        {rematchMut.data && (
-          <div className="small text-secondary mb-2">
-            ✓ matched {rematchMut.data.matched}, {rematchMut.data.unmatched} still unmatched
-          </div>
-        )}
-        {unmatchMut.data && (
-          <div className="small text-secondary mb-2">
-            ✓ unlinked {unmatchMut.data.unmatched}, cleared {unmatchMut.data.fields_cleared} fields
-          </div>
-        )}
-        <ErrorNote
-          className="mt-3 mb-3"
-          of={[purchases, previewMut, importMut, rematchMut, unmatchMut, unmatchOneMut]}
-        />
+      {rows.length > 0 && (
+        <>
+          <span className="hr-eyebrow mt-3">Recent purchases</span>
+          <ul className="hr-sd-rows">
+            {rows.slice(0, ROW_LIMIT).map(r => (
+              <li key={r.id}>
+                <span className="hr-sd-row-title">
+                  <span
+                    className={`hr-sd-link-dot${r.hat_id != null ? ' is-linked' : ''}`}
+                    aria-hidden="true"
+                  />
+                  <span className="visually-hidden">
+                    {r.hat_id != null ? 'Linked: ' : 'Not linked: '}
+                  </span>
+                  {/* A linked row opens its hat: the link is the thing a
+                      person checks before deciding it is wrong. */}
+                  <span className="hr-sd-row-text">
+                    {r.hat_id != null
+                      ? <Link to={`/hats/${r.hat_id}`}>{r.item_title}</Link>
+                      : r.item_title}
+                  </span>
+                </span>
+                <span className="hr-sd-row-aside">
+                  <span className="font-mono text-secondary">
+                    {r.price != null ? `$${r.price.toFixed(2)}` : '—'}
+                  </span>
+                  {r.hat_id != null && (
+                    <button
+                      type="button"
+                      className="btn btn-outline-secondary btn-sm"
+                      aria-label={`Unlink ${r.item_title} from its hat`}
+                      disabled={unmatchOneMut.isPending}
+                      onClick={() => unmatchOneMut.mutate(r.id)}
+                    >
+                      Unlink
+                    </button>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {rows.length > ROW_LIMIT && (
+            <div className="small text-muted mt-1">…and {rows.length - ROW_LIMIT} more</div>
+          )}
+        </>
+      )}
 
-        {rows.slice(0, 8).map(r => (
-          <div key={r.id} className="small d-flex justify-content-between align-items-center gap-2 mb-1">
-            <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {r.hat_id != null ? '🔗 ' : '· '}{r.item_title}
-            </span>
-            <span className="d-flex align-items-center gap-2 flex-shrink-0">
-              <span className="font-mono text-secondary">
-                {r.price != null ? `$${r.price.toFixed(2)}` : '—'}
-              </span>
-              {r.hat_id != null && (
-                <button
-                  type="button"
-                  className="btn btn-outline-secondary btn-sm"
-                  aria-label={`Unlink ${r.item_title} from its hat`}
-                  disabled={unmatchOneMut.isPending}
-                  onClick={() => unmatchOneMut.mutate(r.id)}
-                >
-                  Unlink
-                </button>
-              )}
-            </span>
-          </div>
-        ))}
-        {rows.length > 8 && <div className="small text-muted">…and {rows.length - 8} more</div>}
-      </div>
-    </div>
+      <hr className="hr-panel-divider" />
+      <EmailPromptDisclosure />
+    </Panel>
   );
 }

@@ -16,6 +16,7 @@ export function Skeleton({
   width,
   className = '',
   label = 'Loading…',
+  decorative = false,
 }: {
   /** Number of text-line bars. Ignored when `height` is set. */
   lines?: number;
@@ -24,11 +25,22 @@ export function Skeleton({
   width?: number | string;
   className?: string;
   label?: string;
+  /**
+   * Shape only, no announcement. For every skeleton but one on a page that
+   * shows several: each is otherwise its own status region, and a detail
+   * page with four read "Loading… Loading… Loading… Loading…".
+   */
+  decorative?: boolean;
 }) {
   const block: CSSProperties | undefined = height !== undefined ? { height, width } : undefined;
   return (
-    <div className={`hr-skeleton-wrap ${className}`} role="status" aria-live="polite">
-      <span className="visually-hidden">{label}</span>
+    <div
+      className={`hr-skeleton-wrap ${className}`}
+      role={decorative ? undefined : 'status'}
+      aria-live={decorative ? undefined : 'polite'}
+      aria-hidden={decorative || undefined}
+    >
+      {!decorative && <span className="visually-hidden">{label}</span>}
       {block ? (
         <span className="hr-skeleton" style={block} aria-hidden="true" />
       ) : (

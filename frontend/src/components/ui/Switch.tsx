@@ -30,18 +30,22 @@ export function Switch({
   id?: string;
 }) {
   const auto = useId();
-  const labelId = `${id ?? auto}-label`;
-  const hintId = `${id ?? auto}-hint`;
+  const buttonId = id ?? `${auto}-switch`;
+  const labelId = `${buttonId}-label`;
+  const hintId = `${buttonId}-hint`;
   return (
     <div className={`hr-switch-row${disabled ? ' is-disabled' : ''}`}>
       <div className="hr-switch-text">
-        <span className="hr-switch-label" id={labelId}>{label}</span>
+        {/* A real <label> for the button, so tapping the WORDS flips it too —
+            the checkboxes these replaced worked that way, and a 52px track is
+            a small target next to a full-width sentence. */}
+        <label className="hr-switch-label" id={labelId} htmlFor={buttonId}>{label}</label>
         {hint && <span className="hr-switch-hint" id={hintId}>{hint}</span>}
       </div>
       <button
         type="button"
         role="switch"
-        id={id}
+        id={buttonId}
         aria-checked={checked}
         aria-labelledby={labelId}
         aria-describedby={hint ? hintId : undefined}

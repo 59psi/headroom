@@ -14,10 +14,19 @@ import { portalToBody } from './ModalPortal';
  * Bound to the DOCUMENT, not the dialog: the cropper's focus sits inside a
  * third-party canvas, and a key handler on the dialog element never hears
  * a key pressed there.
+ *
+ * Only the TOPMOST open dialog answers. Dialogs can stack now — "Remove this
+ * color?" opens over the color editor — and every open one has a document
+ * listener, so a single Escape closed both, and Tab from the inner dialog was
+ * pulled back into the outer one by the outer's trap.
  */
+const openDialogs: object[] = [];
+
 export function useDialogKeys(open: boolean, onClose: () => void, dialogRef: React.RefObject<HTMLElement | null>) {
   useEffect(() => {
     if (!open) return;
+    const token = {};
+    openDialogs.push(token);
     const opener = document.activeElement as HTMLElement | null;
     const dialog = dialogRef.current;
     // Initial focus: a control that asked for it (`data-autofocus` — the text
@@ -29,6 +38,7 @@ export function useDialogKeys(open: boolean, onClose: () => void, dialogRef: Rea
     (preferred ?? first ?? dialog)?.focus();
 
     function onKey(e: KeyboardEvent) {
+      if (openDialogs[openDialogs.length - 1] !== token) return;
       if (e.key === 'Escape') {
         e.stopPropagation();
         onClose();
@@ -41,10 +51,11 @@ export function useDialogKeys(open: boolean, onClose: () => void, dialogRef: Rea
       const firstItem = items[0];
       const lastItem = items[items.length - 1];
       const active = document.activeElement;
-      if (e.shiftKey && (active === firstItem || !dialog.contains(active))) {
+      const outside = !dialog.contains(active);
+      if (e.shiftKey && (active === firstItem || outside)) {
         e.preventDefault();
         lastItem.focus();
-      } else if (!e.shiftKey && active === lastItem) {
+      } else if (!e.shiftKey && (active === lastItem || outside)) {
         e.preventDefault();
         firstItem.focus();
       }
@@ -52,6 +63,8 @@ export function useDialogKeys(open: boolean, onClose: () => void, dialogRef: Rea
     document.addEventListener('keydown', onKey);
     return () => {
       document.removeEventListener('keydown', onKey);
+      const at = openDialogs.indexOf(token);
+      if (at !== -1) openDialogs.splice(at, 1);
       // Back to the button that opened it — otherwise focus lands on <body>
       // and a keyboard user starts the page over from the top.
       opener?.focus?.();
@@ -72,6 +85,17 @@ interface ModalProps {
   maxWidth?: number;
   /** Class for the body wrapper; the cropper zeroes its padding. */
   bodyStyle?: React.CSSProperties;
+  /**
+   * The body is the dialog's DESCRIPTION (`aria-describedby`), read out with
+   * the title when it opens. For short message dialogs — a confirm's "its
+   * hats become unassigned" — not for forms, where the body is the controls.
+   */
+  describeBody?: boolean;
+  /**
+   * `alertdialog`: an interruption that demands a decision (a destructive
+   * confirm), announced more urgently than a plain dialog.
+   */
+  alert?: boolean;
 }
 
 /**
@@ -79,8 +103,11 @@ interface ModalProps {
  * the dialog role and labelling, and delegates the keyboard to
  * `useDialogKeys`. A click on the backdrop closes; a click inside does not.
  */
-export function Modal({ title, onClose, children, footer, maxWidth, bodyStyle }: ModalProps) {
+export function Modal({
+  title, onClose, children, footer, maxWidth, bodyStyle, describeBody = false, alert = false,
+}: ModalProps) {
   const titleId = useId();
+  const bodyId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   useDialogKeys(true, onClose, dialogRef);
 
@@ -93,9 +120,10 @@ export function Modal({ title, onClose, children, footer, maxWidth, bodyStyle }:
       >
         <div
           className="modal-content"
-          role="dialog"
+          role={alert ? 'alertdialog' : 'dialog'}
           aria-modal="true"
           aria-labelledby={titleId}
+          aria-describedby={describeBody ? bodyId : undefined}
           tabIndex={-1}
           ref={dialogRef}
         >
@@ -103,7 +131,7 @@ export function Modal({ title, onClose, children, footer, maxWidth, bodyStyle }:
             <h5 className="modal-title" id={titleId}>{title}</h5>
             <button type="button" className="btn-close" onClick={onClose} aria-label="Close" />
           </div>
-          <div className="modal-body" style={bodyStyle}>{children}</div>
+          <div className="modal-body" id={bodyId} style={bodyStyle}>{children}</div>
           {footer && <div className="modal-footer">{footer}</div>}
         </div>
       </div>

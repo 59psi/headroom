@@ -163,6 +163,11 @@ class LogoStatus(BaseModel):
     """
 
     logo_path: str | None
+    #: Changes whenever the logo file does (its mtime, in ns). The stored name
+    #: never changes — a replaced logo is written to the same path — so the
+    #: URL alone let every browser keep showing the logo it had cached; the
+    #: client appends this as a cache-busting query string. Null with no logo.
+    version: int | None = None
 
 
 class MetaOption(BaseModel):

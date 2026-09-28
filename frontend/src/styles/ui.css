@@ -270,6 +270,13 @@
   line-height: 1;
 }
 
+/* The documented 44px under a fingertip, like every other control. */
+@media (pointer: coarse) {
+  .hr-toast-action,
+  .hr-toast-close { min-height: 44px; }
+  .hr-toast-close { width: 44px; }
+}
+
 .hr-toast-close:hover { color: var(--text); background: var(--surface-hover); }
 
 .hr-toast-action:focus-visible,
@@ -344,7 +351,8 @@
 
 .hr-switch-text { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
 
-.hr-switch-label { font-weight: 550; color: var(--text); }
+.hr-switch-label { font-weight: 550; color: var(--text); cursor: pointer; }
+.hr-switch-row.is-disabled .hr-switch-label { cursor: not-allowed; }
 
 .hr-switch-hint { font-size: var(--fs-sm); color: var(--text-secondary); line-height: 1.45; }
 
@@ -442,6 +450,27 @@
 
 .hr-field-row > .btn { flex: none; }
 
+/* `ui/CopyButton`. Wide enough for "Copied", so the label change does not
+   nudge the value beside it. */
+.hr-copy-btn {
+  flex: none;
+  min-width: 4.6rem;
+}
+
+/* Inline code in prose — help text, dialog bodies, hints. It rendered in the
+   browser's default monospace with no box, indistinguishable from a typo in
+   a different font. */
+:where(p, li, dd, .hr-panel-help-body, .hr-panel-desc, .hr-dialog-body, .form-text, .hr-setting-hint, .hr-switch-hint, .alert) code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  padding: 0.08em 0.35em;
+  border-radius: var(--radius-xs);
+  background: var(--surface-inset);
+  border: 1px solid var(--border-soft);
+  color: #e7d8ff;
+  overflow-wrap: anywhere;
+}
+
 /* A grid of metric tiles that reflows: two up on a phone, more on wide. */
 .hr-metric-grid {
   display: grid;
@@ -463,7 +492,8 @@
      frosted strip so the cards passing under it do not fight the labels. */
   .hr-settings-nav {
     position: sticky;
-    top: 0;
+    /* Below the status-bar scrim in the installed iOS app (0 in a tab). */
+    top: var(--safe-top);
     z-index: 20;
     margin: 0 -20px 1rem;
     padding: 0.55rem 20px;
@@ -490,7 +520,8 @@
 
   .hr-settings-side {
     position: sticky;
-    top: 24px;
+    /* Clear of the sticky top nav (which carries the safe-area inset). */
+    top: calc(var(--nav-height) + var(--safe-top) + 24px);
     display: flex;
     flex-direction: column;
     gap: 1rem;

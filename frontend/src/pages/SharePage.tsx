@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { useParams } from 'react-router';
 import { getSharedCollection } from '../api/share';
-import { LoadingSpinner } from '../components/common/LoadingSpinner';
-import { SharedCollectionGrid } from '../components/share/SharedCollectionGrid';
+import { SharedCollectionGrid, SharedCollectionSkeleton } from '../components/share/SharedCollectionGrid';
+import { PublicNotice, PublicPage } from '../components/share/PublicPage';
 
 
 /** Public, read-only collection view — reached via a share-link token. */
@@ -15,24 +15,37 @@ export function SharePage() {
     retry: false,
   });
 
-  if (isLoading) return <LoadingSpinner />;
+  if (isLoading) {
+    return (
+      <PublicPage>
+        <div className="hr-public-head" aria-hidden="true">
+          <span className="hr-skeleton hr-public-title-skel" />
+        </div>
+        <SharedCollectionSkeleton />
+      </PublicPage>
+    );
+  }
   if (error || !data) {
     return (
-      <div className="text-center py-5 text-secondary" style={{ paddingTop: '20vh' }}>
-        <h1>HEADROOM</h1>
-        <p>This share link is invalid, expired, or was revoked.</p>
-      </div>
+      <PublicPage>
+        <PublicNotice
+          title="This link isn't working"
+          detail="This share link is invalid, expired, or was revoked."
+        />
+      </PublicPage>
     );
   }
 
   return (
-    <div style={{ maxWidth: 960, margin: '0 auto', padding: '1.5rem 1rem' }}>
-      <h1 className="mb-1">{data.label}</h1>
-      <p className="text-secondary small mb-4">
-        {data.hat_count} hat{data.hat_count !== 1 ? 's' : ''} · shared via Headroom
-      </p>
+    <PublicPage>
+      <div className="hr-public-head">
+        <h1>{data.label}</h1>
+        <p className="hr-public-sub">
+          {data.hat_count} hat{data.hat_count !== 1 ? 's' : ''} · shared via Headroom
+        </p>
+      </div>
 
       <SharedCollectionGrid hats={data.hats} />
-    </div>
+    </PublicPage>
   );
 }

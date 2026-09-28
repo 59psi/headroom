@@ -160,6 +160,18 @@ export function SettingsPage() {
   const active = SECTIONS.find(s => s.id === requested) ?? SECTIONS[0];
   const [query, setQuery] = useState('');
   const searchId = useId();
+
+  // A link inside a card can change the section ("set up a token under
+  // Account" → `?tab=device`). While search results were showing, that link
+  // changed the URL and nothing on screen: results stay up until the query is
+  // cleared, and only the tab buttons cleared it. Any change of `?tab=`, from
+  // anywhere, now ends the search. Adjusted during render rather than in an
+  // effect, so the stale results never paint.
+  const [searchedFrom, setSearchedFrom] = useState(requested);
+  if (searchedFrom !== requested) {
+    setSearchedFrom(requested);
+    if (query) setQuery('');
+  }
   const errorCount = useAnalysisErrorCount();
 
   const terms = useMemo(

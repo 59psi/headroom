@@ -98,6 +98,46 @@ describe('RepricingCard', () => {
   });
 });
 
+describe('RepricingCard — the state in one word', () => {
+  it.each([
+    ['Scheduled', status()],
+    ['Off', status({ enabled: false })],
+    // The scheduler's alarm outranks "Scheduled": a manual run does not clear
+    // it, so a dead background loop cannot hide behind one good button press.
+    ['Failing', status({ consecutive_failures: 2, last_error: 'MelinRecapError: 429' })],
+    // And a sweep in flight outranks everything — it is the live answer.
+    ['Sweeping', status({
+      consecutive_failures: 2, last_error: 'MelinRecapError: 429',
+      progress: sweepProgressFixture({ running: true, done: 1, total: 9 }),
+    })],
+  ])('reads "%s"', async (word, payload) => {
+    mocked.getRepricing.mockResolvedValue(payload);
+    renderWithProviders(<RepricingCard />);
+    expect(await screen.findByText(word, { selector: '.hr-pill' })).toBeInTheDocument();
+  });
+
+  it('says nothing about the schedule until it knows', async () => {
+    mocked.getRepricing.mockReturnValue(new Promise<RepricingStatus>(() => {}));
+    renderWithProviders(<RepricingCard />);
+    expect(screen.getByRole('heading', { name: 'Re-pricing' })).toBeInTheDocument();
+    expect(screen.getByText('Loading…')).toBeInTheDocument();
+    expect(screen.queryByText('No sweep yet')).toBeNull();
+    expect(document.querySelector('.hr-pill')).toBeNull();
+  });
+
+  it('says a failure once, not twice', async () => {
+    // Each button used to print its error in its own paragraph as well as in
+    // the shared ErrorNote above — every failure appeared on the card twice.
+    const user = userEvent.setup();
+    mocked.getRepricing.mockResolvedValue(status());
+    mocked.runRepricing.mockRejectedValue(new Error('sweep lock held'));
+    renderWithProviders(<RepricingCard />);
+
+    await user.click(await screen.findByRole('button', { name: 'Re-price now' }));
+    expect(await screen.findAllByText(/sweep lock held/)).toHaveLength(1);
+  });
+});
+
 describe('RepricingCard — live progress', () => {
   it('shows a bar and what it is on while a sweep runs', async () => {
     // The scheduled sweep starts at boot and runs for minutes. Without this the
@@ -204,6 +244,21 @@ describe('RepricingCard — re-price all', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Re-price all' }));
 
     expect(await screen.findByText(/already running/)).toBeInTheDocument();
+  });
+
+  it('toasts a sweep that started, and not a refused press', async () => {
+    const user = userEvent.setup();
+    mocked.getRepricing.mockResolvedValue(status());
+    mocked.runRepricingAll.mockResolvedValueOnce({ started: false, already_running: true });
+
+    renderWithProviders(<RepricingCard />);
+    await user.click(await screen.findByRole('button', { name: 'Re-price all' }));
+    await screen.findByText(/already running/);
+    expect(screen.queryByText('Sweep started')).toBeNull();
+
+    mocked.runRepricingAll.mockResolvedValueOnce({ started: true, already_running: false });
+    await user.click(screen.getByRole('button', { name: 'Re-price all' }));
+    expect(await screen.findByText('Sweep started')).toBeInTheDocument();
   });
 
   it('disables both buttons while the server says a sweep is in flight', async () => {

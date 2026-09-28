@@ -1,2 +1,1033 @@
 /* Area styles: collection-pages. Owned by the components in this area; shared
-   primitives live in ui.css, global elements in app.css. */
+   primitives live in ui.css, global elements in app.css.
+
+   Home, Hats, Search, Duplicates, Valuation, Stats — the pages you browse the
+   collection on — plus the pieces they share (HatRow, RankedHatList, the
+   filter bar, the chart cards). Everything is prefixed `hr-cp-` so nothing
+   here can collide with another area's rules in the one global cascade.
+
+   Same rule as ui.css: calm surfaces, neon on accents and state. A hat's id
+   is cyan, the one primary action per screen glows, a selected chip is lit;
+   labels, names and captions are plain ink. */
+
+/* ----- Page header -------------------------------------------------- */
+/* Title left, actions right; the actions drop under the title on a phone
+   rather than squeezing it. */
+.hr-cp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.hr-cp-head-title {
+  display: flex;
+  align-items: baseline;
+  gap: 0.65rem;
+  min-width: 0;
+}
+
+/* The live count beside the page title: "128", or "12 of 128" while
+   filtered. Mono and muted — it is a readout, not a heading. */
+.hr-cp-head-count {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.hr-cp-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.hr-cp-icon { flex: none; }
+
+/* A one-line lede under the header ("12 hats across 5 groups…"). */
+.hr-cp-lede {
+  margin: -0.25rem 0 1rem;
+  max-width: 68ch;
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+/* A small print line under tiles or a chart: the caveat, the method link. */
+.hr-cp-note {
+  margin: 0.9rem 0 0;
+  max-width: 72ch;
+  font-size: var(--fs-xs);
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+/* An error with its retry button beside it, rather than "reload to try
+   again" — the retry is a refetch in place. */
+.hr-cp-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem 1rem;
+  flex-wrap: wrap;
+}
+
+.hr-cp-error > .btn { flex: none; }
+
+/* ----- Toolbar, chips, segmented control ---------------------------- */
+.hr-cp-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.85rem;
+}
+
+/* Pushed to the right edge of the toolbar; on a phone it wraps with the
+   rest and still sits at the right of its line. */
+.hr-cp-toolbar-end { margin-left: auto; }
+
+.hr-cp-chips {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+/* A pill-shaped toggle: placement filters, active-filter chips, and the
+   Stats page's jump links. Quiet at rest; lit when on. */
+.hr-cp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 36px;
+  padding: 0.3rem 0.85rem;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font-family: var(--font-body);
+  font-size: var(--fs-sm);
+  font-weight: 550;
+  line-height: 1.2;
+  white-space: nowrap;
+  text-decoration: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: color var(--dur-fast) ease, background var(--dur-fast) ease,
+    border-color var(--dur-fast) ease, box-shadow var(--dur) ease;
+}
+
+@media (pointer: coarse) {
+  .hr-cp-chip { min-height: 44px; }
+}
+
+@media (hover: hover) {
+  .hr-cp-chip:hover { color: var(--text); border-color: var(--border-bright); background: var(--surface-hover); }
+}
+
+.hr-cp-chip:focus-visible {
+  outline: 2px solid var(--neon-cyan);
+  outline-offset: 2px;
+}
+
+.hr-cp-chip.is-active {
+  color: var(--text);
+  background: rgba(255, 46, 182, 0.12);
+  border-color: rgba(255, 46, 182, 0.5);
+  box-shadow: 0 0 12px rgba(255, 46, 182, 0.14);
+}
+
+.hr-cp-chip-count {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--neon-cyan);
+}
+
+/* A removable chip: the × is the affordance, the whole chip the target. */
+.hr-cp-chip.is-removable { padding-right: 0.6rem; }
+
+.hr-cp-chip-x {
+  display: inline-grid;
+  place-items: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  border-radius: 50%;
+  font-size: 0.95rem;
+  line-height: 1;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.06);
+  transition: color var(--dur-fast) ease, background var(--dur-fast) ease;
+}
+
+@media (hover: hover) {
+  .hr-cp-chip.is-removable:hover .hr-cp-chip-x { color: var(--text); background: rgba(255, 56, 96, 0.35); }
+}
+
+/* "Clear filters" / "Clear all": a text button, secondary ink. It used to be
+   an inline neon-red link — red reads as "delete", and nothing is deleted. */
+.btn.hr-cp-clear {
+  color: var(--text-secondary);
+  padding-left: 0.4rem;
+  padding-right: 0.4rem;
+}
+
+.btn.hr-cp-clear:hover { color: var(--text); text-shadow: none; }
+
+/* List / gallery. Two icons in one inset track; the chosen one is lit.
+   `aria-pressed` is the state, so the style cannot disagree with what a
+   screen reader is told. */
+.hr-cp-seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-inset);
+  border: 1px solid var(--border);
+}
+
+.hr-cp-seg-btn {
+  display: grid;
+  place-items: center;
+  min-width: 40px;
+  min-height: 30px;
+  padding: 0 0.6rem;
+  border: 0;
+  border-radius: calc(var(--radius-sm) - 3px);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: color var(--dur-fast) ease, background var(--dur-fast) ease, box-shadow var(--dur) ease;
+}
+
+/* The BUTTON is the target, so the button itself is 44px to a fingertip. The
+   track's padding around it is not tappable — counting it toward the 44px
+   floor left a 38px-tall hit area. */
+@media (pointer: coarse) {
+  .hr-cp-seg-btn { min-height: 44px; min-width: 44px; }
+}
+
+.hr-cp-seg-btn:hover { color: var(--text); }
+
+.hr-cp-seg-btn[aria-pressed="true"] {
+  color: var(--text);
+  background: rgba(255, 46, 182, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(255, 46, 182, 0.45), 0 0 12px rgba(255, 46, 182, 0.18);
+}
+
+.hr-cp-seg-btn:focus-visible {
+  outline: 2px solid var(--neon-cyan);
+  outline-offset: 1px;
+}
+
+/* ----- Filter bar ---------------------------------------------------- */
+.hr-cp-filters > .card-body { padding: 0.9rem 1rem 1rem; }
+
+.hr-cp-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem 0.75rem;
+}
+
+@media (min-width: 768px) {
+  .hr-cp-filter-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+.hr-cp-field { min-width: 0; }
+
+/* An extra passed in the old Bootstrap shape (`col-6 col-md-3`) still takes
+   exactly one cell: the column classes' 50%/25% caps and padding are for a
+   flex row, and inside a grid they would shrink the field within its cell. */
+.hr-cp-filter-grid > [class*="col-"] {
+  flex: none;
+  max-width: none;
+  padding: 0;
+}
+
+.hr-cp-filter-grid .form-label {
+  font-size: var(--fs-xs);
+  margin-bottom: 0.3rem;
+}
+
+.hr-cp-filter-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.8rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--border-soft);
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+}
+
+/* The Filters toggle while something is set: tinted, not a second gradient
+   button beside the page's primary action. */
+.btn.hr-cp-filter-toggle.is-active {
+  color: var(--text);
+  background: rgba(255, 46, 182, 0.1);
+  border-color: rgba(255, 46, 182, 0.5);
+}
+
+.hr-cp-count-badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding: 0 0.3rem;
+  border-radius: var(--radius-pill);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--text-on-neon);
+  background: var(--neon-pink);
+  box-shadow: 0 0 8px rgba(255, 46, 182, 0.5);
+}
+
+/* ----- Empty states --------------------------------------------------- */
+.hr-cp-empty {
+  text-align: center;
+  padding: 2.25rem 1.25rem;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+}
+
+/* The Search page's before-you-type state: an invitation, not a problem. */
+.hr-cp-empty.hr-cp-empty-quiet {
+  border-style: solid;
+  border-color: var(--border-soft);
+  background: transparent;
+}
+
+.hr-cp-empty-title {
+  color: var(--text);
+  font-weight: 650;
+  font-size: var(--fs-md);
+  margin-bottom: 0.35rem;
+}
+
+.hr-cp-empty p {
+  max-width: 44ch;
+  margin: 0 auto 0.5rem;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+
+.hr-cp-empty-actions {
+  display: flex;
+  justify-content: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+}
+
+.hr-cp-empty-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  margin-bottom: 0.6rem;
+  border-radius: 50%;
+  font-size: 1.15rem;
+  color: var(--neon-green);
+  background: rgba(57, 255, 20, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(57, 255, 20, 0.35), 0 0 16px rgba(57, 255, 20, 0.15);
+}
+
+/* ----- Skeleton shapes ------------------------------------------------ */
+/* The bars themselves (`.hr-skeleton`, `.hr-skeleton-line`) are the shared
+   primitive's; these only give them the size of what they stand in for. */
+.hr-cp-skel-w35 { width: 35%; }
+.hr-cp-skel-w55 { width: 55%; }
+.hr-cp-skel-w75 { width: 75%; }
+
+.hr-cp-skel-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.hr-cp-skel-photo {
+  display: block;
+  aspect-ratio: 1;
+  width: 100%;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+}
+
+.hr-cp-skel-thumb { width: 80px; height: 80px; }
+.hr-cp-skel-thumb.hr-cp-skel-thumb-sm { width: 72px; height: 72px; }
+
+.hr-cp-skel-square {
+  display: block;
+  aspect-ratio: 1;
+  width: 100%;
+  border-radius: var(--radius-sm);
+}
+
+/* A tile-shaped placeholder: a label bar over a figure bar. */
+.hr-cp-tile-skel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-height: 4.6rem;
+}
+
+.hr-skeleton-line.hr-cp-skel-label { width: 45%; height: 0.55rem; }
+
+.hr-cp-skel-figure {
+  display: block;
+  width: 70%;
+  height: 1.3rem;
+  border-radius: var(--radius-xs);
+}
+
+/* The Home stat rail while its counts load: one block the rail's height. */
+.hr-cp-rail-skel { padding: 0.75rem; }
+
+/* 72px count row + 44px sub-row, less this wrapper's padding. */
+.hr-cp-rail-skel > .hr-skeleton {
+  display: block;
+  height: 5.75rem;
+  border-radius: var(--radius-sm);
+}
+
+/* ----- Home ---------------------------------------------------------- */
+/* The hero, quieter: less height on a phone so the collection starts on the
+   first screen, the two glows dimmed a notch — still the sunset card and
+   still the flickering wordmark, just not the loudest thing on the page. */
+.hr-hero.hr-cp-hero { padding: 1.35rem 1rem 1.2rem; }
+
+.hr-cp-hero::before,
+.hr-cp-hero::after { opacity: 0.13; }
+
+.hr-cp-hero .hr-logo {
+  position: relative;
+  max-height: 60px;
+  margin-bottom: 0.5rem;
+}
+
+.hr-hero.hr-cp-hero h1 {
+  font-size: 1.75rem;
+  margin-bottom: 0.3rem;
+}
+
+.hr-hero.hr-cp-hero p { font-size: var(--fs-sm); }
+
+.hr-cp-hero-actions {
+  position: relative; /* above the hero's glow pseudo-elements */
+  display: flex;
+  justify-content: center;
+  gap: 0.6rem;
+  margin-top: 1.1rem;
+}
+
+.hr-cp-hero-actions > .btn {
+  flex: 1 1 0;
+  max-width: 11.5rem;
+}
+
+@media (min-width: 768px) {
+  .hr-hero.hr-cp-hero { padding: 2.25rem 2rem 2rem; }
+  .hr-cp-hero .hr-logo { max-height: 76px; }
+  .hr-hero.hr-cp-hero h1 { font-size: 2.5rem; }
+  .hr-hero.hr-cp-hero p { font-size: 1rem; }
+}
+
+/* The carousel caption's id — it was an <h6>, styled by `.carousel-caption
+   h6`; now a span, so the same look is stated here. */
+.hr-cp-caption-id {
+  display: block;
+  font-weight: 650;
+  font-size: 0.95rem;
+  margin-bottom: 0.15rem;
+  color: var(--text);
+}
+
+/* ----- Hats: gallery ------------------------------------------------- */
+.hr-cp-gallery {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+@media (min-width: 768px) {
+  .hr-cp-gallery { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
+}
+
+@media (min-width: 992px) {
+  .hr-cp-gallery { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+.hr-cp-tile {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  text-decoration: none;
+  color: inherit;
+}
+
+.hr-cp-tile-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.6rem 0.7rem 0.75rem;
+  min-width: 0;
+}
+
+.hr-cp-tile-id {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: var(--fs-sm);
+  color: var(--neon-cyan);
+  overflow-wrap: anywhere;
+}
+
+.hr-cp-tile-name {
+  font-size: var(--fs-xs);
+  font-weight: 550;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hr-cp-tile-meta {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
+/* ----- Hat rows (HatRow, search results) ----------------------------- */
+.hr-cp-row {
+  display: block;
+  margin-bottom: 0.5rem;
+  text-decoration: none;
+  color: inherit;
+}
+
+.hr-cp-row > .hr-cp-row-body {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0.75rem 0.85rem;
+}
+
+.hr-cp-row-thumb { flex: none; }
+
+.hr-cp-thumb-72 { width: 72px; height: 72px; }
+
+/* No photo yet: an empty frame the size of the thumbnail. */
+.hr-cp-thumb-empty {
+  display: block;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px dashed var(--border);
+}
+
+.hr-cp-row-main { flex: 1 1 auto; min-width: 0; }
+
+.hr-cp-row-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.hr-cp-row-heading { min-width: 0; }
+
+.hr-cp-row-id {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--neon-cyan);
+  overflow-wrap: anywhere;
+}
+
+.hr-cp-row-name {
+  margin-top: 0.1rem;
+  font-size: var(--fs-sm);
+  font-weight: 550;
+  color: var(--text);
+}
+
+.hr-cp-row-meta {
+  margin: 0.25rem 0 0.2rem;
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
+.hr-cp-list { display: block; }
+
+/* ----- Search -------------------------------------------------------- */
+.hr-cp-search { margin-bottom: 1.1rem; }
+
+.hr-cp-search-opts {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.65rem;
+}
+
+@media (min-width: 768px) {
+  .hr-cp-search-opts {
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.75rem;
+  }
+}
+
+/* The exact-names switch reads as an inline option: switch first, then its
+   label — not the settings-row layout with the switch pushed to the far
+   edge of the screen. */
+.hr-cp-inline-switch .hr-switch-row {
+  flex-direction: row-reverse;
+  justify-content: flex-end;
+  gap: 0.7rem;
+}
+
+.hr-cp-inline-switch .hr-switch-label { font-size: var(--fs-sm); }
+
+.hr-cp-inline-switch .hr-switch-hint { font-size: var(--fs-xs); }
+
+.hr-cp-scope {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem 0.7rem;
+  flex-wrap: wrap;
+}
+
+.hr-cp-scope-label {
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+}
+
+.hr-cp-palette { margin-bottom: 1.25rem; }
+
+.hr-cp-palette-hint {
+  margin: 0 0 0.5rem;
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+}
+
+.hr-cp-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* 36px visible, 44px to the touch: the ::after reaches 4px past each edge,
+   which the 8px gap leaves room for without neighbors overlapping. */
+.hr-cp-swatch {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.22);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform var(--dur-fast) ease, box-shadow var(--dur) ease, border-color var(--dur) ease;
+}
+
+.hr-cp-swatch::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+}
+
+@media (hover: hover) {
+  .hr-cp-swatch:hover { transform: scale(1.08); }
+}
+
+.hr-cp-swatch[aria-pressed="true"] {
+  border-color: var(--text);
+  box-shadow: 0 0 0 2px var(--bg-deep), 0 0 0 4px var(--neon-cyan), 0 0 14px rgba(0, 240, 255, 0.5);
+}
+
+.hr-cp-swatch:focus-visible {
+  outline: 2px solid var(--neon-cyan);
+  outline-offset: 3px;
+}
+
+.hr-cp-any-color {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 44px;
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.hr-cp-any-color input[type="color"] {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+/* A color named by its dot: the shade searched for, the swatch matched. */
+.hr-cp-dot {
+  display: inline-block;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  vertical-align: middle;
+}
+
+.hr-cp-dot.hr-cp-dot-sm { width: 12px; height: 12px; }
+
+.hr-cp-results-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.hr-cp-results-count {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+}
+
+.hr-cp-updating {
+  font-size: var(--fs-xs);
+  color: #d9a8ff;
+}
+
+.hr-cp-updating::before {
+  content: '';
+  display: inline-block;
+  width: 0.45rem;
+  height: 0.45rem;
+  margin-right: 0.35rem;
+  border-radius: 50%;
+  background: var(--neon-purple);
+  vertical-align: middle;
+  animation: hrPulse 1.2s ease-in-out infinite;
+}
+
+/* The last results, held on screen while the next search is in flight. */
+.hr-cp-results { transition: opacity var(--dur) ease; }
+.hr-cp-results.is-stale { opacity: 0.55; }
+
+.hr-cp-match {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-top: 0.3rem;
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
+/* ----- Duplicates ---------------------------------------------------- */
+.hr-cp-dup-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+@media (min-width: 992px) {
+  .hr-cp-dup-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+.hr-cp-dup-card {
+  display: block;
+  height: 100%;
+  text-decoration: none;
+  color: inherit;
+}
+
+.hr-cp-dup-card > .card-body { padding: 0.6rem; }
+
+.hr-cp-dup-photo {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: contain;
+  margin-bottom: 0.5rem;
+}
+
+.hr-cp-dup-nophoto {
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-xs);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+}
+
+.hr-cp-dup-id {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--neon-cyan);
+  overflow-wrap: anywhere;
+}
+
+.hr-cp-dup-where {
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
+
+/* ----- Stats / Valuation layout -------------------------------------- */
+/* Jump links to the Stats page's sections: one row that scrolls sideways
+   on a phone rather than wrapping into three.
+
+   `overflow-x: auto` clips vertically too, and a chip's focus ring sits 4px
+   outside it (2px offset + 2px outline) — with no padding the ring's top and
+   bottom were cut off, leaving a keyboard user two thin side bars. The 4px
+   padding gives the ring room; the matching negative margin keeps the row
+   where it was. */
+.hr-cp-jump {
+  display: flex;
+  gap: 0.4rem;
+  margin: -4px -4px calc(1.25rem - 4px);
+  padding: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.hr-cp-jump::-webkit-scrollbar { display: none; }
+
+.hr-cp-jump > .hr-cp-chip { flex: none; }
+
+.hr-cp-section + .hr-cp-section { margin-top: 1.75rem; }
+
+/* A section heading is a quiet eyebrow with a hairline trailing off to the
+   right — it groups the cards under it without competing with their own
+   titles. */
+.hr-cp-section-title {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0 0 0.8rem;
+  font-family: var(--font-body);
+  font-size: var(--fs-xs);
+  font-weight: 650;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  /* Clear of the sticky top nav on desktop when jumped to. */
+  scroll-margin-top: 1rem;
+}
+
+@media (min-width: 992px) {
+  .hr-cp-section-title { scroll-margin-top: 5.5rem; }
+}
+
+.hr-cp-section-title::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--border), transparent);
+}
+
+.hr-cp-section-title:focus { outline: none; }
+
+.hr-cp-section-title:focus-visible {
+  outline: 2px solid var(--neon-cyan);
+  outline-offset: 4px;
+  border-radius: var(--radius-xs);
+}
+
+/* Cards two-up from the desktop breakpoint; one column below it. Panels in
+   the grid lose their own bottom margin — the grid's gap does that job. */
+.hr-cp-grid {
+  display: grid;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.hr-cp-grid > .hr-panel { margin-bottom: 0; min-width: 0; }
+
+@media (min-width: 992px) {
+  .hr-cp-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .hr-cp-grid > .hr-cp-span { grid-column: 1 / -1; }
+}
+
+/* ----- Tables (Valuation breakdowns) ---------------------------------- */
+.hr-cp-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: var(--fs-sm);
+}
+
+.hr-cp-table th,
+.hr-cp-table td {
+  padding: 0.5rem 0.35rem;
+  border-bottom: 1px solid var(--border-soft);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.hr-cp-table th:first-child,
+.hr-cp-table td:first-child { padding-left: 0; }
+
+.hr-cp-table th:last-child,
+.hr-cp-table td:last-child { padding-right: 0; }
+
+.hr-cp-table tbody tr:last-child > * { border-bottom: 0; }
+
+.hr-cp-table thead th {
+  padding-top: 0;
+  font-size: var(--fs-2xs);
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.hr-cp-table tbody th {
+  font-weight: 550;
+  color: var(--text);
+}
+
+.hr-cp-table-label {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hr-cp-table .hr-cp-col-num {
+  width: 3.25rem;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.hr-cp-table .hr-cp-col-money {
+  width: 5.5rem;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.hr-cp-table thead .hr-cp-col-num,
+.hr-cp-table thead .hr-cp-col-money { font-family: var(--font-body); }
+
+.hr-cp-table td.hr-cp-col-num { color: var(--text-secondary); }
+.hr-cp-fig-paid { color: var(--neon-purple); }
+.hr-cp-fig-worth { color: var(--neon-pink); }
+
+/* The cases line under the valuation totals. */
+.hr-cp-case-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.75rem;
+}
+
+.hr-cp-case-grand { color: var(--neon-cyan); }
+
+/* ----- Ranked lists -------------------------------------------------- */
+.hr-cp-rank-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.hr-cp-rank-list > li + li { border-top: 1px solid var(--border-soft); }
+
+.hr-cp-rank {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 52px;
+  padding: 0.45rem 0.25rem;
+  margin: 0 -0.25rem;
+  border-radius: var(--radius-xs);
+  text-decoration: none;
+  color: inherit;
+  transition: background var(--dur-fast) ease;
+}
+
+@media (hover: hover) {
+  .hr-cp-rank:hover { background: var(--surface-hover); }
+}
+
+.hr-cp-rank:focus-visible {
+  outline: 2px solid var(--neon-cyan);
+  outline-offset: 0;
+}
+
+.hr-cp-rank-num {
+  flex: none;
+  min-width: 1.4rem;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--neon-purple);
+}
+
+.hr-cp-rank-thumb {
+  flex: none;
+  width: 40px;
+  height: 40px;
+}
+
+.hr-cp-rank-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.hr-cp-rank-id {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--neon-cyan);
+}
+
+.hr-cp-rank-name {
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hr-cp-rank-value {
+  flex: none;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--neon-pink);
+}
+
+.hr-cp-rank-value.is-muted {
+  font-weight: 500;
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hr-cp-updating::before { animation: none; }
+  .hr-cp-results,
+  .hr-cp-swatch,
+  .hr-cp-chip,
+  .hr-cp-seg-btn,
+  .hr-cp-rank { transition: none; }
+}

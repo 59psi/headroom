@@ -88,4 +88,79 @@ describe('TagLandingPage', () => {
     expect(await screen.findByText(/tag not recognized/i)).toBeInTheDocument();
     expect(mocked.getHat).not.toHaveBeenCalled();
   });
+
+  it('shows the wear as logged the moment it is tapped, before the server answers', async () => {
+    // Optimistic: the answer is predictable, and at the closet door a
+    // "Logging…" that lasts as long as the Pi takes reads as a tap that
+    // didn't take.
+    const user = userEvent.setup();
+    mocked.logWear.mockReturnValueOnce(new Promise(() => {}));
+    renderTag(hatFixture({ model_name: 'Coronado', wear_count: 4 }));
+
+    await user.click(await screen.findByRole('button', { name: /wore it today/i }));
+
+    expect(screen.getByText(/worn today/i)).toBeInTheDocument();
+    expect(screen.getByText(/Worn 5 times/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /wore it today/i })).toBeNull();
+  });
+
+  it('keeps Undo disabled until the wear it would undo has landed', async () => {
+    // An undo sent while the log is still in flight would delete the
+    // PREVIOUS wear on the server instead.
+    const user = userEvent.setup();
+    mocked.logWear.mockReturnValueOnce(new Promise(() => {}));
+    renderTag(hatFixture({ model_name: 'Coronado' }));
+
+    await user.click(await screen.findByRole('button', { name: /wore it today/i }));
+
+    expect(screen.getByRole('button', { name: /undo/i })).toBeDisabled();
+  });
+
+  it('snaps back to the button, with the reason, when the wear fails', async () => {
+    const user = userEvent.setup();
+    mocked.logWear.mockRejectedValueOnce(new Error('Hat is disposed'));
+    renderTag(hatFixture({ model_name: 'Coronado', wear_count: 4 }));
+    await screen.findByRole('button', { name: /wore it today/i });
+    // The follow-up refetch never lands, so what is on screen afterwards is
+    // the rollback's doing alone — not the server quietly correcting it.
+    mocked.getHat.mockReturnValue(new Promise(() => {}));
+
+    await user.click(screen.getByRole('button', { name: /wore it today/i }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Hat is disposed');
+    expect(screen.getByRole('button', { name: /wore it today/i })).toBeInTheDocument();
+    expect(screen.queryByText(/worn today/i)).toBeNull();
+    expect(screen.getByText(/Worn 4 times/)).toBeInTheDocument();
+  });
+
+  it('confirms a logged wear with a toast', async () => {
+    const user = userEvent.setup();
+    renderTag(hatFixture({ model_name: 'Coronado' }));
+
+    await user.click(await screen.findByRole('button', { name: /wore it today/i }));
+
+    expect(await screen.findByText('Wear logged')).toBeInTheDocument();
+  });
+
+  it('undoes a wear and confirms it', async () => {
+    const user = userEvent.setup();
+    renderTag(hatFixture({ model_name: 'Coronado', date_last_worn: utcToday(), wear_count: 1 }));
+    // The refetch after the undo returns the hat as the server now has it.
+    mocked.getHat.mockResolvedValue(hatFixture({ model_name: 'Coronado', date_last_worn: null, wear_count: 0 }));
+
+    await user.click(await screen.findByRole('button', { name: /undo/i }));
+
+    await waitFor(() => expect(mocked.undoLatestWear).toHaveBeenCalledWith(5));
+    expect(await screen.findByText('Wear undone')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /wore it today/i })).toBeInTheDocument();
+  });
+
+  it('holds the page shape while the hat loads', () => {
+    mocked.getHat.mockReturnValue(new Promise(() => {}));
+    renderWithProviders(
+      <Routes><Route path="/t/h/:hatId" element={<TagLandingPage />} /></Routes>,
+      { route: '/t/h/5' },
+    );
+    expect(screen.getByRole('status')).toHaveTextContent('Loading…');
+  });
 });

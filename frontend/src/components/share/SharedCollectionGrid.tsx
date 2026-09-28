@@ -1,5 +1,6 @@
 import { Link } from 'react-router';
 import type { SharedHat } from '../../types';
+import { CapGlyph } from './PublicPage';
 
 /**
  * The collection as an outside viewer sees it.
@@ -22,7 +23,12 @@ export function SharedCollectionGrid({ hats, hrefFor }: {
   hrefFor?: (hat: SharedHat) => string;
 }) {
   if (!hats.length) {
-    return <p className="text-secondary small">Nothing to show.</p>;
+    return (
+      <div className="hr-share-empty">
+        <CapGlyph className="hr-share-empty-icon" />
+        <p className="mb-0">Nothing to show.</p>
+      </div>
+    );
   }
 
   return (
@@ -32,11 +38,11 @@ export function SharedCollectionGrid({ hats, hrefFor }: {
         return (
           <div key={hat.id} className="col-6 col-md-4 col-lg-3">
             {href ? (
-              <Link to={href} className="card h-100 text-decoration-none">
+              <Link to={href} className="card h-100 text-decoration-none hr-share-tile">
                 <Tile hat={hat} />
               </Link>
             ) : (
-              <div className="card h-100">
+              <div className="card h-100 hr-share-tile">
                 <Tile hat={hat} />
               </div>
             )}
@@ -47,38 +53,70 @@ export function SharedCollectionGrid({ hats, hrefFor }: {
   );
 }
 
+/**
+ * Tile-shaped placeholders while the collection loads.
+ *
+ * The grid is the whole page for an outside viewer, so a centered spinner
+ * meant a blank screen that then jumped to a wall of tiles. Placeholders in
+ * the grid's own shape hold the layout, and the page settles once.
+ *
+ * One status message for the lot, not one per tile: eight "Loading…"
+ * announcements in a row is noise, not information.
+ */
+export function SharedCollectionSkeleton({ count = 8 }: { count?: number }) {
+  return (
+    <div className="row g-3" role="status">
+      <span className="visually-hidden">Loading the collection…</span>
+      {Array.from({ length: count }, (_, i) => (
+        <div key={i} className="col-6 col-md-4 col-lg-3" aria-hidden="true">
+          <div className="card h-100 hr-share-tile">
+            <div className="card-body hr-share-tile-body">
+              <span className="hr-skeleton hr-share-thumb" />
+              <span className="hr-skeleton hr-skeleton-line hr-share-skel-name" />
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** The tile body. A separate component rather than a wrapper built inside the
  *  map: defining a component there creates a new type on every render, which
  *  React treats as a different component and remounts. */
 function Tile({ hat }: { hat: SharedHat }) {
   return (
-    <div className="card-body text-center">
+    <div className="card-body hr-share-tile-body">
       {hat.photo_url ? (
         <img
+          className="hr-share-thumb"
           src={hat.thumb_url ?? hat.photo_url}
           alt=""
-          style={{ width: '100%', height: 120, objectFit: 'contain' }}
+          // A collection is a few hundred tiles; only the first screenful
+          // should be fetched before the page is usable.
+          loading="lazy"
+          decoding="async"
         />
       ) : (
-        <div style={{ height: 120, display: 'grid', placeItems: 'center', opacity: 0.4 }}>🧢</div>
+        <div className="hr-share-thumb is-empty"><CapGlyph /></div>
       )}
-      <div className="small fw-semibold mt-2">
+      <div className="hr-share-name">
         {[hat.brand, hat.model_name].filter(Boolean).join(' ') || hat.style.replace(/_/g, ' ')}
       </div>
-      <div className="d-flex justify-content-center gap-1 mt-1">
-        {hat.colors.slice(0, 3).map((c, i) => (
-          <span
-            key={i}
-            title={c.name}
-            style={{
-              width: 14, height: 14, borderRadius: '50%',
-              background: c.hex || '#444',
-              border: '1px solid rgba(255,255,255,0.3)',
-              display: 'inline-block',
-            }}
-          />
-        ))}
-      </div>
+      {hat.colors.length > 0 && (
+        <div className="hr-share-swatches">
+          {hat.colors.slice(0, 3).map((c, i) => (
+            <span
+              key={i}
+              className="hr-share-swatch"
+              title={c.name}
+              // The color IS the data; everything else about the dot is in
+              // the stylesheet.
+              style={{ background: c.hex || '#444' }}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

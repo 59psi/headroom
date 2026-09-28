@@ -77,8 +77,13 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       {children}
       {portalToBody(
         // Always mounted, even empty: a live region only announces changes to
-        // a region that already existed when the change happened.
-        <div className="hr-toasts" role="region" aria-label="Notifications">
+        // a region that already existed when the change happened. So the
+        // CONTAINER is the live region — `role="region"` alone is a landmark
+        // with no implicit aria-live, and each toast's own `role="status"`
+        // arrives already holding its text, which is exactly the insertion
+        // screen readers skip. (An error's `role="alert"` is the exception
+        // that announces on insertion; it still interrupts.)
+        <div className="hr-toasts" role="region" aria-label="Notifications" aria-live="polite">
           {items.map(t => <Toast key={t.id} item={t} onDismiss={dismiss} />)}
         </div>,
       )}
@@ -99,8 +104,11 @@ function Toast({ item, onDismiss }: { item: ToastItem; onDismiss: (id: number) =
   return (
     <div
       className={`hr-toast is-${item.tone}`}
-      // An error interrupts; everything else waits its turn.
-      role={item.tone === 'error' ? 'alert' : 'status'}
+      // An error interrupts; everything else is announced by the polite
+      // container it is inserted into. No `role="status"` on those: a live
+      // region nested in a live region is announced by both in some screen
+      // readers, so "Key saved" was read twice.
+      role={item.tone === 'error' ? 'alert' : undefined}
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
       onFocus={() => setPaused(true)}

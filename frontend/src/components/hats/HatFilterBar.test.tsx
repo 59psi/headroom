@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../../test/utils';
-import { useHatFilters, HatFilterBar, FilterToggleButton } from './HatFilters';
+import { useHatFilters, HatFilterBar, FilterToggleButton, ActiveFilterChips } from './HatFilters';
 
 vi.mock('../../api/hats', async (importOriginal) => {
   const { stubAll } = await import('../../test/stubModule');
@@ -124,6 +124,76 @@ describe('HatFilterBar', () => {
     // activeCount is overridden to 1, so Clear shows even with nothing shared set.
     await user.click(screen.getByRole('button', { name: /clear filters/i }));
     expect(onClearExtras).toHaveBeenCalledOnce();
+  });
+});
+
+describe('ActiveFilterChips', () => {
+  /** A page with the bar folded away: only the chips show what is set. */
+  function ChipsHarness({ onClearExtras }: { onClearExtras?: () => void }) {
+    const state = useHatFilters();
+    return (
+      <>
+        <div data-testid="style">{state.filters.style}</div>
+        <div data-testid="room">{state.filters.room}</div>
+        <div data-testid="open">{String(state.isOpen)}</div>
+        <ActiveFilterChips
+          state={state}
+          extras={[{ key: 'brand', label: 'Brand: melin', onRemove: () => {} }]}
+          onClearExtras={onClearExtras}
+        />
+      </>
+    );
+  }
+
+  it('starts with the bar closed even when a link applied filters', () => {
+    // The chips carry "why is this list short" now; unfolding seven selects
+    // on every arrival (including every Back from a hat) was noise.
+    renderWithProviders(<ChipsHarness />, { route: '/hats?style=odysea' });
+    expect(screen.getByTestId('open')).toHaveTextContent('false');
+  });
+
+  it('names each set filter by its option label, and removes just that one', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ChipsHarness />, { route: '/hats?style=odysea&room=3' });
+
+    await user.click(await screen.findByRole('button', { name: 'Remove filter Style: Odysea' }));
+
+    expect(screen.getByTestId('style')).toHaveTextContent('');
+    expect(screen.getByTestId('room')).toHaveTextContent('3');
+    expect(await screen.findByRole('button', { name: 'Remove filter Room: Closet' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove filter Brand: melin' })).toBeInTheDocument();
+  });
+
+  it('clears shared filters and page extras together with "Clear all"', async () => {
+    const user = userEvent.setup();
+    const onClearExtras = vi.fn();
+    renderWithProviders(<ChipsHarness onClearExtras={onClearExtras} />, { route: '/hats?style=odysea&room=3' });
+
+    await user.click(screen.getByRole('button', { name: /clear all/i }));
+
+    expect(screen.getByTestId('style')).toHaveTextContent('');
+    expect(screen.getByTestId('room')).toHaveTextContent('');
+    expect(onClearExtras).toHaveBeenCalledOnce();
+  });
+
+  it('never seeds the Color filter from a hex', () => {
+    // `?color=#aabbcc` is a color SEARCH link; as a filter value it matches
+    // no hat and empties the list.
+    function ColorHarness() {
+      const state = useHatFilters();
+      return <div data-testid="color">{state.filters.color}</div>;
+    }
+    renderWithProviders(<ColorHarness />, { route: '/search?color=%23aabbcc' });
+    expect(screen.getByTestId('color')).toHaveTextContent('');
+  });
+
+  it('renders nothing when nothing is filtering', () => {
+    function Empty() {
+      const state = useHatFilters();
+      return <ActiveFilterChips state={state} />;
+    }
+    renderWithProviders(<Empty />);
+    expect(screen.queryByRole('group', { name: /active filters/i })).toBeNull();
   });
 });
 

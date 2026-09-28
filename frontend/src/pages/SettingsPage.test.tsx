@@ -55,6 +55,9 @@ function explicit() {
     issuer_not_after: '2034-11-12T00:00:00Z', clamped_by_issuer: false,
   })),
   getRecentErrors: vi.fn(async () => []),
+  // The page's Analysis tab and the errors card both read the count. As a
+  // bare stub it resolved `undefined`, which TanStack rejects as query data.
+  getRecentErrorsCount: vi.fn(async () => ({ count: 0 })),
   getAnalysisFailures: vi.fn(async () => []),
   getAnalysisQueue: vi.fn(async () => ({
     worker_alive: true, queued: 0, pending_count: 0, pending: [],
@@ -307,6 +310,25 @@ describe('SettingsPage', () => {
     expect(screen.queryByRole('tab', { selected: true })).not.toBeInTheDocument();
   });
 
+  it('a link to another section, followed from search results, ends the search', async () => {
+    // The Share-photos card links to the Account card ("?tab=device"). Search
+    // is page state, so the link used to change the URL and nothing visible.
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<SettingsPage />);
+    await screen.findByText('Claude API key');
+
+    await user.type(screen.getByRole('searchbox', { name: 'Search settings' }), 'shortcut');
+    expect(await screen.findByRole('heading', { name: 'Share photos to Headroom' })).toBeInTheDocument();
+    const ios = screen.queryByRole('button', { name: /^iOS/ });
+    if (ios && ios.getAttribute('aria-pressed') !== 'true') await user.click(ios);
+
+    await user.click(screen.getByRole('link', { name: 'Account' }));
+
+    expect(screen.getByRole('searchbox', { name: 'Search settings' })).toHaveValue('');
+    expect(screen.getByRole('tab', { name: 'Device' })).toHaveAttribute('aria-selected', 'true');
+    await waitFor(() => expect(renderedCards(container)).toEqual(SECTION_CARDS.device));
+  });
+
   it('says so when nothing matches, and Escape clears the search', async () => {
     const user = userEvent.setup();
     const { container } = renderWithProviders(<SettingsPage />);
@@ -367,18 +389,28 @@ describe('AnthropicKeyCard loading guard', () => {
 
     renderWithProviders(<AnthropicKeyCard />);
 
+    // The skeleton's status text. The title stays up while it loads — only
+    // the body waits — and neither the sentence nor the header pill may
+    // guess at the answer in the meantime.
     expect(screen.getByText('Loading…')).toBeInTheDocument();
-    expect(screen.queryByText('No key configured.')).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Claude API key' })).toBeInTheDocument();
+    expect(screen.queryByText(/No key configured/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Not set')).not.toBeInTheDocument();
 
     release({ configured: true, source: 'database', masked: 'sk-an…wxyz' });
     expect(await screen.findByText('sk-an…wxyz')).toBeInTheDocument();
-    expect(screen.queryByText('No key configured.')).not.toBeInTheDocument();
+    expect(screen.queryByText(/No key configured/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Not set')).not.toBeInTheDocument();
+    expect(screen.getByText('Configured')).toBeInTheDocument();
   });
 
   it('does say so once loading finishes with no key', async () => {
     vi.mocked(settingsApi.getApiKeyStatus).mockResolvedValueOnce({ configured: false, source: null, masked: null });
     renderWithProviders(<AnthropicKeyCard />);
-    expect(await screen.findByText('No key configured.')).toBeInTheDocument();
+    // Regex: the sentence carries a link to the console, so its text is split
+    // across elements and an exact-string match would miss it.
+    expect(await screen.findByText(/No key configured/)).toBeInTheDocument();
+    expect(screen.getByText('Not set')).toBeInTheDocument();
   });
 
   it('drops a stale test result when the active model changes', async () => {
@@ -390,6 +422,7 @@ describe('AnthropicKeyCard loading guard', () => {
 
     await user.click(screen.getByRole('button', { name: /test connection/i }));
     expect(await screen.findByText(/Reachable\./)).toBeInTheDocument();
+    expect(screen.getByText('Connected')).toBeInTheDocument();
 
     // Simulate the Model card saving a different model.
     vi.mocked(settingsApi.getModel).mockResolvedValue({ model_id: 'claude-opus-5', source: 'database', default_model_id: 'claude-sonnet-5' });
@@ -398,6 +431,9 @@ describe('AnthropicKeyCard loading guard', () => {
     await waitFor(() => {
       expect(screen.queryByText(/Reachable\./)).not.toBeInTheDocument();
     });
+    // The header pill goes with it: "Connected" was a claim about the old model.
+    expect(screen.queryByText('Connected')).not.toBeInTheDocument();
+    expect(screen.getByText('Configured')).toBeInTheDocument();
   });
 });
 
