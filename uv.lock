@@ -733,7 +733,7 @@ requires-dist = [
     { name = "pydantic-settings" },
     { name = "python-multipart" },
     { name = "qrcode", specifier = ">=8.2" },
-    { name = "rembg", extras = ["cpu"], specifier = ">=2.0.78" },
+    { name = "rembg", extras = ["cpu"], specifier = ">=2.0.85" },
     { name = "sqlalchemy", extras = ["asyncio"] },
     { name = "starlette" },
     { name = "uvicorn", extras = ["standard"] },
