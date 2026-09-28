@@ -36,6 +36,7 @@ from headroom.services import (
     retail_pricing,
     settings_service,
     tls_health,
+    upgrade_guard,
     vocabulary,
 )
 from headroom.utils import branding
@@ -220,6 +221,26 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # suite never executed. `create_app` seeds both defaults; tests override.
     factory = app.state.session_factory
     bind = app.state.engine
+
+    # "Take a backup first", done by the app rather than asked of a person:
+    # on the first boot of a new version, a copy of the database exactly as
+    # the previous version left it, before anything below migrates it (see
+    # `upgrade_guard`). Best-effort — a snapshot that fails is logged loudly
+    # and the boot goes on, because an app that refuses to start over its own
+    # safety copy is down for a reason nobody can see, and the nightly
+    # archives are still there.
+    running = upgrade_guard.running_version()
+    try:
+        snapshot = await asyncio.to_thread(
+            upgrade_guard.snapshot_before_upgrade,
+            upgrade_guard.sqlite_file(bind.url), backup_service._backup_dir(), running,
+        )
+    except Exception:  # a failed safety copy must not stop the boot; logged with traceback
+        logger.exception("Could not snapshot the database before upgrading to %s", running)
+    else:
+        if snapshot is not None:
+            logger.info("Snapshotted the database before upgrading to %s: %s", running, snapshot)
+
     await database.init_db(bind=bind, session_factory=factory)
 
     async with factory() as db:
@@ -246,6 +267,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 "Put %d hat(s) back on their cutout — a re-cut was interrupted "
                 "by the last shutdown", abandoned,
             )
+        # Last, after migrations and every repair got through: the version
+        # this database is now fully upgraded to. Recorded any earlier, a boot
+        # that died half-way would be taken for a finished upgrade and the next
+        # attempt would skip its snapshot.
+        await settings_service.set_setting(db, upgrade_guard.LAST_BOOTED_KEY, running)
 
     # The login verifies an unknown username against a placeholder argon2
     # hash, so a wrong name costs what a wrong password does (see

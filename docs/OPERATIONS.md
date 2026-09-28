@@ -701,27 +701,54 @@ you'll land on the first-run setup screen.
 ## 5. Upgrades
 
 ```bash
-git pull
-docker compose up -d --build     # Docker — SEE THE WARNING BELOW about overlays
+./scripts/upgrade.sh             # Docker — the whole upgrade, one command
 # — or —
 ./scripts/setup.sh --no-docker   # bare metal: re-sync deps + rebuild SPA, then restart uvicorn
 ```
 
-> **Re-run with the same `-f` flags you deploy with.** Compose applies only the
-> files named in the command, so a bare `docker compose up -d --build` on a
-> host running an overlay is not an upgrade — it is a switch to the base
+`scripts/upgrade.sh` is the upgrade checklist as a script, so there is nothing
+to remember between releases. It:
+
+1. refuses to run over uncommitted changes to tracked files;
+2. records the compose files the running install uses as `COMPOSE_FILE` in
+   `.env` — after that, every `docker compose` command (the script's and
+   yours) keeps the overlays without `-f` flags;
+3. sets `TZ` in `.env` — pass `--tz Area/City` once (e.g.
+   `--tz America/Los_Angeles`); without it the host's zone is used, unless the
+   host is on UTC, which it will not guess is yours;
+4. with the rclone overlay, copies an existing `rclone.conf` into the writable
+   directory the overlay mounts (never over one already there);
+5. `git pull --ff-only`, stamps the build SHA, `docker compose build`,
+   `docker compose up -d`;
+6. waits for the container's healthcheck (`/health/ready`) to pass, and shows
+   the last log lines if it does not;
+7. restarts a Caddy container whose served Caddyfile no longer matches the
+   file on disk (a pull replaces the file's inode, and a bind-mounted file
+   keeps the old one until restart);
+8. with `--prune-build-cache`, drops Docker build cache older than a week —
+   worth it on a Pi's SD card, where it grows by a few GB per release.
+
+`--no-pull` rebuilds the current checkout without pulling.
+
+> **Upgrading by hand instead?** Use the same `-f` flags you deploy with
+> (or set `COMPOSE_FILE` in `.env` once, as the script does). Compose applies
+> only the files named in the command, so a bare `docker compose up -d --build`
+> on a host running an overlay is not an upgrade — it is a switch to the base
 > config. On the `http80` overlay that means the Caddy sidecar isn't started
 > and the app goes back to `:8000`, so `http://headroom.local` stops
-> answering. Upgrade with the whole command:
->
-> ```bash
-> git pull
-> docker compose -f docker-compose.yml -f docker-compose.http80.yml up -d --build
-> ```
+> answering.
 
+- **The app backs itself up before it migrates.** The first boot of a new
+  version writes a copy of the database, exactly as the previous version left
+  it, to `/data/backups/pre-upgrade-<from>-to-<to>-<UTC time>.db` — before any
+  migration runs. The last three are kept. It is the database only (a
+  migration never changes photos); the nightly archives remain the full
+  backups. To go back: stop the app, copy the snapshot over
+  `/data/headroom.db`, delete `/data/headroom.db-wal` and
+  `/data/headroom.db-shm`, and start the PREVIOUS version's image — there is
+  no downgrade path for the schema, so the old code needs the old database.
 - Database migrations are **automatic**: `init_db()` runs inline DDL
-  migrations at every boot. There is no separate migrate step and no
-  downgrade path — take a backup before major upgrades.
+  migrations at every boot. There is no separate migrate step.
 - **One one-time rebuild to know about.** The first boot of the release that
   made hat ids never-reused rebuilds the `hats` table once for AUTOINCREMENT,
   logging `Rebuilt hats with AUTOINCREMENT; new hat ids start after N`, so a
