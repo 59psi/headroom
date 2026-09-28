@@ -104,7 +104,8 @@ describe('LogoCard', () => {
   });
 
   it('shows the picked file at once while the upload runs', async () => {
-    // jsdom has no object URLs at all; lend it a pair for this test only.
+    // A known object URL for this test, so the preview's src can be asserted
+    // (the suite-wide pair in `test/setup.ts` numbers its URLs).
     const blobUrls = URL as unknown as Record<'createObjectURL' | 'revokeObjectURL', unknown>;
     const saved = { create: blobUrls.createObjectURL, revoke: blobUrls.revokeObjectURL };
     blobUrls.createObjectURL = vi.fn(() => 'blob:picked');
