@@ -1,42 +1,129 @@
+import { useRef, useState } from 'react';
+import { Link } from 'react-router';
 import { DEFAULT_HAT_BASICS } from '../hats/HatFormFields';
+import { copyText } from '../../lib/clipboard';
+import { Panel } from '../ui/Panel';
+import { Segmented, type SegmentedOption } from '../ui/Segmented';
+import { useToast } from '../ui/Toast';
 
-/** Static how-to: Android PWA share target + the equivalent iOS Shortcut recipe. */
+type Platform = 'ios' | 'android';
+
+const PLATFORMS: ReadonlyArray<SegmentedOption<Platform>> = [
+  { value: 'ios', label: 'iPhone & iPad' },
+  { value: 'android', label: 'Android' },
+];
+
+/**
+ * Which recipe to open first. Only Android is detected: everything else —
+ * iOS, and a desktop browser, where the likeliest reason to be reading this
+ * is to copy the import URL into a Shortcut on the phone beside you — gets
+ * the iOS recipe, the only one with anything to set up.
+ */
+function detectPlatform(): Platform {
+  if (typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)) return 'android';
+  return 'ios';
+}
+
+/**
+ * Static how-to: Android PWA share target + the equivalent iOS Shortcut recipe.
+ *
+ * Two recipes that each matter to exactly one phone used to be printed one
+ * after the other, so every reader scrolled past the one that was not theirs.
+ * Now a two-way switch shows one at a time, opening on the phone this is
+ * being read on. The iOS recipe is unchanged step for step — it is the whole
+ * point of the card and a Shortcut built from half of it does nothing — and
+ * its URL, the one thing that is tedious to type on a phone, gets a copy
+ * button.
+ */
 export function ShareTargetCard() {
+  const toast = useToast();
+  const [platform, setPlatform] = useState<Platform>(detectPlatform);
+  const urlRef = useRef<HTMLInputElement>(null);
+  const importUrl = `${window.location.origin}/api/hats/import`;
+
+  async function copyUrl() {
+    if (await copyText(importUrl, urlRef.current)) toast.success('URL copied');
+    // `copyText` leaves the field selected when it cannot copy, so a
+    // long-press → Copy is one gesture away.
+    else toast.error('Couldn’t copy — the URL is selected, copy it by hand.');
+  }
+
   return (
-    <div className="card mb-3">
-      <div className="card-body">
-        <div className="card-title">Share Photos to Headroom</div>
-        <p className="text-secondary small mb-3">
-          <strong>Android Chrome:</strong> install Headroom as a PWA (browser
-          menu → Install app), then "Share to Headroom" appears in the system
-          share sheet automatically — selected photos route into a bulk-import
-          job.
-        </p>
-        <p className="text-secondary small mb-3">
-          <strong>iOS Safari</strong> doesn't support Web Share Target yet,
-          so use a one-time Shortcut. Open the Shortcuts app → tap <strong>+</strong>
-          → add these actions in order:
-        </p>
-        <ol className="text-secondary small mb-3" style={{ paddingLeft: '1.2rem' }}>
-          <li className="mb-1"><strong>Receive</strong> Images from Share Sheet (toggle "Show in Share Sheet" ON)</li>
-          <li className="mb-1"><strong>Get Contents of URL</strong>
-            <ul style={{ paddingLeft: '1.2rem', marginTop: '0.25rem' }}>
-              <li>URL: <code style={{ fontSize: '0.85em' }}>{`${window.location.origin}/api/hats/import`}</code></li>
-              <li>Method: <code>POST</code></li>
-              <li>Headers → add: key=<code>Authorization</code>, value=<code>Bearer YOUR-API-TOKEN</code> (copy the token from the <strong>Account</strong> card on the <strong>Device</strong> tab)</li>
-              <li>Request Body: <code>Form</code></li>
-              <li>Add field: key=<code>photos</code>, type=<code>File</code>, value=<em>Shortcut Input</em></li>
-            </ul>
-          </li>
-          <li>Name it "Add to Headroom" and you're done.</li>
-        </ol>
-        <p className="text-muted small mb-0" style={{ fontSize: '0.75rem' }}>
-          Now open Photos → select multiple → Share → "Add to Headroom".
-          Each shared photo becomes a hat with the same defaults the Bulk Import
-          page uses (style: {DEFAULT_HAT_BASICS.style} · size: {DEFAULT_HAT_BASICS.size} ·
-          condition: {DEFAULT_HAT_BASICS.condition}) — edit after Claude finishes analyzing.
-        </p>
-      </div>
-    </div>
+    <Panel
+      title="Share photos to Headroom"
+      className="hr-sharing"
+      description="Send photos from your phone's share sheet straight into a bulk import."
+    >
+      <Segmented
+        label="Instructions for"
+        fill
+        className="hr-share-platforms"
+        options={PLATFORMS}
+        value={platform}
+        onChange={setPlatform}
+      />
+
+      {platform === 'android' ? (
+        <div className="hr-share-recipe">
+          <p className="mb-0">
+            <strong>Android Chrome:</strong> install Headroom as a PWA (browser
+            menu → Install app), then “Share to Headroom” appears in the system
+            share sheet automatically — selected photos route into a bulk-import
+            job.
+          </p>
+        </div>
+      ) : (
+        <div className="hr-share-recipe">
+          <p>
+            <strong>iOS Safari</strong> doesn&rsquo;t support Web Share Target
+            yet, so use a one-time Shortcut. Open the Shortcuts app → tap{' '}
+            <strong>+</strong> → add these actions in order:
+          </p>
+          <ol className="hr-share-steps">
+            <li><strong>Receive</strong> Images from Share Sheet (turn “Show in Share Sheet” on)</li>
+            <li>
+              <strong>Get Contents of URL</strong>
+              <ul>
+                <li>
+                  URL:
+                  <div className="hr-field-row mt-1">
+                    <input
+                      ref={urlRef}
+                      className="form-control font-mono hr-share-field"
+                      aria-label="Import URL"
+                      value={importUrl}
+                      readOnly
+                      onFocus={e => e.currentTarget.select()}
+                    />
+                    <button type="button" className="btn btn-outline-secondary" onClick={() => { void copyUrl(); }}>
+                      Copy
+                    </button>
+                  </div>
+                </li>
+                <li>Method: <code>POST</code></li>
+                <li>
+                  Headers → add: key=<code>Authorization</code>,
+                  value=<code>Bearer YOUR-API-TOKEN</code> (copy the token from
+                  the <Link to="/settings?tab=device">Account</Link> card
+                  on the <strong>Device</strong> tab)
+                </li>
+                <li>Request Body: <code>Form</code></li>
+                <li>Add field: key=<code>photos</code>, type=<code>File</code>, value=<em>Shortcut Input</em></li>
+              </ul>
+            </li>
+            <li>Name it “Add to Headroom” and you&rsquo;re done.</li>
+          </ol>
+          <p className="mb-0">
+            Now open Photos → select multiple → Share → “Add to Headroom”.
+          </p>
+        </div>
+      )}
+
+      <p className="text-muted small mt-3 mb-0">
+        Each shared photo becomes a hat with the same defaults the Bulk Import
+        page uses (style: {DEFAULT_HAT_BASICS.style} · size: {DEFAULT_HAT_BASICS.size} ·
+        condition: {DEFAULT_HAT_BASICS.condition}) — edit after Claude finishes analyzing.
+      </p>
+    </Panel>
   );
 }

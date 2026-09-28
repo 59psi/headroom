@@ -1,0 +1,272 @@
+/* Area styles: settings-sharing. Owned by the components in this area; shared
+   primitives live in ui.css, global elements in app.css.
+
+   Every card in the Sharing section passes `className="hr-sharing"` to its
+   Panel, so anything here that styles a bare element (`code`) is scoped to
+   these six cards and cannot leak into another section's. */
+
+/* ----- Shared ------------------------------------------------------- */
+
+/* Hosts, paths and header values are things people retype into another app
+   (a tag writer, the Shortcuts editor), so they read as literal text: mono,
+   in a recessed chip, and allowed to wrap anywhere — a long origin on a 390px
+   phone otherwise pushes the card sideways. */
+.hr-sharing code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  padding: 0.05em 0.35em;
+  border-radius: var(--radius-xs);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/* The input in an `.hr-field-row` takes the leftover width and may shrink
+   below its intrinsic ~20ch; its buttons keep their label width. Without the
+   `min-width: 0` a field + Save + Reset overflows a phone. */
+.hr-share-field { flex: 1 1 auto; min-width: 0; }
+.hr-sharing .hr-field-row > .btn { flex: none; }
+
+/* ----- Guest browsing ----------------------------------------------- */
+
+/* Unknown (the status fetch failed): the switch is disabled with its knob
+   parked mid-track, so it reads as neither on nor off. The hint and the
+   "Unknown" pill carry the words. */
+.hr-guest-unknown .hr-switch-knob { transform: translateX(11px); }
+
+.hr-guest-scope {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: 0.9rem 1.5rem;
+  margin: 1rem 0 0.75rem;
+  padding: 0.9rem 1rem;
+  border-radius: var(--radius-sm);
+  background: var(--surface-inset);
+  border: 1px solid var(--border-soft);
+}
+
+.hr-guest-scope .hr-eyebrow { margin-bottom: 0.4rem; }
+
+.hr-guest-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+}
+
+.hr-guest-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  color: var(--text-secondary);
+}
+
+.hr-guest-list li::before {
+  flex: none;
+  width: 1em;
+  text-align: center;
+  font-weight: 700;
+}
+
+/* The glyph is decoration — the group label above says which list this is —
+   so the alt-text form gives it an empty name where it is supported. */
+.hr-guest-list.is-shown li::before {
+  content: '✓';
+  content: '✓' / '';
+  color: var(--neon-cyan);
+}
+
+.hr-guest-list.is-withheld li::before {
+  content: '✕';
+  content: '✕' / '';
+  color: var(--neon-pink);
+}
+
+/* ----- Share links -------------------------------------------------- */
+.hr-share-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.hr-share-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  padding: 0.7rem 0.75rem 0.7rem 0.9rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-soft);
+  background: var(--surface-inset);
+}
+
+/* The row a create just added: one cyan pulse, then it settles like the
+   rest. Transient on purpose — "new" is only news for a moment. */
+.hr-share-row.is-fresh { animation: hrShareFresh 2.4s var(--ease-out); }
+
+@keyframes hrShareFresh {
+  0%, 25% {
+    border-color: rgba(0, 240, 255, 0.7);
+    box-shadow: 0 0 0 1px rgba(0, 240, 255, 0.45), 0 0 18px rgba(0, 240, 255, 0.22);
+  }
+  100% {
+    border-color: var(--border-soft);
+    box-shadow: none;
+  }
+}
+
+.hr-share-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  flex: 1 1 11rem;
+  min-width: 0;
+}
+
+.hr-share-label {
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.hr-share-expiry {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
+/* A link that never expires is the one worth a second look. */
+.hr-share-expiry.is-never { color: var(--neon-yellow); }
+.hr-share-expiry.is-expired { color: var(--text-muted); font-style: italic; }
+
+.hr-share-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex: none;
+}
+
+/* The create form fills the footer row. Phone: the label on its own line,
+   expiry + button under it. Wider: all three in one line. */
+.hr-share-create {
+  flex: 1 1 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.hr-share-create-label,
+.hr-share-never { grid-column: 1 / -1; }
+
+/* "Create link" ⇄ "Creating…" must not wrap onto two lines mid-request. */
+.hr-share-create-btn { white-space: nowrap; }
+
+.hr-share-never {
+  font-size: var(--fs-xs);
+  color: var(--neon-yellow);
+  line-height: 1.45;
+}
+
+@media (min-width: 576px) {
+  .hr-share-create { grid-template-columns: minmax(0, 1fr) minmax(8.5rem, auto) auto; }
+  .hr-share-create-label { grid-column: auto; }
+}
+
+/* ----- Share the collection ----------------------------------------- */
+.hr-export-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.hr-export-options .form-check { align-items: center; }
+
+/* The checkbox is 1.2em; the whole label is the tap target, padded out to
+   the 44px a fingertip needs. Block, not flex: the label is a sentence with
+   an inline aside ("— off by default"), and as flex items the two halves
+   split into side-by-side columns on a phone. */
+.hr-export-options .form-check-label {
+  display: block;
+  padding: 0.3rem 0;
+  cursor: pointer;
+}
+
+@media (pointer: coarse) {
+  .hr-export-options .form-check-label { padding: 0.7rem 0; }
+}
+
+.hr-export-options .form-check-input { margin-top: 0; }
+
+/* ----- Tags & labels ------------------------------------------------ */
+.hr-tags-hint { line-height: 1.55; }
+
+/* ----- Share photos to Headroom ------------------------------------- */
+
+/* The two-way platform switch (`ui/Segmented`, equal halves): capped so on
+   a wide card the halves stay button-sized instead of stretching into two
+   long bars. */
+.hr-share-platforms {
+  max-width: 22rem;
+  margin-bottom: 1rem;
+}
+
+.hr-share-recipe {
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+  color: var(--text-secondary);
+  animation: fadeIn 0.2s var(--ease-out) both;
+}
+
+.hr-share-recipe strong { color: var(--text); font-weight: 600; }
+
+/* The cross-reference to the Account card is a real link now; it reads as
+   one, not as another bold term. */
+.hr-share-recipe a {
+  color: var(--neon-cyan);
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-color: rgba(0, 240, 255, 0.4);
+  text-underline-offset: 2px;
+}
+
+.hr-share-recipe a:hover { text-decoration-color: currentColor; }
+
+.hr-share-steps {
+  padding-left: 1.3rem;
+  margin: 0 0 0.75rem;
+}
+
+.hr-share-steps > li + li { margin-top: 0.55rem; }
+
+.hr-share-steps > li::marker {
+  color: var(--neon-cyan);
+  font-weight: 700;
+}
+
+.hr-share-steps ul {
+  padding-left: 1.1rem;
+  margin: 0.35rem 0 0;
+}
+
+.hr-share-steps ul > li + li { margin-top: 0.3rem; }
+
+/* The import URL field: the global size is 16px (no iOS zoom on focus); on
+   a pointer screen it can afford to be smaller so the origin fits. */
+.hr-share-steps .hr-field-row .form-control { font-size: var(--fs-sm); }
+
+@media (pointer: coarse) {
+  .hr-share-steps .hr-field-row .form-control { font-size: 16px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hr-share-row.is-fresh { animation: none; }
+  .hr-share-recipe { animation: none; }
+}

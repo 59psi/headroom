@@ -1,0 +1,1037 @@
+/* Area styles: app shell and public pages (nav, footer, login, guest,
+   share, tag landing). Shared primitives live in ui.css.
+
+   Loaded after app.css, so a rule here at the same specificity as the
+   app.css rule it refines wins without `!important`. `--safe-top` lives in
+   tokens.css beside `--safe-bottom`. */
+
+/* ===== Status-bar scrim ============================================ */
+/* Content scrolled under the installed app's translucent status bar ran
+   straight through the clock and battery. A frosted strip exactly the height
+   of the bar keeps them legible; it is zero-height everywhere else. */
+.hr-status-scrim {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--safe-top);
+  z-index: 110;
+  pointer-events: none;
+  background: rgba(6, 0, 17, 0.82);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+/* The page starts below the status bar, not under it. Phone only: at lg the
+   sticky top nav takes the inset instead (below). */
+@media (max-width: 991.98px) {
+  main.container { padding-top: calc(16px + var(--safe-top)); }
+}
+
+@media (min-width: 768px) and (max-width: 991.98px) {
+  main.container { padding-top: calc(28px + var(--safe-top)); }
+}
+
+/* ===== Skip link =================================================== */
+.hr-skip-link {
+  position: fixed;
+  top: calc(0.5rem + var(--safe-top));
+  left: 0.5rem;
+  z-index: 1200;
+  padding: 0.6rem 1rem;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  border: 1px solid var(--neon-cyan);
+  color: var(--text);
+  font-weight: 600;
+  font-size: var(--fs-sm);
+  transform: translateY(-200%);
+  transition: transform var(--dur) var(--ease-out);
+}
+
+.hr-skip-link:focus,
+.hr-skip-link:focus-visible {
+  transform: none;
+  outline: none;
+  color: var(--text);
+  text-shadow: none;
+  box-shadow: var(--glow-cyan);
+}
+
+main.container:focus { outline: none; }
+
+/* ===== Activity bar ================================================ */
+/* A hairline of light across the top while a first load or a save is in
+   flight. See `ActivityBar` for what counts. */
+.hr-activity {
+  position: fixed;
+  top: var(--safe-top);
+  left: 0;
+  right: 0;
+  height: 2px;
+  z-index: 111;
+  pointer-events: none;
+  overflow: hidden;
+  opacity: 0;
+  /* Out: at once. */
+  transition: opacity 0.25s ease;
+}
+
+.hr-activity.is-active {
+  opacity: 1;
+  /* In: only after 180 ms, so an answer faster than that never shows it. */
+  transition-delay: 0.18s;
+}
+
+.hr-activity::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, var(--neon-pink), var(--neon-cyan), transparent);
+  box-shadow: 0 0 10px rgba(255, 46, 182, 0.7);
+  transform: translateX(-100%);
+}
+
+.hr-activity.is-active::before {
+  animation: hrActivitySweep 1.15s var(--ease-out) infinite;
+}
+
+@keyframes hrActivitySweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(250%); }
+}
+
+/* Reduced motion: app.css's blanket rule runs every animation once, in an
+   instant, and without a fill mode the sweep then drops back to its resting
+   `translateX(-100%)` — off the left edge, so the bar lit up and showed
+   nothing at all. A still, full-width line carries the same signal without
+   moving. */
+@media (prefers-reduced-motion: reduce) {
+  .hr-activity.is-active::before {
+    width: 100%;
+    transform: none;
+    animation: none;
+    opacity: 0.75;
+  }
+}
+
+/* ===== Top nav (lg+) =============================================== */
+.navbar {
+  background: rgba(10, 3, 26, 0.8);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  border-bottom: 1px solid var(--border-soft);
+  padding: calc(0.6rem + var(--safe-top)) 0 0.6rem;
+}
+
+/* The same pink→cyan hairline the bottom nav wears on its top edge. */
+.navbar::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 46, 182, 0.55), rgba(0, 240, 255, 0.55), transparent);
+  pointer-events: none;
+}
+
+.navbar .navbar-brand:hover { text-shadow: none; }
+
+.navbar .nav-link {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  color: var(--text-secondary);
+  padding: 0.5rem 0.9rem;
+}
+
+/* The top nav is lg+ only, which on a touch screen means an iPad in
+   landscape — a fingertip, not a pointer. Keyed on the pointer like the
+   `-sm` controls in app.css, so a mouse keeps the tighter bar. */
+@media (pointer: coarse) {
+  .navbar .nav-link { min-height: 44px; }
+}
+
+/* Hover lifts the ink and the surface, not the neon: a link under the
+   pointer is not an event. */
+.navbar .nav-link:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+  text-shadow: none;
+}
+
+/* Active: full-strength ink over a glowing bar, instead of pink text on a
+   pink wash — the tab you are on should read as settled, not as the loudest
+   thing in the bar. */
+.navbar .nav-link.active {
+  color: var(--text);
+  background: transparent;
+  text-shadow: 0 0 12px rgba(255, 46, 182, 0.35);
+}
+
+.navbar .nav-link.active::after {
+  content: '';
+  position: absolute;
+  left: 0.9rem;
+  right: 0.9rem;
+  bottom: 0.15rem;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--gradient-pink-cyan);
+  box-shadow: 0 0 8px rgba(255, 46, 182, 0.65);
+}
+
+.navbar .nav-link:focus-visible {
+  outline: 2px solid var(--neon-cyan);
+  outline-offset: 1px;
+}
+
+.navbar .nav-link.hr-nav-icon {
+  justify-content: center;
+  width: 44px;
+  padding: 0;
+  margin-left: 0.25rem;
+}
+
+.navbar .nav-link.hr-nav-icon.active { color: var(--neon-pink); }
+
+.navbar .nav-link.hr-nav-icon.active svg {
+  filter: drop-shadow(0 0 5px rgba(255, 46, 182, 0.7));
+}
+
+.navbar .nav-link.hr-nav-icon.active::after {
+  left: 0.75rem;
+  right: 0.75rem;
+}
+
+.navbar .hr-nav-error-badge {
+  top: 2px;
+  right: 2px;
+}
+
+/* ===== Analysis-error badge (both navs) ============================ */
+/* A pill that grows for "9+", ringed in the bar's color so it reads as
+   sitting ON the icon. Dark ink: white on this red is 3.0:1 — below AA for
+   text this small — where the ink `.btn-danger` uses is 5.9:1. */
+.hr-nav-error-badge {
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: var(--radius-pill);
+  font-family: var(--font-body);
+  font-size: 0.625rem;
+  font-weight: 750;
+  line-height: 1;
+  color: var(--text-on-neon);
+  box-shadow: 0 0 0 2px var(--bg-surface), 0 0 10px rgba(255, 56, 96, 0.65);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ===== Footer ====================================================== */
+.hr-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+  padding-top: 1.5rem;
+  margin-top: 3rem;
+  border-top: 1px solid var(--border-soft);
+  font-family: var(--font-body);
+  font-size: var(--fs-xs);
+  letter-spacing: 0;
+  color: var(--text-muted);
+}
+
+/* The body already reserves the bottom nav's height on a phone, so the
+   footer adding it a second time left a nav-sized gap under the last line. */
+@media (max-width: 991.98px) {
+  .hr-footer { padding-bottom: 1.5rem; }
+}
+
+.hr-footer-line { margin: 0; }
+
+.hr-footer-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 0.2rem 0.45rem;
+  opacity: 0.85;
+}
+
+.hr-footer-version {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+}
+
+.hr-footer a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: rgba(154, 134, 196, 0.45);
+  text-underline-offset: 3px;
+}
+
+.hr-footer a:hover {
+  color: var(--neon-cyan);
+  text-decoration-color: currentColor;
+  text-shadow: none;
+}
+
+/* ===== Loading spinner ============================================= */
+.hr-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.85rem;
+  padding: 3rem 1rem;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  font-weight: 550;
+  /* Held back a beat, so a fast answer never flashes a spinner. */
+  animation: hrLoadingIn 0.25s ease-out 0.2s both;
+}
+
+.hr-loading-ring {
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 50%;
+  /* A comet tail: transparent → cyan → pink around the ring, masked to a
+     3px band. */
+  background: conic-gradient(from 90deg, transparent 0 20%, rgba(0, 240, 255, 0.9) 65%, var(--neon-pink));
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+  filter: drop-shadow(0 0 6px rgba(255, 46, 182, 0.55));
+  animation: spin 0.85s linear infinite;
+}
+
+.hr-loading-label { letter-spacing: 0.01em; }
+
+@keyframes hrLoadingIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* In-button busy ring ("Signing in…"). */
+.hr-btn-spinner {
+  flex: none;
+  width: 1em;
+  height: 1em;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  animation: spin 0.7s linear infinite;
+}
+
+.hr-btn-icon {
+  flex: none;
+  width: 1.15em;
+  height: 1.15em;
+}
+
+/* ===== Error note ================================================== */
+.hr-error-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  line-height: 1.45;
+}
+
+.hr-error-note-icon {
+  flex: none;
+  width: 1.15rem;
+  height: 1.15rem;
+  margin-top: 0.05rem;
+  color: var(--neon-red);
+}
+
+.hr-error-note-msg {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ===== Lightbox ==================================================== */
+.hr-lightbox-trigger {
+  position: relative;
+  max-width: 100%;
+  cursor: zoom-in;
+}
+
+.hr-lightbox-trigger.is-hat { max-width: 480px; }
+
+.hr-lightbox-thumb {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+}
+
+.hr-lightbox-trigger.is-hat .hr-lightbox-thumb {
+  aspect-ratio: 1;
+  object-fit: contain;
+}
+
+.hr-lightbox-hint {
+  position: absolute;
+  right: 0.6rem;
+  bottom: 0.6rem;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: rgba(6, 0, 17, 0.6);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  opacity: 0.75;
+  transition: opacity var(--dur) ease, color var(--dur) ease, border-color var(--dur) ease;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.hr-lightbox-hint svg { width: 15px; height: 15px; }
+
+.hr-lightbox-trigger:hover .hr-lightbox-hint,
+.hr-lightbox-trigger:focus-visible .hr-lightbox-hint {
+  opacity: 1;
+  color: var(--neon-cyan);
+  border-color: rgba(0, 240, 255, 0.45);
+}
+
+.hr-lightbox-overlay {
+  background: rgba(3, 0, 10, 0.92);
+  animation: hrLightboxFade 0.18s ease-out;
+  padding: calc(1rem + var(--safe-top)) 1rem calc(1rem + var(--safe-bottom));
+}
+
+.hr-lightbox-content {
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+  animation: hrLightboxZoom 0.24s var(--ease-out);
+}
+
+.hr-lightbox-close {
+  top: calc(1rem + var(--safe-top));
+  background: rgba(22, 10, 48, 0.85);
+  transition: background var(--dur-fast) ease, border-color var(--dur-fast) ease, box-shadow var(--dur) ease;
+}
+
+/* A tint, not a solid neon disc: closing a photo is not the loudest thing
+   that can happen on a page. */
+.hr-lightbox-close:hover {
+  background: rgba(255, 46, 182, 0.2);
+  border-color: var(--neon-pink);
+  box-shadow: 0 0 14px rgba(255, 46, 182, 0.35);
+}
+
+.hr-lightbox-close:focus-visible {
+  outline: 2px solid var(--neon-cyan);
+  outline-offset: 2px;
+}
+
+@keyframes hrLightboxFade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes hrLightboxZoom {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ===== Combobox ==================================================== */
+/* The chevron a <select> has, on a field that also takes free text: it is
+   the one visible sign that there is a list of known values behind the box
+   — the whole reason this replaced <datalist>. Pink like the select's, so
+   the two read as the same family. */
+.hr-combobox > .form-control {
+  padding-right: 2.5rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23ff2eb6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.9rem center;
+  background-size: 12px 8px;
+}
+
+.hr-combobox-list {
+  border-color: var(--border-bright);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(0, 240, 255, 0.12);
+}
+
+.hr-combobox-option {
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
+}
+
+.hr-combobox-option:hover,
+.hr-combobox-option.is-active {
+  background: rgba(0, 240, 255, 0.1);
+  color: var(--text);
+}
+
+.hr-combobox-option.is-selected {
+  color: var(--neon-cyan);
+}
+
+/* ===== Outside-viewer frame (guest, share) ========================= */
+.hr-public {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+.hr-public-bar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  min-height: 56px;
+  padding: calc(0.5rem + var(--safe-top)) 16px 0.5rem;
+  background: rgba(10, 3, 26, 0.8);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.hr-public-bar::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 46, 182, 0.5), rgba(0, 240, 255, 0.5), transparent);
+  pointer-events: none;
+}
+
+@media (min-width: 768px) {
+  .hr-public-bar { padding-left: 28px; padding-right: 28px; }
+}
+
+.hr-public-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
+.hr-public-brand img {
+  height: 30px;
+  width: auto;
+  filter: drop-shadow(0 0 8px rgba(255, 46, 182, 0.45));
+}
+
+.hr-public-action { flex: none; }
+
+.hr-public-main {
+  flex: 1;
+  width: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 1.5rem 16px 2.5rem;
+  animation: fadeIn 0.25s ease-out;
+}
+
+.hr-public-main.is-narrow { max-width: 640px; }
+
+@media (min-width: 768px) {
+  .hr-public-main { padding: 2rem 28px 3rem; }
+}
+
+.hr-public-head { margin-bottom: 1.25rem; }
+
+.hr-public-head h1 { overflow-wrap: anywhere; }
+
+.hr-public-sub {
+  margin: 0.35rem 0 0;
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+}
+
+.hr-public-back { margin-bottom: 1rem; }
+
+/* Search: field with its icon, then the buttons, in one row. */
+.hr-public-search { margin-bottom: 1rem; }
+
+.hr-search-field {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.hr-search-field .form-control { padding-left: 2.5rem; }
+
+.hr-search-icon {
+  position: absolute;
+  left: 0.85rem;
+  top: 50%;
+  width: 1.05rem;
+  height: 1.05rem;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.hr-public-scope { margin-bottom: 1rem; }
+
+.hr-result-count {
+  margin: 0 0 0.85rem;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The previous result while the next one loads: still there, plainly not
+   current. */
+.hr-results { transition: opacity var(--dur) ease; }
+
+.hr-results.is-stale { opacity: 0.5; }
+
+/* Page skeleton pieces (guest hat, share heading). */
+.hr-public-title-skel {
+  display: block;
+  width: min(60%, 18rem);
+  height: 1.6rem;
+  margin-bottom: 0.5rem;
+}
+
+.hr-public-photo-skel {
+  display: block;
+  width: min(100%, 320px);
+  aspect-ratio: 1;
+  margin: 0 auto 1.25rem;
+  border-radius: var(--radius);
+}
+
+.hr-public-card-skel {
+  display: block;
+  height: 7.5rem;
+  margin-top: 1.25rem;
+  border-radius: var(--radius);
+}
+
+/* The hat's photo on the guest page. */
+.hr-public-photo {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 1.25rem;
+}
+
+.hr-public-photo .hr-lightbox-trigger { max-width: 360px; }
+
+.hr-public-photo.is-empty {
+  height: 220px;
+  align-items: center;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+}
+
+.hr-public-photo.is-empty svg { width: 64px; height: 64px; opacity: 0.6; }
+
+/* Room names are words, not codes: body face, not the tile's mono. */
+.hr-public-place { font-family: var(--font-body); }
+
+.hr-public-place.is-none {
+  color: var(--text-muted);
+  font-weight: 550;
+}
+
+.hr-color-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.hr-color-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 32px;
+  padding: 0.25rem 0.75rem 0.25rem 0.4rem;
+  border-radius: var(--radius-pill);
+  background: var(--surface-inset);
+  border: 1px solid var(--border-soft);
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+}
+
+.hr-color-dot {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+/* "Link unavailable" and friends. */
+.hr-public-notice {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.75rem;
+  max-width: 28rem;
+  margin: 12vh auto 0;
+}
+
+.hr-public-notice-icon {
+  width: 56px;
+  height: 56px;
+  color: var(--text-muted);
+  opacity: 0.7;
+  filter: drop-shadow(0 0 12px rgba(177, 78, 255, 0.35));
+}
+
+/* The message, in reading type: this is a sentence, not a page title. */
+.hr-public-notice-title {
+  font-family: var(--font-body);
+  font-size: var(--fs-xl);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  text-transform: none;
+  line-height: 1.3;
+}
+
+.hr-public-notice-detail {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+}
+
+.hr-public-notice-action { margin-top: 0.5rem; }
+
+/* ===== Shared collection grid ====================================== */
+/* `a:hover` glows its text, and text-shadow inherits — so hovering a tile
+   haloed the hat's name in pink. The card's own lift is the hover. */
+.hr-share-tile:hover { text-shadow: none; }
+
+.hr-share-tile-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  height: 100%;
+  padding: 0.85rem 0.75rem 0.9rem;
+  text-align: center;
+}
+
+.hr-share-thumb {
+  display: block;
+  width: 100%;
+  height: 120px;
+  object-fit: contain;
+  filter: drop-shadow(0 6px 12px rgba(0, 0, 0, 0.5));
+}
+
+@media (min-width: 768px) {
+  .hr-share-thumb { height: 140px; }
+}
+
+span.hr-share-thumb.hr-skeleton {
+  border-radius: var(--radius-sm);
+  filter: none;
+}
+
+.hr-share-thumb.is-empty {
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+  filter: none;
+}
+
+.hr-share-thumb.is-empty svg { width: 44px; height: 44px; opacity: 0.55; }
+
+.hr-share-name {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.hr-share-skel-name {
+  width: 70%;
+  margin-top: 0.25rem;
+}
+
+.hr-share-swatches {
+  display: flex;
+  justify-content: center;
+  gap: 0.3rem;
+  margin-top: auto;
+}
+
+.hr-share-swatch {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.hr-share-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 3rem 1rem;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+}
+
+.hr-share-empty-icon {
+  width: 40px;
+  height: 40px;
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+/* ===== Login ======================================================= */
+.hr-auth {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: calc(1.5rem + var(--safe-top)) 16px calc(1.5rem + var(--safe-bottom));
+}
+
+/* A low sun on the horizon behind the card — the sunset the brand is built
+   on, at a whisper. Fixed to the viewport rather than clipped to the page
+   box, which cut it off in a hard line where the body's reserved nav space
+   begins. */
+.hr-auth::before {
+  content: '';
+  position: fixed;
+  left: 50%;
+  bottom: -35vh;
+  width: max(120vw, 900px);
+  height: 70vh;
+  transform: translateX(-50%);
+  background: radial-gradient(closest-side, rgba(255, 46, 182, 0.22), rgba(177, 78, 255, 0.1) 55%, transparent 78%);
+  pointer-events: none;
+}
+
+/* Below lg the body reserves the bottom nav's height on EVERY page — these
+   too, which have no nav — so a full-viewport min-height here always
+   overflowed by exactly that much and the login card scrolled for no reason.
+   Sized to what is left instead; the card sits 34px above true center, which
+   on a phone is closer to the thumb anyway. */
+@media (max-width: 991.98px) {
+  .hr-auth,
+  .hr-public {
+    min-height: calc(100vh - var(--nav-height) - var(--safe-bottom));
+    min-height: calc(100dvh - var(--nav-height) - var(--safe-bottom));
+  }
+
+  .hr-auth { padding-bottom: 1.5rem; }
+}
+
+.hr-auth-card {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 400px;
+  animation: fadeIn 0.3s var(--ease-out);
+}
+
+.hr-auth-card > .card-body { padding: 1.75rem 1.4rem 1.5rem; }
+
+@media (min-width: 480px) {
+  .hr-auth-card > .card-body { padding: 2.25rem 2rem 2rem; }
+}
+
+.hr-auth-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.6rem;
+  text-align: center;
+}
+
+.hr-auth-logo {
+  max-height: 64px;
+  width: auto;
+  filter: drop-shadow(0 0 12px rgba(255, 46, 182, 0.45));
+}
+
+.hr-auth-wordmark {
+  font-size: 1.75rem;
+  line-height: 1.1;
+}
+
+.hr-auth-lead {
+  margin: 0 0 1.5rem;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+}
+
+.hr-auth-skeleton { margin-top: 1rem; }
+
+.hr-auth-skeleton .hr-skeleton-line { height: 2.75rem; }
+
+/* Password field with its show/hide control inside the right edge. */
+.hr-password-field { position: relative; }
+
+.hr-password-field .form-control { padding-right: 3rem; }
+
+.hr-password-toggle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 44px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: color var(--dur-fast) ease;
+}
+
+.hr-password-toggle svg { width: 20px; height: 20px; }
+
+.hr-password-toggle:hover { color: var(--text); }
+
+.hr-password-toggle[aria-pressed="true"] { color: var(--neon-cyan); }
+
+.hr-password-toggle:focus-visible {
+  outline: 2px solid var(--neon-cyan);
+  outline-offset: -3px;
+}
+
+.hr-auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 1.1rem 0;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+}
+
+.hr-auth-divider::before,
+.hr-auth-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border-soft);
+}
+
+.hr-auth-foot {
+  margin-top: 1.25rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border-soft);
+  text-align: center;
+}
+
+.hr-auth-guest {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 44px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+/* ===== Tag landing ================================================= */
+.hr-tag-landing { padding-top: 2rem; }
+
+.hr-tag-name {
+  font-size: 1.4rem;
+  line-height: 1.25;
+}
+
+.hr-tag-action {
+  box-shadow: 0 6px 28px rgba(255, 46, 182, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+
+.hr-tag-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+/* "Worn today": a settled, green confirmation — the state the button left
+   behind, not another call to action. */
+.hr-tag-done {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 3rem;
+  padding: 0.55rem 1.25rem;
+  margin: 0;
+  border-radius: var(--radius-pill);
+  border: 1px solid rgba(57, 255, 20, 0.38);
+  background: rgba(57, 255, 20, 0.08);
+  box-shadow: 0 0 22px rgba(57, 255, 20, 0.12);
+  color: #8dff7a;
+  font-family: var(--font-body);
+  font-size: 1.05rem;
+  font-weight: 650;
+  animation: hrTagPop 0.32s var(--ease-out);
+}
+
+.hr-tag-done svg {
+  width: 20px;
+  height: 20px;
+  filter: drop-shadow(0 0 4px rgba(57, 255, 20, 0.7));
+}
+
+@keyframes hrTagPop {
+  from { opacity: 0; transform: scale(0.94); }
+  to { opacity: 1; transform: none; }
+}
+
+.hr-tag-undo { min-width: 8rem; }
+
+/* The landing is centered, and so was a failed wear's note until ErrorNote
+   became a flex row (icon + message), which packs to the left edge. */
+.hr-tag-landing .hr-error-note { justify-content: center; }
+
+.hr-tag-meta { font-variant-numeric: tabular-nums; }
+
+.hr-tag-more {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
+
+/* Skeleton pieces in the landing's own shape. */
+span.hr-tag-photo.hr-skeleton {
+  border-radius: var(--radius);
+  filter: none;
+}
+
+.hr-tag-skel-name {
+  width: 60%;
+  height: 1.3rem;
+  margin: 0 auto 1.75rem;
+}
+
+.hr-tag-skel-action {
+  display: block;
+  height: 3.75rem;
+  border-radius: var(--radius-sm);
+}

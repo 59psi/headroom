@@ -179,6 +179,8 @@ async def test_a_rejected_logo_upload_leaves_the_existing_logo_in_place(client, 
     logo = branding.find_logo()
     assert logo is not None
     original_bytes = logo.read_bytes()
+    first_version = first.json()["version"]
+    assert isinstance(first_version, int)
 
     # Oversize → 413, logo untouched.
     monkeypatch.setattr(upload, "MAX_PHOTO_BYTES", 2048)
@@ -209,7 +211,13 @@ async def test_a_rejected_logo_upload_leaves_the_existing_logo_in_place(client, 
         )
     ).status_code == 200
     assert branding.find_logo().read_bytes() != original_bytes
-    assert (await client.get("/api/settings/logo")).json() == {"logo_path": "branding/logo.png"}
+    status = (await client.get("/api/settings/logo")).json()
+    # Same path — the file is replaced in place — but a new version, which is
+    # the only thing that makes a browser fetch the new image instead of
+    # showing the cached old one under the unchanged URL.
+    assert status["logo_path"] == "branding/logo.png"
+    assert isinstance(status["version"], int)
+    assert status["version"] != first_version
 
 
 async def test_a_photo_within_the_cap_still_works(client):

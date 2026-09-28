@@ -1,8 +1,12 @@
 import { useState } from 'react';
 import { Modal } from './Modal';
+import { ErrorNote } from './ErrorNote';
+import { Segmented } from '../ui/Segmented';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { updateHatColors } from '../../api/hats';
-import type { ColorTag } from '../../types';
+import { useToast } from '../ui/Toast';
+import { useConfirm } from '../ui/Dialogs';
+import type { ColorTag, HatRead } from '../../types';
 
 interface Props {
   hatId: number;
@@ -12,15 +16,17 @@ interface Props {
   onClose: () => void;
 }
 
-const TIERS: { id: string; label: string }[] = [
-  { id: 'primary', label: 'Primary' },
-  { id: 'secondary', label: 'Secondary' },
-  { id: 'tertiary', label: 'Tertiary' },
-  { id: 'accent', label: 'Accent' },
+const TIERS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: 'primary', label: 'Primary' },
+  { value: 'secondary', label: 'Secondary' },
+  { value: 'tertiary', label: 'Tertiary' },
+  { value: 'accent', label: 'Accent' },
 ];
 
 export function ColorEditModal({ hatId, colors, editingRank, onClose }: Props) {
   const qc = useQueryClient();
+  const toast = useToast();
+  const confirm = useConfirm();
   const isEdit = editingRank !== null;
   const target = isEdit ? colors.find(c => c.dominance_rank === editingRank) : null;
 
@@ -39,6 +45,19 @@ export function ColorEditModal({ hatId, colors, editingRank, onClose }: Props) {
   // instance and the `useState` seeds above ARE the sync. An effect keyed on
   // `target?.dominance_rank` sat here for a mount-once modal that no longer
   // exists, and could never fire.
+
+  /**
+   * The PUT answers with the hat as stored — including the `general_color`
+   * the server derives when the box is left blank — so write that straight
+   * into the page's cache. The palette under the modal is correct the moment
+   * it closes instead of a refetch later, and it is the server's answer, not
+   * a guess at it. The invalidations stay: the hat lists show swatches too.
+   */
+  function applySaved(hat: HatRead | undefined) {
+    if (hat && hat.id === hatId) qc.setQueryData(['hat', hatId], hat);
+    qc.invalidateQueries({ queryKey: ['hat', hatId] });
+    qc.invalidateQueries({ queryKey: ['hats'] });
+  }
 
   const saveMut = useMutation({
     mutationFn: () => {
@@ -59,9 +78,9 @@ export function ColorEditModal({ hatId, colors, editingRank, onClose }: Props) {
         : [...colors, next];
       return updateHatColors(hatId, updated);
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['hat', hatId] });
-      qc.invalidateQueries({ queryKey: ['hats'] });
+    onSuccess: hat => {
+      applySaved(hat);
+      toast.success(isEdit ? 'Color saved' : 'Color added');
       onClose();
     },
   });
@@ -73,26 +92,35 @@ export function ColorEditModal({ hatId, colors, editingRank, onClose }: Props) {
         .map((c, i) => ({ ...c, dominance_rank: i + 1 }));
       return updateHatColors(hatId, filtered);
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['hat', hatId] });
-      qc.invalidateQueries({ queryKey: ['hats'] });
+    onSuccess: hat => {
+      applySaved(hat);
+      toast.success('Color removed');
       onClose();
     },
   });
 
+  async function remove() {
+    const ok = await confirm({
+      title: 'Remove this color?',
+      body: 'The colors after it move up one place in the palette.',
+      confirmLabel: 'Remove color',
+      tone: 'danger',
+    });
+    if (ok) removeMut.mutate();
+  }
+
   return (
-    <Modal title={isEdit ? `Edit Color #${editingRank}` : 'Add Color'} onClose={onClose} maxWidth={460}
+    <Modal title={isEdit ? `Edit color #${editingRank}` : 'Add color'} onClose={onClose} maxWidth={460}
       footer={(
         <>
           {isEdit && (
             <button
               type="button"
-              className="btn btn-outline-danger me-2"
-              onClick={() => { if (confirm('Remove this color?')) removeMut.mutate(); }}
+              className="btn btn-outline-danger hr-modal-foot-start"
+              onClick={() => { void remove(); }}
               disabled={removeMut.isPending}
-              style={{ marginRight: 'auto' }}
             >
-              Remove
+              {removeMut.isPending ? 'Removing…' : 'Remove'}
             </button>
           )}
           <button type="button" className="btn btn-outline-secondary" onClick={onClose}>Cancel</button>
@@ -102,46 +130,37 @@ export function ColorEditModal({ hatId, colors, editingRank, onClose }: Props) {
             onClick={() => saveMut.mutate()}
             disabled={saveMut.isPending}
           >
-            {saveMut.isPending ? 'Saving…' : 'Save'}
+            {saveMut.isPending ? 'Saving…' : isEdit ? 'Save' : 'Add color'}
           </button>
         </>
       )}
     >
 
       {/* Big color preview that doubles as the picker — iOS Safari opens
-          the system color wheel; desktop opens its native picker. */}
+          the system color wheel; desktop opens its native picker. The fill
+          and its glow are the only inline styles left: they ARE the value. */}
       <label
         htmlFor="hr-color-input"
-        style={{
-          display: 'block', width: '100%', height: 96,
-          background: hex, borderRadius: 'var(--radius-sm)',
-          border: '2px solid var(--border-bright)',
-          boxShadow: `0 0 24px ${hex}80`,
-          cursor: 'pointer', marginBottom: '0.75rem',
-          position: 'relative',
-        }}
+        className="hr-color-preview"
+        style={{ background: hex, boxShadow: `0 0 24px ${hex}80` }}
         title="Tap to open the color wheel"
       >
-        <span style={{
-          position: 'absolute', bottom: 8, right: 12,
-          fontFamily: 'var(--font-mono)', fontSize: '0.85rem',
-          color: '#000', mixBlendMode: 'difference', filter: 'invert(1)',
-          background: 'rgba(0,0,0,0.45)', padding: '2px 8px', borderRadius: 6,
-        }}>{hex.toUpperCase()}</span>
+        <span className="hr-color-preview-hex">{hex.toUpperCase()}</span>
       </label>
       <input
         id="hr-color-input"
         type="color"
+        aria-label="Pick a color"
+        className="hr-offscreen-input"
         value={hex}
         onChange={e => { setHex(e.target.value); setHexText(e.target.value); }}
-        style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
       />
 
-      <label className="form-label">Hex</label>
+      <label className="form-label" htmlFor="color-hex">Hex</label>
       <input
+        id="color-hex"
         type="text"
-        className="form-control mb-3"
-        aria-label="Hex value"
+        className="form-control mb-3 font-mono"
         value={hexText}
         onChange={e => {
           setHexText(e.target.value);
@@ -151,38 +170,45 @@ export function ColorEditModal({ hatId, colors, editingRank, onClose }: Props) {
           }
         }}
         autoComplete="off"
+        spellCheck={false}
       />
 
-      <label className="form-label" htmlFor="color-specific-name">Specific name</label>
-      <input
-        id="color-specific-name"
-        type="text"
-        className="form-control mb-3"
-        placeholder="e.g. cobalt blue"
-        value={name}
-        onChange={e => setName(e.target.value)}
-      />
-
-      <label className="form-label" htmlFor="color-general-name">General color (for filters)</label>
-      <input
-        id="color-general-name"
-        type="text"
-        className="form-control mb-3"
-        placeholder="e.g. blue"
-        value={general}
-        onChange={e => setGeneral(e.target.value)}
-      />
-
-      <label className="form-label">Tier</label>
-      <select aria-label="Tier" className="form-select" value={tier} onChange={e => setTier(e.target.value)}>
-        {TIERS.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
-      </select>
-
-      {(saveMut.error || removeMut.error) && (
-        <div className="alert alert-danger mt-3 mb-0 small">
-          {String(saveMut.error || removeMut.error)}
+      <div className="hr-color-names">
+        <div>
+          <label className="form-label" htmlFor="color-specific-name">Specific name</label>
+          <input
+            id="color-specific-name"
+            type="text"
+            className="form-control"
+            placeholder="e.g. cobalt blue"
+            value={name}
+            onChange={e => setName(e.target.value)}
+          />
         </div>
-      )}
+        <div>
+          <label className="form-label" htmlFor="color-general-name">General color (for filters)</label>
+          <input
+            id="color-general-name"
+            type="text"
+            className="form-control"
+            placeholder="e.g. blue"
+            value={general}
+            onChange={e => setGeneral(e.target.value)}
+          />
+        </div>
+      </div>
+
+      {/* Chips rather than a <select>: four words, one tap. */}
+      <span className="form-label" id="color-tier-label">Tier</span>
+      <Segmented
+        variant="chips"
+        labelledBy="color-tier-label"
+        options={TIERS}
+        value={tier}
+        onChange={setTier}
+      />
+
+      <ErrorNote of={[saveMut, removeMut]} className="mt-3 mb-0" />
     </Modal>
   );
 }

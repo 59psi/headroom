@@ -1,0 +1,355 @@
+/* Area styles: settings-analysis. Owned by the components in this area; shared
+   primitives live in ui.css, global elements in app.css.
+
+   The Analysis section's cards: the two API keys, the model picker, the
+   analysis queue and the recent-errors list. Everything here is prefixed
+   `hr-an-` so it cannot collide with another area's classes.
+
+   Same rule as the primitives: calm surfaces, neon on STATE. The key that
+   works, the run in flight and the hat that failed get color; the prose
+   around them does not. */
+
+/* ----- Shared bits --------------------------------------------------- */
+
+/* Small secondary prose inside a card: "No key configured", "Nothing
+   waiting". Deliberately not an alert — a normal state is not news. */
+.hr-an-note {
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.hr-an-note code,
+.hr-an-keycard .hr-panel-help code,
+.hr-an-model-active code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  padding: 0.05rem 0.35rem;
+  border-radius: var(--radius-xs);
+  background: var(--surface-inset);
+  border: 1px solid var(--border-soft);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/* The finest print: sample ids, "showing the first N", truncation notes. */
+.hr-an-fine {
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+/* One outcome line — a passing connection test, a model check in flight.
+   A failure is an `.alert` instead: it is the one outcome that needs acting on. */
+.hr-an-result {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  margin: 0.75rem 0 0;
+  font-size: var(--fs-sm);
+  font-weight: 550;
+  overflow-wrap: anywhere;
+}
+
+.hr-an-result.is-ok { color: #8dff7a; }
+
+.hr-an-result.is-busy { color: #d9a8ff; }
+
+.hr-an-result.is-busy::before {
+  content: '';
+  flex: none;
+  align-self: center;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: var(--neon-purple);
+  animation: hrPulse 1.2s ease-in-out infinite;
+}
+
+/* A titled group inside a card body ("Recent runs", "Why analysis is
+   failing"). Real h3s under the card's h2, styled as quiet labels. */
+.hr-an-group { margin-top: 1.25rem; }
+
+.hr-an-group:first-child { margin-top: 0; }
+
+.hr-an-subhead {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0 0 0.5rem;
+  font-family: var(--font-body);
+  font-size: var(--fs-2xs);
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.hr-an-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.35rem;
+  height: 1.2rem;
+  padding: 0 0.35rem;
+  border-radius: var(--radius-pill);
+  background: rgba(177, 78, 255, 0.16);
+  color: #d9a8ff;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ----- Key cards ------------------------------------------------------ */
+
+/* The key it HAS, and what can be done to it: value left, actions right on a
+   tablet; stacked on a phone, where the three buttons need the full width. */
+.hr-an-key {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+  padding: 0.75rem 0.9rem;
+  border-radius: var(--radius-sm);
+  background: var(--surface-inset);
+  border: 1px solid var(--border-soft);
+}
+
+.hr-an-key-value {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.hr-an-key-value .hr-metric-label { margin-bottom: 0.15rem; }
+
+.hr-an-key-masked {
+  font-family: var(--font-mono);
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.02em;
+  overflow-wrap: anywhere;
+}
+
+.hr-an-key-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+@media (max-width: 575.98px) {
+  .hr-an-key-actions { width: 100%; }
+  .hr-an-key-actions > .btn { flex: 1 1 auto; }
+}
+
+.hr-an-key-form .form-label { margin-bottom: 0.4rem; }
+
+/* ----- Model card ----------------------------------------------------- */
+
+/* "Active claude-sonnet-5 · Saved": the raw id the select's friendly label
+   stands for, and the autosave acknowledgment beside it. */
+.hr-an-model-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem 1rem;
+  margin-top: 0.6rem;
+}
+
+.hr-an-model-active {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  min-width: 0;
+}
+
+/* ----- Analysis queue ------------------------------------------------- */
+
+.hr-an-run {
+  margin-bottom: 1rem;
+  padding: 0.75rem 0.9rem;
+  border-radius: var(--radius-sm);
+  background: var(--surface-inset);
+  border: 1px solid rgba(177, 78, 255, 0.3);
+}
+
+.hr-an-run-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin-bottom: 0.45rem;
+  font-weight: 550;
+}
+
+.hr-an-pending > li {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
+  min-height: 32px;
+}
+
+/* One failure group: a quiet block with its severity on the left edge,
+   instead of a whole alert box in cyan per group. Four groups used to be four
+   glowing panels, and the one that mattered (billing) looked like the rest. */
+.hr-an-failure {
+  margin-bottom: 0.6rem;
+  padding: 0.7rem 0.85rem;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--surface-inset);
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid var(--neon-red);
+  font-size: var(--fs-sm);
+}
+
+.hr-an-failure.is-billing {
+  border-left-color: var(--neon-yellow);
+  background: rgba(255, 225, 86, 0.05);
+}
+
+.hr-an-failure-count {
+  font-weight: 650;
+  color: var(--text);
+}
+
+.hr-an-failure.is-billing .hr-an-failure-count { color: var(--neon-yellow); }
+
+.hr-an-failure-reason {
+  margin: 0.2rem 0 0.25rem;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.hr-an-failure-fix {
+  margin: 0.25rem 0;
+  color: var(--text);
+}
+
+.hr-an-failure-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.75rem;
+  margin-top: 0.55rem;
+}
+
+/* A hat's verbatim error inside a run log: untruncated, and allowed to break
+   anywhere — these are long Python reprs with no spaces to wrap at. */
+.hr-an-verbatim {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.hr-an-runlog-error { margin: 0.25rem 0 0.5rem 0.75rem; }
+
+/* Footer: the reassurance and the expensive button, side by side on a tablet
+   and stacked on a phone, where the button takes the full width. */
+.hr-an-rerun {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem 1rem;
+  width: 100%;
+}
+
+.hr-an-rerun-text {
+  flex: 1 1 16rem;
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+@media (max-width: 575.98px) {
+  .hr-an-rerun > .btn { width: 100%; }
+}
+
+/* ----- Recent errors -------------------------------------------------- */
+
+.hr-an-err + .hr-an-err { border-top: 1px solid var(--border-soft); }
+
+.hr-an-err { padding: 0.55rem 0; }
+
+.hr-an-err:first-child { padding-top: 0; }
+
+.hr-an-err-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+/* The row's link: thumbnail and text, the whole block one tap target. The
+   Retry button is its sibling, never its child — a button inside a link is
+   invalid markup and swallows the link's tap on iOS. */
+.hr-an-err-main {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 44px;
+  color: inherit;
+  text-decoration: none;
+  border-radius: var(--radius-xs);
+}
+
+.hr-an-err-main:hover .hr-an-err-id,
+.hr-an-err-main:focus-visible .hr-an-err-id { text-decoration: underline; }
+
+.hr-an-err-main:focus-visible {
+  outline: 2px solid var(--neon-cyan);
+  outline-offset: 2px;
+}
+
+.hr-an-err-thumb {
+  flex: none;
+  width: 40px;
+  height: 40px;
+}
+
+.hr-an-err-thumb.is-empty {
+  display: block;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px dashed var(--border);
+}
+
+.hr-an-err-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.35;
+}
+
+.hr-an-err-id {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--neon-cyan);
+}
+
+.hr-an-err-msg {
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hr-an-err-time {
+  font-size: var(--fs-2xs);
+  color: var(--text-muted);
+}
+
+.hr-an-err-row > .btn,
+.hr-an-err-row > .hr-pill { flex: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .hr-an-result.is-busy::before { animation: none; }
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../../test/utils';
 import { AnalysisQueueCard } from './AnalysisQueueCard';
@@ -66,6 +66,78 @@ describe('AnalysisQueueCard', () => {
     renderWithProviders(<AnalysisQueueCard />);
 
     expect(await screen.findByText(/no worker is/i)).toBeInTheDocument();
+    // And the header says it in one word, ahead of anything else it could say.
+    expect(screen.getByText('Stalled')).toBeInTheDocument();
+  });
+
+  it.each([
+    ['a run in flight', {
+      pending_count: 5,
+      current_job: {
+        id: 1, total: 10, done: 5, failed: 0, status: 'running',
+        started_at: new Date().toISOString(), finished_at: null,
+      },
+    }, 'Running'],
+    ['a backlog being drained', { pending_count: 4 }, '4 waiting'],
+    ['a stopped worker with nothing waiting', { worker_alive: false }, 'Worker stopped'],
+    ['nothing to do', {}, 'Idle'],
+  ] as const)('states %s in the header pill', async (_what, over, word) => {
+    vi.mocked(settingsApi.getAnalysisQueue).mockResolvedValue(queue(over as Partial<AnalysisQueueStatus>));
+    renderWithProviders(<AnalysisQueueCard />);
+    expect(await screen.findByText(word)).toBeInTheDocument();
+  });
+
+  it('asks before re-analyzing everything, and Cancel runs nothing', async () => {
+    // The expensive button: a Claude call per hat. It must not fire on the
+    // press itself, and backing out must leave nothing queued.
+    const user = userEvent.setup();
+    vi.mocked(settingsApi.getAnalysisQueue).mockResolvedValue(IDLE);
+    renderWithProviders(<AnalysisQueueCard />);
+
+    await user.click(await screen.findByRole('button', { name: 'Re-analyze every hat' }));
+    const dialog = screen.getByRole('dialog', { name: 'Re-analyze every hat?' });
+    // The warning the inline confirm used to carry, now the dialog's body.
+    expect(within(dialog).getByText(/costs an API call each/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Prices you entered by hand are kept/)).toBeInTheDocument();
+    expect(settingsApi.reanalyzeAll).not.toHaveBeenCalled();
+
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(settingsApi.reanalyzeAll).not.toHaveBeenCalled();
+  });
+
+  it('queues the run once confirmed, and says how many', async () => {
+    const user = userEvent.setup();
+    vi.mocked(settingsApi.getAnalysisQueue).mockResolvedValue(IDLE);
+    vi.mocked(settingsApi.reanalyzeAll).mockResolvedValue({ queued: 213, worker_alive: true, job: null });
+    renderWithProviders(<AnalysisQueueCard />);
+
+    await user.click(await screen.findByRole('button', { name: 'Re-analyze every hat' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Yes, re-analyze' }));
+
+    expect(settingsApi.reanalyzeAll).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText('Queued 213 hats.')).toBeInTheDocument();
+  });
+
+  it('keeps a failed run request on the card, not only in a toast', async () => {
+    const user = userEvent.setup();
+    vi.mocked(settingsApi.getAnalysisQueue).mockResolvedValue(IDLE);
+    vi.mocked(settingsApi.reanalyzeAll).mockRejectedValue(new Error('Worker is disabled'));
+    renderWithProviders(<AnalysisQueueCard />);
+
+    await user.click(await screen.findByRole('button', { name: 'Re-analyze every hat' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Yes, re-analyze' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Worker is disabled');
+  });
+
+  it('says so when the queue itself cannot be read', async () => {
+    // It used to render nothing at all — an empty card that looked like one
+    // still loading, forever.
+    vi.mocked(settingsApi.getAnalysisQueue).mockRejectedValue(new Error('502 Bad Gateway'));
+    renderWithProviders(<AnalysisQueueCard />);
+    expect(await screen.findByText(/502 Bad Gateway/)).toBeInTheDocument();
+    expect(screen.getByText(/Could not read the queue/)).toBeInTheDocument();
   });
 
   it('lists recent runs once nothing is in flight', async () => {
@@ -109,7 +181,9 @@ describe('AnalysisQueueCard — why analysis is failing', () => {
     // Anchored, because the group's Retry button now also carries the count and
     // a bare /235 hats/ matches both.
     expect(await screen.findByText(/^235 hats ·/)).toBeInTheDocument();
-    expect(screen.getByText(/your Anthropic ACCOUNT, not your key/)).toBeInTheDocument();
+    // Case-insensitive: the emphasis moved from capital letters to the group's
+    // yellow edge, and the words are what the test is about.
+    expect(screen.getByText(/your Anthropic account, not your key/i)).toBeInTheDocument();
     // And the real error text, which used to be visible nowhere.
     expect(screen.getByText(/credit balance is too low/)).toBeInTheDocument();
   });
@@ -244,6 +318,26 @@ describe('AnalysisQueueCard — retrying only what failed', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Retry 21 hats' }));
     expect(await screen.findByText(/already queued/)).toBeInTheDocument();
+  });
+
+  it("reports a failed re-analyze even after an earlier retry failed", async () => {
+    // Each press keeps its own error. Sharing one note between them showed
+    // only the FIRST that had failed — a stale retry error standing in for
+    // the re-analyze that had just been refused.
+    const user = userEvent.setup();
+    vi.mocked(settingsApi.getAnalysisFailures).mockResolvedValue([OVERLOAD]);
+    vi.mocked(settingsApi.retryFailedAnalysis).mockRejectedValue(new Error('Retry refused'));
+    vi.mocked(settingsApi.reanalyzeAll).mockRejectedValue(new Error('Worker is disabled'));
+
+    renderWithProviders(<AnalysisQueueCard />);
+
+    await user.click(await screen.findByRole('button', { name: 'Retry 21 hats' }));
+    expect(await screen.findByText(/Retry refused/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Re-analyze every hat' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Yes, re-analyze' }));
+
+    expect(await screen.findByText(/Worker is disabled/)).toBeInTheDocument();
   });
 });
 

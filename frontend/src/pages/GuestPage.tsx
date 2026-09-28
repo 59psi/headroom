@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router';
 import { getGuestCollection } from '../api/guest';
-import { LoadingSpinner } from '../components/common/LoadingSpinner';
-import { SharedCollectionGrid } from '../components/share/SharedCollectionGrid';
+import { SharedCollectionGrid, SharedCollectionSkeleton } from '../components/share/SharedCollectionGrid';
+import { PublicNotice, PublicPage } from '../components/share/PublicPage';
 import { ColorScopePicker } from '../components/common/ColorScopePicker';
 
 /**
@@ -31,7 +31,7 @@ export function GuestPage() {
   // not.
   const [query, setQuery] = useState(submitted);
 
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, isPlaceholderData, error } = useQuery({
     queryKey: ['guest-collection', submitted, scope],
     queryFn: () => getGuestCollection(submitted || undefined, scope),
     retry: false,
@@ -41,28 +41,36 @@ export function GuestPage() {
     // top. Cached data means the page is its full height immediately and your
     // position survives.
     staleTime: 60_000,
+    // A new search keeps the last result on screen, dimmed, until the answer
+    // lands. Each search is a new query key, so without this every submit
+    // (and every color-scope tap) blanked the grid to a spinner and back —
+    // the page visibly reloading for what is one field changing.
+    placeholderData: keepPreviousData,
   });
 
   if (error) {
     return (
-      <div className="text-center py-5 text-secondary" style={{ paddingTop: '20vh' }}>
-        <h1>HEADROOM</h1>
-        <p>Guest browsing isn't available.</p>
-        <Link to="/login" className="btn btn-outline-primary btn-sm">Sign in</Link>
-      </div>
+      <PublicPage>
+        <PublicNotice
+          title="Guest browsing isn't available"
+          action={<Link to="/login" className="btn btn-primary">Sign in</Link>}
+        />
+      </PublicPage>
     );
   }
 
+  const count = data?.hat_count ?? 0;
+
   return (
-    <div style={{ maxWidth: 960, margin: '0 auto', padding: '1.5rem 1rem' }}>
-      <div className="d-flex justify-content-between align-items-start gap-2 flex-wrap mb-1">
-        <h1 className="mb-0">The collection</h1>
-        <Link to="/login" className="btn btn-outline-secondary btn-sm">Sign in</Link>
+    <PublicPage action={<Link to="/login" className="btn btn-outline-secondary btn-sm">Sign in</Link>}>
+      <div className="hr-public-head">
+        <h1>The collection</h1>
+        <p className="hr-public-sub">Browsing as a guest.</p>
       </div>
-      <p className="text-secondary small mb-3">Browsing as a guest.</p>
 
       <form
-        className="d-flex gap-2 mb-4"
+        className="hr-field-row hr-public-search"
+        role="search"
         onSubmit={e => {
           e.preventDefault();
           const next = query.trim();
@@ -74,13 +82,22 @@ export function GuestPage() {
           );
         }}
       >
-        <input
-          aria-label="Search the collection"
-          className="form-control"
-          placeholder="Search by model, color, style…"
-          value={query}
-          onChange={e => setQuery(e.target.value)}
-        />
+        <div className="hr-search-field">
+          <svg className="hr-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+            <circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" />
+          </svg>
+          <input
+            aria-label="Search the collection"
+            className="form-control"
+            // The keyboard's return key reads "Search". Not `type="search"`:
+            // WebKit adds its own × to those, which empties the box but
+            // leaves the submitted search in place — a second, lesser Clear.
+            enterKeyHint="search"
+            placeholder="Search by model, color, style…"
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+          />
+        </div>
         <button type="submit" className="btn btn-primary">Search</button>
         {submitted && (
           <button
@@ -92,7 +109,7 @@ export function GuestPage() {
       </form>
 
       {submitted && (
-        <div className="mb-4">
+        <div className="hr-public-scope">
           <ColorScopePicker
             value={scope}
             onChange={next => setParams(
@@ -103,15 +120,26 @@ export function GuestPage() {
         </div>
       )}
 
-      {isLoading || !data ? <LoadingSpinner /> : (
+      {isLoading || !data ? <SharedCollectionSkeleton /> : (
         <>
-          <p className="text-secondary small mb-3">
-            {data.hat_count} hat{data.hat_count !== 1 ? 's' : ''}
-            {submitted && <> matching “{submitted}”</>}
+          {/* A live region, so a screen reader hears the new count when a
+              search lands instead of having to go looking for it. */}
+          <p className="hr-result-count" role="status">
+            {isPlaceholderData ? 'Searching…' : (
+              <>
+                {count} hat{count !== 1 ? 's' : ''}
+                {submitted && <> matching “{submitted}”</>}
+              </>
+            )}
           </p>
-          <SharedCollectionGrid hats={data.hats} hrefFor={h => `/guest/hat/${h.id}`} />
+          <div
+            className={`hr-results${isPlaceholderData ? ' is-stale' : ''}`}
+            aria-busy={isPlaceholderData || undefined}
+          >
+            <SharedCollectionGrid hats={data.hats} hrefFor={h => `/guest/hat/${h.id}`} />
+          </div>
         </>
       )}
-    </div>
+    </PublicPage>
   );
 }

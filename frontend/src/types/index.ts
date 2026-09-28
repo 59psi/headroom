@@ -269,6 +269,14 @@ export interface SharedCollection {
   hats: SharedHat[];
 }
 
+/** Mirrors `LogoStatus`. `version` changes whenever the logo file does. */
+export interface LogoStatus {
+  logo_path: string | null;
+  /** The file's mtime (ns). The server always sends it; optional so a fixture
+   *  that only names the path still type-checks. */
+  version?: number | null;
+}
+
 export interface ApiKeyStatus {
   configured: boolean;
   source: string | null;

@@ -2,26 +2,30 @@ import { isNotFound } from '../api/client';
 import { ErrorNote } from '../components/common/ErrorNote';
 import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useParams, useNavigate } from 'react-router';
+import { useParams, useNavigate, Link } from 'react-router';
 import {
   getHat, updateHat, uploadHatPhoto, assignHat, updateHatColors, getColorwayOptions,
 } from '../api/hats';
-import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { NewCaseModal } from '../components/common/NewCaseModal';
 import { Combobox } from '../components/common/Combobox';
+import { PageHeader } from '../components/ui/PageHeader';
+import { Panel } from '../components/ui/Panel';
+import { useToast } from '../components/ui/Toast';
 import { useDebouncedValue } from '../lib/useDebouncedValue';
 import {
-  useHatFormOptions, useHatPhoto, PhotoCard, HatBasicsCard, type HatBasics,
+  useHatFormOptions, useHatPhoto, PhotoCard, HatBasicsCard, HatFormSkeleton, HatFormActions,
+  type HatBasics,
 } from '../components/hats/HatFormFields';
 import type { ColorTag } from '../types';
+import { invalidateHatViews, invalidateHatVocabulary } from '../lib/invalidate';
 
 type ColorRow = ColorTag & { rowKey: number };
-import { invalidateHatViews, invalidateHatVocabulary } from '../lib/invalidate';
 
 export function EditHatPage() {
   const { hatId } = useParams<{ hatId: string }>();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const toast = useToast();
   const id = Number(hatId);
 
   const hat = useQuery({ queryKey: ['hat', id], queryFn: () => getHat(id), enabled: !isNaN(id) });
@@ -203,6 +207,9 @@ export function EditHatPage() {
       // covered by anything above (CLAUDE.md, `shared_price_audit`).
       qc.invalidateQueries({ queryKey: ['admin', 'shared-prices'] });
       invalidateHatVocabulary(qc);
+      // The toast lives at the app root, so it is still up on the hat page
+      // this lands on — the acknowledgement arrives where the eye goes next.
+      toast.success('Changes saved');
       navigate(`/hats/${id}`);
     },
   });
@@ -216,15 +223,42 @@ export function EditHatPage() {
     mutation.mutate();
   }
 
-  if (hat.isLoading || options.isLoading) return <LoadingSpinner />;
+  // Back to the hat without saving — named by its id, as Edit case names its
+  // case. Present from the first paint, labeled plain "Hat" for the moment a
+  // cold load has no id to show yet: arriving with the hat instead would push
+  // the title down just as the form replaced its skeleton.
+  const backToHat = Number.isNaN(id) ? undefined : {
+    to: `/hats/${id}`,
+    label: hat.data ? (hat.data.display_id || `Hat #${hat.data.id}`) : 'Hat',
+    title: 'Back to this hat without saving',
+  };
+
+  // The title stays up while the hat and the option lists load, so the page
+  // does not blink from a spinner to a form.
+  if (hat.isLoading || options.isLoading) {
+    return (
+      <>
+        <PageHeader back={backToHat} title="Edit hat" />
+        <HatFormSkeleton />
+      </>
+    );
+  }
   if (hat.error && !isNotFound(hat.error)) {
     return <div className="py-4"><ErrorNote of={{ isError: true, error: hat.error }} what="Could not load this hat" /></div>;
   }
-  if (!hat.data) return <div className="alert alert-danger">Hat not found</div>;
+  if (!hat.data) {
+    return (
+      <div className="text-center py-5">
+        <h1 className="hr-empty-title">Hat not found</h1>
+        <p className="text-secondary small mb-3">This hat may have been deleted or doesn't exist.</p>
+        <Link to="/hats" className="btn btn-outline-secondary">← Back to hats</Link>
+      </div>
+    );
+  }
 
   return (
     <>
-      <h1 className="mb-3">Edit Hat</h1>
+      <PageHeader back={backToHat} title="Edit hat" />
 
       <form onSubmit={handleSubmit}>
         <PhotoCard onCapture={onCapture} previewUrl={photoPreview} />
@@ -236,140 +270,88 @@ export function EditHatPage() {
           onCreateCase={() => setShowNewCase(true)}
         />
 
-        <div className="card mb-3">
-          <div className="card-body">
-            <div className="card-title">AI / Pricing Overrides</div>
-            <p className="text-secondary small mb-3">
-              Override anything Claude got wrong. Blank = leave as null.
-            </p>
+        <Panel
+          title="Identity and pricing"
+          description="Override anything the analysis got wrong. A blank field is cleared."
+        >
+          <div className="mb-3">
+            <label className="form-label" htmlFor="hat-brand">Brand</label>
+            <input id="hat-brand" type="text" className="form-control" value={brand} onChange={e => setBrand(e.target.value)} placeholder="e.g. Melin" />
+          </div>
 
-            <div className="mb-3">
-              <label className="form-label" htmlFor="hat-brand">Brand</label>
-              <input id="hat-brand" type="text" className="form-control" value={brand} onChange={e => setBrand(e.target.value)} placeholder="e.g. Melin" />
+          {/* A Combobox, not a <datalist>: iOS renders a datalist as a thin
+              strip above the keyboard that is easy to miss entirely, so 188
+              harvested colorways read as a blank text box. Same component
+              the Basics card uses for construction and collection. */}
+          <div className="mb-3">
+            <Combobox
+              id="hat-model-name"
+              label="Model name"
+              value={modelName}
+              onChange={setModelName}
+              options={(modelOptions.data ?? []).map(o => o.value)}
+              placeholder="e.g. A-Game Hydro"
+            />
+          </div>
+
+          {/* Collection / collab lives in the Basics card, beside
+              construction — both answer "what is this hat", and it has to be
+              on the Add form too, which has no Identity card. One definition
+              in `HatFormFields`, rendered by both pages. */}
+
+          <div className="mb-3">
+            <Combobox
+              id="hat-colorway"
+              label="Colorway"
+              value={colorway}
+              onChange={setColorway}
+              options={(colorwayOptions.data ?? []).map(o => o.value)}
+              placeholder="e.g. Heather Ocean"
+              help={<>Suggestions come from the Melin Recap catalog for this model (refresh it under Settings &rarr; Data).</>}
+            />
+          </div>
+
+          {/* Price paid moved up into HatBasicsCard, where the Add form has
+              it too — two inputs for one column is how they end up
+              disagreeing about which was edited last. */}
+          <div className="row g-2 mb-3">
+            <div className="col-6">
+              <label className="form-label" htmlFor="hat-est-new">Est. new retail ($)</label>
+              <input id="hat-est-new" ref={estimatedRef} type="number" inputMode="decimal" step="0.01" className="form-control" value={estimatedPrice} onChange={e => setEstimatedPrice(e.target.value)} />
             </div>
-
-            {/* A Combobox, not a <datalist>: iOS renders a datalist as a thin
-                strip above the keyboard that is easy to miss entirely, so 188
-                harvested colorways read as a blank text box. Same component
-                the Basics card uses for construction and collection. */}
-            <div className="mb-3">
-              <Combobox
-                id="hat-model-name"
-                label="Model Name"
-                value={modelName}
-                onChange={setModelName}
-                options={(modelOptions.data ?? []).map(o => o.value)}
-                placeholder="e.g. A-Game Hydro"
-              />
+            <div className="col-6">
+              <label className="form-label" htmlFor="hat-resale">Resale ($)</label>
+              <input id="hat-resale" ref={resaleRef} type="number" inputMode="decimal" step="0.01" className="form-control" value={resalePrice} onChange={e => setResalePrice(e.target.value)} />
             </div>
-
-            {/* Collection / collab lives in the Basics card, beside
-                construction — both answer "what is this hat", and it has to be
-                on the Add form too, which has no Identity card. One definition
-                in `HatFormFields`, rendered by both pages. */}
-
-            <div className="mb-3">
-              <Combobox
-                id="hat-colorway"
-                label="Colorway"
-                value={colorway}
-                onChange={setColorway}
-                options={(colorwayOptions.data ?? []).map(o => o.value)}
-                placeholder="e.g. Heather Ocean"
-                help={<>Suggestions come from the Melin Recap catalog for this model (refresh it under Settings &rarr; Data).</>}
-              />
-            </div>
-
-            {/* Price paid moved up into HatBasicsCard, where the Add form has
-                it too — two inputs for one column is how they end up
-                disagreeing about which was edited last. */}
-            <div className="row g-2 mb-3">
-              <div className="col-6">
-                <label className="form-label" htmlFor="hat-est-new">Est. new retail ($)</label>
-                <input id="hat-est-new" ref={estimatedRef} type="number" step="0.01" className="form-control" value={estimatedPrice} onChange={e => setEstimatedPrice(e.target.value)} />
+            {/* Full width under the pair, not squeezed into the resale
+                column: at phone width a 170px column turned this into a
+                ten-line ribbon beside an empty one. It is the one sentence on
+                the form whose consequence is permanent, so it gets to be
+                readable. */}
+            <div className="col-12">
+              <div className="form-text">
+                Setting a resale price marks it as your own: it's used as-is
+                and a re-analysis won't overwrite it. Clear it to hand the hat
+                back to the live market feed.
               </div>
-              <div className="col-6">
-                <label className="form-label" htmlFor="hat-resale">Resale ($)</label>
-                <input id="hat-resale" ref={resaleRef} type="number" step="0.01" className="form-control" value={resalePrice} onChange={e => setResalePrice(e.target.value)} />
-                <div className="form-text small">
-                  Setting this marks it as your own price: it's used as-is and
-                  a re-analysis won't overwrite it. Clear it to hand the hat
-                  back to the live market feed.
-                </div>
-              </div>
-            </div>
-
-            <div className="mb-3">
-              <label className="form-label">Design Notes</label>
-              <textarea
-                aria-label="Design Notes"
-                className="form-control"
-                rows={3}
-                value={designNotes}
-                onChange={e => setDesignNotes(e.target.value)}
-              />
             </div>
           </div>
-        </div>
 
-        <div className="card mb-3">
-          <div className="card-body">
-            <div className="card-title">Colors</div>
+          <div>
+            <label className="form-label" htmlFor="hat-design-notes">Design notes</label>
+            <textarea
+              id="hat-design-notes"
+              className="form-control"
+              rows={3}
+              value={designNotes}
+              onChange={e => setDesignNotes(e.target.value)}
+            />
+          </div>
+        </Panel>
 
-            {colors.map((color, i) => (
-              <div key={color.rowKey} className="mb-2">
-                <div className="d-flex align-items-center gap-2 flex-wrap">
-                  <input
-                    type="color"
-                    aria-label={`Color ${i + 1} swatch`}
-                    className="form-control form-control-color"
-                    value={color.hex_value}
-                    onChange={e => {
-                      const updated = [...colors];
-                      updated[i] = { ...updated[i], hex_value: e.target.value };
-                      setColors(updated);
-                    }}
-                  />
-                  <input
-                    type="text"
-                    className="form-control flex-grow-1"
-                    style={{ minWidth: 120 }}
-                    placeholder="Color name"
-                    aria-label={`Color ${i + 1} name`}
-                    value={color.color_name}
-                    onChange={e => {
-                      const updated = [...colors];
-                      updated[i] = { ...updated[i], color_name: e.target.value };
-                      setColors(updated);
-                    }}
-                  />
-                  <input
-                    type="text"
-                    className="form-control flex-grow-1"
-                    style={{ minWidth: 120 }}
-                    placeholder="General"
-                    aria-label={`Color ${i + 1} general color`}
-                    value={color.general_color}
-                    onChange={e => {
-                      const updated = [...colors];
-                      updated[i] = { ...updated[i], general_color: e.target.value };
-                      setColors(updated);
-                    }}
-                  />
-                  <button
-                    type="button"
-                    className="btn btn-outline-danger btn-sm"
-                    aria-label={`Remove color ${i + 1}`}
-                    onClick={() => {
-                      const updated = colors.filter((_, j) => j !== i)
-                        .map((c, j) => ({ ...c, dominance_rank: j + 1 }));
-                      setColors(updated);
-                    }}
-                  >×</button>
-                </div>
-              </div>
-            ))}
-
+        <Panel
+          title="Colors"
+          footer={(
             <button
               type="button"
               className="btn btn-outline-secondary btn-sm"
@@ -377,21 +359,75 @@ export function EditHatPage() {
                 ...colors,
                 withKey({ color_name: '', general_color: '', hex_value: '#000000', dominance_rank: colors.length + 1, tier: 'primary' }),
               ])}
-            >+ Add Color</button>
-          </div>
-        </div>
-
-        {mutation.error && (
-          <div className="alert alert-danger">{String(mutation.error)}</div>
-        )}
-
-        <button
-          type="submit"
-          className="btn btn-primary w-100 btn-lg"
-          disabled={mutation.isPending}
+            >+ Add color</button>
+          )}
         >
-          {mutation.isPending ? 'Saving…' : 'Save Changes'}
-        </button>
+          {colors.length === 0 ? (
+            <p className="text-muted small mb-0">No colors. Add one below, or reanalyze the hat to rebuild the palette.</p>
+          ) : colors.map((color, i) => (
+            // Swatch, name and remove on one line; the general color under
+            // the name on a phone and beside it where there is room — the old
+            // flex-wrap put each input wherever it happened to fall.
+            <div key={color.rowKey} className="hr-color-edit-row">
+              <input
+                type="color"
+                aria-label={`Color ${i + 1} swatch`}
+                className="form-control form-control-color hr-color-edit-swatch"
+                value={color.hex_value}
+                onChange={e => {
+                  const updated = [...colors];
+                  updated[i] = { ...updated[i], hex_value: e.target.value };
+                  setColors(updated);
+                }}
+              />
+              <input
+                type="text"
+                className="form-control hr-color-edit-name"
+                placeholder="Color name"
+                aria-label={`Color ${i + 1} name`}
+                value={color.color_name}
+                onChange={e => {
+                  const updated = [...colors];
+                  updated[i] = { ...updated[i], color_name: e.target.value };
+                  setColors(updated);
+                }}
+              />
+              <input
+                type="text"
+                className="form-control hr-color-edit-general"
+                placeholder="General"
+                aria-label={`Color ${i + 1} general color`}
+                value={color.general_color}
+                onChange={e => {
+                  const updated = [...colors];
+                  updated[i] = { ...updated[i], general_color: e.target.value };
+                  setColors(updated);
+                }}
+              />
+              <button
+                type="button"
+                className="btn btn-outline-danger btn-sm hr-color-edit-remove"
+                aria-label={`Remove color ${i + 1}`}
+                onClick={() => {
+                  const updated = colors.filter((_, j) => j !== i)
+                    .map((c, j) => ({ ...c, dominance_rank: j + 1 }));
+                  setColors(updated);
+                }}
+              >×</button>
+            </div>
+          ))}
+        </Panel>
+
+        <HatFormActions error={<ErrorNote of={mutation} what="Not saved" className="mb-2" />}>
+          <Link to={`/hats/${id}`} className="btn btn-outline-secondary">Cancel</Link>
+          <button
+            type="submit"
+            className="btn btn-primary hr-form-actions-main"
+            disabled={mutation.isPending}
+          >
+            {mutation.isPending ? 'Saving…' : 'Save changes'}
+          </button>
+        </HatFormActions>
       </form>
 
       <NewCaseModal

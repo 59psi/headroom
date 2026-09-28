@@ -2,7 +2,7 @@
   "name": "headroom-frontend",
   "private": true,
   "license": "AGPL-3.0-or-later",
-  "version": "2.79.1",
+  "version": "2.80.0",
   "type": "module",
   "engines": {
     "node": ">=22.22"

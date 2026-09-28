@@ -105,4 +105,28 @@ describe('RoomDetailPage', () => {
     expect(await screen.findByText('Room not found')).toBeInTheDocument();
     expect(mocked.getRoom).not.toHaveBeenCalled();
   });
+
+  it('heads the page with the room, under a way back to Rooms', async () => {
+    renderRoom(room({ name: 'Study', is_default: true, cases: [aCase()] }));
+
+    const title = await screen.findByRole('heading', { level: 1, name: 'Study' });
+    const back = screen.getByRole('link', { name: 'Rooms' });
+    expect(back).toHaveAttribute('href', '/rooms');
+    expect(back.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const head = title.closest('header')!;
+    expect(head).toHaveTextContent('1 case');
+    expect(head).toHaveTextContent('Default');
+  });
+
+  it('while the room loads, the way back already works and no title is guessed', () => {
+    mocked.getRoom.mockReturnValue(new Promise<RoomDetail>(() => {}));
+    renderWithProviders(
+      <Routes><Route path="/rooms/:roomId" element={<RoomDetailPage />} /></Routes>,
+      { route: '/rooms/1' },
+    );
+
+    expect(screen.getByRole('link', { name: 'Rooms' })).toHaveAttribute('href', '/rooms');
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
+    expect(screen.getByRole('status')).toHaveTextContent('Loading room…');
+  });
 });

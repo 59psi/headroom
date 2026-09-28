@@ -14,6 +14,7 @@
  */
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
+import { Panel } from '../ui/Panel';
 
 /** Series colors, in assignment order. Distinguishable on a dark canvas. */
 export const SERIES_COLORS = [
@@ -297,40 +298,66 @@ export function TimeSeries({
 
 /* ===== Layout helpers ============================================ */
 
-/** A titled block on the stats page. Keeps section chrome in one place. */
+/**
+ * A titled block on the stats and valuation pages.
+ *
+ * Now a thin wrapper over `Panel`, the shell every titled card in the app
+ * shares, so a chart card and a settings card put their title, caveat and
+ * action in the same places. It used to hand-roll that header with its own
+ * spacing and a heading that was a `<div>` — which meant a screen reader's
+ * heading list skipped every chart on a twenty-card page. The prop names are
+ * kept (`subtitle`, `action`) so call sites read as they always have.
+ */
 export function ChartCard({
   title,
   subtitle,
   action,
+  help,
+  helpLabel,
+  as,
+  className,
+  id,
   children,
 }: {
-  title: string;
+  title: ReactNode;
+  /** One line under the title: the caveat, the scope. */
   subtitle?: ReactNode;
+  /** A small control at the right of the title (a link, a button). */
   action?: ReactNode;
+  /** The long explanation, folded behind a disclosure. */
+  help?: ReactNode;
+  helpLabel?: string;
+  /** `h3` when the card sits under a section heading. */
+  as?: 'h2' | 'h3';
+  className?: string;
+  id?: string;
   children: ReactNode;
 }) {
   return (
-    <div className="card mb-3">
-      <div className="card-body">
-        <div className="d-flex justify-content-between align-items-start gap-2 mb-2">
-          <div style={{ minWidth: 0 }}>
-            <div className="card-title mb-0">{title}</div>
-            {subtitle && <div className="text-muted small mt-1">{subtitle}</div>}
-          </div>
-          {action}
-        </div>
-        {children}
-      </div>
-    </div>
+    <Panel
+      title={title}
+      description={subtitle}
+      actions={action}
+      help={help}
+      helpLabel={helpLabel}
+      as={as}
+      className={className}
+      id={id}
+    >
+      {children}
+    </Panel>
   );
 }
 
+export interface StatTile {
+  label: string;
+  value: string;
+  sub?: ReactNode;
+  tone?: 'pink' | 'cyan' | 'purple' | 'muted';
+}
+
 /** Big-number tiles. `tone` picks the accent; `sub` is the caveat line. */
-export function StatTiles({
-  tiles,
-}: {
-  tiles: Array<{ label: string; value: string; sub?: ReactNode; tone?: 'pink' | 'cyan' | 'purple' | 'muted' }>;
-}) {
+export function StatTiles({ tiles }: { tiles: StatTile[] }) {
   return (
     <div className="hr-tile-grid">
       {tiles.map(t => (
@@ -338,6 +365,26 @@ export function StatTiles({
           <div className="hr-tile-label">{t.label}</div>
           <div className="hr-tile-value">{t.value}</div>
           {t.sub && <div className="hr-tile-sub">{t.sub}</div>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * `StatTiles` in the shape it will have, while the numbers load.
+ *
+ * One status region for the whole grid rather than one `Skeleton` per tile:
+ * four tiles would otherwise announce "Loading…" four times over.
+ */
+export function StatTilesSkeleton({ count = 4, label = 'Loading…' }: { count?: number; label?: string }) {
+  return (
+    <div className="hr-tile-grid" role="status" aria-live="polite">
+      <span className="visually-hidden">{label}</span>
+      {Array.from({ length: count }, (_, i) => (
+        <div key={i} className="hr-tile hr-cp-tile-skel" aria-hidden="true">
+          <span className="hr-skeleton hr-skeleton-line hr-cp-skel-label" />
+          <span className="hr-skeleton hr-cp-skel-figure" />
         </div>
       ))}
     </div>

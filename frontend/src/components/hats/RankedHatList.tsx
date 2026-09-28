@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 import type { HatRead } from '../../types';
 import { tileSrc } from '../../lib/photo';
+import { useHatLabels } from '../../lib/labels';
 
 /**
  * A ranked "top N" list of hats — number, thumbnail, id, name, one figure.
@@ -10,6 +11,15 @@ import { tileSrc } from '../../lib/photo';
  * already diverged in what a hat with no brand is called. One list, and the
  * empty state is a prop rather than something one page rendered inline and
  * the other forgot.
+ *
+ * An ordered list (`<ol>`) when it is a leaderboard, so the rows are one list
+ * to a screen reader rather than ten loose links.
+ *
+ * The rank itself stays in the link's text, NOT aria-hidden in favor of the
+ * list's own numbering: the list is `list-style: none` (the number is drawn
+ * by us, in purple), and a list without a marker has no numbering to announce
+ * — hiding the digit as well left "Most valuable" read out as ten hats in no
+ * stated order. It is also part of what the link says: "3. A-001-02 …".
  */
 export function RankedHatList({
   hats,
@@ -27,48 +37,39 @@ export function RankedHatList({
   /** `accent` for a figure worth reading (a price), `muted` for a date or a note. */
   valueTone?: 'accent' | 'muted';
 }) {
+  // Above the early return: a hook must run on every render.
+  const labels = useHatLabels();
   if (!hats.length) {
     return typeof empty === 'string' ? <p className="text-muted small mb-0">{empty}</p> : <>{empty ?? null}</>;
   }
+  const List = numbered ? 'ol' : 'ul';
   return (
-    <div>
+    <List className="hr-cp-rank-list">
       {hats.map((h, i) => (
-        <Link
-          key={h.id}
-          to={`/hats/${h.id}`}
-          className="hr-color-row text-decoration-none"
-          style={{ paddingTop: '0.5rem' }}
-        >
-          {numbered && (
-            <div className="font-mono fw-bold" style={{ color: 'var(--neon-purple)', minWidth: 22 }}>
-              {i + 1}.
-            </div>
-          )}
-          {h.photo_path ? (
-            <img src={tileSrc(h)} alt="" className="hr-thumb flex-shrink-0" style={{ width: 40, height: 40 }} />
-          ) : (
-            <div className="rounded flex-shrink-0" style={{ width: 40, height: 40, background: 'rgba(0,0,0,0.3)' }} />
-          )}
-          <div className="flex-grow-1" style={{ minWidth: 0 }}>
-            <div className="font-mono small" style={{ color: 'var(--neon-cyan)' }}>
-              {h.display_id || `Hat #${h.id}`}
-            </div>
-            <div
-              className="text-secondary small"
-              style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
-            >
-              {h.brand || h.style.replace(/_/g, ' ')}{h.model_name && ` · ${h.model_name}`}
-            </div>
-          </div>
-          {valueTone === 'accent' ? (
-            <div className="font-mono fw-bold flex-shrink-0" style={{ color: 'var(--neon-pink)' }}>
+        <li key={h.id}>
+          <Link to={`/hats/${h.id}`} className="hr-cp-rank">
+            {numbered && (
+              <span className="hr-cp-rank-num">
+                {i + 1}<span className="visually-hidden">.</span>
+              </span>
+            )}
+            {h.photo_path ? (
+              <img src={tileSrc(h)} alt="" className="hr-thumb hr-cp-rank-thumb" />
+            ) : (
+              <span className="hr-cp-rank-thumb hr-cp-thumb-empty" aria-hidden="true" />
+            )}
+            <span className="hr-cp-rank-main">
+              <span className="hr-cp-rank-id">{h.display_id || `Hat #${h.id}`}</span>
+              <span className="hr-cp-rank-name">
+                {h.brand || labels.style(h.style)}{h.model_name && ` · ${h.model_name}`}
+              </span>
+            </span>
+            <span className={`hr-cp-rank-value${valueTone === 'muted' ? ' is-muted' : ''}`}>
               {valueFor(h)}
-            </div>
-          ) : (
-            <div className="text-secondary small font-mono flex-shrink-0">{valueFor(h)}</div>
-          )}
-        </Link>
+            </span>
+          </Link>
+        </li>
       ))}
-    </div>
+    </List>
   );
 }

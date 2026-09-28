@@ -15,6 +15,13 @@ describe('ErrorNote', () => {
     expect(note).not.toHaveTextContent('Error:');
   });
 
+  it('keeps its icon out of the message text', () => {
+    // The text is what gets read out and quoted in bug reports; the icon is
+    // decoration and must not become a leading "!" in either.
+    render(<ErrorNote of={{ isError: true, error: new Error('HTTP 500 boom') }} />);
+    expect(screen.getByRole('alert').textContent).toBe('HTTP 500 boom');
+  });
+
   it('takes a list and shows the first failure in it', () => {
     render(
       <ErrorNote

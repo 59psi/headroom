@@ -3,10 +3,12 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { createHat, uploadHatPhoto } from '../api/hats';
 import { getApiKeyStatus } from '../api/settings';
-import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { NewCaseModal } from '../components/common/NewCaseModal';
+import { ErrorNote } from '../components/common/ErrorNote';
+import { PageHeader } from '../components/ui/PageHeader';
+import { useToast } from '../components/ui/Toast';
 import {
-  useHatFormOptions, useHatPhoto, PhotoCard, HatBasicsCard,
+  useHatFormOptions, useHatPhoto, PhotoCard, HatBasicsCard, HatFormSkeleton, HatFormActions,
   DEFAULT_HAT_BASICS, type HatBasics,
 } from '../components/hats/HatFormFields';
 import { invalidateHatViews, invalidateHatVocabulary } from '../lib/invalidate';
@@ -14,6 +16,7 @@ import { invalidateHatViews, invalidateHatVocabulary } from '../lib/invalidate';
 export function AddHatPage() {
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const toast = useToast();
   const [searchParams] = useSearchParams();
 
   const [basics, setBasics] = useState<HatBasics>({
@@ -66,6 +69,9 @@ export function AddHatPage() {
     onSuccess: (hat) => {
       invalidateHatViews(qc);
       invalidateHatVocabulary(qc);
+      // "Processing", not "analyzing": with no key only the cutout and the
+      // fallback colors run. The hat page's status badge says which.
+      toast.success(photo ? 'Hat added — the photo is processing' : 'Hat added');
       navigate(`/hats/${hat.id}`);
     },
   });
@@ -75,16 +81,23 @@ export function AddHatPage() {
     mutation.mutate();
   }
 
-  if (options.isLoading) return <LoadingSpinner />;
+  if (options.isLoading) {
+    return (
+      <>
+        <PageHeader title="Add hat" />
+        <HatFormSkeleton />
+      </>
+    );
+  }
 
   return (
     <>
-      <h1 className="mb-3">Add Hat</h1>
+      <PageHeader title="Add hat" />
 
       {photo && apiKey.data && !apiKey.data.configured && (
         <div className="alert alert-warning mb-3">
-          No Anthropic API key configured — photo will save, but Claude won't run.
-          Set one in <Link to="/settings?tab=analysis" style={{ color: 'inherit', textDecoration: 'underline' }}>Settings</Link> for brand / color / price detection.
+          No Anthropic API key configured — the photo will save, but Claude won't run.
+          Set one in <Link to="/settings?tab=analysis" className="hr-alert-link">Settings</Link> for brand, color and price detection.
         </div>
       )}
 
@@ -96,24 +109,22 @@ export function AddHatPage() {
           onChange={setBasic}
           options={options}
           onCreateCase={() => setShowNewCase(true)}
-          caseLabel="Assign to Case (optional)"
-          dateLabel="Date Last Worn (optional)"
+          caseLabel="Assign to case (optional)"
+          dateLabel="Date last worn (optional)"
         />
 
-        {mutation.error && (
-          <div className="alert alert-danger">{String(mutation.error)}</div>
-        )}
-
-        <button
-          type="submit"
-          className="btn btn-primary w-100 btn-lg"
-          disabled={mutation.isPending}
-        >
-          {/* No longer "Claude analyzing…": the upload returns as soon as the
-              photo is saved and analysis is queued, so claiming otherwise
-              would overstate what this button is waiting on. */}
-          {mutation.isPending ? 'Saving…' : 'Save Hat'}
-        </button>
+        <HatFormActions error={<ErrorNote of={mutation} what="Not saved" className="mb-2" />}>
+          <button
+            type="submit"
+            className="btn btn-primary hr-form-actions-main"
+            disabled={mutation.isPending}
+          >
+            {/* No longer "Claude analyzing…": the upload returns as soon as the
+                photo is saved and analysis is queued, so claiming otherwise
+                would overstate what this button is waiting on. */}
+            {mutation.isPending ? 'Saving…' : 'Save hat'}
+          </button>
+        </HatFormActions>
       </form>
 
       <NewCaseModal

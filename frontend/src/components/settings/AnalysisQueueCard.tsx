@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import {
@@ -6,6 +6,13 @@ import {
 } from '../../api/settings';
 import { STAGE_SHORT } from '../hats/AnalysisStatus';
 import { timeAgo } from '../../lib/format';
+import { ErrorNote } from '../common/ErrorNote';
+import { Panel } from '../ui/Panel';
+import { StatusPill, type PillTone } from '../ui/StatusPill';
+import { Skeleton } from '../ui/Skeleton';
+import { useToast } from '../ui/Toast';
+import { useConfirm } from '../ui/Dialogs';
+import type { AnalysisQueueStatus } from '../../types';
 
 /** The hat page's stage labels, lower-cased for mid-sentence use ("· identifying").
  *  Imported rather than restated: a second table had already drifted in casing. */
@@ -15,6 +22,29 @@ const STAGE_LABELS: Record<string, string> = Object.fromEntries(
 
 function pct(job: { done: number; total: number }): number {
   return job.total > 0 ? Math.round((job.done / job.total) * 100) : 0;
+}
+
+function plural(n: number, word = 'hat'): string {
+  return `${n} ${word}${n === 1 ? '' : 's'}`;
+}
+
+/**
+ * The queue's state in one word, for the card's header.
+ *
+ * Ordered by what matters most: a backlog with a dead worker is the failure
+ * worth seeing (nothing happens until a restart), so it outranks a run in
+ * flight. "Idle" is only said when the worker is alive AND nothing waits —
+ * a stopped worker with an empty queue is still a stopped worker.
+ */
+function queueState(d: AnalysisQueueStatus): { tone: PillTone; label: string; title?: string } {
+  const backlog = d.pending_count;
+  if (backlog > 0 && !d.worker_alive) {
+    return { tone: 'error', label: 'Stalled', title: `${plural(backlog)} waiting, no worker running` };
+  }
+  if (d.current_job) return { tone: 'busy', label: 'Running', title: 'Re-analyzing all hats' };
+  if (backlog > 0) return { tone: 'busy', label: `${backlog} waiting`, title: 'Worker running' };
+  if (!d.worker_alive) return { tone: 'warn', label: 'Worker stopped', title: 'Nothing waiting' };
+  return { tone: 'ok', label: 'Idle', title: 'Worker running, nothing waiting' };
 }
 
 /**
@@ -30,14 +60,14 @@ function RunLog({ jobId }: { jobId: number }) {
     queryFn: () => getAnalysisJob(jobId),
   });
 
-  if (q.isPending) return <div className="text-secondary small ps-3">Loading run…</div>;
-  if (q.error) {
+  if (q.isPending) {
     return (
-      <div className="small ps-3" style={{ color: 'var(--neon-pink)' }}>
-        {String(q.error)}
+      <div className="hr-run-log">
+        <Skeleton lines={3} label="Loading run…" />
       </div>
     );
   }
+  if (q.isError) return <ErrorNote of={q} what="Could not load this run" className="hr-an-runlog-error" />;
   const d = q.data;
   if (!d) return null;
 
@@ -68,12 +98,7 @@ function RunLog({ jobId }: { jobId: number }) {
               </Link>
               <span className="text-secondary"> · {h.analysis_status ?? 'unknown'}</span>
               {h.analysis_error && (
-                <div
-                  className="font-mono text-muted"
-                  style={{ fontSize: '0.7rem', wordBreak: 'break-word' }}
-                >
-                  {h.analysis_error}
-                </div>
+                <div className="hr-an-verbatim">{h.analysis_error}</div>
               )}
             </li>
           ))}
@@ -83,7 +108,7 @@ function RunLog({ jobId }: { jobId: number }) {
       {/* Stated, never silent: the list is capped and the count above is a real
           COUNT, so a truncated log must not read as the whole story. */}
       {d.still_tagged > d.hats.length && (
-        <div className="text-muted" style={{ fontSize: '0.72rem' }}>
+        <div className="hr-an-fine">
           Showing the first {d.hats.length} of {d.still_tagged}, failures first.
         </div>
       )}
@@ -96,13 +121,15 @@ function RunLog({ jobId }: { jobId: number }) {
  *
  * Before this the queue was invisible: a hat showed "Analyzing…" with no way to
  * tell whether twenty were ahead of it, or whether anything was draining the
- * queue at all. The two numbers are deliberately separate — `queued` is the
- * in-memory depth, `pending_count` is what the database says. A backlog with a
- * dead worker is the failure worth seeing, and only the DB number reveals it.
+ * queue at all. The two facts are deliberately separate — `pending_count` is
+ * what the database says is waiting, `worker_alive` is whether anything is
+ * draining it. A backlog with a dead worker is the failure worth seeing, and
+ * only the pair reveals it; the header pill states it in one word.
  */
 export function AnalysisQueueCard() {
   const qc = useQueryClient();
-  const [confirming, setConfirming] = useState(false);
+  const toast = useToast();
+  const confirm = useConfirm();
   const [openJob, setOpenJob] = useState<number | null>(null);
 
   // Why hats are failing, grouped. Before this the only place a failure was
@@ -141,11 +168,16 @@ export function AnalysisQueueCard() {
     qc.invalidateQueries({ queryKey: ['hats'] });
   };
 
+  // Acknowledged by toast rather than a banner in the card. A banner here was
+  // itself a fix — nested inside the failures list, a successful retry cleared
+  // the failures it queued, the list unmounted, and the banner went with it in
+  // the same render, leaving the press with no acknowledgment at all. A toast
+  // lives outside the card entirely, so no refetch can take it away.
   const rerun = useMutation({
     mutationFn: () => reanalyzeAll(),
-    onSuccess: () => {
-      setConfirming(false);
+    onSuccess: (r) => {
       afterQueueing();
+      toast.success(`Queued ${plural(r.queued)}.`);
     },
   });
 
@@ -154,12 +186,38 @@ export function AnalysisQueueCard() {
   // the spinner belongs to it.
   const retry = useMutation({
     mutationFn: (reason: string | undefined) => retryFailedAnalysis(reason),
-    onSuccess: afterQueueing,
+    onSuccess: (r) => {
+      afterQueueing();
+      // Pressing twice is the normal way to get a zero: the first press
+      // cleared the failures and moved the hats to pending. Reported as its
+      // own outcome, because "Queued 0 hats" reads as a silent no-op.
+      if (r.queued > 0) toast.success(`Queued ${plural(r.queued)} to retry.`);
+      else toast.info('Nothing left to retry — those hats are already queued.');
+    },
   });
+
+  async function confirmRerun() {
+    const ok = await confirm({
+      title: 'Re-analyze every hat?',
+      body: (
+        <>
+          <p>
+            This re-runs Claude for every hat with a photo — minutes of work,
+            and it costs an API call each. Background removal is skipped, so
+            your cutouts are not touched.
+          </p>
+          <p>Prices you entered by hand are kept — nothing here can overwrite them.</p>
+        </>
+      ),
+      confirmLabel: 'Yes, re-analyze',
+    });
+    if (ok) rerun.mutate();
+  }
 
   const data = queue.data;
   const backlog = data?.pending_count ?? 0;
   const stalled = backlog > 0 && data?.worker_alive === false;
+  const state = data ? queueState(data) : null;
 
   // Retryable, not failed: a hat whose photo has gone is a failure the card
   // must still show and a retry cannot fix, so summing `hat_count` here would
@@ -168,27 +226,21 @@ export function AnalysisQueueCard() {
     (n, f) => n + f.retryable_count, 0,
   );
 
-  return (
-    <div className="card mb-3">
-      <div className="card-body">
-        <div className="card-title">Analysis Queue</div>
-        <p className="text-secondary small mb-3">
-          Photo analysis runs in the background. This is the backlog, and the way
-          to re-run it across your whole collection after a change to how hats
-          are identified or priced.
-        </p>
-
-        {queue.isLoading && <div className="text-secondary small">Loading…</div>}
-
-        {data?.current_job && (
-          <div className="mb-3">
-            <div className="d-flex justify-content-between align-items-baseline mb-1">
+  let queueBody: ReactNode = null;
+  if (queue.isLoading) {
+    queueBody = <Skeleton lines={2} />;
+  } else if (data) {
+    queueBody = (
+      <>
+        {data.current_job && (
+          <div className="hr-an-run">
+            <div className="hr-an-run-head">
               <span>Re-analyzing all hats</span>
               <span className="font-mono small">
                 {data.current_job.done} / {data.current_job.total}
               </span>
             </div>
-            <div className="hr-progress mb-1">
+            <div className="hr-progress">
               <div
                 className="hr-progress-fill"
                 style={{ width: `${pct(data.current_job)}%` }}
@@ -199,49 +251,33 @@ export function AnalysisQueueCard() {
                 aria-valuemax={data.current_job.total}
               />
             </div>
-            <div className="text-secondary small">
+            <div className="text-secondary small mt-1">
               started {timeAgo(data.current_job.started_at)}
               {data.current_job.failed > 0 && ` · ${data.current_job.failed} failed`}
             </div>
           </div>
         )}
 
-        {data && (
-          <>
-            <div className="row g-2 mb-3">
-              <div className="col-6">
-                <div className="hr-metric">
-                  <div className="hr-metric-label">Waiting</div>
-                  <div className="hr-metric-value font-mono">{backlog}</div>
-                </div>
-              </div>
-              <div className="col-6">
-                <div className="hr-metric">
-                  <div className="hr-metric-label">Worker</div>
-                  <div className="hr-metric-value font-mono">
-                    {data.worker_alive ? 'running' : 'stopped'}
-                  </div>
-                </div>
-              </div>
-            </div>
+        {stalled && (
+          <div className="alert alert-warning small mb-3">
+            {plural(backlog)} waiting, but no worker is
+            draining the queue. They&rsquo;ll be picked up on the next restart.
+          </div>
+        )}
 
-            {stalled && (
-              <div className="alert alert-warning">
-                {backlog} hat{backlog === 1 ? '' : 's'} waiting, but no worker is
-                draining the queue. They'll be picked up on the next restart.
-              </div>
-            )}
-
-            {backlog === 0 && (
-              <div className="text-secondary small mb-3">
-                Nothing waiting — every hat with a photo has been analyzed.
-              </div>
-            )}
-
+        {backlog === 0 ? (
+          <p className="hr-an-note">
+            Nothing waiting — every hat with a photo has been analyzed.
+          </p>
+        ) : (
+          <section className="hr-an-group">
+            <h3 className="hr-an-subhead">
+              Waiting <span className="hr-an-count">{backlog}</span>
+            </h3>
             {data.pending.length > 0 && (
-              <ul className="hr-plain-list mb-3">
+              <ul className="hr-plain-list hr-an-pending">
                 {data.pending.map(h => (
-                  <li key={h.id} className="d-flex align-items-center gap-2 mb-1">
+                  <li key={h.id}>
                     <span className="hr-analysis-spinner" aria-hidden="true" />
                     <Link to={`/hats/${h.id}`}>
                       {h.display_id ?? h.label ?? `Hat #${h.id}`}
@@ -253,17 +289,17 @@ export function AnalysisQueueCard() {
                 ))}
               </ul>
             )}
-          </>
+          </section>
         )}
 
-        {data && data.recent_jobs.length > 0 && (
-          <div className="mb-3">
-            <div className="hr-metric-label mb-1">Recent runs</div>
+        {data.recent_jobs.length > 0 && (
+          <section className="hr-an-group">
+            <h3 className="hr-an-subhead">Recent runs</h3>
             <ul className="hr-plain-list">
               {data.recent_jobs.map(j => {
                 const open = openJob === j.id;
                 return (
-                  <li key={j.id} className="mb-1">
+                  <li key={j.id}>
                     <button
                       type="button"
                       className="hr-run-row"
@@ -280,152 +316,137 @@ export function AnalysisQueueCard() {
                 );
               })}
             </ul>
-          </div>
+          </section>
         )}
+      </>
+    );
+  }
 
-        {/* Failures come BEFORE the re-analyze-everything button on purpose.
-            Retrying 21 casualties of a transient overload is the cheap, correct
-            repair, and while it was the only button on this card the expensive
-            one was the one people reached for. */}
-        {(failures.data?.length ?? 0) > 0 && (
-          <div className="mb-3">
-            <div className="text-secondary small fw-semibold mb-1">
-              Why analysis is failing
-            </div>
-            {failures.data!.map(f => (
-              <div
-                key={f.reason}
-                className={`alert mb-2 small ${f.is_billing ? 'alert-warning' : 'alert-info'}`}
-              >
-                <div className="fw-semibold">
-                  {f.hat_count} hat{f.hat_count === 1 ? '' : 's'}
-                  {f.is_billing && ' · your Anthropic ACCOUNT, not your key'}
-                </div>
-                <div style={{ wordBreak: 'break-word' }}>{f.reason}</div>
-                {f.is_billing && (
-                  <div className="mt-1">
-                    The key is fine. Top up at{' '}
-                    <span className="font-mono">console.anthropic.com</span>{' '}
-                    → Plans &amp; Billing, then retry below.
-                  </div>
-                )}
-                <div className="text-muted" style={{ fontSize: '0.72rem' }}>
-                  e.g. hat{f.sample_hat_ids.length === 1 ? '' : 's'}{' '}
-                  {f.sample_hat_ids.map(id => `#${id}`).join(', ')}
-                </div>
-
-                {f.retryable_count > 0 ? (
-                  <>
-                    <button
-                      type="button"
-                      className="btn btn-outline-primary btn-sm mt-2"
-                      disabled={retry.isPending}
-                      onClick={() => retry.mutate(f.reason)}
-                    >
-                      {retry.isPending && retry.variables === f.reason
-                        ? 'Queueing…'
-                        : `Retry ${f.retryable_count} hat${f.retryable_count === 1 ? '' : 's'}`}
-                    </button>
-                    {f.retryable_count < f.hat_count && (
-                      <div className="text-muted mt-1" style={{ fontSize: '0.72rem' }}>
-                        {f.hat_count - f.retryable_count} of these{' '}
-                        {f.hat_count - f.retryable_count === 1 ? 'has' : 'have'} no
-                        photo left to analyze and can&rsquo;t be retried.
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <div className="text-muted mt-2" style={{ fontSize: '0.72rem' }}>
-                    Nothing to retry — no photo left to analyze.
-                  </div>
-                )}
-              </div>
-            ))}
-
-            {/* Only worth its own button when the per-group ones don't already
-                cover everything in one press. */}
-            {failures.data!.length > 1 && totalRetryable > 0 && (
-              <button
-                type="button"
-                className="btn btn-outline-primary btn-sm w-100"
-                disabled={retry.isPending}
-                onClick={() => retry.mutate(undefined)}
-              >
-                {retry.isPending && retry.variables === undefined
-                  ? 'Queueing…'
-                  : `Retry all ${totalRetryable} failed hats`}
-              </button>
-            )}
-
-          </div>
-        )}
-
-        {/* Outside the failures block on purpose. A successful retry clears the
-            failures it just queued, so the list empties and unmounts — and a
-            banner nested inside it would disappear in the same render, leaving
-            the press with no acknowledgment at all. */}
-        {retry.data && (
-          <div className="alert alert-success mb-3 small">
-            {retry.data.queued > 0
-              ? `Queued ${retry.data.queued} hat${retry.data.queued === 1 ? '' : 's'} to retry.`
-              : 'Nothing left to retry — those hats are already queued.'}
-          </div>
-        )}
-        {retry.error && (
-          <div className="alert alert-danger mb-3 small">{String(retry.error)}</div>
-        )}
-
-        <hr />
-
-        {/* The checkbox that used to sit here ("Leave hand-entered prices
-            alone", ON by default) mapped to a filter for Claude-priced hats.
-            It spared nothing — a Manual price is protected unconditionally —
-            and after 2.27 moved most hats onto the retail table it silently
-            cut the run to a fraction, under a button reading "Re-analyze
-            every hat". */}
-        <p className="text-secondary small mb-2">
-          Covers every hat with a photo. Prices you entered by hand are kept —
-          nothing here can overwrite them.
+  return (
+    <Panel
+      title="Analysis queue"
+      status={state && <StatusPill tone={state.tone} title={state.title}>{state.label}</StatusPill>}
+      description="Photo analysis runs in the background: this is its backlog, and the way to re-run it."
+      help={
+        <p>
+          Hats wait here between upload and a finished analysis. Re-run the whole
+          collection after a change to how hats are identified or priced; for
+          hats that failed, retry just those from &ldquo;Why analysis is
+          failing&rdquo; — it is cheaper, and usually what is needed.
         </p>
-
-        {!confirming ? (
+      }
+      footer={
+        <div className="hr-an-rerun">
+          {/* The checkbox that used to sit here ("Leave hand-entered prices
+              alone", ON by default) mapped to a filter for Claude-priced hats.
+              It spared nothing — a Manual price is protected unconditionally —
+              and after 2.27 moved most hats onto the retail table it silently
+              cut the run to a fraction, under a button reading "Re-analyze
+              every hat". */}
+          <p className="hr-an-rerun-text">
+            Covers every hat with a photo. Prices you entered by hand are kept —
+            nothing here can overwrite them.
+          </p>
+          {/* Outline, not primary, on purpose: see the failures comment below.
+              The expensive button is the one people reached for while it was
+              the loudest thing on the card. */}
           <button
             type="button"
-            className="btn btn-outline-primary w-100"
-            onClick={() => setConfirming(true)}
-          >Re-analyze every hat</button>
-        ) : (
-          <div className="alert alert-warning mb-0">
-            <div className="mb-2">
-              This re-runs Claude for every hat with a photo — minutes of work,
-              and it costs an API call each. Background removal is skipped, so
-              your cutouts are not touched.
-            </div>
-            <div className="d-flex gap-2">
-              <button
-                type="button"
-                className="btn btn-primary"
-                disabled={rerun.isPending}
-                onClick={() => rerun.mutate()}
-              >{rerun.isPending ? 'Queueing…' : 'Yes, re-analyze'}</button>
-              <button
-                type="button"
-                className="btn btn-outline-secondary"
-                onClick={() => setConfirming(false)}
-              >Cancel</button>
-            </div>
-          </div>
-        )}
+            className="btn btn-outline-primary"
+            disabled={rerun.isPending}
+            onClick={confirmRerun}
+          >
+            {rerun.isPending ? 'Queueing…' : 'Re-analyze every hat'}
+          </button>
+        </div>
+      }
+    >
+      {/* The queue's own read failing used to render nothing at all — an
+          empty card, indistinguishable from one still loading. */}
+      <ErrorNote of={queue} what="Could not read the queue" className="mb-3" />
+      <ErrorNote of={failures} what="Could not read why analysis is failing" className="mb-3" />
+      {queueBody}
 
-        {rerun.data && (
-          <div className="alert alert-success mt-3 mb-0">
-            Queued {rerun.data.queued} hat{rerun.data.queued === 1 ? '' : 's'}.
-          </div>
-        )}
-        {rerun.error && (
-          <div className="alert alert-danger mt-3 mb-0">{String(rerun.error)}</div>
-        )}
-      </div>
-    </div>
+      {/* Failures come BEFORE the re-analyze-everything button on purpose.
+          Retrying 21 casualties of a transient overload is the cheap, correct
+          repair, and while it was the only button on this card the expensive
+          one was the one people reached for. */}
+      {(failures.data?.length ?? 0) > 0 && (
+        <section className="hr-an-group">
+          <h3 className="hr-an-subhead">Why analysis is failing</h3>
+          {failures.data!.map(f => (
+            <div
+              key={f.reason}
+              className={`hr-an-failure${f.is_billing ? ' is-billing' : ''}`}
+            >
+              <div className="hr-an-failure-count">
+                {f.hat_count} hat{f.hat_count === 1 ? '' : 's'}
+                {f.is_billing && ' · your Anthropic account, not your key'}
+              </div>
+              <div className="hr-an-failure-reason">{f.reason}</div>
+              {f.is_billing && (
+                <div className="hr-an-failure-fix">
+                  The key is fine. Top up at{' '}
+                  <span className="font-mono">console.anthropic.com</span>{' '}
+                  → Plans &amp; Billing, then retry below.
+                </div>
+              )}
+              <div className="hr-an-fine">
+                e.g. hat{f.sample_hat_ids.length === 1 ? '' : 's'}{' '}
+                {f.sample_hat_ids.map(id => `#${id}`).join(', ')}
+              </div>
+
+              {f.retryable_count > 0 ? (
+                <div className="hr-an-failure-actions">
+                  <button
+                    type="button"
+                    className="btn btn-outline-primary btn-sm"
+                    disabled={retry.isPending}
+                    onClick={() => retry.mutate(f.reason)}
+                  >
+                    {retry.isPending && retry.variables === f.reason
+                      ? 'Queueing…'
+                      : `Retry ${f.retryable_count} hat${f.retryable_count === 1 ? '' : 's'}`}
+                  </button>
+                  {f.retryable_count < f.hat_count && (
+                    <span className="hr-an-fine">
+                      {f.hat_count - f.retryable_count} of these{' '}
+                      {f.hat_count - f.retryable_count === 1 ? 'has' : 'have'} no
+                      photo left to analyze and can&rsquo;t be retried.
+                    </span>
+                  )}
+                </div>
+              ) : (
+                <div className="hr-an-fine mt-2">
+                  Nothing to retry — no photo left to analyze.
+                </div>
+              )}
+            </div>
+          ))}
+
+          {/* Only worth its own button when the per-group ones don't already
+              cover everything in one press. */}
+          {failures.data!.length > 1 && totalRetryable > 0 && (
+            <button
+              type="button"
+              className="btn btn-outline-primary btn-sm w-100"
+              disabled={retry.isPending}
+              onClick={() => retry.mutate(undefined)}
+            >
+              {retry.isPending && retry.variables === undefined
+                ? 'Queueing…'
+                : `Retry all ${totalRetryable} failed hats`}
+            </button>
+          )}
+        </section>
+      )}
+
+      {/* One note per press, never one shared between them: ErrorNote shows
+          the FIRST failure in its list, and a mutation keeps its error until
+          it runs again — so a retry refused earlier stood in front of the
+          re-analyze that had just been refused, and that one said nothing. */}
+      <ErrorNote of={retry} className="mt-3" />
+      <ErrorNote of={rerun} className="mt-3" />
+    </Panel>
   );
 }

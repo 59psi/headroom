@@ -60,14 +60,19 @@ h1 .accent,
   text-shadow: 0 0 30px rgba(255, 46, 182, 0.4);
 }
 
+/* Everything below the page title is Inter. Orbitron is a display face — at
+   heading sizes in uppercase it read as every section shouting its name. */
 h2, h3, h4, h5, h6 {
-  font-family: var(--font-heading);
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  font-family: var(--font-body);
+  font-weight: 650;
+  letter-spacing: -0.01em;
   color: var(--text);
 }
 
-h5, h6 { font-size: 0.95rem; text-transform: uppercase; }
+h2, .h2 { font-size: var(--fs-xl); }
+h3, .h3 { font-size: 1.15rem; }
+h5, h6 { font-size: var(--fs-lg); }
+.h6 { font-size: var(--fs-md); font-weight: 650; }
 
 @media (min-width: 768px) {
   h1, .h1 { font-size: 1.85rem; }
@@ -172,14 +177,31 @@ button.card:hover::before,
   z-index: 1;
 }
 
+/* A card's name, in the body face at reading size. The neon survives as a
+   short glowing bar in front of it — the accent marks the heading instead of
+   BEING the heading, which is most of the difference between a synthwave app
+   and a synthwave poster. */
 .card-title {
-  font-family: var(--font-heading);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-size: 0.78rem;
-  color: var(--neon-cyan);
-  margin-bottom: 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-family: var(--font-body);
+  font-weight: 650;
+  font-size: var(--fs-lg);
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  color: var(--text);
+  margin: 0 0 0.5rem;
+}
+
+.card-title::before {
+  content: '';
+  flex: none;
+  width: 3px;
+  height: 1em;
+  border-radius: 2px;
+  background: var(--gradient-pink-cyan);
+  box-shadow: 0 0 8px rgba(255, 46, 182, 0.55);
 }
 
 .card.border-warning {
@@ -244,56 +266,73 @@ button.card:hover::before,
   min-height: 52px;
 }
 
+/* Sentence case, one weight. The gradient stays — it is the one button per
+   screen that should look like it glows — but it rests quietly and only
+   lights up under the pointer. Every button used to be a different case
+   ("+ ADD HAT" beside "+ Add Case", "SAVE" beside "Remove key"), set by
+   whichever variant it happened to be. */
 .btn-primary {
   background: var(--gradient-pink-cyan);
   color: var(--text-on-neon);
   border: none;
-  box-shadow: 0 4px 20px rgba(255, 46, 182, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.3);
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  box-shadow: 0 2px 12px rgba(255, 46, 182, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  font-weight: 650;
+  letter-spacing: 0.01em;
 }
 
 .btn-primary:hover,
-.btn-primary:focus {
+.btn-primary:focus-visible {
   background: var(--gradient-pink-cyan);
   color: var(--text-on-neon);
   transform: translateY(-1px);
-  box-shadow: 0 8px 30px rgba(255, 46, 182, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  box-shadow: 0 6px 26px rgba(255, 46, 182, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.4);
 }
+
+.btn-primary:active { transform: translateY(0); }
 
 .btn-primary:disabled,
 .btn-primary.disabled {
-  opacity: 0.55;
+  opacity: 0.5;
   transform: none;
   box-shadow: none;
+  cursor: not-allowed;
 }
 
+/* Pink outline: the secondary call to action. Hover tints rather than
+   flooding the button solid neon — a full-pink fill under the cursor made a
+   routine "Re-price now" look like the most important thing on the page. */
 .btn-outline-primary {
-  background: rgba(255, 46, 182, 0.05);
-  color: var(--neon-pink);
-  border: 1px solid var(--neon-pink-soft);
+  background: rgba(255, 46, 182, 0.06);
+  color: #ff6ccb;
+  border: 1px solid rgba(255, 46, 182, 0.45);
 }
 
 .btn-outline-primary:hover,
 .btn-outline-primary.active {
-  background: var(--neon-pink);
-  color: var(--text-on-neon);
+  background: rgba(255, 46, 182, 0.16);
+  color: #ffd3ef;
   border-color: var(--neon-pink);
-  box-shadow: var(--glow-pink);
+  box-shadow: 0 0 16px rgba(255, 46, 182, 0.3);
 }
 
+/* Neutral: most buttons. A raised surface, not an outline. */
 .btn-outline-secondary {
-  background: rgba(255, 255, 255, 0.03);
-  color: var(--text-secondary);
+  background: var(--surface-raised);
+  color: var(--text);
   border: 1px solid var(--border);
 }
 
 .btn-outline-secondary:hover,
 .btn-outline-secondary.active {
-  background: var(--bg-elevated);
+  background: var(--surface-hover);
   color: var(--text);
   border-color: var(--border-bright);
+}
+
+.btn:disabled,
+.btn.disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .btn-outline-danger {
@@ -303,9 +342,10 @@ button.card:hover::before,
 }
 
 .btn-outline-danger:hover {
-  background: var(--neon-red);
-  color: var(--text);
-  box-shadow: 0 0 18px rgba(255, 56, 96, 0.4);
+  background: rgba(255, 56, 96, 0.14);
+  color: #ffb1c1;
+  border-color: var(--neon-red);
+  box-shadow: 0 0 16px rgba(255, 56, 96, 0.3);
 }
 
 .btn-outline-warning {
@@ -325,16 +365,16 @@ button.card:hover::before,
      ink .btn-primary uses on pink reads 5.9:1 here. */
   color: var(--text-on-neon);
   border: none;
-  text-transform: uppercase;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  box-shadow: 0 4px 16px rgba(255, 56, 96, 0.35);
+  font-weight: 650;
+  box-shadow: 0 2px 12px rgba(255, 56, 96, 0.3);
 }
 
 .btn-danger:hover {
   background: #ff5c7a;
-  color: var(--text);
-  box-shadow: 0 8px 24px rgba(255, 56, 96, 0.5);
+  /* Same dark ink as at rest — the hover used to flip it to --text, which
+     undid the contrast fix above for exactly the moment you are aiming. */
+  color: var(--text-on-neon);
+  box-shadow: 0 6px 22px rgba(255, 56, 96, 0.45);
 }
 
 .btn-link {
@@ -529,21 +569,46 @@ kbd {
   height: 44px;
 }
 
+/* A label names a field; it does not need to glow. Inter, sentence case,
+   secondary ink — the cyan Orbitron caps it used to be sat at the same visual
+   weight as the card title above it, so every form read as a stack of
+   headings. */
 .form-label {
-  font-family: var(--font-heading);
-  font-weight: 500;
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--neon-cyan);
-  margin-bottom: 0.45rem;
+  font-family: var(--font-body);
+  font-weight: 550;
+  font-size: var(--fs-sm);
+  letter-spacing: 0;
+  color: var(--text-secondary);
+  margin-bottom: 0.4rem;
   display: block;
 }
 
 .form-text {
   margin-top: 0.35rem;
-  font-size: 0.8rem;
+  font-size: var(--fs-xs);
+  line-height: 1.45;
   color: var(--text-muted);
+}
+
+.form-control:hover:not(:focus):not(:disabled),
+.form-select:hover:not(:focus):not(:disabled) {
+  border-color: var(--border-bright);
+}
+
+.form-control:disabled,
+.form-select:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Inputs and selects fill their column unless a layout says otherwise.
+   Without it they took the browser's intrinsic ~20ch, which is how the eBay
+   credential boxes ended up a third of the card wide with "Save" floating
+   beside the second one. `:where` keeps it at zero specificity so any sized
+   variant (`.form-control-color`, an inline width) still wins. */
+:where(.form-control, .form-select) {
+  width: 100%;
+  max-width: 100%;
 }
 
 /* The checkbox + label pair. Had no rule of its own, so the two sat wherever
@@ -600,13 +665,14 @@ kbd {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  padding: 0.3rem 0.65rem;
+  padding: 0.25rem 0.6rem;
   border-radius: var(--radius-pill);
-  font-family: var(--font-heading);
-  font-size: 0.7rem;
-  font-weight: 600;
+  font-family: var(--font-body);
+  font-size: var(--fs-2xs);
+  font-weight: 650;
+  line-height: 1.3;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   background: rgba(255, 255, 255, 0.06);
   color: var(--text);
   border: 1px solid var(--border);
@@ -878,7 +944,7 @@ kbd {
 }
 
 .hr-stat-cap {
-  font-family: var(--font-heading);
+  font-family: var(--font-body);
   font-size: 0.6rem;
   text-transform: uppercase;
   letter-spacing: 0.14em;
@@ -948,7 +1014,7 @@ kbd {
 }
 
 .hr-tile-label {
-  font-family: var(--font-heading);
+  font-family: var(--font-body);
   font-size: 0.58rem;
   text-transform: uppercase;
   letter-spacing: 0.12em;
@@ -1059,7 +1125,7 @@ kbd {
 }
 
 .hr-donut-center-label {
-  font-family: var(--font-heading);
+  font-family: var(--font-body);
   font-size: 8px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -1339,10 +1405,10 @@ kbd {
 }
 
 .modal-title {
-  font-family: var(--font-heading);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  font-size: 1rem;
+  font-family: var(--font-body);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  font-size: var(--fs-lg);
   color: var(--text);
   margin: 0;
 }
@@ -1541,26 +1607,32 @@ kbd {
 
 /* ===== Hat detail metric tiles ================================ */
 .hr-metric {
-  background: var(--bg-input);
-  border: 1px solid var(--border);
+  background: var(--surface-inset);
+  border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
-  padding: 0.75rem 0.9rem;
+  padding: 0.7rem 0.9rem;
 }
 
+/* Eyebrow: small tracked caps in the body face. Orbitron at 10px was the
+   hardest text in the app to read and carried no information the words
+   didn't. */
 .hr-metric-label {
-  font-family: var(--font-heading);
-  font-size: 0.65rem;
+  font-family: var(--font-body);
+  font-size: var(--fs-2xs);
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.07em;
   color: var(--text-muted);
-  margin-bottom: 0.2rem;
+  margin-bottom: 0.25rem;
 }
 
 .hr-metric-value {
   font-family: var(--font-mono);
   font-size: 1.05rem;
-  font-weight: 700;
+  font-weight: 650;
   color: var(--text);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
 }
 
 /* The mDNS card reads as three facts, not two: a STATE (advertising or not),
@@ -1574,10 +1646,11 @@ kbd {
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  font-family: var(--font-heading);
-  font-size: 0.65rem;
+  font-family: var(--font-body);
+  font-size: var(--fs-2xs);
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.07em;
   color: var(--text-muted);
   margin-bottom: 0.35rem;
 }
@@ -1616,7 +1689,7 @@ kbd {
 }
 
 .hr-net-label {
-  font-family: var(--font-heading);
+  font-family: var(--font-body);
   font-size: 0.6rem;
   text-transform: uppercase;
   letter-spacing: 0.1em;
@@ -1692,7 +1765,7 @@ kbd {
 }
 
 .hr-tier-label {
-  font-family: var(--font-heading);
+  font-family: var(--font-body);
   font-size: 0.6rem;
   text-transform: uppercase;
   letter-spacing: 0.12em;
@@ -1717,7 +1790,7 @@ kbd {
   padding: 0.25rem 0.6rem;
   border-radius: var(--radius-pill);
   font-size: 0.7rem;
-  font-family: var(--font-heading);
+  font-family: var(--font-body);
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -1766,23 +1839,6 @@ kbd {
   border-radius: 50%;
   background: currentColor;
   box-shadow: 0 0 6px currentColor;
-}
-
-/* ===== Sticky search/filter bars =============================== */
-.hr-sticky-bar {
-  position: sticky;
-  top: var(--nav-height);
-  z-index: 20;
-  background: rgba(15, 5, 36, 0.92);
-  backdrop-filter: blur(12px);
-  margin-left: -16px;
-  margin-right: -16px;
-  padding: 0.75rem 16px;
-  border-bottom: 1px solid var(--border);
-}
-
-@media (max-width: 991.98px) {
-  .hr-sticky-bar { top: 0; }
 }
 
 /* ===== Bootstrap utilities passthrough fillers ================= */
@@ -2114,7 +2170,7 @@ body.hr-keyboard-open .bottom-nav {
    sometimes a reason it can't be used. */
 .hr-case-group {
   padding: 0.5rem 0.75rem 0.25rem;
-  font-family: var(--font-heading);
+  font-family: var(--font-body);
   font-size: 0.68rem;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -2164,7 +2220,7 @@ body.hr-keyboard-open .bottom-nav {
    than red: a fourth hat in a three-hat case is a thing people do on purpose,
    not an error to be alarmed by. */
 .hr-fill-tag {
-  font-family: var(--font-heading);
+  font-family: var(--font-body);
   font-size: 0.55rem;
   text-transform: uppercase;
   letter-spacing: 0.12em;
@@ -2262,72 +2318,6 @@ body.hr-keyboard-open .bottom-nav {
 
 .hr-tag-url-row .form-control {
   font-size: 0.8rem;
-}
-
-/* ------------------------------------------------------------------ *
- * Settings section tabs.
- *
- * Nineteen cards in one scroll became five errands. The strip scrolls
- * horizontally rather than wrapping: three rows of small targets is
- * worse on a phone than one row you swipe, and wrapping moves the tabs
- * under your thumb at unpredictable heights.
- * ------------------------------------------------------------------ */
-
-.hr-settings-tabs {
-  /* ONE ROW, always. Not a scroller and not wrapped.
-     As a horizontal scroller the tabs past the fold were invisible — no
-     scrollbar on touch, last pill flush with the gutter — so nothing said
-     "Upkeep" existed. Wrapping fixed that and looked like a broken toolbar.
-     The real constraint is that five labels have to share ~320px on a phone,
-     which is a LABEL problem, not a layout one: the sections are named Data /
-     Device / Upkeep rather than "Collection data" / "This device" /
-     "Maintenance" so five equal columns fit without ellipsis. */
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: 1fr;
-  gap: 0.35rem;
-  margin-bottom: 0.75rem;
-}
-
-.hr-settings-tab {
-  /* 44px minimum tap target — the one thing that never gives. */
-  min-height: 44px;
-  min-width: 0;
-  padding: 0.5rem 0.4rem;
-  text-align: center;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 0.9rem;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
-}
-
-.hr-settings-tab:hover {
-  color: var(--text);
-  border-color: var(--neon-cyan);
-}
-
-@media (max-width: 420px) {
-  /* Last concession on the narrowest phones. Type only — the row stays one
-     row and the tap target stays 44px. */
-  .hr-settings-tab {
-    font-size: 0.78rem;
-    padding: 0.5rem 0.25rem;
-  }
-}
-
-.hr-settings-tab.is-active {
-  color: var(--neon-cyan);
-  border-color: var(--neon-cyan);
-  background: rgba(0, 255, 255, 0.08);
-  box-shadow: 0 0 12px rgba(0, 255, 255, 0.15);
-}
-
-.hr-settings-blurb {
-  margin-bottom: 1rem;
 }
 
 /* The cases line under the collection totals. Set apart from the tiles

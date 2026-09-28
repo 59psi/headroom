@@ -1035,7 +1035,7 @@ UPLOAD_PROVIDERS: dict[str, UploadProvider] = {
             "read it.",
             "Bring the stack up with the rclone overlay: "
             "`-f docker-compose.backup-rclone.yml`.",
-            "Put the remote name and path in the field above, then press Test now.",
+            "Enter the remote name and path as the destination, then press Test now.",
         ),
     ),
     "rsync": UploadProvider(
@@ -1059,7 +1059,7 @@ UPLOAD_PROVIDERS: dict[str, UploadProvider] = {
             "Bring the stack up with the rsync overlay: "
             "`-f docker-compose.backup-rsync.yml` (it mounts the key and "
             "known_hosts read-only).",
-            "Put the destination above, then press Test now.",
+            "Enter it as the destination, then press Test now.",
         ),
     ),
     "synology": UploadProvider(

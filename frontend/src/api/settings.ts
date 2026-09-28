@@ -5,7 +5,7 @@ import type {
   TlsStatus, FrozenPriceRow, PriceReleaseResult, AnalysisFailureGroup,
   RecentError, TagBaseStatus, ConstructionAuditRow, ConstructionClearResult, RepricingStatus,
   ReanalyzeResult, AnalysisJobDetail, CatalogStatus, SharedPriceGroup,
-  UnclaimedFromPurchases, RepricingSweepStarted, RetentionStatus,
+  UnclaimedFromPurchases, RepricingSweepStarted, RetentionStatus, LogoStatus,
 } from '../types';
 
 // Re-exported so existing imports from this module keep working; the
@@ -13,13 +13,13 @@ import type {
 export type { AnalysisJobRead, AnalysisQueueStatus, BackupHealth } from '../types';
 
 export function getLogo() {
-  return apiFetch<{ logo_path: string | null }>('/api/settings/logo');
+  return apiFetch<LogoStatus>('/api/settings/logo');
 }
 
 export function uploadLogo(file: File) {
   const form = new FormData();
   form.append('photo', file);
-  return apiFetch<{ logo_path: string | null }>('/api/settings/logo', {
+  return apiFetch<LogoStatus>('/api/settings/logo', {
     method: 'POST',
     body: form,
   });

@@ -23,3 +23,15 @@ export function tileSrc(hat: { thumb_path: string | null; photo_path: string | n
 export function uploadUrl(path: string | null | undefined): string {
   return `/uploads/${path ?? ''}`;
 }
+
+/**
+ * The site logo's URL, or null when there is none. Versioned: the server
+ * writes every logo to the same path, so the bare URL let the nav and the
+ * home hero go on showing the cached logo after it was replaced — the one
+ * place that did not was the settings card, which bumped a counter of its own.
+ */
+export function logoSrc(status: { logo_path: string | null; version?: number | null } | undefined): string | null {
+  if (!status?.logo_path) return null;
+  const v = status.version;
+  return `${uploadUrl(status.logo_path)}${v !== null && v !== undefined ? `?v=${v}` : ''}`;
+}

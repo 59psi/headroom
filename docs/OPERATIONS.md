@@ -227,7 +227,7 @@ names the code reads, so a new knob cannot silently join that list.
   records the outage and moves on), and the pipeline's own "skipped" lines
   at INFO.
 - **In-app**: Settings → Analysis shows *Recent analysis errors* (a list of
-  the latest failures) and, on the *Analysis Queue* card, failures grouped by
+  the latest failures) and, on the *Analysis queue* card, failures grouped by
   cause with a per-group *Retry*; Settings →
   Upkeep the *Activity log* (append-only audit of every significant change,
   pruned daily per retention, with the pruner's own health beside it).
@@ -306,7 +306,7 @@ An old newest-backup is therefore not by itself a problem. Check
 distinguishes *running and idle because nothing changed* from *failing* from
 *not running at all*.
 
-**On-demand**: Settings → Upkeep → Backups (*↓ Full Backup* / *↓ DB Only*), or
+**On-demand**: Settings → Upkeep → Backups (*Download full backup* / *Database only*), or
 `GET /api/admin/backup` (add `?include_uploads=false` for a database-only
 archive). This streams a fresh archive — use it before upgrades or before
 experimenting.
@@ -560,7 +560,7 @@ Reset to a clean install: fresh database, no hats/cases/photos, and the
 first-run "create owner" screen returns. The database, photos, *and* rolling
 backups all live in the
 `headroom-data` volume, so this means removing that volume. **This is
-irreversible — take a backup first** (Settings → Upkeep → Backups → *↓ Full Backup*) if you want
+irreversible — take a backup first** (Settings → Upkeep → Backups → *Download full backup*) if you want
 to keep anything.
 
 Full reset (Docker) — use the same `-f` flags you deploy with:

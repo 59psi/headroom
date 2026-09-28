@@ -159,6 +159,32 @@ describe('SharedPricesCard', () => {
       .not.toBeInTheDocument();
   });
 
+  it('counts the affected hats in the header, or says nothing is shared', async () => {
+    mocked.auditSharedPrices.mockResolvedValue([
+      group({ hat_count: 30, hats: [hat({ hat_id: 1 })] }),
+      group({ resale_price: 60, hat_count: 12, hats: [hat({ hat_id: 2 })] }),
+    ]);
+    const { unmount } = renderWithProviders(<SharedPricesCard />);
+    expect(await screen.findByText('42 hats', { selector: '.hr-pill' })).toBeInTheDocument();
+    unmount();
+
+    mocked.auditSharedPrices.mockResolvedValue([]);
+    renderWithProviders(<SharedPricesCard />);
+    expect(await screen.findByText('Nothing shared', { selector: '.hr-pill' })).toBeInTheDocument();
+  });
+
+  it('says what the fill did once it lands', async () => {
+    mocked.auditSharedPrices.mockResolvedValue([group()]);
+    mocked.getUnclaimedFromPurchases.mockResolvedValue(unclaimed({ colorways: 3 }));
+    purchases.rematchPurchases.mockResolvedValue({ matched: 3, unmatched: 5 });
+
+    renderWithProviders(<SharedPricesCard />);
+    await userEvent.click(await screen.findByRole('button', { name: /Fill 3 from purchase history/ }));
+
+    expect(await screen.findByText('Matched 3 purchases from your order history'))
+      .toBeInTheDocument();
+  });
+
   it('offers the backlog even when no price is shared yet', async () => {
     // The offer lives outside the "there are groups" branch: acting early is
     // what stops these hats landing on a line median in the first place.

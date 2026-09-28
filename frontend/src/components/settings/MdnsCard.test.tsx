@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../../test/utils';
 import { MdnsCard } from './MdnsCard';
 import * as api from '../../api/settings';
+import * as clipboard from '../../lib/clipboard';
 import type { MdnsStatus } from '../../types';
 
 vi.mock('../../api/settings', async (importOriginal) => {
@@ -12,8 +14,10 @@ vi.mock('../../api/settings', async (importOriginal) => {
     getMdnsStatus: vi.fn(),
   };
 });
+vi.mock('../../lib/clipboard', () => ({ copyText: vi.fn() }));
 
 const mocked = vi.mocked(api);
+const copyText = vi.mocked(clipboard.copyText);
 
 function status(over: Partial<MdnsStatus> = {}): MdnsStatus {
   return {
@@ -70,11 +74,68 @@ describe('MdnsCard', () => {
   });
 
   it('does not claim to be advertising when it is only enabled', async () => {
+    // The state moved from a line in the body ("Enabled — not advertising")
+    // to the header pill; the guard is the same — enabled is not advertising.
     mocked.getMdnsStatus.mockResolvedValue(status({ advertising: false }));
     renderWithProviders(<MdnsCard />);
 
-    expect(await screen.findByText(/Enabled — not advertising/)).toBeInTheDocument();
+    expect(await screen.findByText('Not advertising')).toBeInTheDocument();
+    expect(screen.queryByText('Advertising')).not.toBeInTheDocument();
     // No addresses to show when nothing is being advertised.
     expect(screen.queryByText('IPv4')).not.toBeInTheDocument();
+  });
+
+  it('says Advertising when it is, and Off when mDNS is disabled', async () => {
+    mocked.getMdnsStatus.mockResolvedValue(status());
+    const { unmount } = renderWithProviders(<MdnsCard />);
+    expect(await screen.findByText('Advertising')).toBeInTheDocument();
+    unmount();
+
+    mocked.getMdnsStatus.mockResolvedValue(status({
+      enabled: false, advertising: false, url: null, ip: null, ipv6: null,
+    }));
+    renderWithProviders(<MdnsCard />);
+    expect(await screen.findByText('Off')).toBeInTheDocument();
+    expect(screen.queryByText('Not advertising')).not.toBeInTheDocument();
+    // The name it WOULD advertise, rather than an empty box.
+    expect(screen.getByText('headroom.local')).toBeInTheDocument();
+  });
+
+  it('shows a placeholder, not an empty card or a guessed state, while loading', async () => {
+    mocked.getMdnsStatus.mockReturnValue(new Promise(() => {}));
+    renderWithProviders(<MdnsCard />);
+
+    expect(screen.getByText('LAN discovery (mDNS)')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('Loading…');
+    expect(screen.queryByText('Off')).not.toBeInTheDocument();
+    expect(screen.queryByText('Not advertising')).not.toBeInTheDocument();
+  });
+});
+
+describe('MdnsCard — copying an address', () => {
+  it('copies each address on its own', async () => {
+    const user = userEvent.setup();
+    copyText.mockResolvedValue(true);
+    mocked.getMdnsStatus.mockResolvedValue(status());
+    renderWithProviders(<MdnsCard />);
+
+    await user.click(await screen.findByRole('button', { name: 'Copy the IPv4 address' }));
+    expect(copyText).toHaveBeenLastCalledWith('10.0.111.4');
+    expect(screen.getByRole('button', { name: 'Copied the IPv4 address' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Copy the IPv6 address' }));
+    expect(copyText).toHaveBeenLastCalledWith('2600:6c52:7500:a7b:7e16:6b7c:551a:2d40');
+
+    await user.click(screen.getByRole('button', { name: 'Copy the address' }));
+    expect(copyText).toHaveBeenLastCalledWith('https://headroom.local');
+  });
+
+  it('offers nothing to copy for a missing IPv6', async () => {
+    mocked.getMdnsStatus.mockResolvedValue(status({ ipv6: null }));
+    renderWithProviders(<MdnsCard />);
+
+    await screen.findByText('IPv6');
+    expect(screen.queryByRole('button', { name: /IPv6/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Copy the IPv4 address' })).toBeInTheDocument();
   });
 });

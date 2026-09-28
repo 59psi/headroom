@@ -7,17 +7,18 @@
  * `lib/valuation` rule the home page and the valuation page use — the three
  * hand-rolled copies that preceded it had already drifted apart.
  */
-import { useMemo } from 'react';
+import { useMemo, type MouseEvent, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import { listAllHats, listDisposedHats } from '../api/hats';
 import { listCases } from '../api/cases';
 import { listRooms } from '../api/rooms';
-import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import {
-  BarList, ChartCard, Donut, StatTiles, TimeSeries,
+  BarList, ChartCard, Donut, StatTiles, StatTilesSkeleton, TimeSeries,
   type ChartDatum, type TimePoint,
 } from '../components/charts/Charts';
+import { PageHeader } from '../components/ui/PageHeader';
+import { Panel } from '../components/ui/Panel';
 import {
   BASIS_LABEL, money, moneyPrecise, realizedTotals, valueCases, valueCollection, valueHat,
   costOf, type ValueBasis,
@@ -111,6 +112,63 @@ function monthlySeries(
   return out;
 }
 
+/**
+ * The page's sections, in order. Twenty-odd cards in one column was a long
+ * way to scroll for "which room is fullest"; grouped under five headings with
+ * a jump bar at the top, each answer is one tap from the top of the page.
+ */
+const SECTIONS = [
+  { id: 'stats-overview', label: 'Overview' },
+  { id: 'stats-composition', label: 'Composition' },
+  { id: 'stats-where', label: 'Where it lives' },
+  { id: 'stats-time', label: 'Over time' },
+  { id: 'stats-leaders', label: 'Leaderboards' },
+] as const;
+
+type SectionId = (typeof SECTIONS)[number]['id'];
+
+/**
+ * Scroll to a section and move focus to its heading.
+ *
+ * Handled here rather than left to the browser's own `#hash` jump: the router
+ * would see each jump as a navigation (a history entry per tap, so Back walks
+ * the page's sections before it leaves the page), and a hash jump does not
+ * move keyboard focus, so Tab would carry on from the jump bar rather than
+ * from the section just scrolled to.
+ */
+function jumpTo(e: MouseEvent, id: SectionId) {
+  e.preventDefault();
+  const heading = document.getElementById(`${id}-title`);
+  if (!heading) return;
+  const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  heading.scrollIntoView?.({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+  heading.focus({ preventScroll: true });
+}
+
+function Section({ id, title, children }: { id: SectionId; title: string; children: ReactNode }) {
+  return (
+    <section className="hr-cp-section" aria-labelledby={`${id}-title`}>
+      {/* tabIndex -1: focusable by `jumpTo`, not a Tab stop. */}
+      <h2 id={`${id}-title`} className="hr-cp-section-title" tabIndex={-1}>{title}</h2>
+      <div className="hr-cp-grid">{children}</div>
+    </section>
+  );
+}
+
+function PageHead() {
+  return (
+    <PageHeader
+      title="Stats"
+      actions={
+        <>
+          <Link to="/valuation" className="btn btn-outline-secondary btn-sm">Valuation →</Link>
+          <Link to="/" className="btn btn-outline-secondary btn-sm">← Home</Link>
+        </>
+      }
+    />
+  );
+}
+
 export function StatsPage() {
   const hatsQ = useQuery({ queryKey: ['hats'], queryFn: listAllHats });
   const disposedQ = useQuery({ queryKey: ['hats', 'disposed'], queryFn: listDisposedHats });
@@ -180,7 +238,10 @@ export function StatsPage() {
       label,
       value: v.count,
       color: v.hex,
-      href: `/search?color=${encodeURIComponent(v.hex)}`,
+      // `hex`, not `color`: on the Search page `color` is also the Color
+      // FILTER (palette names), and a hex landing there filtered every
+      // ranked result away.
+      href: `/search?hex=${encodeURIComponent(v.hex)}`,
     }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 14);
@@ -222,14 +283,40 @@ export function StatsPage() {
   // wrong answer — the exact thing `valueHat` returns `null` rather than 0 to
   // avoid. Errors are shown, not averaged in.
   if (hatsQ.isError || disposedQ.isError || casesQ.isError) {
+    const retrying = hatsQ.isFetching || disposedQ.isFetching || casesQ.isFetching;
     return (
-      <div className="alert alert-danger" role="alert">
-        Couldn&rsquo;t load the collection, so no charts are shown — they would
-        describe a collection you don&rsquo;t have. Reload to try again.
-      </div>
+      <>
+        <PageHead />
+        <div className="alert alert-danger hr-cp-error" role="alert">
+          <span>
+            Couldn&rsquo;t load the collection, so no charts are shown — they would
+            describe a collection you don&rsquo;t have.
+          </span>
+          <button
+            type="button"
+            className="btn btn-sm btn-outline-secondary"
+            onClick={() => { void hatsQ.refetch(); void disposedQ.refetch(); void casesQ.refetch(); }}
+            disabled={retrying}
+          >{retrying ? 'Retrying…' : 'Try again'}</button>
+        </div>
+      </>
     );
   }
-  if (hatsQ.isLoading || casesQ.isLoading) return <LoadingSpinner />;
+  // The disposed list too: the Realized tile read "$0 · 0 sold" until it
+  // arrived, which is a claim, not a placeholder.
+  if (hatsQ.isLoading || casesQ.isLoading || disposedQ.isLoading) {
+    return (
+      <>
+        <PageHead />
+        <Panel title="The collection">
+          <StatTilesSkeleton count={4} label="Loading stats…" />
+        </Panel>
+        <Panel title="Money">
+          <StatTilesSkeleton count={4} label="Loading stats…" />
+        </Panel>
+      </>
+    );
+  }
 
   const conditionData: ChartDatum[] = ['new_with_tags', 'new', 'worn']
     .map(k => ({
@@ -241,204 +328,231 @@ export function StatsPage() {
 
   return (
     <>
-      <div className="d-flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
-        <h1>Stats</h1>
-        <div className="d-flex gap-2">
-          <Link to="/valuation" className="btn btn-outline-primary btn-sm">Valuation →</Link>
-          <Link to="/" className="btn btn-outline-secondary btn-sm">← Home</Link>
-        </div>
-      </div>
+      <PageHead />
+
+      <nav className="hr-cp-jump" aria-label="Stats sections">
+        {SECTIONS.map(s => (
+          <a key={s.id} href={`#${s.id}-title`} className="hr-cp-chip" onClick={e => jumpTo(e, s.id)}>
+            {s.label}
+          </a>
+        ))}
+      </nav>
+
+      {/* Two-up from the desktop breakpoint; a card whose content is wide
+          (a row of tiles, a timeline) spans both columns via `hr-cp-span`.
+          Every card here is an h3 under its section's h2. */}
 
       {/* ===== Totals ===== */}
-      <ChartCard title="The collection">
-        <StatTiles tiles={[
-          { label: 'Hats', value: String(hats.length), tone: 'pink' },
-          { label: 'Cases', value: String(cases.length), tone: 'cyan' },
-          { label: 'Rooms', value: String(roomsQ.data?.length ?? 0), tone: 'purple' },
-          {
-            label: 'Total wears',
-            value: wear.totalWears.toLocaleString(),
-            tone: 'muted',
-            sub: `${wear.neverWorn} never worn`,
-          },
-        ]} />
-      </ChartCard>
+      <Section id="stats-overview" title="Overview">
+        <ChartCard title="The collection" as="h3" className="hr-cp-span">
+          <StatTiles tiles={[
+            { label: 'Hats', value: String(hats.length), tone: 'pink' },
+            { label: 'Cases', value: String(cases.length), tone: 'cyan' },
+            // A dash while rooms are unknown, never a zero — the page does not
+            // wait on them, and "0 rooms" is a claim.
+            { label: 'Rooms', value: roomsQ.data ? String(roomsQ.data.length) : '–', tone: 'purple' },
+            {
+              label: 'Total wears',
+              value: wear.totalWears.toLocaleString(),
+              tone: 'muted',
+              sub: `${wear.neverWorn} never worn`,
+            },
+          ]} />
+        </ChartCard>
 
-      <ChartCard
-        title="Money"
-        subtitle={<>Sale value is estimated — <Link to="/valuation">how it's worked out</Link>.</>}
-      >
-        <StatTiles tiles={[
-          {
-            label: 'Paid',
-            value: money(valuation.spentTotal),
-            tone: 'purple',
-            sub: `${valuation.spentCount} of ${valuation.total} hats priced`,
-          },
-          {
-            label: 'Retail value',
-            value: money(valuation.retailTotal),
-            tone: 'cyan',
-            sub: `${valuation.retailCount} appraised`,
-          },
-          {
-            label: 'Est. sale value',
-            value: money(valuation.marketTotal),
-            tone: 'pink',
-            sub: valuation.retentionPct != null ? `${valuation.retentionPct}% of retail` : undefined,
-          },
-          {
-            label: 'Cases',
-            value: money(caseValue.retailTotal),
-            tone: 'cyan',
-            sub: `${caseValue.count} at replacement cost`,
-          },
-          {
-            label: 'Everything',
-            value: money(valuation.marketTotal + caseValue.retailTotal),
-            tone: 'pink',
-            sub: 'hats + cases',
-          },
-          {
-            label: 'Realized',
-            value: money(realized.proceeds),
-            tone: 'muted',
-            sub: `${realized.sold} sold${realized.otherDisposals > 0 ? ` · ${realized.otherDisposals} other` : ''}`,
-          },
-        ]} />
-      </ChartCard>
+        <ChartCard
+          title="Money"
+          as="h3"
+          className="hr-cp-span"
+          subtitle={<>Sale value is estimated — <Link to="/valuation">how it's worked out</Link>.</>}
+        >
+          <StatTiles tiles={[
+            {
+              label: 'Paid',
+              value: money(valuation.spentTotal),
+              tone: 'purple',
+              sub: `${valuation.spentCount} of ${valuation.total} hats priced`,
+            },
+            {
+              label: 'Retail value',
+              value: money(valuation.retailTotal),
+              tone: 'cyan',
+              sub: `${valuation.retailCount} appraised`,
+            },
+            {
+              label: 'Est. sale value',
+              value: money(valuation.marketTotal),
+              tone: 'pink',
+              sub: valuation.retentionPct != null ? `${valuation.retentionPct}% of retail` : undefined,
+            },
+            {
+              label: 'Cases',
+              value: money(caseValue.retailTotal),
+              tone: 'cyan',
+              sub: `${caseValue.count} at replacement cost`,
+            },
+            {
+              label: 'Everything',
+              value: money(valuation.marketTotal + caseValue.retailTotal),
+              tone: 'pink',
+              sub: 'hats + cases',
+            },
+            {
+              label: 'Realized',
+              value: money(realized.proceeds),
+              tone: 'muted',
+              sub: `${realized.sold} sold${realized.otherDisposals > 0 ? ` · ${realized.otherDisposals} other` : ''}`,
+            },
+          ]} />
+        </ChartCard>
 
-      {/* ===== Where the value estimate comes from ===== */}
-      <ChartCard
-        title="What the estimate rests on"
-        subtitle="Each hat is valued from the best signal it has. Weaker bases are worth knowing about."
-      >
-        <BarList data={basisRows} colorize />
-      </ChartCard>
+        {/* ===== Where the value estimate comes from ===== */}
+        <ChartCard
+          title="What the estimate rests on"
+          as="h3"
+          className="hr-cp-span"
+          subtitle="Each hat is valued from the best signal it has. Weaker bases are worth knowing about."
+        >
+          <BarList data={basisRows} colorize />
+        </ChartCard>
+      </Section>
 
       {/* ===== Composition ===== */}
-      <ChartCard title="By condition">
-        <Donut
-          data={conditionData}
-          centerValue={String(hats.length)}
-          centerLabel="hats"
-        />
-      </ChartCard>
+      <Section id="stats-composition" title="Composition">
+        <ChartCard title="By condition" as="h3">
+          <Donut
+            data={conditionData}
+            centerValue={String(hats.length)}
+            centerLabel="hats"
+          />
+        </ChartCard>
 
-      <ChartCard title="By style">
-        <BarList
-          data={countBy(hats, h => prettify(h.style)).map(d => ({
-            ...d,
-            href: `/hats?style=${encodeURIComponent(d.label.replace(/ /g, '_'))}`,
-          }))}
-          colorize
-        />
-      </ChartCard>
+        <ChartCard title="By style" as="h3">
+          <BarList
+            data={countBy(hats, h => prettify(h.style)).map(d => ({
+              ...d,
+              href: `/hats?style=${encodeURIComponent(d.label.replace(/ /g, '_'))}`,
+            }))}
+            colorize
+          />
+        </ChartCard>
 
-      <ChartCard title="By size">
-        <BarList data={countBy(hats, h => prettify(h.size))} colorize />
-      </ChartCard>
+        <ChartCard title="By size" as="h3">
+          <BarList data={countBy(hats, h => prettify(h.size))} colorize />
+        </ChartCard>
 
-      <ChartCard title="By brand" subtitle="Hats with no brand identified are left out.">
-        <BarList data={countBy(hats, h => h.brand, 12)} colorize />
-      </ChartCard>
+        <ChartCard title="By brand" as="h3" subtitle="Hats with no brand identified are left out.">
+          <BarList data={countBy(hats, h => h.brand, 12)} colorize />
+        </ChartCard>
 
-      <ChartCard title="By construction" subtitle="Hats with no construction recorded are left out.">
-        <BarList data={countBy(hats, h => h.construction, 12)} colorize />
-      </ChartCard>
+        <ChartCard title="By construction" as="h3" subtitle="Hats with no construction recorded are left out.">
+          <BarList data={countBy(hats, h => h.construction, 12)} colorize />
+        </ChartCard>
 
-      <ChartCard title="Top colorways">
-        <BarList data={countBy(hats, h => h.colorway, 12)} colorize />
-      </ChartCard>
+        <ChartCard title="Top colorways" as="h3">
+          <BarList data={countBy(hats, h => h.colorway, 12)} colorize />
+        </ChartCard>
 
-      <ChartCard title="Artist & collab series">
-        <BarList
-          data={countBy(hats, h => h.artist_series, 12)}
-          emptyText="No collab or artist series recorded yet."
-          colorize
-        />
-      </ChartCard>
+        <ChartCard title="Artist & collab series" as="h3">
+          <BarList
+            data={countBy(hats, h => h.artist_series, 12)}
+            emptyText="No collab or artist series recorded yet."
+            colorize
+          />
+        </ChartCard>
 
-      <ChartCard title="Colors" subtitle="One vote per hat per color. Tap to search that shade.">
-        <BarList data={colors} emptyText="No colors detected yet." />
-      </ChartCard>
+        <ChartCard title="Colors" as="h3" subtitle="One vote per hat per color. Tap to search that shade.">
+          <BarList data={colors} emptyText="No colors detected yet." />
+        </ChartCard>
+      </Section>
 
       {/* ===== Where it all lives ===== */}
-      <ChartCard title="Hats by room">
-        <BarList data={countBy(hats, h => h.room_name)} colorize />
-      </ChartCard>
+      <Section id="stats-where" title="Where it lives">
+        <ChartCard title="Hats by room" as="h3">
+          <BarList data={countBy(hats, h => h.room_name)} colorize />
+        </ChartCard>
 
-      <ChartCard title="Value by room">
-        <BarList data={valueBy(hats, h => h.room_name)} colorize />
-      </ChartCard>
+        <ChartCard title="Value by room" as="h3">
+          <BarList data={valueBy(hats, h => h.room_name)} colorize />
+        </ChartCard>
 
-      <ChartCard title="Fullest cases" subtitle="Full in pink, overfull in orange.">
-        <BarList data={caseFill} emptyText="No cases yet." />
-      </ChartCard>
+        <ChartCard title="Fullest cases" as="h3" className="hr-cp-span" subtitle="Full in pink, overfull in orange.">
+          <BarList data={caseFill} emptyText="No cases yet." />
+        </ChartCard>
+      </Section>
 
       {/* ===== Over time ===== */}
-      <ChartCard
-        title="Hats acquired"
-        subtitle="By purchase date where known, otherwise when the photo was added."
-      >
-        <TimeSeries points={timelines.acquired} />
-      </ChartCard>
+      <Section id="stats-time" title="Over time">
+        <ChartCard
+          title="Hats acquired"
+          as="h3"
+          className="hr-cp-span"
+          subtitle="By purchase date where known, otherwise when the photo was added."
+        >
+          <TimeSeries points={timelines.acquired} />
+        </ChartCard>
 
-      <ChartCard
-        title="Spend over time"
-        subtitle={
-          valuation.costUnknown > 0
-            ? <>Only the {valuation.spentCount} hats with a recorded price and date. The cyan line is the running total.</>
-            : <>The cyan line is the running total.</>
-        }
-      >
-        <TimeSeries points={timelines.spend} cumulative />
-      </ChartCard>
+        <ChartCard
+          title="Spend over time"
+          as="h3"
+          className="hr-cp-span"
+          subtitle={
+            valuation.costUnknown > 0
+              ? <>Only the {valuation.spentCount} hats with a recorded price and date. The cyan line is the running total.</>
+              : <>The cyan line is the running total.</>
+          }
+        >
+          <TimeSeries points={timelines.spend} cumulative />
+        </ChartCard>
+      </Section>
 
       {/* ===== Leaderboards ===== */}
-      <ChartCard title="Most valuable">
-        <RankedHatList
-          hats={[...hats]
-            .filter(h => valueHat(h).value != null)
-            .sort((a, b) => (valueHat(b).value ?? 0) - (valueHat(a).value ?? 0))
-            .slice(0, 10)}
-          valueFor={h => money(valueHat(h).value ?? 0)}
-          empty="No hats have a value estimate yet."
-        />
-      </ChartCard>
+      <Section id="stats-leaders" title="Leaderboards">
+        <ChartCard title="Most valuable" as="h3">
+          <RankedHatList
+            hats={[...hats]
+              .filter(h => valueHat(h).value != null)
+              .sort((a, b) => (valueHat(b).value ?? 0) - (valueHat(a).value ?? 0))
+              .slice(0, 10)}
+            valueFor={h => money(valueHat(h).value ?? 0)}
+            empty="No hats have a value estimate yet."
+          />
+        </ChartCard>
 
-      <ChartCard title="Most expensive (paid)">
-        <RankedHatList
-          hats={[...hats]
-            .filter(h => costOf(h) != null)
-            .sort((a, b) => (costOf(b) ?? 0) - (costOf(a) ?? 0))
-            .slice(0, 10)}
-          valueFor={h => money(costOf(h) ?? 0)}
-          empty="No purchase prices recorded yet."
-        />
-      </ChartCard>
+        <ChartCard title="Most expensive (paid)" as="h3">
+          <RankedHatList
+            hats={[...hats]
+              .filter(h => costOf(h) != null)
+              .sort((a, b) => (costOf(b) ?? 0) - (costOf(a) ?? 0))
+              .slice(0, 10)}
+            valueFor={h => money(costOf(h) ?? 0)}
+            empty="No purchase prices recorded yet."
+          />
+        </ChartCard>
 
-      <ChartCard title="Most worn">
-        <RankedHatList
-          hats={wear.mostWorn}
-          valueFor={h => `${h.wear_count}×`}
-          empty="No wears logged yet — tap “Wearing this today” on a hat."
-        />
-      </ChartCard>
+        <ChartCard title="Most worn" as="h3">
+          <RankedHatList
+            hats={wear.mostWorn}
+            valueFor={h => `${h.wear_count}×`}
+            empty="No wears logged yet — tap “Wearing this today” on a hat."
+          />
+        </ChartCard>
 
-      <ChartCard
-        title="Best cost per wear"
-        subtitle="What you paid, divided by how often you've worn it. Needs both numbers."
-      >
-        <RankedHatList
-          hats={wear.costPerWear.slice(0, 10).map(x => x.h)}
-          valueFor={h => {
-            const cost = costOf(h) ?? 0;
-            return `${moneyPrecise(cost / (h.wear_count || 1))}/wear`;
-          }}
-          empty="Needs a purchase price and at least one logged wear."
-        />
-      </ChartCard>
+        <ChartCard
+          title="Best cost per wear"
+          as="h3"
+          subtitle="What you paid, divided by how often you've worn it. Needs both numbers."
+        >
+          <RankedHatList
+            hats={wear.costPerWear.slice(0, 10).map(x => x.h)}
+            valueFor={h => {
+              const cost = costOf(h) ?? 0;
+              return `${moneyPrecise(cost / (h.wear_count || 1))}/wear`;
+            }}
+            empty="Needs a purchase price and at least one logged wear."
+          />
+        </ChartCard>
+      </Section>
     </>
   );
 }

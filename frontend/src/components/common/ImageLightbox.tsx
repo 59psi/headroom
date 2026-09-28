@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 import { useDialogKeys } from './Modal';
+import { portalToBody } from './ModalPortal';
 
 interface Props {
   src: string;
@@ -29,24 +30,28 @@ export function ImageLightbox({ src, alt = '', hat = false }: Props) {
     <>
       <button
         type="button"
-        className="hr-lightbox-trigger"
+        className={`hr-lightbox-trigger${hat ? ' is-hat' : ''}`}
         aria-label={alt ? `View ${alt} full size` : 'View photo full size'}
         onClick={() => setOpen(true)}
-        style={{ maxWidth: hat ? 480 : '100%' }}
       >
         <img
           src={src}
           alt={alt}
-          className={hat ? 'hr-hat-photo' : 'rounded'}
-          style={{
-            width: '100%',
-            aspectRatio: hat ? '1' : '4/3',
-            objectFit: hat ? 'contain' : 'cover',
-            display: 'block',
-          }}
+          className={hat ? 'hr-hat-photo hr-lightbox-thumb' : 'rounded hr-lightbox-thumb'}
         />
+        {/* A touch screen has no hover to hint that the photo opens, so the
+            corner mark says it — quietly, until the photo is pointed at. */}
+        <span className="hr-lightbox-hint" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" focusable="false">
+            <path d="M15 3h6v6" /><path d="M9 21H3v-6" /><path d="M21 3l-7 7" /><path d="M3 21l7-7" />
+          </svg>
+        </span>
       </button>
-      {open && (
+      {/* Portalled: rendered in place, `position: fixed` is measured against
+          any ancestor with a transform — and the settings panels and card
+          hovers both use one — so the "full screen" overlay could open
+          confined to a card. See `ModalPortal`. */}
+      {open && portalToBody(
         <div
           className="hr-lightbox-overlay"
           role="dialog"
@@ -68,7 +73,7 @@ export function ImageLightbox({ src, alt = '', hat = false }: Props) {
             className="hr-lightbox-content"
             onClick={e => e.stopPropagation()}
           />
-        </div>
+        </div>,
       )}
     </>
   );

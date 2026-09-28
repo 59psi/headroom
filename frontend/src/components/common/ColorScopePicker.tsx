@@ -1,3 +1,5 @@
+import { Segmented } from '../ui/Segmented';
+
 /**
  * Which swatches a color term is allowed to match.
  *
@@ -16,21 +18,15 @@ export const COLOR_SCOPES = [
   { value: 'all', label: 'Any' },
 ] as const;
 
+/**
+ * The scope as a one-tap strip, shared by Search and the guest page so both
+ * ask the question in the same words. The strip itself is `ui/Segmented`,
+ * which started life here as `ChoiceGroup` before the other areas' copies of
+ * it were folded in.
+ */
 export function ColorScopePicker({ value, onChange }: {
   value: string;
   onChange: (v: string) => void;
 }) {
-  return (
-    <div className="btn-group" role="group" aria-label="Color match">
-      {COLOR_SCOPES.map(s => (
-        <button
-          key={s.value}
-          type="button"
-          aria-pressed={value === s.value}
-          className={`btn btn-sm ${value === s.value ? 'btn-primary' : 'btn-outline-primary'}`}
-          onClick={() => onChange(s.value)}
-        >{s.label}</button>
-      ))}
-    </div>
-  );
+  return <Segmented label="Color match" options={COLOR_SCOPES} value={value} onChange={onChange} />;
 }

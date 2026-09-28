@@ -54,7 +54,15 @@ LOGO_MAX_HEIGHT = 96
 
 def _logo_status() -> LogoStatus:
     logo = branding.find_logo()
-    return LogoStatus(logo_path=f"branding/{logo.name}" if logo else None)
+    if not logo:
+        return LogoStatus(logo_path=None)
+    try:
+        version = logo.stat().st_mtime_ns
+    except OSError:
+        # Removed between the lookup and the stat: report it as unversioned
+        # rather than failing the whole status read over a cache hint.
+        version = None
+    return LogoStatus(logo_path=f"branding/{logo.name}", version=version)
 
 
 @router.get("/logo", response_model=LogoStatus)
@@ -114,7 +122,10 @@ async def upload_logo(photo: UploadFile):
         tmp_path.unlink(missing_ok=True)
         staging.unlink(missing_ok=True)
 
-    return LogoStatus(logo_path=f"branding/{out_path.name}")
+    # The same status the GET reports, version included — the client puts this
+    # straight into its cache, and without the new version every open page
+    # would go on showing the old image under the unchanged URL.
+    return _logo_status()
 
 
 @router.delete("/logo", status_code=204)

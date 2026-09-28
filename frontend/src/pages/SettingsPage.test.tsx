@@ -55,6 +55,9 @@ function explicit() {
     issuer_not_after: '2034-11-12T00:00:00Z', clamped_by_issuer: false,
   })),
   getRecentErrors: vi.fn(async () => []),
+  // The page's Analysis tab and the errors card both read the count. As a
+  // bare stub it resolved `undefined`, which TanStack rejects as query data.
+  getRecentErrorsCount: vi.fn(async () => ({ count: 0 })),
   getAnalysisFailures: vi.fn(async () => []),
   getAnalysisQueue: vi.fn(async () => ({
     worker_alive: true, queued: 0, pending_count: 0, pending: [],
@@ -181,31 +184,31 @@ vi.mock('../lib/webauthn', () => ({
  */
 const SECTION_CARDS: Record<string, string[]> = {
   analysis: [
-    'Claude API Key',
-    'Claude Model',
-    'Google Vision Key (fallback)',
-    'Analysis Queue',
-    'Recent Analysis Errors',
+    'Claude API key',
+    'Claude model',
+    'Google Vision key',
+    'Analysis queue',
+    'Recent analysis errors',
   ],
   data: [
     'Construction audit',
     'Re-pricing',
     'Frozen prices',
     'Prices shared by many hats',
-    'Colorway Catalog',
-    'Purchase History',
-    'eBay Comparable Listings (optional)',
+    'Colorway catalog',
+    'Purchase history',
+    'eBay comparable listings',
   ],
   sharing: [
     'Guest browsing',
-    'Share Links',
+    'Share links',
     'Share the collection',
-    'Inventory Report',
+    'Inventory report',
     'Tags & labels',
-    'Share Photos to Headroom',
+    'Share photos to Headroom',
   ],
-  device: ['Account', 'LAN Discovery (mDNS)', 'Site Logo'],
-  maintenance: ['Backups', 'Off-site backup', 'Recent Activity'],
+  device: ['Account', 'LAN discovery (mDNS)', 'Site logo'],
+  maintenance: ['Backups', 'Off-site backup', 'Recent activity'],
 };
 
 /**
@@ -219,12 +222,15 @@ const SECTION_CARDS: Record<string, string[]> = {
  * has to be accounted for — it just is not accounted for by rendering.
  */
 const MOUNTED_BUT_HIDDEN: Record<string, number> = { device: 1 };
+const HIDDEN_NAMES = new Set(['Trust this device']);
 
-/** Cards visible in a section, scoped to `.card-title` — card *bodies* mention
+/** Cards visible in a section, by their panel titles — card *bodies* mention
  *  other cards by name (ShareTargetCard points at "Account"), so a bare text
- *  query would be ambiguous. */
+ *  query would be ambiguous. Scoped to the settings panel so the page's own
+ *  section heading is not counted as a card. */
 function renderedCards(container: HTMLElement): string[] {
-  return [...container.querySelectorAll('.card-title')].map(el => el.textContent?.trim() ?? '');
+  return [...container.querySelectorAll('.hr-settings-panel .card-title')]
+    .map(el => el.textContent?.trim() ?? '');
 }
 
 beforeEach(() => { vi.clearAllMocks(); });
@@ -264,9 +270,21 @@ describe('SettingsPage', () => {
     }
   });
 
+  it("names every entry exactly as its card titles itself, so search finds what you see", () => {
+    // Search matches the `name` in the section table, not the rendered DOM
+    // (it has to find cards in sections that are not mounted). A card retitled
+    // without its entry would be unfindable under the words on its own header.
+    for (const section of SECTIONS) {
+      const names = section.cards.map(c => c.name).filter(n => !HIDDEN_NAMES.has(n));
+      expect(names).toEqual(SECTION_CARDS[section.id]);
+    }
+    const all = SECTIONS.flatMap(s => s.cards.map(c => c.name));
+    expect(new Set(all).size).toBe(all.length); // names are also the React keys
+  });
+
   it('defaults to the first section when no tab is named', async () => {
     const { container } = renderWithProviders(<SettingsPage />);
-    await screen.findByText('Claude API Key');
+    await screen.findByText('Claude API key');
     expect(renderedCards(container)).toEqual(SECTION_CARDS.analysis);
   });
 
@@ -275,14 +293,60 @@ describe('SettingsPage', () => {
     const { container } = renderWithProviders(<SettingsPage />, {
       route: '/settings?tab=nonsense',
     });
-    await screen.findByText('Claude API Key');
+    await screen.findByText('Claude API key');
+    expect(renderedCards(container)).toEqual(SECTION_CARDS.analysis);
+  });
+
+  it('finds cards across every section by name or by a word on the card', async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<SettingsPage />);
+    await screen.findByText('Claude API key');
+
+    // "restore" is nowhere in a title — it is one of the Backups keywords.
+    await user.type(screen.getByRole('searchbox', { name: 'Search settings' }), 'restore');
+    expect(await screen.findByRole('heading', { name: 'Upkeep' })).toBeInTheDocument();
+    expect(renderedCards(container)).toEqual(['Backups']);
+    // No tab claims to be selected while results from any section are shown.
+    expect(screen.queryByRole('tab', { selected: true })).not.toBeInTheDocument();
+  });
+
+  it('a link to another section, followed from search results, ends the search', async () => {
+    // The Share-photos card links to the Account card ("?tab=device"). Search
+    // is page state, so the link used to change the URL and nothing visible.
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<SettingsPage />);
+    await screen.findByText('Claude API key');
+
+    await user.type(screen.getByRole('searchbox', { name: 'Search settings' }), 'shortcut');
+    expect(await screen.findByRole('heading', { name: 'Share photos to Headroom' })).toBeInTheDocument();
+    const ios = screen.queryByRole('button', { name: /^iOS/ });
+    if (ios && ios.getAttribute('aria-pressed') !== 'true') await user.click(ios);
+
+    await user.click(screen.getByRole('link', { name: 'Account' }));
+
+    expect(screen.getByRole('searchbox', { name: 'Search settings' })).toHaveValue('');
+    expect(screen.getByRole('tab', { name: 'Device' })).toHaveAttribute('aria-selected', 'true');
+    await waitFor(() => expect(renderedCards(container)).toEqual(SECTION_CARDS.device));
+  });
+
+  it('says so when nothing matches, and Escape clears the search', async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<SettingsPage />);
+    await screen.findByText('Claude API key');
+    const box = screen.getByRole('searchbox', { name: 'Search settings' });
+
+    await user.type(box, 'zzzz');
+    expect(screen.getByText(/No settings match/)).toBeInTheDocument();
+
+    await user.keyboard('{Escape}');
+    expect(box).toHaveValue('');
     expect(renderedCards(container)).toEqual(SECTION_CARDS.analysis);
   });
 
   it('switches section on tab press', async () => {
     const user = userEvent.setup();
     const { container } = renderWithProviders(<SettingsPage />);
-    await screen.findByText('Claude API Key');
+    await screen.findByText('Claude API key');
 
     await user.click(screen.getByRole('tab', { name: 'Upkeep' }));
 
@@ -325,18 +389,28 @@ describe('AnthropicKeyCard loading guard', () => {
 
     renderWithProviders(<AnthropicKeyCard />);
 
+    // The skeleton's status text. The title stays up while it loads — only
+    // the body waits — and neither the sentence nor the header pill may
+    // guess at the answer in the meantime.
     expect(screen.getByText('Loading…')).toBeInTheDocument();
-    expect(screen.queryByText('No key configured.')).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Claude API key' })).toBeInTheDocument();
+    expect(screen.queryByText(/No key configured/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Not set')).not.toBeInTheDocument();
 
     release({ configured: true, source: 'database', masked: 'sk-an…wxyz' });
     expect(await screen.findByText('sk-an…wxyz')).toBeInTheDocument();
-    expect(screen.queryByText('No key configured.')).not.toBeInTheDocument();
+    expect(screen.queryByText(/No key configured/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Not set')).not.toBeInTheDocument();
+    expect(screen.getByText('Configured')).toBeInTheDocument();
   });
 
   it('does say so once loading finishes with no key', async () => {
     vi.mocked(settingsApi.getApiKeyStatus).mockResolvedValueOnce({ configured: false, source: null, masked: null });
     renderWithProviders(<AnthropicKeyCard />);
-    expect(await screen.findByText('No key configured.')).toBeInTheDocument();
+    // Regex: the sentence carries a link to the console, so its text is split
+    // across elements and an exact-string match would miss it.
+    expect(await screen.findByText(/No key configured/)).toBeInTheDocument();
+    expect(screen.getByText('Not set')).toBeInTheDocument();
   });
 
   it('drops a stale test result when the active model changes', async () => {
@@ -348,6 +422,7 @@ describe('AnthropicKeyCard loading guard', () => {
 
     await user.click(screen.getByRole('button', { name: /test connection/i }));
     expect(await screen.findByText(/Reachable\./)).toBeInTheDocument();
+    expect(screen.getByText('Connected')).toBeInTheDocument();
 
     // Simulate the Model card saving a different model.
     vi.mocked(settingsApi.getModel).mockResolvedValue({ model_id: 'claude-opus-5', source: 'database', default_model_id: 'claude-sonnet-5' });
@@ -356,6 +431,9 @@ describe('AnthropicKeyCard loading guard', () => {
     await waitFor(() => {
       expect(screen.queryByText(/Reachable\./)).not.toBeInTheDocument();
     });
+    // The header pill goes with it: "Connected" was a claim about the old model.
+    expect(screen.queryByText('Connected')).not.toBeInTheDocument();
+    expect(screen.getByText('Configured')).toBeInTheDocument();
   });
 });
 

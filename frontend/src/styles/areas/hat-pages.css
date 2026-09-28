@@ -1,0 +1,679 @@
+/* Area styles: hat-pages. Owned by the components in this area; shared
+   primitives live in ui.css, global elements in app.css.
+
+   The hat detail page, the Add / Edit hat forms, Bulk import, and the
+   modals and pickers they open (photo capture and crop, color edit,
+   dispose). Same rule as ui.css: calm surfaces, neon on accents and state —
+   the hat's id, its brand, the one filled button, a drop zone you are
+   aiming at. */
+
+/* ===== Hat detail: header ============================================ */
+/* The head itself — the id as a mono title, the badges at its right — is
+   `ui/PageHeader` (`code`, `status`), styled in ui.css, as are the headers of
+   the Add / Edit hat forms and Bulk import. */
+
+/* The case half of the id is a breadcrumb; underlined in a dimmer cyan so
+   it reads as a link without shouting over the id itself. */
+.hr-crumb-link {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: rgba(0, 240, 255, 0.45);
+  text-underline-offset: 0.2em;
+  transition: text-decoration-color var(--dur-fast) ease;
+}
+
+.hr-crumb-link:hover { text-decoration-color: currentColor; }
+
+/* The analysis badge in the pills' voice: sentence case at caption size.
+   Tracked caps made "2/4 · IDENTIFYING" the loudest words in the header. */
+.hr-analysis-status {
+  min-height: 26px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  text-transform: none;
+}
+
+/* A link inside an alert takes the alert's ink, underlined. */
+.hr-alert-link {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.hr-empty-title {
+  font-family: var(--font-body);
+  font-size: var(--fs-xl);
+  font-weight: 650;
+  text-transform: none;
+  letter-spacing: -0.01em;
+  margin-bottom: 0.5rem;
+}
+
+/* ===== Hat detail: layout ============================================ */
+/* One column on a phone and a portrait iPad — photo first. From a landscape
+   iPad up the photo and its actions sit on the left and the cards on the
+   right; where the screen is tall enough the photo column stays in view
+   while the cards scroll, so "Wearing this today" and Edit are never a
+   scroll away. Sticky clears the top nav, which is sticky itself at lg+. */
+.hr-hat-main { min-width: 0; }
+
+@media (min-width: 992px) {
+  .hr-hat-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    gap: 1.5rem;
+    align-items: start;
+  }
+
+  /* The price tiles two-up here, as on a phone: the main column is ~560px,
+     which auto-fit splits into three and leaves the fourth tile alone on a
+     row of its own. */
+  .hr-hat-main .hr-price-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* Sticky only on a screen tall enough to hold the whole photo card. The card
+   is ~620px at this width before any error note, and a sticky box taller
+   than the viewport keeps its bottom below the fold for the entire scroll —
+   on a 768px-tall laptop the wear count, its Undo and a failed wear's error
+   note stayed unreachable until the right column ran out. Shorter screens
+   still get the two columns; the photo just scrolls with the page. */
+@media (min-width: 992px) and (min-height: 820px) {
+  .hr-hat-aside {
+    position: sticky;
+    top: calc(var(--nav-height) + var(--safe-top) + 16px);
+  }
+}
+
+/* The photo card: the cutout floats on the card's own canvas, so the card
+   loses the gradient sheen the text cards carry. */
+.hr-hat-hero.card { background: var(--bg-card); }
+
+.hr-hero-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.hr-hero-actions > * { min-width: 0; }
+.hr-hero-actions .btn { width: 100%; }
+.hr-hero-actions > .hr-hero-primary { grid-column: 1 / -1; }
+
+.hr-upload-note {
+  margin-top: 0.5rem;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+}
+
+.hr-wear-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 1rem;
+  margin-top: 0.75rem;
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+}
+
+.hr-wear-line strong { color: var(--text); }
+
+.hr-wear-line .hr-wear-undo {
+  padding: 0 0.35rem;
+  font-size: inherit;
+}
+
+@media (pointer: coarse) {
+  .hr-wear-line .hr-wear-undo { min-height: 44px; }
+}
+
+/* ===== Hat detail: identification ==================================== */
+/* The brand keeps the display face and the pink: it is the hat's name, the
+   one line on the page that is allowed to be a sign. */
+.hr-id-brand {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  letter-spacing: 0.04em;
+  color: var(--neon-pink);
+  text-shadow: 0 0 16px rgba(255, 46, 182, 0.35);
+  overflow-wrap: anywhere;
+}
+
+.hr-id-model {
+  margin-top: 2px;
+  font-family: var(--font-mono);
+  font-size: 1.05rem;
+  color: var(--text);
+}
+
+.hr-id-style {
+  margin-top: 4px;
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+}
+
+.hr-id-series {
+  margin-top: 6px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--neon-cyan);
+}
+
+.hr-id-logo {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+}
+
+.hr-id-notes {
+  margin: 1rem 0 0;
+  padding-left: 0.75rem;
+  border-left: 2px solid rgba(177, 78, 255, 0.45);
+  font-style: italic;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+/* ===== Hat detail: valuation ========================================= */
+.hr-value-hero {
+  margin-bottom: 0.75rem;
+  padding: 0.9rem 1rem;
+  border-radius: var(--radius-sm);
+  background:
+    radial-gradient(ellipse at 0% 0%, rgba(0, 240, 255, 0.08), transparent 60%),
+    var(--surface-inset);
+  border: 1px solid var(--border-soft);
+}
+
+.hr-value-why {
+  margin-top: 0.25rem;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.hr-metric-source {
+  margin-top: 2px;
+  font-size: 0.68rem;
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+
+.hr-metric-empty {
+  font-size: 0.95rem;
+  color: var(--text-muted);
+}
+
+.hr-spec-value { font-size: 0.95rem; }
+
+/* ===== Hat detail: case ============================================== */
+.hr-case-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.hr-case-summary-what {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.hr-case-code {
+  font-family: var(--font-mono);
+  font-size: 1.05rem;
+  color: var(--neon-cyan);
+}
+
+.hr-case-unplaced { color: var(--neon-yellow); }
+
+/* ===== Hat detail: palette =========================================== */
+/* Each swatch row is a button (tap to edit). A solid hairline between rows
+   instead of the dashed rule — calmer, and the row lights on hover instead. */
+.hr-color-row.hr-color-row-btn {
+  width: 100%;
+  min-height: 52px;
+  padding: 0.55rem 0.4rem;
+  border: 0;
+  border-bottom: 1px solid var(--border-soft);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-fast) ease;
+}
+
+.hr-color-row.hr-color-row-btn:last-child { border-bottom: 0; }
+.hr-color-row.hr-color-row-btn:hover { background: var(--surface-hover); }
+
+.hr-color-row.hr-color-row-btn:focus-visible {
+  outline: 2px solid var(--neon-cyan);
+  outline-offset: 1px;
+}
+
+.hr-color-row-swatch {
+  width: 32px;
+  height: 32px;
+  flex: none;
+}
+
+.hr-color-row-name {
+  display: block;
+  font-weight: 600;
+}
+
+.hr-color-row-sub {
+  display: block;
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
+.hr-color-row-btn .hr-tier-label { display: block; }
+
+/* ===== Hat detail: disposition + footer ============================== */
+.hr-dispose-notes {
+  margin-top: 4px;
+  font-size: var(--fs-sm);
+  font-style: italic;
+  color: var(--text-muted);
+}
+
+/* "Add another" on its own line on a phone with Edit / Delete paired under
+   it; one row from 576px. */
+.hr-hat-foot-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.hr-hat-foot-actions > :first-child { grid-column: 1 / -1; }
+
+@media (min-width: 576px) {
+  .hr-hat-foot-actions { grid-template-columns: minmax(0, 1fr) auto auto; }
+  .hr-hat-foot-actions > :first-child { grid-column: auto; }
+}
+
+/* ===== Notes ========================================================= */
+.hr-notes-hint {
+  margin: 0.5rem 0 0;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.hr-notes-error {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.hr-notes-error > .alert { flex: 1 1 14rem; }
+
+/* ===== Hat forms ===================================================== */
+/* Style full width on a phone (its option labels are the long ones), Size
+   and Condition two-up; all three in a row from a tablet up. */
+.hr-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.hr-form-grid > * { min-width: 0; }
+.hr-form-grid > .hr-form-grid-wide { grid-column: 1 / -1; }
+
+@media (min-width: 768px) {
+  .hr-form-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .hr-form-grid > .hr-form-grid-wide { grid-column: auto; }
+}
+
+/* The submit row rides above the bottom nav while the form scrolls. */
+.hr-form-actions {
+  position: sticky;
+  bottom: calc(var(--nav-height) + var(--safe-bottom) + 10px);
+  z-index: 30;
+  margin: 1rem 0;
+  padding: 0.65rem;
+  border-radius: var(--radius);
+  background: rgba(15, 5, 36, 0.88);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+}
+
+@media (min-width: 992px) {
+  .hr-form-actions { bottom: 16px; }
+}
+
+/* While the keyboard or a picker is up the bottom nav is hidden and iOS
+   positions sticky boxes against a viewport the keyboard has shrunk — the
+   bar would float mid-screen over the field being typed in. It just sits at
+   the end of the form until the keyboard goes away. */
+body.hr-keyboard-open .hr-form-actions,
+body.hr-picker-open .hr-form-actions {
+  position: static;
+  box-shadow: none;
+}
+
+.hr-form-actions-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.hr-form-actions-row > .hr-form-actions-main { flex: 1 1 auto; }
+
+/* Edit form color rows: swatch | name | remove, with the general color
+   under the name on a phone and beside it from 576px. */
+.hr-color-edit-row {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) 44px;
+  grid-template-areas:
+    "swatch name remove"
+    "swatch general remove";
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.hr-color-edit-row:first-child { padding-top: 0; }
+.hr-color-edit-row:last-child { border-bottom: 0; padding-bottom: 0; }
+
+.hr-color-edit-swatch { grid-area: swatch; }
+.hr-color-edit-name { grid-area: name; }
+.hr-color-edit-general { grid-area: general; }
+
+.hr-color-edit-remove.btn {
+  grid-area: remove;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  font-size: 1.1rem;
+}
+
+@media (min-width: 576px) {
+  .hr-color-edit-row {
+    grid-template-columns: 48px minmax(0, 1.3fr) minmax(0, 1fr) 44px;
+    grid-template-areas: "swatch name general remove";
+  }
+}
+
+/* ===== Photo capture ================================================= */
+.hr-photo-capture { position: relative; }
+
+.hr-photo-preview {
+  display: block;
+  max-width: 480px;
+  margin: 0 auto 0.75rem;
+  border-radius: var(--radius-sm);
+}
+
+/* The empty photo square is the picker itself. Dashed like a drop target,
+   lit when a file is dragged over it. */
+.hr-photo-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  width: 100%;
+  max-width: 480px;
+  aspect-ratio: 1;
+  margin: 0 auto;
+  padding: 1rem;
+  border: 1.5px dashed rgba(255, 46, 182, 0.4);
+  border-radius: var(--radius-sm);
+  background:
+    radial-gradient(ellipse at center, rgba(255, 46, 182, 0.08), transparent 65%),
+    var(--surface-inset);
+  color: var(--text-secondary);
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color var(--dur) ease, box-shadow var(--dur) ease, background var(--dur) ease;
+}
+
+.hr-photo-drop:hover,
+.hr-photo-capture.is-dragging .hr-photo-drop,
+.hr-import-drop-zone.is-dragging .hr-photo-drop {
+  border-color: var(--neon-cyan);
+  box-shadow: 0 0 22px rgba(0, 240, 255, 0.18);
+}
+
+.hr-photo-drop:focus-visible {
+  outline: 2px solid var(--neon-cyan);
+  outline-offset: 3px;
+}
+
+.hr-photo-capture.is-dragging .hr-photo-preview {
+  outline: 2px dashed var(--neon-cyan);
+  outline-offset: 4px;
+}
+
+.hr-photo-drop-icon {
+  width: 2.25rem;
+  height: 2.25rem;
+  color: var(--neon-pink);
+  filter: drop-shadow(0 0 6px rgba(255, 46, 182, 0.55));
+}
+
+.hr-photo-drop-title {
+  font-size: var(--fs-md);
+  font-weight: 650;
+  color: var(--text);
+}
+
+.hr-photo-drop-hint {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+/* "Drop it here" is advice for a mouse; a phone has nothing to drag. */
+@media (pointer: coarse) {
+  .hr-drop-hint-fine { display: none; }
+}
+
+/* ===== Crop modal ==================================================== */
+.hr-cropper-stage {
+  position: relative;
+  width: 100%;
+  height: min(360px, 55vh);
+  background: #000;
+}
+
+.hr-cropper-controls { padding: 1rem 1.25rem; }
+
+.hr-range {
+  display: block;
+  width: 100%;
+  height: 32px;
+  accent-color: var(--neon-pink);
+}
+
+/* ===== Modals: footer + color editor ================================= */
+/* The destructive / dismissive action at the far left of a modal footer,
+   away from the one that commits. */
+.hr-modal-foot-start { margin-right: auto; }
+
+.hr-color-preview {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 96px;
+  margin-bottom: 0.75rem;
+  border-radius: var(--radius-sm);
+  border: 2px solid var(--border-bright);
+  cursor: pointer;
+}
+
+.hr-color-preview-hex {
+  position: absolute;
+  right: 12px;
+  bottom: 8px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+/* The native color input, kept focusable-by-label but out of sight — the
+   preview above is its face. */
+.hr-offscreen-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.hr-color-names {
+  display: grid;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+@media (min-width: 480px) {
+  .hr-color-names { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* ===== Bulk import =================================================== */
+.hr-import-defaults {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.hr-import-defaults > * { min-width: 0; }
+
+@media (min-width: 768px) {
+  .hr-import-defaults { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+.hr-import-drop-zone.is-dragging > .card {
+  border-color: var(--neon-cyan);
+  box-shadow: var(--shadow), var(--glow-cyan);
+}
+
+/* The empty list as one wide target, not a photo-shaped square. */
+.hr-photo-drop.hr-import-empty {
+  aspect-ratio: auto;
+  max-width: none;
+  min-height: 150px;
+}
+
+.hr-import-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.hr-import-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.hr-import-list > li:last-child,
+.hr-import-list > li:last-child > .hr-import-row { border-bottom: 0; }
+
+.hr-import-index {
+  min-width: 1.75rem;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
+.hr-import-file {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.hr-import-name {
+  overflow: hidden;
+  font-size: var(--fs-sm);
+  color: var(--text);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.hr-import-meta {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.hr-import-error {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: #ff8aa3;
+  overflow-wrap: anywhere;
+}
+
+.hr-import-item-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.25rem;
+  flex: none;
+}
+
+.hr-import-view { font-size: var(--fs-xs); }
+
+.hr-import-remove.btn {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  font-size: 1.1rem;
+}
+
+.hr-import-job {
+  width: 100%;
+  min-height: 52px;
+  padding-left: 0.4rem;
+  padding-right: 0.4rem;
+  border: 0;
+  border-bottom: 1px solid var(--border-soft);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-fast) ease;
+}
+
+.hr-import-job:hover { background: var(--surface-hover); }
+
+.hr-import-job:focus-visible {
+  outline: 2px solid var(--neon-cyan);
+  outline-offset: 1px;
+}
+
+.hr-import-progress { margin-bottom: 1rem; }
+.hr-import-counts { margin-bottom: 1rem; }
+
+.hr-import-start.btn { flex: 1 1 auto; }
+
+@media (prefers-reduced-motion: reduce) {
+  .hr-photo-drop,
+  .hr-import-job,
+  .hr-color-row.hr-color-row-btn { transition: none; }
+}

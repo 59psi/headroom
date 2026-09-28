@@ -29,6 +29,41 @@ function status(over: Partial<CatalogStatus> = {}): CatalogStatus {
 
 beforeEach(() => { vi.clearAllMocks(); });
 
+describe('ColorwayCatalogCard — what is in the catalog', () => {
+  it('shows the real counts as tiles', async () => {
+    mocked.getColorwayStatus.mockResolvedValue(status({ models: 146, colorways: 402, entries: 988 }));
+    renderWithProviders(<ColorwayCatalogCard />);
+
+    const value = async (label: string) =>
+      (await screen.findByText(label, { selector: 'dt' })).nextElementSibling?.textContent;
+    expect(await value('Models')).toBe('146');
+    expect(await value('Colorways')).toBe('402');
+    expect(await value('Listings')).toBe('988');
+  });
+
+  it.each([
+    ['Ready', status()],
+    ['Empty', status({ entries: 0, models: 0, colorways: 0 })],
+    ['Harvesting', status({ in_flight: true })],
+    ['Failed', status({
+      progress: sweepProgressFixture({ running: false, error: 'Melin Recap query 429' }),
+    })],
+  ])('reads "%s" in the header', async (word, payload) => {
+    mocked.getColorwayStatus.mockResolvedValue(payload);
+    renderWithProviders(<ColorwayCatalogCard />);
+    expect(await screen.findByText(word, { selector: '.hr-pill' })).toBeInTheDocument();
+  });
+
+  it('shows no counts and no state until it has them', async () => {
+    // "0 models" while loading would read as an empty catalog.
+    mocked.getColorwayStatus.mockReturnValue(new Promise<CatalogStatus>(() => {}));
+    renderWithProviders(<ColorwayCatalogCard />);
+    expect(screen.getByText('Loading…')).toBeInTheDocument();
+    expect(screen.queryByText('Models', { selector: 'dt' })).toBeNull();
+    expect(document.querySelector('.hr-pill')).toBeNull();
+  });
+});
+
 describe('ColorwayCatalogCard — live harvest progress', () => {
   it('shows which category it is on while harvesting', async () => {
     // This endpoint answers 202 and runs in the background, so before this its
@@ -93,6 +128,25 @@ describe('ColorwayCatalogCard — live harvest progress', () => {
 
     expect(await screen.findByText(/Already running/)).toBeInTheDocument();
     expect(screen.queryByText(/Harvest finished/)).not.toBeInTheDocument();
+  });
+
+  it('toasts a harvest it started — and not one it was refused', async () => {
+    const user = userEvent.setup();
+    mocked.getColorwayStatus.mockResolvedValue(status());
+    mocked.refreshColorwayCatalog.mockResolvedValueOnce({
+      started: false, already_running: true, detail: 'Already running.',
+    });
+    renderWithProviders(<ColorwayCatalogCard />);
+
+    await user.click(await screen.findByRole('button', { name: /Refresh from Melin Recap/ }));
+    await screen.findByText(/Already running/);
+    expect(screen.queryByText('Harvest started')).toBeNull();
+
+    mocked.refreshColorwayCatalog.mockResolvedValueOnce({
+      started: true, already_running: false, detail: 'Harvest started.',
+    });
+    await user.click(screen.getByRole('button', { name: /Refresh from Melin Recap/ }));
+    expect(await screen.findByText('Harvest started')).toBeInTheDocument();
   });
 
   it('surfaces a harvest that failed, after it has stopped', async () => {

@@ -1,8 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import { findDuplicates } from '../api/search';
-import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ConditionBadge } from '../components/common/ConditionBadge';
+import { PageHeader } from '../components/ui/PageHeader';
+import { Panel } from '../components/ui/Panel';
+import { Skeleton } from '../components/ui/Skeleton';
+import { StatusPill } from '../components/ui/StatusPill';
 import { tileSrc } from '../lib/photo';
 import { placementLabel } from '../lib/placement';
 
@@ -15,39 +18,73 @@ import { placementLabel } from '../lib/placement';
  * stays theirs.
  */
 export function DuplicatesPage() {
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, error, refetch, isFetching } = useQuery({
     queryKey: ['duplicates'],
     queryFn: findDuplicates,
   });
 
-  if (isLoading) return <LoadingSpinner />;
-  if (error) return <div className="alert alert-danger">Couldn't check for duplicates.</div>;
+  const header = (
+    <PageHeader
+      title="Possible duplicates"
+      actions={<Link to="/search" className="btn btn-outline-secondary btn-sm">← Search</Link>}
+    />
+  );
+
+  if (isLoading) {
+    return (
+      <>
+        {header}
+        <div className="card hr-panel">
+          <div className="card-body">
+            <Skeleton lines={1} />
+            <div className="hr-cp-dup-grid mt-3" aria-hidden="true">
+              {Array.from({ length: 2 }, (_, i) => (
+                <span key={i} className="hr-skeleton hr-cp-skel-square" />
+              ))}
+            </div>
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  if (error) {
+    return (
+      <>
+        {header}
+        <div className="alert alert-danger hr-cp-error" role="alert">
+          <span>Couldn&rsquo;t check for duplicates.</span>
+          <button
+            type="button"
+            className="btn btn-sm btn-outline-secondary"
+            onClick={() => { void refetch(); }}
+            disabled={isFetching}
+          >{isFetching ? 'Retrying…' : 'Try again'}</button>
+        </div>
+      </>
+    );
+  }
 
   const groups = data ?? [];
   const total = groups.reduce((n, g) => n + g.hats.length, 0);
 
   return (
     <>
-      <div className="d-flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
-        <h1>Possible Duplicates</h1>
-        <Link to="/search" className="btn btn-outline-secondary btn-sm">← Search</Link>
-      </div>
+      {header}
 
       {groups.length === 0 ? (
-        <div className="card">
-          <div className="card-body text-center py-5">
-            <div className="fs-4 mb-2">✓</div>
-            <div className="fw-semibold mb-1">No duplicates found</div>
-            <p className="text-secondary small mb-0">
-              Every hat with an identified model looks distinct. Hats that
-              haven't been analyzed yet aren't compared — there's nothing to
-              compare them on.
-            </p>
-          </div>
+        <div className="hr-cp-empty">
+          <div className="hr-cp-empty-icon" aria-hidden="true">✓</div>
+          <div className="hr-cp-empty-title">No duplicates found</div>
+          <p className="mb-0">
+            Every hat with an identified model looks distinct. Hats that
+            haven't been analyzed yet aren't compared — there's nothing to
+            compare them on.
+          </p>
         </div>
       ) : (
         <>
-          <p className="text-secondary small mb-3">
+          <p className="hr-cp-lede">
             {total} hats across {groups.length}{' '}
             {groups.length === 1 ? 'group' : 'groups'}. Nothing is deleted
             here — open a hat to dispose of it, or leave it if you really do own
@@ -55,59 +92,46 @@ export function DuplicatesPage() {
           </p>
 
           {groups.map(group => (
-            <div className="card mb-3" key={group.key}>
-              <div className="card-body">
-                <div className="d-flex justify-content-between align-items-center gap-2 flex-wrap mb-3">
-                  <div className="card-title mb-0">{group.label}</div>
-                  <span
-                    className={`badge ${group.confidence === 'exact' ? 'bg-danger' : 'bg-warning'}`}
-                    title={
-                      group.confidence === 'exact'
-                        ? 'Every identity field matches'
-                        : 'Same model and size; one of these has no colorway recorded yet'
-                    }
-                  >
-                    {group.confidence === 'exact' ? 'exact match' : 'likely'}
-                  </span>
-                </div>
-
-                <div className="row g-2">
-                  {group.hats.map(hat => (
-                    <div className="col-6 col-lg-3" key={hat.id}>
-                      <Link to={`/hats/${hat.id}`} className="card hr-hoverable h-100">
-                        <div className="card-body p-2">
-                          {hat.photo_path ? (
-                            <img
-                              src={tileSrc(hat)}
-                              alt={hat.display_id || `Hat ${hat.id}`}
-                              className="w-100 mb-2"
-                              style={{ aspectRatio: '1', objectFit: 'contain' }}
-                            />
-                          ) : (
-                            <div
-                              className="w-100 mb-2 d-flex align-items-center justify-content-center text-muted"
-                              style={{ aspectRatio: '1' }}
-                            >
-                              no photo
-                            </div>
-                          )}
-                          <div className="font-mono small">
-                            {hat.display_id || `#${hat.id}`}
-                          </div>
-                          <div className="text-secondary" style={{ fontSize: '0.7rem' }}>
-                            {placementLabel(hat)}
-                            {hat.case_display_id && hat.room_name ? ` · ${hat.room_name}` : ''}
-                          </div>
-                          <div className="mt-1">
-                            <ConditionBadge condition={hat.condition} />
-                          </div>
-                        </div>
-                      </Link>
+            <Panel
+              key={group.key}
+              title={group.label}
+              status={
+                group.confidence === 'exact' ? (
+                  <StatusPill tone="error" title="Every identity field matches">Exact match</StatusPill>
+                ) : (
+                  <StatusPill
+                    tone="warn"
+                    title="Same model and size; one of these has no colorway recorded yet"
+                  >Likely</StatusPill>
+                )
+              }
+            >
+              <div className="hr-cp-dup-grid">
+                {group.hats.map(hat => (
+                  <Link key={hat.id} to={`/hats/${hat.id}`} className="card hr-hoverable hr-cp-dup-card">
+                    <div className="card-body">
+                      {hat.photo_path ? (
+                        <img
+                          src={tileSrc(hat)}
+                          alt={hat.display_id || `Hat ${hat.id}`}
+                          className="hr-cp-dup-photo"
+                        />
+                      ) : (
+                        <div className="hr-cp-dup-photo hr-cp-dup-nophoto">no photo</div>
+                      )}
+                      <div className="hr-cp-dup-id">{hat.display_id || `#${hat.id}`}</div>
+                      <div className="hr-cp-dup-where">
+                        {placementLabel(hat)}
+                        {hat.case_display_id && hat.room_name ? ` · ${hat.room_name}` : ''}
+                      </div>
+                      <div className="mt-1">
+                        <ConditionBadge condition={hat.condition} />
+                      </div>
                     </div>
-                  ))}
-                </div>
+                  </Link>
+                ))}
               </div>
-            </div>
+            </Panel>
           ))}
         </>
       )}

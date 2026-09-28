@@ -10,21 +10,55 @@ import {
 import { getStyles, getSizes, getConditions } from '../api/hats';
 import { listCases } from '../api/cases';
 import { DEFAULT_HAT_BASICS } from '../components/hats/HatFormFields';
-import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { invalidateHatViews } from '../lib/invalidate';
 import { formatBytes } from '../lib/format';
 import { ErrorNote } from '../components/common/ErrorNote';
+import { PageHeader } from '../components/ui/PageHeader';
+import { Panel } from '../components/ui/Panel';
+import { StatusPill, type PillTone } from '../components/ui/StatusPill';
+import { Skeleton } from '../components/ui/Skeleton';
+import { useToast } from '../components/ui/Toast';
+import { useConfirm } from '../components/ui/Dialogs';
+import type { ImportJob, ImportJobItem } from '../types';
 
 const MAX_FILES = 100;
 
 /** What identifies a picked file — the row key, and the dedupe key. */
 const fileKey = (f: File) => `${f.name}:${f.size}:${f.lastModified}`;
 
+/** Same test the single-photo picker uses; see `PhotoCapture`. */
+const isImage = (f: File) => f.type.startsWith('image/') || /\.(heic|heif)$/i.test(f.name);
+
+/** A job's and an item's state as one word with a tone — never the tone alone. */
+const JOB_PILL: Record<ImportJob['status'], { tone: PillTone; label: string }> = {
+  queued: { tone: 'info', label: 'Queued' },
+  running: { tone: 'busy', label: 'Running' },
+  done: { tone: 'ok', label: 'Done' },
+  canceled: { tone: 'off', label: 'Canceled' },
+};
+
+const ITEM_PILL: Record<ImportJobItem['status'], { tone: PillTone; label: string }> = {
+  queued: { tone: 'off', label: 'Queued' },
+  processing: { tone: 'busy', label: 'Processing' },
+  done: { tone: 'ok', label: 'Done' },
+  error: { tone: 'error', label: 'Error' },
+  skipped: { tone: 'warn', label: 'Skipped' },
+  canceled: { tone: 'off', label: 'Canceled' },
+};
+
+function pillFor<K extends string>(map: Record<K, { tone: PillTone; label: string }>, status: string) {
+  // A status this build does not know still renders — as its own word.
+  return map[status as K] ?? { tone: 'off' as PillTone, label: status };
+}
+
 export function BulkImportPage() {
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const toast = useToast();
+  const confirm = useConfirm();
   const fileInput = useRef<HTMLInputElement>(null);
   const [files, setFiles] = useState<File[]>([]);
+  const [dragging, setDragging] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   // ?job=N takes precedence so the Web Share Target redirect lands us
   // straight on the active job.
@@ -54,6 +88,9 @@ export function BulkImportPage() {
   const [defaultStyle, setDefaultStyle] = useState(DEFAULT_HAT_BASICS.style);
   const [defaultCaseId, setDefaultCaseId] = useState('');
 
+  // Live while the job is: the progress bar, the counts and every row's pill
+  // update on their own every 2s, and the polling stops the moment the job
+  // reaches a terminal state.
   const job = useQuery({
     queryKey: ['admin', 'import-job', activeJobId],
     queryFn: () => getImportJob(activeJobId!),
@@ -78,14 +115,19 @@ export function BulkImportPage() {
       setFiles([]);
       setActiveJobId(data.id);
       qc.invalidateQueries({ queryKey: ['admin', 'import-jobs'] });
+      toast.success(`Import started — ${data.total} ${data.total === 1 ? 'photo' : 'photos'} queued`);
     },
   });
 
   const cancelMut = useMutation({
     mutationFn: (id: number) => cancelImportJob(id),
-    onSuccess: () => {
+    onSuccess: (data) => {
+      // The DELETE answers with the job as it now stands; show it at once
+      // rather than waiting for the next poll, which is about to stop anyway.
+      if (data && data.id === activeJobId) qc.setQueryData(['admin', 'import-job', activeJobId], data);
       qc.invalidateQueries({ queryKey: ['admin', 'import-job', activeJobId] });
       qc.invalidateQueries({ queryKey: ['admin', 'import-jobs'] });
+      toast.success('Import canceled');
     },
   });
 
@@ -95,20 +137,41 @@ export function BulkImportPage() {
   // only `['hats']` and `['cases']`, which left the case you had just filled
   // showing its old contents for the 30s staleTime. Highest-volume path in the
   // app, so the worst place to hand-roll the subset.
+  //
+  // The "finished" toast only fires on a transition this page WATCHED — the
+  // same job going from running to done — so opening an old finished job from
+  // Recent imports does not announce it as news.
+  const seen = useRef<{ id: number | null; status?: string }>({ id: null });
+  // The counts are read at the moment the status flips; the effect is about
+  // the flip, not about every poll, so they come through a ref.
+  const latestJob = useRef(job.data);
+  latestJob.current = job.data;
+  const status = job.data?.status;
+  const jobId = job.data?.id ?? null;
   useEffect(() => {
-    if (job.data?.status === 'done') invalidateHatViews(qc);
-  }, [job.data?.status, qc]);
+    const prev = seen.current;
+    seen.current = { id: jobId, status };
+    if (status !== 'done') return;
+    invalidateHatViews(qc);
+    const finished = latestJob.current;
+    if (prev.id === jobId && (prev.status === 'running' || prev.status === 'queued') && finished) {
+      toast.success(`Import finished — ${finished.done} of ${finished.total} added`);
+    }
+  }, [status, jobId, qc, toast]);
 
-  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
-    const picked = Array.from(e.target.files ?? []);
+  function addFiles(picked: File[]) {
     // Keyed on what identifies a file rather than its position: removing row
     // 3 of 10 with index keys re-labels every row beneath it. The same key
     // also dedupes a file picked twice.
     setFiles(prev => {
-      const seen = new Set(prev.map(fileKey));
-      const fresh = picked.filter(f => !seen.has(fileKey(f)) && seen.add(fileKey(f)));
+      const seenKeys = new Set(prev.map(fileKey));
+      const fresh = picked.filter(f => !seenKeys.has(fileKey(f)) && seenKeys.add(fileKey(f)));
       return [...prev, ...fresh].slice(0, MAX_FILES);
     });
+  }
+
+  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    addFiles(Array.from(e.target.files ?? []));
     e.target.value = ''; // allow re-picking same files
   }
 
@@ -116,16 +179,64 @@ export function BulkImportPage() {
     setFiles(prev => prev.filter(f => fileKey(f) !== key));
   }
 
-  if (styles.isLoading || sizes.isLoading || conditions.isLoading) {
-    return <LoadingSpinner />;
+  // One tap empties a list that may be a hundred photos long, and the button
+  // sits right beside "Add more" at the same weight — so it can be taken
+  // back. The cleared list returns in its old order, with anything added
+  // since kept after it (deduped the same way).
+  function clearFiles() {
+    const cleared = files;
+    setFiles([]);
+    toast.info(`${cleared.length} ${cleared.length === 1 ? 'photo' : 'photos'} cleared`, {
+      action: {
+        label: 'Undo',
+        onClick: () => setFiles(prev => {
+          const restored = new Set(cleared.map(fileKey));
+          return [...cleared, ...prev.filter(f => !restored.has(fileKey(f)))].slice(0, MAX_FILES);
+        }),
+      },
+    });
   }
+
+  async function confirmCancel(id: number) {
+    const ok = await confirm({
+      title: 'Cancel this import?',
+      body: 'Photos still waiting are dropped. The one being processed finishes, and hats already imported stay.',
+      confirmLabel: 'Cancel import',
+      cancelLabel: 'Keep going',
+      tone: 'danger',
+    });
+    if (ok) cancelMut.mutate(id);
+  }
+
+  // Drag-and-drop a folder's worth of photos from Finder or Files onto the
+  // Photos card — the same list the picker fills, deduped the same way.
+  const dropHandlers = {
+    onDragOver: (e: React.DragEvent) => {
+      if (!Array.from(e.dataTransfer?.types ?? []).includes('Files')) return;
+      e.preventDefault();
+      setDragging(true);
+    },
+    onDragLeave: (e: React.DragEvent) => {
+      if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
+    },
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault();
+      setDragging(false);
+      addFiles(Array.from(e.dataTransfer.files).filter(isImage));
+    },
+  };
+
+  const optionsLoading = styles.isLoading || sizes.isLoading || conditions.isLoading;
+  const jobData = activeJobId != null ? job.data : undefined;
+  const processed = jobData ? jobData.done + jobData.errors + jobData.skipped : 0;
+  const pct = jobData ? Math.round((processed / Math.max(1, jobData.total)) * 100) : 0;
 
   return (
     <>
-      <div className="d-flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
-        <h1>Bulk Import</h1>
-        <Link to="/hats" className="btn btn-outline-secondary btn-sm">← Hats</Link>
-      </div>
+      <PageHeader
+        title="Bulk import"
+        actions={<Link to="/hats" className="btn btn-outline-secondary btn-sm">← Hats</Link>}
+      />
 
       {/* The option lists feed the defaults form below; a failed fetch used
           to render three empty selects with no explanation. */}
@@ -136,50 +247,55 @@ export function BulkImportPage() {
       />
 
       {activeJobId != null && job.error && (
-        <div className="card mb-3">
-          <div className="card-body">
-            <div className="alert alert-danger">
-              Couldn't load import job #{activeJobId}. It may have been removed.
-            </div>
-            <button
-              type="button"
-              className="btn btn-primary w-100"
-              onClick={() => { setActiveJobId(null); navigate('/hats/import'); }}
-            >Start a new import</button>
+        // "Error", not "Not found": the fetch can fail for reasons other than
+        // a removed job, and the pill states only what is known.
+        <Panel title={`Import #${activeJobId}`} status={<StatusPill tone="error">Error</StatusPill>}>
+          <div className="alert alert-danger">
+            Couldn't load import job #{activeJobId}. It may have been removed.
           </div>
-        </div>
+          <button
+            type="button"
+            className="btn btn-primary w-100"
+            onClick={() => { setActiveJobId(null); navigate('/hats/import'); }}
+          >Start a new import</button>
+        </Panel>
+      )}
+
+      {activeJobId != null && job.isLoading && (
+        <Panel title={`Import #${activeJobId}`}>
+          <Skeleton lines={4} />
+        </Panel>
       )}
 
       {!activeJobId && (
         <>
-          <div className="card mb-3">
-            <div className="card-body">
-              <div className="card-title">Defaults applied to every hat</div>
-              <p className="text-secondary small mb-3">
-                You can edit each hat after Claude finishes analyzing it.
-              </p>
-              <div className="row g-2">
-                <div className="col-6 col-md-3">
-                  <label className="form-label">Style</label>
-                  <select aria-label="Default style" className="form-select" value={defaultStyle} onChange={e => setDefaultStyle(e.target.value)}>
+          <Panel
+            title="Defaults for every hat"
+            description="You can edit each hat after Claude finishes analyzing it."
+          >
+            {optionsLoading ? <Skeleton lines={2} /> : (
+              <div className="hr-import-defaults">
+                <div>
+                  <label className="form-label" htmlFor="import-style">Style</label>
+                  <select id="import-style" className="form-select" value={defaultStyle} onChange={e => setDefaultStyle(e.target.value)}>
                     {styles.data?.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
                   </select>
                 </div>
-                <div className="col-6 col-md-3">
-                  <label className="form-label">Size</label>
-                  <select aria-label="Default size" className="form-select" value={defaultSize} onChange={e => setDefaultSize(e.target.value)}>
+                <div>
+                  <label className="form-label" htmlFor="import-size">Size</label>
+                  <select id="import-size" className="form-select" value={defaultSize} onChange={e => setDefaultSize(e.target.value)}>
                     {sizes.data?.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
                   </select>
                 </div>
-                <div className="col-6 col-md-3">
-                  <label className="form-label">Condition</label>
-                  <select aria-label="Default condition" className="form-select" value={defaultCondition} onChange={e => setDefaultCondition(e.target.value)}>
+                <div>
+                  <label className="form-label" htmlFor="import-condition">Condition</label>
+                  <select id="import-condition" className="form-select" value={defaultCondition} onChange={e => setDefaultCondition(e.target.value)}>
                     {conditions.data?.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
                   </select>
                 </div>
-                <div className="col-6 col-md-3">
-                  <label className="form-label">Case</label>
-                  <select aria-label="Default case" className="form-select" value={defaultCaseId} onChange={e => setDefaultCaseId(e.target.value)}>
+                <div>
+                  <label className="form-label" htmlFor="import-case">Case</label>
+                  <select id="import-case" className="form-select" value={defaultCaseId} onChange={e => setDefaultCaseId(e.target.value)}>
                     <option value="">Unassigned</option>
                     {cases.data?.map(c => (
                       <option key={c.id} value={c.id}>{c.display_id} ({c.hat_count} hats)</option>
@@ -187,166 +303,207 @@ export function BulkImportPage() {
                   </select>
                 </div>
               </div>
-            </div>
-          </div>
+            )}
+          </Panel>
 
-          <div className="card mb-3">
-            <div className="card-body">
-              <div className="d-flex justify-content-between align-items-center mb-2">
-                <div className="card-title mb-0">Photos ({files.length} / {MAX_FILES})</div>
+          <div className={`hr-import-drop-zone${dragging ? ' is-dragging' : ''}`} {...dropHandlers}>
+            <Panel
+              title="Photos"
+              status={(
+                <StatusPill tone={files.length ? 'info' : 'off'}>
+                  {files.length} of {MAX_FILES}
+                </StatusPill>
+              )}
+              actions={files.length > 0 && (
+                <>
+                  <button
+                    type="button"
+                    className="btn btn-outline-secondary btn-sm"
+                    onClick={clearFiles}
+                  >
+                    Clear
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-outline-secondary btn-sm"
+                    onClick={() => fileInput.current?.click()}
+                    disabled={files.length >= MAX_FILES}
+                  >
+                    + Add more
+                  </button>
+                </>
+              )}
+              help={(
+                <p>
+                  Each photo goes through the same pipeline as a single upload
+                  (resize → background removal → Claude analysis), one at a time,
+                  in the background — you can leave this page once it starts.
+                </p>
+              )}
+              footer={(
                 <button
                   type="button"
-                  className="btn btn-outline-primary btn-sm"
-                  onClick={() => fileInput.current?.click()}
-                  disabled={files.length >= MAX_FILES}
+                  className="btn btn-primary hr-import-start"
+                  disabled={files.length === 0 || submit.isPending}
+                  onClick={() => submit.mutate()}
                 >
-                  + Add Photos
+                  {submit.isPending ? 'Queuing…' : `Start import (${files.length})`}
                 </button>
-                <input
-                  ref={fileInput}
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  hidden
-                  onChange={handleFileSelect}
-                />
-              </div>
+              )}
+            >
+              <input
+                ref={fileInput}
+                type="file"
+                accept="image/*"
+                multiple
+                hidden
+                aria-label="Choose photos to import"
+                onChange={handleFileSelect}
+              />
               {files.length === 0 ? (
-                <p className="text-muted small mb-0">
-                  Pick up to {MAX_FILES} photos. Each goes through the same pipeline as a single
-                  upload (resize → background removal → Claude analysis), one at a time, in the
-                  background.
-                </p>
+                // The empty list IS the picker: one big target instead of a
+                // sentence and a small button in the corner.
+                <button type="button" className="hr-photo-drop hr-import-empty" onClick={() => fileInput.current?.click()}>
+                  <span className="hr-photo-drop-title">Add photos</span>
+                  <span className="hr-photo-drop-hint">
+                    Pick up to {MAX_FILES} at once
+                    <span className="hr-drop-hint-fine"> — or drop them here</span>
+                  </span>
+                </button>
               ) : (
-                <div>
+                <ol className="hr-import-list">
                   {files.map((f, idx) => (
-                    <div key={fileKey(f)} className="hr-color-row" style={{ paddingTop: '0.5rem' }}>
-                      <div className="font-mono small text-muted" style={{ minWidth: 28 }}>{idx + 1}.</div>
-                      <div className="flex-grow-1" style={{ minWidth: 0 }}>
-                        <div className="small" style={{
-                          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                        }}>{f.name}</div>
-                        <div className="text-muted small font-mono" style={{ fontSize: '0.7rem' }}>
-                          {formatBytes(f.size)}
-                        </div>
+                    <li key={fileKey(f)} className="hr-import-row">
+                      <span className="hr-import-index">{idx + 1}.</span>
+                      <div className="hr-import-file">
+                        <div className="hr-import-name">{f.name}</div>
+                        <div className="hr-import-meta">{formatBytes(f.size)}</div>
                       </div>
                       <button
                         type="button"
-                        className="btn btn-outline-danger btn-sm"
+                        className="btn btn-outline-secondary btn-sm hr-import-remove"
                         aria-label={`Remove ${f.name}`}
                         onClick={() => removeFile(fileKey(f))}
                       >×</button>
-                    </div>
+                    </li>
                   ))}
-                </div>
+                </ol>
               )}
-            </div>
+              <ErrorNote of={submit} className="mt-3 mb-0" />
+            </Panel>
           </div>
-
-          <ErrorNote of={submit} className="mb-3" />
-
-          <button
-            type="button"
-            className="btn btn-primary w-100 btn-lg"
-            disabled={files.length === 0 || submit.isPending}
-            onClick={() => submit.mutate()}
-          >
-            {submit.isPending ? 'Queuing…' : `Start Import (${files.length})`}
-          </button>
         </>
       )}
 
-      {activeJobId && job.data && (
-        <div className="card mb-3">
-          <div className="card-body">
-            <div className="d-flex justify-content-between align-items-center mb-2">
-              <div className="card-title mb-0">Job #{job.data.id} · {job.data.status}</div>
-              {(job.data.status === 'queued' || job.data.status === 'running') && (
-                <button
-                  type="button"
-                  className="btn btn-outline-danger btn-sm"
-                  onClick={() => cancelMut.mutate(job.data!.id)}
-                  disabled={cancelMut.isPending}
-                >Cancel</button>
-              )}
-            </div>
-            <div className="text-secondary small mb-3">
-              {job.data.done} done · {job.data.errors} errors · {job.data.skipped} skipped · of {job.data.total}
-            </div>
-            <ErrorNote of={cancelMut} what="Could not cancel" className="mb-3" />
-            <div style={{
-              height: 8, background: 'rgba(0,0,0,0.3)', borderRadius: 4, overflow: 'hidden',
-              marginBottom: '1rem',
-            }}>
-              <div style={{
-                height: '100%',
-                width: `${Math.round(((job.data.done + job.data.errors + job.data.skipped) / Math.max(1, job.data.total)) * 100)}%`,
-                background: 'var(--gradient-pink-cyan)',
-                transition: 'width 0.3s ease',
-              }} />
-            </div>
-            {job.data.items.map(item => (
-              <div key={item.id} className="hr-color-row" style={{ paddingTop: '0.5rem' }}>
-                <div className="flex-grow-1" style={{ minWidth: 0 }}>
-                  <div className="small" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {item.filename}
-                  </div>
-                  {item.error && (
-                    <div className="text-danger small font-mono" style={{ fontSize: '0.7rem' }}>{item.error}</div>
-                  )}
-                </div>
-                <div className="text-end">
-                  <div className={
-                    item.status === 'done' ? 'badge bg-info' :
-                    item.status === 'error' ? 'badge bg-warning' :
-                    item.status === 'canceled' ? 'badge bg-secondary' :
-                    'badge bg-light'
-                  }>{item.status}</div>
-                  {item.hat_id && (
-                    <div className="small mt-1">
-                      <Link to={`/hats/${item.hat_id}`}>view hat →</Link>
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))}
-            {(job.data.status === 'done' || job.data.status === 'canceled') && (
+      {jobData && (
+        <Panel
+          title={`Import #${jobData.id}`}
+          status={(() => {
+            const p = pillFor(JOB_PILL, jobData.status);
+            return <StatusPill tone={p.tone}>{p.label}</StatusPill>;
+          })()}
+          actions={(jobData.status === 'queued' || jobData.status === 'running') && (
+            <button
+              type="button"
+              className="btn btn-outline-danger btn-sm"
+              onClick={() => { void confirmCancel(jobData.id); }}
+              disabled={cancelMut.isPending}
+            >{cancelMut.isPending ? 'Canceling…' : 'Cancel'}</button>
+          )}
+          footer={(jobData.status === 'done' || jobData.status === 'canceled') && (
+            <>
               <button
                 type="button"
-                className="btn btn-primary w-100 mt-3"
+                className="btn btn-primary"
                 onClick={() => { setActiveJobId(null); navigate('/hats'); }}
-              >{job.data.status === 'done' ? 'Done — go to Hats' : 'Canceled — go to Hats'}</button>
-            )}
+              >{jobData.status === 'done' ? 'Done — go to hats' : 'Canceled — go to hats'}</button>
+              <button
+                type="button"
+                className="btn btn-outline-secondary"
+                onClick={() => setActiveJobId(null)}
+              >Start another import</button>
+            </>
+          )}
+        >
+          <ErrorNote of={cancelMut} what="Could not cancel" className="mb-3" />
+          <div
+            className="hr-progress hr-import-progress"
+            role="progressbar"
+            aria-label="Import progress"
+            aria-valuemin={0}
+            aria-valuemax={jobData.total}
+            aria-valuenow={processed}
+          >
+            <div className="hr-progress-fill" style={{ width: `${pct}%` }} />
           </div>
-        </div>
+          <div className="hr-metric-grid hr-import-counts">
+            <div className="hr-metric">
+              <div className="hr-metric-label">Done</div>
+              <div className="hr-metric-value">{jobData.done}</div>
+            </div>
+            <div className="hr-metric">
+              <div className="hr-metric-label">Errors</div>
+              <div className="hr-metric-value">{jobData.errors}</div>
+            </div>
+            <div className="hr-metric">
+              <div className="hr-metric-label">Skipped</div>
+              <div className="hr-metric-value">{jobData.skipped}</div>
+            </div>
+            <div className="hr-metric">
+              <div className="hr-metric-label">Of</div>
+              <div className="hr-metric-value">{jobData.total}</div>
+            </div>
+          </div>
+          <ol className="hr-import-list">
+            {jobData.items.map(item => {
+              const p = pillFor(ITEM_PILL, item.status);
+              return (
+                <li key={item.id} className="hr-import-row">
+                  <div className="hr-import-file">
+                    <div className="hr-import-name">{item.filename}</div>
+                    {item.error && <div className="hr-import-error">{item.error}</div>}
+                  </div>
+                  <div className="hr-import-item-state">
+                    <StatusPill tone={p.tone}>{p.label}</StatusPill>
+                    {item.hat_id && (
+                      <Link to={`/hats/${item.hat_id}`} className="hr-import-view">View hat →</Link>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+        </Panel>
       )}
 
       {!activeJobId && (recentJobs.data?.length ?? 0) > 0 && (
-        <div className="card mb-3">
-          <div className="card-body">
-            <div className="card-title">Recent Imports</div>
-            {recentJobs.data?.map(j => (
-              <button
-                key={j.id}
-                type="button"
-                className="hr-color-row text-decoration-none"
-                style={{ paddingTop: '0.5rem', background: 'transparent', border: 0, width: '100%' }}
-                onClick={() => setActiveJobId(j.id)}
-              >
-                <div className="flex-grow-1 text-start">
-                  <div className="font-mono small">Job #{j.id}</div>
-                  <div className="text-muted small">
-                    {j.created_at ? new Date(j.created_at).toLocaleString() : '—'}
-                  </div>
-                </div>
-                <div className="text-end">
-                  <div className="badge bg-info">{j.status}</div>
-                  <div className="text-muted small font-mono">{j.done}/{j.total}</div>
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
+        <Panel title="Recent imports">
+          <ul className="hr-import-list">
+            {recentJobs.data?.map(j => {
+              const p = pillFor(JOB_PILL, j.status);
+              return (
+                <li key={j.id}>
+                  <button
+                    type="button"
+                    className="hr-import-row hr-import-job"
+                    onClick={() => setActiveJobId(j.id)}
+                  >
+                    <span className="hr-import-file">
+                      <span className="hr-import-name font-mono">Import #{j.id}</span>
+                      <span className="hr-import-meta">
+                        {j.created_at ? new Date(j.created_at).toLocaleString() : '—'}
+                      </span>
+                    </span>
+                    <span className="hr-import-item-state">
+                      <StatusPill tone={p.tone}>{p.label}</StatusPill>
+                      <span className="hr-import-meta font-mono">{j.done}/{j.total}</span>
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </Panel>
       )}
     </>
   );

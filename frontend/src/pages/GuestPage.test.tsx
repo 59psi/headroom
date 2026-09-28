@@ -124,5 +124,42 @@ describe('GuestPage', () => {
     renderWithProviders(<GuestPage />);
 
     expect(await screen.findByText(/isn't available/i)).toBeInTheDocument();
+    // …and still offers the way out.
+    expect(screen.getByRole('link', { name: 'Sign in' })).toHaveAttribute('href', '/login');
+  });
+
+  it('holds the grid shape on first load instead of blanking the page', () => {
+    mocked.getGuestCollection.mockReturnValue(new Promise(() => {}));
+    renderWithProviders(<GuestPage />);
+    expect(screen.getByText('Loading the collection…')).toBeInTheDocument();
+    // The search box is usable before the grid arrives.
+    expect(screen.getByLabelText('Search the collection')).toBeInTheDocument();
+  });
+
+  it('keeps the last result on screen, marked stale, while a new search runs', async () => {
+    // Each search is a new query key; without placeholder data every submit
+    // blanked the grid to a spinner and back.
+    const user = userEvent.setup();
+    mocked.getGuestCollection.mockResolvedValueOnce(collection(['Coronado', 'Odysea']));
+    renderWithProviders(<GuestPage />);
+    await screen.findByText('Melin Coronado');
+
+    let land!: (v: ReturnType<typeof collection>) => void;
+    mocked.getGuestCollection.mockReturnValueOnce(new Promise(r => { land = r; }));
+    await user.type(screen.getByLabelText('Search the collection'), 'hydro');
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+
+    // Still there, dimmed, and the count line says what is happening.
+    expect(screen.getByText('Melin Coronado')).toBeInTheDocument();
+    expect(await screen.findByText('Searching…')).toBeInTheDocument();
+    expect(document.querySelector('.hr-results')).toHaveClass('is-stale');
+    expect(screen.queryByText('Loading the collection…')).toBeNull();
+
+    land(collection(['Hydro']));
+
+    expect(await screen.findByText('Melin Hydro')).toBeInTheDocument();
+    expect(screen.queryByText('Melin Coronado')).toBeNull();
+    expect(screen.getByText(/1 hat matching “hydro”/)).toBeInTheDocument();
+    expect(document.querySelector('.hr-results')).not.toHaveClass('is-stale');
   });
 });

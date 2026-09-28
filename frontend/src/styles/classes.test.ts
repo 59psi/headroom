@@ -28,13 +28,24 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-/** Class selectors defined across every stylesheet under src/. */
+/** Every stylesheet under src/, at any depth. */
+function stylesheets(dir: string = SRC, out: string[] = []): string[] {
+  for (const name of readdirSync(dir)) {
+    const full = join(dir, name);
+    if (statSync(full).isDirectory()) stylesheets(full, out);
+    else if (name.endsWith('.css')) out.push(full);
+  }
+  return out;
+}
+
+/** Class selectors defined across every stylesheet under src/.
+ *
+ *  Walked, not listed. This read `styles/*.css` plus one named component
+ *  sheet, so when the per-area sheets arrived in `styles/areas/` every class
+ *  defined there — a few hundred of them — reported as missing, and a census
+ *  that fails on every run is a census nobody reads. */
 function definedClasses(): Set<string> {
-  const css = readdirSync(join(SRC, 'styles'))
-    .filter((f: string) => f.endsWith('.css'))
-    .map((f: string) => readFileSync(join(SRC, 'styles', f), 'utf8'))
-    .join('\n')
-    + readFileSync(join(SRC, 'components/layout/BottomNav.css'), 'utf8');
+  const css = stylesheets().map(f => readFileSync(f, 'utf8')).join('\n');
   const defined = new Set<string>();
   for (const m of css.matchAll(/\.(-?[_a-zA-Z][_a-zA-Z0-9-]*)/g)) defined.add(m[1]);
   return defined;
@@ -95,5 +106,16 @@ describe('stylesheet parity', () => {
       if (!ok) missing.push(`${cls}  (${[...new Set(files)].slice(0, 3).join(', ')})`);
     }
     expect(missing, `classes used in TSX with no rule in any stylesheet:\n  ${missing.join('\n  ')}`).toEqual([]);
+  });
+
+  it('only counts stylesheets something actually imports', () => {
+    // The census above treats every .css file under src/ as live. A sheet no
+    // module imports never reaches the page, so its rules would satisfy the
+    // census while styling nothing — the exact failure it exists to catch.
+    const sources = walk(SRC).map(f => readFileSync(f, 'utf8')).join('\n');
+    const orphans = stylesheets()
+      .map(f => f.slice(f.lastIndexOf('/') + 1))
+      .filter(name => !sources.includes(`/${name}'`) && !sources.includes(`./${name}'`));
+    expect(orphans, 'stylesheets under src/ that no module imports').toEqual([]);
   });
 });

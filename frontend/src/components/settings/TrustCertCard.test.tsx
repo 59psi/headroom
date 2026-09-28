@@ -7,9 +7,11 @@
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../../test/utils';
 import { TrustCertCard } from './TrustCertCard';
 import * as settingsApi from '../../api/settings';
+import * as clipboard from '../../lib/clipboard';
 import type { TlsStatus } from '../../types';
 
 vi.mock('../../api/settings', async (importOriginal) => {
@@ -19,8 +21,10 @@ vi.mock('../../api/settings', async (importOriginal) => {
     getTlsStatus: vi.fn(), caCertificateAvailable: vi.fn()
   };
 });
+vi.mock('../../lib/clipboard', () => ({ copyText: vi.fn() }));
 
 const tlsApi = vi.mocked(settingsApi);
+const copyText = vi.mocked(clipboard.copyText);
 
 function tls(over: Partial<TlsStatus> = {}): TlsStatus {
   return {
@@ -115,8 +119,12 @@ describe('TrustCertCard', () => {
     renderWithProviders(<TrustCertCard />);
     await screen.findByText('Trust this device');
 
-    expect(screen.queryByText(/EXPIRED/)).not.toBeInTheDocument();
-    expect(screen.getByText(/good until/i)).toBeInTheDocument();
+    // Case-insensitive now that the alarm is sentence case ("has expired"):
+    // the pill and the alert box carry the emphasis the capitals used to.
+    expect(await screen.findByText(/good until/i)).toBeInTheDocument();
+    expect(screen.queryByText(/has expired/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/expires in/i)).not.toBeInTheDocument();
+    expect(screen.getByText('Valid')).toBeInTheDocument();
   });
 
   it('gives the Mac command that avoids the iCloud-keychain trap', async () => {
@@ -198,5 +206,136 @@ describe('TrustCertCard', () => {
 
     await screen.findByText(/Install the certificate/i);
     expect(screen.queryByText(/certificate authority has changed/i)).toBeNull();
+  });
+});
+
+describe('TrustCertCard — the header verdict', () => {
+  it('ranks a replaced authority above an expiry, as the alerts do', async () => {
+    // Both are true here; the pill names the one with the bigger blast
+    // radius (every device locked out) rather than the one listed first.
+    tlsApi.caCertificateAvailable.mockResolvedValue(true);
+    tlsApi.getTlsStatus.mockResolvedValue(tls({
+      ca_changed: true, ca_sha256: 'NEW:FF:EE', ca_expected_sha256: 'OLD:AA:BB',
+      expired: true, needs_attention: true, days_remaining: -3,
+    }));
+
+    renderWithProviders(<TrustCertCard />);
+
+    expect(await screen.findByText('CA changed')).toBeInTheDocument();
+    expect(screen.queryByText('Expired')).not.toBeInTheDocument();
+  });
+
+  it('says Expired for an expired leaf', async () => {
+    tlsApi.caCertificateAvailable.mockResolvedValue(true);
+    tlsApi.getTlsStatus.mockResolvedValue(
+      tls({ expired: true, needs_attention: true, days_remaining: -37.6 }),
+    );
+
+    renderWithProviders(<TrustCertCard />);
+
+    expect(await screen.findByText('Expired')).toBeInTheDocument();
+  });
+
+  it('counts the days left once renewal has stopped', async () => {
+    tlsApi.caCertificateAvailable.mockResolvedValue(true);
+    tlsApi.getTlsStatus.mockResolvedValue(
+      tls({ needs_attention: true, days_remaining: 11.4 }),
+    );
+
+    renderWithProviders(<TrustCertCard />);
+
+    expect(await screen.findByText('11 days left')).toBeInTheDocument();
+  });
+
+  it('claims nothing while the served certificate is still being read', async () => {
+    // A "Valid" pill before the answer arrives would be the exact reassurance
+    // the 37-day incident was made of.
+    tlsApi.caCertificateAvailable.mockResolvedValue(true);
+    tlsApi.getTlsStatus.mockReturnValue(new Promise(() => {}));
+
+    renderWithProviders(<TrustCertCard />);
+
+    await screen.findByText('Trust this device');
+    expect(screen.getByRole('status')).toHaveTextContent('Loading…');
+    expect(screen.queryByText('Valid')).not.toBeInTheDocument();
+  });
+
+  it('does not stay silent when the server could not read its own certificate', async () => {
+    tlsApi.caCertificateAvailable.mockResolvedValue(true);
+    tlsApi.getTlsStatus.mockResolvedValue(tls({
+      not_after: null, days_remaining: null, hostname_ok: null,
+      error: 'Connection refused',
+    }));
+
+    renderWithProviders(<TrustCertCard />);
+
+    expect(await screen.findByText('Can’t check')).toBeInTheDocument();
+    expect(screen.getByText(/Connection refused/)).toBeInTheDocument();
+    expect(screen.queryByText('Valid')).not.toBeInTheDocument();
+  });
+});
+
+describe('TrustCertCard — copying', () => {
+  it('copies the fingerprint exactly, and says so in place', async () => {
+    const user = userEvent.setup();
+    copyText.mockResolvedValue(true);
+    tlsApi.caCertificateAvailable.mockResolvedValue(true);
+
+    renderWithProviders(<TrustCertCard />);
+    await user.click(await screen.findByRole('button', { name: 'Copy the fingerprint' }));
+
+    expect(copyText).toHaveBeenCalledWith('CB:08:88:5B:FD:B7:F7:DD');
+    expect(screen.getByRole('button', { name: 'Copied the fingerprint' })).toHaveTextContent('Copied');
+  });
+
+  it('copies the whole Mac command, not the sentence around it', async () => {
+    const user = userEvent.setup();
+    copyText.mockResolvedValue(true);
+    tlsApi.caCertificateAvailable.mockResolvedValue(true);
+
+    renderWithProviders(<TrustCertCard />);
+    await user.click(await screen.findByRole('button', { name: 'Copy the Mac trust command' }));
+
+    expect(copyText).toHaveBeenCalledWith(
+      'sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain headroom-ca.crt',
+    );
+  });
+
+  it('copies an intermediate fix that names the files, with no glob to fail', async () => {
+    // `docker exec` runs `rm` with no shell, so `intermediate.*` is only ever
+    // expanded on the HOST, where it matches nothing: zsh aborted the chain,
+    // bash passed `rm -f` a literal and restarted Caddy onto the same short
+    // intermediate. The copied text is the fix, so it has to work verbatim.
+    const user = userEvent.setup();
+    copyText.mockResolvedValue(true);
+    tlsApi.caCertificateAvailable.mockResolvedValue(true);
+    tlsApi.getTlsStatus.mockResolvedValue(tls({
+      needs_attention: true, days_remaining: 4.2,
+      clamped_by_issuer: true, issuer_not_after: '2026-08-30T05:31:42Z',
+    }));
+
+    renderWithProviders(<TrustCertCard />);
+    await user.click(await screen.findByRole('button', { name: 'Copy the intermediate-replacement command' }));
+
+    const copied = copyText.mock.calls[0][0];
+    expect(copied).not.toContain('*');
+    expect(copied).toContain('/data/caddy/pki/authorities/local/intermediate.crt');
+    expect(copied).toContain('/data/caddy/pki/authorities/local/intermediate.key');
+    expect(copied).toContain('rm -rf /data/caddy/certificates/local');
+    expect(copied).toMatch(/&& docker restart headroom-caddy$/);
+    // The root is what every device trusts; the fix must never touch it.
+    expect(copied).not.toMatch(/root\./);
+  });
+
+  it('tells you when the browser refused to copy', async () => {
+    const user = userEvent.setup();
+    copyText.mockResolvedValue(false);
+    tlsApi.caCertificateAvailable.mockResolvedValue(true);
+
+    renderWithProviders(<TrustCertCard />);
+    await user.click(await screen.findByRole('button', { name: 'Copy the fingerprint' }));
+
+    expect(await screen.findByText(/Couldn’t copy the fingerprint/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Copied the fingerprint' })).not.toBeInTheDocument();
   });
 });

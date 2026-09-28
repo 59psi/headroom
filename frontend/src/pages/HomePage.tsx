@@ -5,8 +5,10 @@ import { listCases } from '../api/cases';
 import { listAllHats } from '../api/hats';
 import { listRooms } from '../api/rooms';
 import { getLogo } from '../api/settings';
-import { LoadingSpinner } from '../components/common/LoadingSpinner';
-import { StatTiles } from '../components/charts/Charts';
+import { logoSrc } from '../lib/photo';
+import { useHatLabels } from '../lib/labels';
+import { StatTiles, StatTilesSkeleton } from '../components/charts/Charts';
+import { Panel } from '../components/ui/Panel';
 import { money, valueCases, valueCollection } from '../lib/valuation';
 import { useMediaQuery } from '../lib/useMediaQuery';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -28,6 +30,7 @@ export function HomePage() {
   const hats = useQuery({ queryKey: ['hats'], queryFn: listAllHats });
   const rooms = useQuery({ queryKey: ['rooms'], queryFn: listRooms });
   const logo = useQuery({ queryKey: ['settings', 'logo'], queryFn: getLogo });
+  const labels = useHatLabels();
   const [activeIndex, setActiveIndex] = useState(0);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const touchStartX = useRef<number | null>(null);
@@ -121,37 +124,74 @@ export function HomePage() {
   // Cases count too — dozens at $49 each, previously absent from every total.
   const caseValue = useMemo(() => valueCases(cases.data ?? []), [cases.data]);
 
+  // The hero is not data: it renders the moment the page does, whatever the
+  // queries below are doing, so the first paint is the app rather than a
+  // spinner in an empty frame. The two ways into the collection sit in it,
+  // on the first screen of a phone — they used to be at the very bottom,
+  // under the carousel.
+  const hero = (
+    <div className="hr-hero hr-cp-hero mb-3">
+      {logoSrc(logo.data) && (
+        <img src={logoSrc(logo.data)!} alt="" className="hr-logo" />
+      )}
+      <h1>Headroom</h1>
+      <p>The Outrun-grade vault for your hat collection.</p>
+      <div className="hr-cp-hero-actions">
+        <Link to="/hats/new" className="btn btn-primary">Add hat</Link>
+        <Link to="/cases/new" className="btn btn-outline-secondary">Add case</Link>
+      </div>
+    </div>
+  );
+
   // A failed fetch must not render as an empty collection. `?? []` turns a
   // 500 or a dropped connection into "$0 across 0 hats", which is a confident
   // wrong answer — the exact thing `valueHat` returns `null` rather than 0 to
-  // avoid. Errors are shown, not averaged in.
+  // avoid. Errors are shown, not averaged in. "Try again" refetches in place
+  // rather than asking for a reload of the whole app.
   if (cases.isError || hats.isError) {
+    const retrying = cases.isFetching || hats.isFetching;
     return (
-      <div className="alert alert-danger" role="alert">
-        Couldn&rsquo;t load your collection. Reload to try again.
-      </div>
+      <>
+        {hero}
+        <div className="alert alert-danger hr-cp-error" role="alert">
+          <span>Couldn&rsquo;t load your collection.</span>
+          <button
+            type="button"
+            className="btn btn-sm btn-outline-secondary"
+            onClick={() => { void cases.refetch(); void hats.refetch(); }}
+            disabled={retrying}
+          >{retrying ? 'Retrying…' : 'Try again'}</button>
+        </div>
+      </>
     );
   }
-  if (cases.isLoading || hats.isLoading) return <LoadingSpinner />;
+  if (cases.isLoading || hats.isLoading) {
+    return (
+      <>
+        {hero}
+        <div className="hr-stat-rail hr-cp-rail-skel mb-3" aria-hidden="true">
+          <span className="hr-skeleton" />
+        </div>
+        <Panel title="Valuation overview" featured>
+          <StatTilesSkeleton count={4} label="Loading your collection…" />
+        </Panel>
+      </>
+    );
+  }
 
   const totalHats = hats.data?.length ?? 0;
   const totalCases = cases.data?.length ?? 0;
-  const totalRooms = rooms.data?.length ?? 0;
   // `rooms` and `logo` are not in the hard error guard above (the page is
   // useful without them), but a failed rooms load showed "0 Rooms" as if the
-  // collection had none.
+  // collection had none — so an unknown count is a dash, never a zero, and
+  // the ErrorNote under the rail says why.
+  const totalRooms = rooms.data ? String(rooms.data.length) : '–';
   const archiveCases = cases.data?.filter(c => c.case_type === 'archive').length ?? 0;
   const dailyCases = cases.data?.filter(c => c.case_type === 'daily_wear').length ?? 0;
 
   return (
     <>
-      <div className="hr-hero mb-3">
-        {logo.data?.logo_path && (
-          <img src={`/uploads/${logo.data.logo_path}`} alt="" className="hr-logo" />
-        )}
-        <h1>Headroom</h1>
-        <p>The Outrun-grade vault for your hat collection.</p>
-      </div>
+      {hero}
 
       {/* Every count here is a question with an answer elsewhere in the app
           ("35 cases" → show me them), so every count is the link to it.
@@ -180,83 +220,79 @@ export function HomePage() {
         </div>
       </nav>
 
-      <div className="card hr-feature mb-3">
-        <div className="card-body">
-          <div className="d-flex justify-content-between align-items-start gap-2 flex-wrap mb-3">
-            <div style={{ minWidth: 0 }}>
-              <div className="card-title mb-1">Valuation Overview</div>
-              <div className="text-secondary small">
-                {valuation.valued > 0
-                  ? <>Estimated sale value of {valuation.valued} of {valuation.total} hats.</>
-                  : <>No priced hats yet — upload a photo with Claude configured, or enter prices by hand.</>
-                }
-              </div>
-            </div>
-            <Link to="/valuation" className="btn btn-outline-primary btn-sm">
-              Full breakdown →
-            </Link>
-          </div>
-
-          {valuation.valued > 0 && (
-            <>
-              <StatTiles tiles={[
-                {
-                  label: 'Paid',
-                  value: money(valuation.spentTotal),
-                  tone: 'purple',
-                  sub: valuation.costUnknown > 0
-                    ? `${valuation.spentCount} of ${valuation.total} known`
-                    : 'all hats',
-                },
-                {
-                  label: 'Retail value',
-                  value: money(valuation.retailTotal),
-                  tone: 'cyan',
-                  sub: `${valuation.retailCount} appraised`,
-                },
-                {
-                  label: 'Est. sale value',
-                  value: money(valuation.marketTotal),
-                  tone: 'pink',
-                  sub: valuation.retentionPct != null
-                    ? `${valuation.retentionPct}% of retail`
-                    : undefined,
-                },
-                {
-                  label: 'Cases',
-                  value: money(caseValue.retailTotal),
-                  tone: 'cyan',
-                  sub: `${caseValue.count} at replacement cost`,
-                },
-                {
-                  // The question this page gets asked is "what's it all
-                  // worth", and a Cases tile beside a hats-only total answers
-                  // it only if you do the addition yourself.
-                  label: 'Everything',
-                  value: money(valuation.marketTotal + caseValue.retailTotal),
-                  tone: 'pink',
-                  sub: 'hats + cases',
-                },
-                {
-                  label: 'vs. paid',
-                  value: valuation.unrealizedGain != null
-                    ? `${valuation.unrealizedGain >= 0 ? '+' : '−'}${money(Math.abs(valuation.unrealizedGain))}`
-                    : '—',
-                  tone: valuation.unrealizedGain != null && valuation.unrealizedGain >= 0 ? 'cyan' : 'muted',
-                  sub: valuation.unrealizedGain != null
-                    ? 'where cost is known'
-                    : 'no purchase prices yet',
-                },
-              ]} />
-              <p className="text-muted small mb-0 mt-3" style={{ fontSize: '0.72rem', lineHeight: 1.5 }}>
-                Sale value is an estimate from live asking prices matched to
-                each hat&rsquo;s own condition and size — not a quote.{' '}
-                <Link to="/valuation">See how it&rsquo;s worked out</Link>.
-              </p>
-            </>
-          )}
-        </div>
-      </div>
+      <Panel
+        title="Valuation overview"
+        featured
+        description={
+          valuation.valued > 0
+            ? <>Estimated sale value of {valuation.valued} of {valuation.total} hats.</>
+            : <>No priced hats yet — upload a photo with Claude configured, or enter prices by hand.</>
+        }
+        actions={
+          <Link to="/valuation" className="btn btn-outline-secondary btn-sm">
+            Full breakdown →
+          </Link>
+        }
+      >
+        {valuation.valued > 0 && (
+          <>
+            <StatTiles tiles={[
+              {
+                label: 'Paid',
+                value: money(valuation.spentTotal),
+                tone: 'purple',
+                sub: valuation.costUnknown > 0
+                  ? `${valuation.spentCount} of ${valuation.total} known`
+                  : 'all hats',
+              },
+              {
+                label: 'Retail value',
+                value: money(valuation.retailTotal),
+                tone: 'cyan',
+                sub: `${valuation.retailCount} appraised`,
+              },
+              {
+                label: 'Est. sale value',
+                value: money(valuation.marketTotal),
+                tone: 'pink',
+                sub: valuation.retentionPct != null
+                  ? `${valuation.retentionPct}% of retail`
+                  : undefined,
+              },
+              {
+                label: 'Cases',
+                value: money(caseValue.retailTotal),
+                tone: 'cyan',
+                sub: `${caseValue.count} at replacement cost`,
+              },
+              {
+                // The question this page gets asked is "what's it all
+                // worth", and a Cases tile beside a hats-only total answers
+                // it only if you do the addition yourself.
+                label: 'Everything',
+                value: money(valuation.marketTotal + caseValue.retailTotal),
+                tone: 'pink',
+                sub: 'hats + cases',
+              },
+              {
+                label: 'vs. paid',
+                value: valuation.unrealizedGain != null
+                  ? `${valuation.unrealizedGain >= 0 ? '+' : '−'}${money(Math.abs(valuation.unrealizedGain))}`
+                  : '—',
+                tone: valuation.unrealizedGain != null && valuation.unrealizedGain >= 0 ? 'cyan' : 'muted',
+                sub: valuation.unrealizedGain != null
+                  ? 'where cost is known'
+                  : 'no purchase prices yet',
+              },
+            ]} />
+            <p className="hr-cp-note">
+              Sale value is an estimate from live asking prices matched to
+              each hat&rsquo;s own condition and size — not a quote.{' '}
+              <Link to="/valuation">See how it&rsquo;s worked out</Link>.
+            </p>
+          </>
+        )}
+      </Panel>
 
       {visibleHats.length > 0 && (
         <div
@@ -275,9 +311,11 @@ export function HomePage() {
                   src={`/uploads/${hat.photo_path}`}
                   alt={hat.display_id || `Hat #${hat.id}`}
                 />
+                {/* A caption, not a heading: an <h6> per slide put a
+                    sixth-level heading straight under the page's h1. */}
                 <div className="carousel-caption">
-                  <h6>{hat.display_id || `Hat #${hat.id}`}</h6>
-                  <small>{hat.style.replace(/_/g, ' ')}</small>
+                  <span className="hr-cp-caption-id">{hat.display_id || `Hat #${hat.id}`}</span>
+                  <small>{labels.style(hat.style)}</small>
                 </div>
               </Link>
             ))}
@@ -304,11 +342,6 @@ export function HomePage() {
           )}
         </div>
       )}
-
-      <div className="d-flex gap-2">
-        <Link to="/hats/new" className="btn btn-primary flex-fill">+ Add Hat</Link>
-        <Link to="/cases/new" className="btn btn-outline-primary flex-fill">+ Add Case</Link>
-      </div>
     </>
   );
 }

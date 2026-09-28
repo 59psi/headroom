@@ -1,0 +1,395 @@
+/* Area styles: settings-device. Owned by the components in this area; shared
+   primitives live in ui.css, global elements in app.css.
+
+   The Device tab's four cards: Trust this device, Account, LAN discovery and
+   Site logo. Everything here is prefixed by the card it belongs to
+   (`hr-cert-`, `hr-acct-`, `hr-mdns-`, `hr-sitelogo-`), or `hr-dev-` for the
+   few pieces the cards share, so nothing leaks into another area. */
+
+/* ----- Shared: copyable values ---------------------------------------- */
+
+/* The Copy button beside a value. Fixed width so "Copy" → "Copied" does not
+   shove the value it sits beside. */
+/* A value you are likely to copy — a fingerprint, a token — in an inset
+   well, with its button attached. The value breaks anywhere: a SHA-256 in
+   colon-hex is one 95-character token with no break a phone can use. */
+.hr-dev-value-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.hr-dev-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0.45rem 0.7rem;
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--surface-inset);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-xs);
+  overflow-wrap: anywhere;
+}
+
+/* A shell command: an inset terminal line with a neon prompt. The `$` is
+   drawn, not typed, so neither the Copy button nor a hand selection picks it
+   up with the command. */
+.hr-dev-cmd {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin: 0.5rem 0 0.65rem;
+  padding: 0.4rem 0.4rem 0.4rem 0.75rem;
+  background: rgba(6, 0, 17, 0.7);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-xs);
+}
+
+.hr-dev-cmd > code {
+  flex: 1 1 auto;
+  min-width: 0;
+  align-self: center;
+  padding: 0.2rem 0;
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  line-height: 1.55;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.hr-dev-cmd > code::before {
+  content: '$ ';
+  color: var(--neon-pink);
+  text-shadow: 0 0 6px rgba(255, 46, 182, 0.6);
+  user-select: none;
+}
+
+.hr-dev-cmd:last-child { margin-bottom: 0; }
+
+/* ----- Trust this device ---------------------------------------------- */
+
+.hr-cert-alert {
+  margin-bottom: 0.9rem;
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+}
+
+/* The one-line verdict, on its own line above the explanation. */
+.hr-cert-alert-head {
+  display: block;
+  margin-bottom: 0.25rem;
+  font-size: var(--fs-md);
+  font-weight: 650;
+}
+
+.hr-cert-alert code { color: inherit; overflow-wrap: anywhere; }
+
+/* Inside a tinted alert the command well keeps its own dark ground, so the
+   command reads as something to run rather than more of the sentence. */
+.hr-cert-alert .hr-dev-cmd { margin: 0.6rem 0 0.1rem; }
+
+/* The two fingerprints as a labeled pair, so "trust" and "serving" line up
+   and differ only where the roots differ. */
+.hr-cert-fp-pair {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.2rem 0.75rem;
+  margin: 0.6rem 0;
+  font-size: var(--fs-xs);
+}
+
+.hr-cert-fp-pair dt { font-weight: 600; opacity: 0.85; }
+.hr-cert-fp-pair dd { margin: 0; }
+.hr-cert-fp-pair code { font-family: var(--font-mono); font-size: 0.7rem; }
+
+.hr-cert-install {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 1rem;
+}
+
+.hr-cert-serving {
+  flex: 1 1 14rem;
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.hr-cert-steps {
+  display: grid;
+  gap: 1rem 1.5rem;
+  margin-top: 1.25rem;
+  padding-top: 1.1rem;
+  border-top: 1px solid var(--border-soft);
+}
+
+@media (min-width: 768px) {
+  .hr-cert-steps { grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); }
+}
+
+.hr-cert-step { min-width: 0; }
+
+.hr-cert-step-list {
+  margin: 0;
+  padding-left: 1.3rem;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.hr-cert-step-list li + li { margin-top: 0.35rem; }
+
+.hr-cert-step-list li::marker {
+  color: var(--neon-cyan);
+  font-weight: 700;
+}
+
+.hr-cert-step-list em,
+.hr-cert-step-text em { color: var(--text); font-style: normal; font-weight: 550; }
+
+.hr-cert-step-text {
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.hr-cert-fp {
+  margin-top: 1.1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-soft);
+}
+
+/* ----- Account -------------------------------------------------------- */
+
+/* Who is signed in, first and at a glance: the one fact people open this
+   card to check, which used to be a gray line under the title. */
+.hr-acct-id {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.65rem 0.65rem 0.65rem 0.75rem;
+  background: var(--surface-inset);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+}
+
+.hr-acct-avatar {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--gradient-sunset);
+  box-shadow: 0 0 14px rgba(255, 46, 182, 0.4);
+  color: var(--text-on-neon);
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  text-transform: uppercase;
+}
+
+.hr-acct-who {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.hr-acct-who strong { color: var(--text); font-weight: 600; }
+
+.hr-acct-rows { margin-top: 1.25rem; }
+
+.hr-acct-pw {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.hr-acct-pw > .btn { justify-self: start; }
+
+.hr-acct-keys {
+  list-style: none;
+  margin: 0 0 0.6rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.hr-acct-key {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.45rem 0.45rem 0.45rem 0.75rem;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-xs);
+}
+
+.hr-acct-key-icon {
+  flex: none;
+  width: 1.15rem;
+  height: 1.15rem;
+  color: var(--neon-cyan);
+  filter: drop-shadow(0 0 4px rgba(0, 240, 255, 0.55));
+}
+
+.hr-acct-key-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.3;
+}
+
+.hr-acct-key-name { font-weight: 600; overflow-wrap: anywhere; }
+
+.hr-acct-key-date { font-size: var(--fs-xs); color: var(--text-muted); }
+
+.hr-acct-empty {
+  margin: 0 0 0.6rem;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.hr-acct-token {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.hr-acct-token-value {
+  flex: 1 1 12rem;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 0.35rem 0.7rem;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  letter-spacing: 0.02em;
+  color: var(--text);
+  background: var(--surface-inset);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-xs);
+  overflow-wrap: anywhere;
+}
+
+.hr-acct-token-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.hr-acct-token-form {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-xs);
+}
+
+.hr-acct-token-note {
+  margin: 0 0 0.5rem;
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
+
+/* Field, submit, cancel on one line where there is room for all three; on a
+   phone the field takes its own line. At 390px the card leaves ~290px in
+   here and the two buttons take ~200 of it, which squeezed the one box you
+   type into down to ~90px — "Current p…" of its own placeholder, at the
+   16px a touch screen gets. */
+@media (max-width: 575.98px) {
+  .hr-acct-token-form .hr-field-row { flex-wrap: wrap; }
+  .hr-acct-token-form .hr-field-row > .form-control { flex-basis: 100%; }
+}
+
+/* ----- LAN discovery (mDNS) ------------------------------------------- */
+
+.hr-mdns-name {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.hr-mdns-name > .hr-net-name { min-width: 0; }
+
+/* Label, value, copy. The empty third cell under a missing IPv6 keeps the
+   columns aligned rather than letting the "none on this host" note run into
+   the button column. */
+.hr-mdns-list {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.35rem 0.75rem;
+  align-items: center;
+}
+
+/* 0.6rem (app.css) was the smallest text on the tab; these are labels you
+   read, not decoration. */
+.hr-mdns-list .hr-net-label { font-size: var(--fs-2xs); }
+.hr-mdns-list .hr-net-value { font-size: 0.85rem; }
+
+/* ----- Site logo ------------------------------------------------------ */
+
+/* The logo on a faint grid — the synthwave floor, and the checkerboard's job
+   of showing where a transparent PNG is actually transparent. */
+.hr-sitelogo-stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 136px;
+  padding: 1.1rem;
+  border-radius: var(--radius-sm);
+  border: 1px dashed var(--border-bright);
+  background:
+    linear-gradient(rgba(0, 240, 255, 0.05) 1px, transparent 1px) 0 0 / 20px 20px,
+    linear-gradient(90deg, rgba(0, 240, 255, 0.05) 1px, transparent 1px) 0 0 / 20px 20px,
+    var(--surface-inset);
+  transition: border-color var(--dur) ease, box-shadow var(--dur) ease;
+}
+
+.hr-sitelogo-stage.has-logo { border-style: solid; border-color: var(--border); }
+
+.hr-sitelogo-stage.is-dragging {
+  border-style: solid;
+  border-color: var(--neon-cyan);
+  box-shadow: inset 0 0 0 1px var(--neon-cyan), 0 0 22px rgba(0, 240, 255, 0.25);
+}
+
+.hr-sitelogo-stage > .hr-skeleton-wrap { width: 100%; align-items: center; }
+
+.hr-sitelogo-img {
+  display: block;
+  max-width: 100%;
+  max-height: 96px;
+  object-fit: contain;
+  transition: opacity var(--dur) ease, filter var(--dur) ease;
+}
+
+.hr-sitelogo-stage.is-busy .hr-sitelogo-img {
+  opacity: 0.55;
+  filter: saturate(0.6);
+}
+
+.hr-sitelogo-empty {
+  margin: 0;
+  max-width: 34ch;
+  text-align: center;
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+}
+
+/* Only where there is something to drag with. */
+.hr-sitelogo-drophint { display: none; }
+
+@media (pointer: fine) {
+  .hr-sitelogo-drophint { display: inline; }
+}

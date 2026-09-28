@@ -194,7 +194,7 @@ export function CasePicker({
               className="hr-combobox-option hr-case-new"
               onMouseDown={e => { e.preventDefault(); pick(NEW_CASE_VALUE); }}
             >
-              + Create New Case…
+              + Create new case…
             </button>
           </li>
 
@@ -218,7 +218,7 @@ export function CasePicker({
 
           {groups.length === 0 && recent.length === 0 && (
             <li className="hr-case-empty">
-              {query ? <>No case matches “{query}”</> : 'No cases yet — “Create New Case” above makes one.'}
+              {query ? <>No case matches “{query}”</> : 'No cases yet — “Create new case” above makes one.'}
             </li>
           )}
       </AnchoredList>

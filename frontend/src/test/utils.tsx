@@ -2,6 +2,8 @@ import type { ReactElement, ReactNode } from 'react';
 import { render } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
+import { ToastProvider } from '../components/ui/Toast';
+import { DialogProvider } from '../components/ui/Dialogs';
 
 /**
  * Render with the providers the app supplies at its root.
@@ -23,7 +25,14 @@ export function renderWithProviders(
   function Wrapper({ children }: { children: ReactNode }) {
     return (
       <QueryClientProvider client={client}>
-        <MemoryRouter initialEntries={[options.route ?? '/']}>{children}</MemoryRouter>
+        {/* The app root's providers too, so a test sees the real in-app
+            confirm dialog and the real toasts rather than their bare-render
+            fallbacks (`window.confirm`, silence). */}
+        <ToastProvider>
+          <DialogProvider>
+            <MemoryRouter initialEntries={[options.route ?? '/']}>{children}</MemoryRouter>
+          </DialogProvider>
+        </ToastProvider>
       </QueryClientProvider>
     );
   }

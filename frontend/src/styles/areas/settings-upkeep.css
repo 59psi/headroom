@@ -1,0 +1,390 @@
+/* Area styles: settings-upkeep. Owned by the components in this area; shared
+   primitives live in ui.css, global elements in app.css.
+
+   Backups, Off-site backup and Recent activity — the three cards that answer
+   "will I still have all of this tomorrow". Same rule as the primitives: the
+   surfaces are calm and the color is spent on STATE (a failing prune, a
+   missing binary, a test that did not land), so the one line that needs
+   attention is the one line that is lit. */
+
+/* ----- Shared bits ------------------------------------------------- */
+
+/* Secondary prose inside a card body: the skip reason, the retention line. */
+.hr-upkeep-note {
+  margin: 0 0 0.85rem;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+/* A problem stated in a sentence — the scheduler stopped, the prune is
+   failing. Tinted and ruled on the left rather than boxed in full neon: it
+   has to be the loudest thing in the card without shouting over the rest of
+   the page. */
+.hr-upkeep-alert {
+  margin: 0 0 0.85rem;
+  padding: 0.6rem 0.85rem;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: #ffb1c1;
+  background: rgba(255, 56, 96, 0.08);
+  border-left: 2px solid var(--neon-red);
+  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+}
+
+/* A gap rather than a fault — no off-site copy set up yet. Yellow, the ink of
+   the warn pill above it, so the sentence and the pill agree on how bad it is. */
+.hr-upkeep-alert.is-warn {
+  color: #ffe98f;
+  background: rgba(255, 225, 86, 0.07);
+  border-left-color: var(--neon-yellow);
+}
+
+/* Raw error text from the server (a subprocess's stderr, an exception). Mono,
+   muted, and wrapped anywhere — these carry paths and hostnames with no
+   break opportunity a phone can use — with its own line breaks kept, since
+   the server's explanations are several paragraphs. */
+.hr-upkeep-error-text {
+  margin: 0.5rem 0 0.85rem;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.hr-upkeep-fine {
+  margin: 0.3rem 0 0;
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+/* Same inks as the status pills, so a sentence and the pill above it read as
+   the same state. */
+.hr-upkeep-ok-text { color: #8dff7a; }
+.hr-upkeep-bad-text { color: #ff8aa3; }
+
+p.hr-upkeep-bad-text {
+  margin: 0.4rem 0 0;
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+
+/* The explanation under a footer's buttons: its own full-width line. */
+.hr-upkeep-foot-note {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.hr-upkeep-icon {
+  width: 1.05em;
+  height: 1.05em;
+  flex: none;
+}
+
+/* On a phone the footer's buttons share the row evenly instead of one
+   wrapping under the other at its own width — two ragged buttons read as an
+   accident, two equal ones as a choice. */
+@media (max-width: 575.98px) {
+  .hr-upkeep-card .hr-panel-foot > .btn { flex: 1 1 auto; }
+}
+
+/* ----- Backups ----------------------------------------------------- */
+
+.hr-upkeep-metrics { margin-bottom: 0.85rem; }
+
+.hr-upkeep-metric-sub {
+  margin-top: 0.25rem;
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+.hr-upkeep-snapshots { margin-top: 0.25rem; }
+
+.hr-upkeep-files {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--surface-inset);
+  overflow: hidden;
+}
+
+.hr-upkeep-file {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.25rem 1rem;
+  padding: 0.6rem 0.9rem;
+  border-top: 1px solid var(--border-soft);
+}
+
+.hr-upkeep-file:first-child { border-top: 0; }
+
+/* The newest snapshot is the one a restore starts from. */
+.hr-upkeep-file:first-child .hr-upkeep-file-name { color: var(--text); }
+
+.hr-upkeep-file-name {
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hr-upkeep-file-meta {
+  flex: none;
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A phone cannot fit a 43-character filename and its age on one line; stack
+   them so neither is cut to an ellipsis to make room for the other. Stacking
+   alone is not enough: at 390px the row has ~290px and the name needs ~330px
+   in mono, so it wraps (anywhere — it has no break opportunity) rather than
+   losing its tail to an ellipsis whose `title` a touch screen cannot show. */
+@media (max-width: 479.98px) {
+  .hr-upkeep-file {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .hr-upkeep-file-name {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
+
+.hr-upkeep-more { margin-top: 0.6rem; }
+
+/* ----- Off-site backup --------------------------------------------- */
+
+/* Where the copies go and whether the last one landed — the answer the card
+   exists for, on an inset panel so it reads as the current state rather than
+   as more of the form. */
+.hr-upkeep-summary {
+  margin-bottom: 0.85rem;
+  padding: 0.8rem 0.95rem;
+  background: var(--surface-inset);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+}
+
+.hr-upkeep-dest {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.hr-upkeep-dest-provider {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.hr-upkeep-dest-path {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.hr-upkeep-last {
+  margin-top: 0.7rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--border-soft);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+
+.hr-upkeep-archive {
+  margin: 0.2rem 0 0;
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
+
+/* The Test now result. Its detail is often several paragraphs of "here is
+   what to fix", so its own line breaks are kept. */
+.hr-upkeep-result {
+  margin: 0 0 0.85rem;
+  padding: 0.6rem 0.85rem;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  border-left: 2px solid var(--border-bright);
+  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+  background: var(--surface-raised);
+}
+
+.hr-upkeep-result.is-ok { color: #b9ffad; border-left-color: var(--neon-green); background: rgba(57, 255, 20, 0.06); }
+.hr-upkeep-result.is-bad { color: #ffb1c1; border-left-color: var(--neon-red); background: rgba(255, 56, 96, 0.08); }
+
+.hr-upkeep-setup { margin: 0.75rem 0 0.85rem; }
+
+.hr-upkeep-setup-body {
+  margin-top: 0.6rem;
+  padding: 0.75rem 0.9rem;
+  background: var(--surface-inset);
+  border-left: 2px solid rgba(0, 240, 255, 0.35);
+  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+}
+
+.hr-upkeep-steps {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.hr-upkeep-steps > li + li { margin-top: 0.35rem; }
+
+.hr-upkeep-steps + .hr-upkeep-fine { margin-top: 0.6rem; }
+
+/* The "what you are sending" warning. Yellow for the rule and the words that
+   matter; the rest in body ink, so eighty words of caution stay readable
+   instead of glowing as one block. */
+.hr-upkeep-warning {
+  margin-bottom: 1rem;
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+  color: var(--text-secondary);
+  border-left: 3px solid var(--neon-yellow);
+}
+
+.hr-upkeep-warning strong { color: var(--neon-yellow); }
+
+.hr-upkeep-form .hr-eyebrow { margin-bottom: 0.6rem; }
+
+.hr-upkeep-fields {
+  display: grid;
+  gap: 0.85rem;
+}
+
+@media (min-width: 768px) {
+  .hr-upkeep-fields { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); }
+}
+
+.hr-upkeep-form .form-label { margin-bottom: 0.35rem; }
+
+/* ----- Recent activity --------------------------------------------- */
+
+.hr-upkeep-timeline { margin-top: 0.1rem; }
+
+.hr-upkeep-day + .hr-upkeep-day { margin-top: 1rem; }
+
+.hr-upkeep-day-label {
+  margin: 0 0 0.35rem;
+  font-family: var(--font-body);
+  font-size: var(--fs-2xs);
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.hr-upkeep-events {
+  position: relative;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* The rail the dots sit on — the one neon line in the card, faded out toward
+   the older end. */
+.hr-upkeep-events::before {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 0.9rem;
+  bottom: 0.9rem;
+  width: 1px;
+  background: linear-gradient(to bottom, rgba(177, 78, 255, 0.55), rgba(0, 240, 255, 0.12));
+}
+
+.hr-upkeep-event {
+  position: relative;
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.4rem 0;
+}
+
+.hr-upkeep-event-dot {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  width: 11px;
+  height: 11px;
+  margin-top: 0.3rem;
+  border-radius: 50%;
+  background: var(--bg-card);
+  border: 2px solid var(--border-bright);
+}
+
+.hr-upkeep-event.is-new .hr-upkeep-event-dot { border-color: var(--neon-green); }
+.hr-upkeep-event.is-gone .hr-upkeep-event-dot { border-color: var(--neon-pink); }
+
+/* Failed and blocked sign-ins, unhandled errors: the only dots that glow. */
+.hr-upkeep-event.is-bad .hr-upkeep-event-dot {
+  border-color: var(--neon-red);
+  background: var(--neon-red);
+  box-shadow: 0 0 8px rgba(255, 56, 96, 0.8);
+}
+
+.hr-upkeep-event-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.hr-upkeep-event-summary {
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/* A subject link reads as part of the sentence, marked by a quiet underline,
+   and lights up only under the pointer. */
+.hr-upkeep-event-summary a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: rgba(0, 240, 255, 0.4);
+  text-underline-offset: 3px;
+}
+
+.hr-upkeep-event-summary a:hover { color: var(--neon-cyan); }
+
+.hr-upkeep-event-summary a:focus-visible {
+  outline: 2px solid var(--neon-cyan);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.hr-upkeep-event-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.1rem 0.6rem;
+  margin-top: 0.1rem;
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.hr-upkeep-event-kind {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  overflow-wrap: anywhere;
+}

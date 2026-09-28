@@ -1,0 +1,552 @@
+/* Area styles: cases-rooms. Owned by the components in this area; shared
+   primitives live in ui.css, global elements in app.css.
+
+   The Cases tab, a case, the two case forms, the Rooms tab and a room.
+   Same rule as the primitives: calm surfaces, neon spent on STATE — a case
+   tile's fill meter, the one Full/Overfull flag, the active filter — and on
+   the one primary action per block, not on every id and count. */
+
+/* The page head (back link, title, summary, actions) is `ui/PageHeader`,
+   styled in ui.css. */
+
+/* Inline SVG glyphs in buttons: the size of the label's text, never a
+   color of their own. */
+.hr-cr-icon {
+  width: 1em;
+  height: 1em;
+  flex: none;
+}
+
+/* ----- Cases toolbar ------------------------------------------------ */
+/* The type filter (`ui/Segmented`, equal segments) above the room select on
+   a phone; side by side from a tablet up. The filter is an inset track with
+   the chosen segment tinted: three gradient-filled buttons in a row made the
+   FILTER the brightest thing on the page, above the cases it filters. */
+.hr-cr-toolbar {
+  display: grid;
+  gap: 0.6rem;
+  margin-bottom: 1.1rem;
+}
+
+@media (min-width: 768px) {
+  .hr-cr-toolbar {
+    grid-template-columns: auto minmax(180px, 240px);
+    justify-content: space-between;
+    align-items: center;
+  }
+}
+
+/* ----- Case grid + tile --------------------------------------------- */
+/* Two up on a phone, then as many ~210px tiles as fit. One grid for the
+   Cases tab and the room page, which used to disagree (one column vs two on
+   the same phone) for no reason either page could state. */
+.hr-case-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+@media (min-width: 768px) {
+  .hr-case-grid {
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+    gap: 1rem;
+  }
+}
+
+.hr-case-tile {
+  display: flex;
+  flex-direction: column;
+}
+
+.hr-case-tile-media {
+  position: relative;
+  background:
+    radial-gradient(ellipse 70% 60% at 50% 62%, rgba(177, 78, 255, 0.14), transparent 72%),
+    var(--surface-inset);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.hr-case-tile-media .hr-case-collage { padding: 0.45rem; }
+
+/* Full / Overfull, pinned to the collage corner so it is read with the
+   picture of what is inside. Overfull stays warm rather than red — a fourth
+   hat in a three-hat case is a thing people do on purpose (see app.css,
+   `.hr-fill-tag`). */
+.hr-case-flag {
+  position: absolute;
+  top: 0.45rem;
+  right: 0.45rem;
+  z-index: 1;
+  padding: 0.12rem 0.5rem;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: rgba(6, 0, 17, 0.78);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  font-size: var(--fs-2xs);
+  font-weight: 650;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.hr-case-flag.is-full { color: #7ff6ff; border-color: rgba(0, 240, 255, 0.4); }
+.hr-case-flag.is-overfull { color: var(--neon-orange); border-color: rgba(255, 140, 66, 0.55); }
+
+.hr-case-tile-body {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.7rem 0.8rem 0.8rem;
+}
+
+.hr-case-tile-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.hr-case-tile-id {
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  color: var(--text);
+  transition: color var(--dur-fast) ease;
+}
+
+a.hr-case-tile:hover .hr-case-tile-id { color: var(--neon-cyan); }
+
+.hr-case-tile-count {
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.hr-case-tile-meta {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Fill meter: held / the count the server says reads as full. */
+.hr-case-meter {
+  display: block;
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+}
+
+.hr-case-meter > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--gradient-pink-cyan);
+  box-shadow: 0 0 8px rgba(255, 46, 182, 0.5);
+  transition: width var(--dur) var(--ease-out);
+}
+
+.hr-case-meter.is-full > span { box-shadow: 0 0 10px rgba(0, 240, 255, 0.55); }
+
+.hr-case-meter.is-overfull > span {
+  background: var(--neon-orange);
+  box-shadow: 0 0 8px rgba(255, 140, 66, 0.6);
+}
+
+/* ----- Collage pieces ----------------------------------------------- */
+.hr-case-collage-img {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  object-fit: contain;
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.5));
+}
+
+/* Three hats: the first takes the whole top row. */
+.hr-case-collage-img.is-lead { grid-column: span 2; }
+
+.hr-case-collage-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 4 / 3;
+  color: var(--text-muted);
+}
+
+.hr-case-collage-empty svg {
+  width: 34%;
+  max-width: 72px;
+  opacity: 0.4;
+}
+
+/* ----- Loading tiles ------------------------------------------------ */
+.hr-case-skel { pointer-events: none; }
+
+.hr-case-skel .hr-case-skel-media {
+  aspect-ratio: 4 / 3;
+  border-radius: 0;
+}
+
+.hr-case-skel .hr-case-skel-short { width: 45%; }
+
+/* ----- Empty state -------------------------------------------------- */
+.hr-cr-empty {
+  padding: 2.25rem 1.25rem;
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.hr-cr-empty-title {
+  margin: 0 0 0.35rem;
+  font-size: var(--fs-lg);
+  font-weight: 650;
+  color: var(--text);
+}
+
+.hr-cr-empty-text {
+  max-width: 42ch;
+  margin: 0 auto 1rem;
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+}
+
+/* ----- Case detail -------------------------------------------------- */
+.hr-case-hero {
+  display: grid;
+  margin-bottom: 1rem;
+}
+
+@media (min-width: 768px) {
+  .hr-case-hero { grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); }
+}
+
+.hr-case-hero-media {
+  padding: 0.75rem;
+  background:
+    radial-gradient(ellipse 70% 60% at 50% 60%, rgba(177, 78, 255, 0.16), transparent 72%),
+    var(--surface-inset);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+@media (min-width: 768px) {
+  .hr-case-hero-media { border-bottom: 0; border-right: 1px solid var(--border-soft); }
+}
+
+.hr-case-hero-facts {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1rem;
+  padding: 1.1rem;
+}
+
+@media (min-width: 768px) {
+  .hr-case-hero-facts { padding: 1.35rem 1.5rem; }
+}
+
+.hr-case-hero .hr-case-meter { height: 6px; }
+
+.hr-case-fill {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+
+/* The one big figure on the page, so it gets the display face and the
+   gradient. */
+.hr-case-fill-figure {
+  font-family: var(--font-display);
+  font-size: 2rem;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+  background: var(--gradient-pink-cyan);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 0 10px rgba(255, 46, 182, 0.35));
+}
+
+.hr-case-fill-label {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.hr-case-fill-empty {
+  font-size: var(--fs-md);
+  color: var(--text-secondary);
+}
+
+.hr-case-move .form-label { margin-bottom: 0.35rem; }
+
+.hr-case-move-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.hr-case-move-row > .form-select { flex: 1 1 auto; min-width: 0; }
+
+/* Hats inside the case, as rows inside their panel — a list of cards
+   inside a card was one border too many. */
+.hr-case-hatlist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.hr-case-hatrow {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  min-height: 64px;
+  padding: 0.5rem 0.75rem 0.5rem 0.5rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-soft);
+  background: var(--surface-raised);
+  color: var(--text);
+  text-decoration: none;
+  transition: background var(--dur-fast) ease, border-color var(--dur-fast) ease;
+}
+
+.hr-case-hatrow:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-bright);
+}
+
+.hr-case-hatrow:hover .hr-case-hatrow-id { color: var(--neon-cyan); }
+
+.hr-case-hatrow:focus-visible {
+  outline: 2px solid var(--neon-cyan);
+  outline-offset: 2px;
+}
+
+.hr-case-hatrow-thumb {
+  width: 52px;
+  height: 52px;
+  flex: none;
+}
+
+.hr-case-hatrow-ph {
+  width: 52px;
+  height: 52px;
+  flex: none;
+  border-radius: var(--radius-sm);
+  border: 1px dashed var(--border);
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.hr-case-hatrow-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.hr-case-hatrow-id {
+  font-family: var(--font-mono);
+  font-weight: 650;
+  color: var(--text);
+  transition: color var(--dur-fast) ease;
+}
+
+.hr-case-hatrow-sub {
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+}
+
+/* A plain drawn chevron: "this row opens something". */
+.hr-cr-chevron {
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  margin-right: 0.2rem;
+  border-right: 1.5px solid var(--text-muted);
+  border-bottom: 1.5px solid var(--text-muted);
+  transform: rotate(-45deg);
+}
+
+/* The destructive block at the foot of a page: a red accent bar and a red
+   edge, so it is recognizably not one more settings card. */
+.hr-cr-danger.card { border-color: rgba(255, 56, 96, 0.3); }
+
+.hr-cr-danger .card-title::before {
+  background: var(--neon-red);
+  box-shadow: 0 0 8px rgba(255, 56, 96, 0.55);
+}
+
+/* ----- Case forms --------------------------------------------------- */
+.hr-case-form { max-width: 640px; }
+
+.hr-case-field + .hr-case-field { margin-top: 1.1rem; }
+
+.hr-case-skel-page { display: grid; gap: 1rem; }
+
+.hr-case-skel-page > .hr-case-skel-title { height: 34px; width: 45%; }
+.hr-case-skel-page > .hr-case-skel-hero { height: 240px; border-radius: var(--radius); }
+.hr-case-skel-page > .hr-case-skel-panel { height: 140px; border-radius: var(--radius); }
+
+/* ----- Rooms list --------------------------------------------------- */
+.hr-room-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.hr-room-row {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.8rem 0;
+  border-top: 1px solid var(--border-soft);
+}
+
+.hr-room-row:first-child { border-top: 0; padding-top: 0; }
+.hr-room-row:last-child { padding-bottom: 0; }
+
+/* The row being renamed: the field takes the whole row (its own Save and
+   Cancel replace the three row buttons until it closes). */
+.hr-room-row.is-editing { grid-template-columns: minmax(0, 1fr); }
+
+@media (min-width: 768px) {
+  .hr-room-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: 1rem;
+  }
+
+  /* An error under a row spans it, rather than squeezing into a column. */
+  .hr-room-row > .alert,
+  .hr-room-row > .hr-room-rename { grid-column: 1 / -1; }
+}
+
+/* The row's name, counts and chevron are one link into the room — the
+   whole line is the tap target, as a list row on a phone is expected to be. */
+.hr-room-main {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+  min-height: 44px;
+  margin: 0 -0.5rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  text-decoration: none;
+  transition: background var(--dur-fast) ease;
+}
+
+.hr-room-main:hover { background: var(--surface-hover); }
+.hr-room-main:hover .hr-room-name { color: var(--neon-cyan); }
+
+.hr-room-main:focus-visible {
+  outline: 2px solid var(--neon-cyan);
+  outline-offset: 1px;
+}
+
+.hr-room-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-md);
+  font-weight: 650;
+  transition: color var(--dur-fast) ease;
+}
+
+.hr-room-meta {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Same three buttons on every row, in equal columns on a phone — see the
+   comment on `RoomRow` for why the count never varies. */
+.hr-room-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.4rem;
+}
+
+/* Three equal columns on a 390px phone leave each button about 100px, and
+   "Make default" at the `-sm` side padding needed more: it broke onto two
+   lines and stretched every button in the row with it. Side padding is what
+   gives, not the label. */
+@media (max-width: 767.98px) {
+  .hr-room-actions .btn { padding-left: 0.4rem; padding-right: 0.4rem; }
+}
+
+@media (min-width: 768px) {
+  .hr-room-actions { display: flex; }
+}
+
+.hr-room-rename .form-control { min-width: 0; }
+
+.hr-room-add { width: 100%; }
+
+/* ----- Room detail -------------------------------------------------- */
+.hr-cr-section { margin-bottom: 1.75rem; }
+
+.hr-cr-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+/* Same accent bar as a card title, so a section of cards and a card read as
+   one family of heading. */
+.hr-cr-section-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0;
+  font-size: var(--fs-lg);
+}
+
+.hr-cr-section-head h2::before {
+  content: '';
+  flex: none;
+  width: 3px;
+  height: 1em;
+  border-radius: 2px;
+  background: var(--gradient-pink-cyan);
+  box-shadow: 0 0 8px rgba(255, 46, 182, 0.55);
+}
+
+.hr-cr-section-count {
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+}
+
+.hr-cr-note {
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hr-case-meter > span { transition: none; }
+}

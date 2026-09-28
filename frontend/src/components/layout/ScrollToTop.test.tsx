@@ -76,6 +76,37 @@ describe('ScrollToTop', () => {
     expect(scrollTo).toHaveBeenCalledTimes(2);
   });
 
+  it('leaves a page alone when it rewrites its own URL, but not when a link is followed', async () => {
+    // Hats and Search mirror their filters into the URL with `replace`. The
+    // first filter change flipped the navigation type PUSH → REPLACE, which
+    // re-ran the effect and threw the list back to the top mid-scroll.
+    const user = userEvent.setup();
+
+    function Controls() {
+      const navigate = useNavigate();
+      return (
+        <>
+          <button onClick={() => { nav.type = 'REPLACE'; navigate('/hats?style=odysea', { replace: true }); }}>filter</button>
+          <button onClick={() => { nav.type = 'PUSH'; navigate('/hats?style=coast'); }}>link</button>
+        </>
+      );
+    }
+
+    render(
+      <MemoryRouter initialEntries={['/hats']}>
+        <ScrollToTop />
+        <Controls />
+      </MemoryRouter>,
+    );
+    expect(scrollTo).toHaveBeenCalledTimes(1); // the initial page
+
+    await user.click(screen.getByText('filter'));
+    expect(scrollTo).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByText('link'));
+    expect(scrollTo).toHaveBeenCalledTimes(2);
+  });
+
   it('is actually mounted by the app shell', () => {
     // Writing the component and forgetting to mount it would leave every test
     // above green while nothing scrolled in the real app.

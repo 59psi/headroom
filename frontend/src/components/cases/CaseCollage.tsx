@@ -1,3 +1,5 @@
+import { uploadUrl } from '../../lib/photo';
+
 /**
  * The hats inside a case, as a tile.
  *
@@ -12,12 +14,16 @@
  */
 export function CaseCollage({ thumbs, label }: { thumbs: string[]; label: string }) {
   if (thumbs.length === 0) {
+    // A drawn outline, not the word "empty": every place this renders already
+    // says so beside it (the tile's "Empty", the case page's "Empty — holds
+    // 3"), and the word twice over read as a label that had lost its box.
     return (
-      <div
-        className="d-flex align-items-center justify-content-center text-muted"
-        style={{ aspectRatio: '4/3', fontSize: '0.75rem' }}
-      >
-        empty
+      <div className="hr-case-collage-empty">
+        <svg viewBox="0 0 64 48" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+          <rect x="4" y="12" width="56" height="32" rx="6" strokeDasharray="5 4" />
+          <path d="M24 12V8a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v4" />
+        </svg>
+        <span className="visually-hidden">{`${label} is empty`}</span>
       </div>
     );
   }
@@ -36,17 +42,12 @@ export function CaseCollage({ thumbs, label }: { thumbs: string[]; label: string
       {thumbs.map((path, i) => (
         <img
           key={path}
-          src={`/uploads/${path}`}
+          src={uploadUrl(path)}
           alt=""
           loading="lazy"
-          style={{
-            width: '100%',
-            height: '100%',
-            objectFit: 'contain',
-            // With three hats the first one takes the whole top row, so the
-            // grid reads as deliberate rather than as a missing fourth.
-            gridColumn: thumbs.length === 3 && i === 0 ? 'span 2' : undefined,
-          }}
+          // With three hats the first one takes the whole top row, so the
+          // grid reads as deliberate rather than as a missing fourth.
+          className={thumbs.length === 3 && i === 0 ? 'hr-case-collage-img is-lead' : 'hr-case-collage-img'}
         />
       ))}
       <span className="visually-hidden">{`Hats in ${label}`}</span>

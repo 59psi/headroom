@@ -97,12 +97,43 @@
   --font-body: 'Inter Variable', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 
+  /* === Type scale ================================================= */
+  /* One ladder for body-font UI text. The display faces (Audiowide,
+     Orbitron) are reserved for the wordmark, page titles and big figures —
+     everything a person reads in order to DO something (card titles, labels,
+     buttons, help text) is Inter, in sentence case. Neon type everywhere was
+     the loudest thing on every screen; neon type in three places is a brand. */
+  --fs-2xs: 0.6875rem;  /* 11px — eyebrows, badges */
+  --fs-xs: 0.75rem;     /* 12px — captions */
+  --fs-sm: 0.875rem;    /* 14px — help text, secondary copy */
+  --fs-md: 1rem;        /* 16px — body, inputs (iOS no-zoom floor) */
+  --fs-lg: 1.0625rem;   /* 17px — card titles */
+  --fs-xl: 1.375rem;    /* 22px — section headings */
+
+  /* === Surfaces =================================================== */
+  /* Three steps of depth inside a card: the card itself, a recessed well
+     (metric tiles, inputs) and a raised hover. */
+  --surface-inset: rgba(6, 0, 17, 0.55);
+  --surface-raised: rgba(255, 255, 255, 0.035);
+  --surface-hover: rgba(255, 255, 255, 0.06);
+
+  /* === Motion ===================================================== */
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --dur-fast: 120ms;
+  --dur: 200ms;
+
   /* === Geometry =================================================== */
   --radius: 14px;
   --radius-sm: 10px;
+  --radius-xs: 6px;
   --radius-pill: 999px;
   --nav-height: 68px;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
+  /* The top counterpart: zero in a browser tab, the status bar's height in
+     the installed iOS app, which draws under a translucent status bar
+     (`black-translucent` + `viewport-fit=cover`). Anything sticky at the top
+     of the viewport offsets by it, or it slides under the clock. */
+  --safe-top: env(safe-area-inset-top, 0px);
 }
 
 /* ===== Base ======================================================= */
