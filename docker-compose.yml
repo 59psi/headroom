@@ -69,6 +69,9 @@ services:
       HEADROOM_CORS_ORIGINS: "${HEADROOM_CORS_ORIGINS:-}"
       HEADROOM_RP_ID: "${HEADROOM_RP_ID:-}"
       HEADROOM_ORIGIN: "${HEADROOM_ORIGIN:-}"
+      # Where the TLS watch dials to read the served certificate (the origin's
+      # name is still what it checks). The LAN-HTTPS overlay sets 127.0.0.1.
+      HEADROOM_TLS_PROBE_ADDRESS: "${HEADROOM_TLS_PROBE_ADDRESS:-}"
       HEADROOM_MDNS_PORT: "${HEADROOM_MDNS_PORT:-}"
       # ---- Operator knobs, forwarded from `.env` ---------------------------
       # Compose's `.env` feeds variable INTERPOLATION only; it never becomes the
