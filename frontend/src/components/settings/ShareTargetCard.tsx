@@ -3,13 +3,14 @@ import { Link } from 'react-router';
 import { DEFAULT_HAT_BASICS } from '../hats/HatFormFields';
 import { copyText } from '../../lib/clipboard';
 import { Panel } from '../ui/Panel';
+import { Segmented, type SegmentedOption } from '../ui/Segmented';
 import { useToast } from '../ui/Toast';
 
 type Platform = 'ios' | 'android';
 
-const PLATFORMS: ReadonlyArray<{ id: Platform; label: string }> = [
-  { id: 'ios', label: 'iPhone & iPad' },
-  { id: 'android', label: 'Android' },
+const PLATFORMS: ReadonlyArray<SegmentedOption<Platform>> = [
+  { value: 'ios', label: 'iPhone & iPad' },
+  { value: 'android', label: 'Android' },
 ];
 
 /**
@@ -53,17 +54,14 @@ export function ShareTargetCard() {
       className="hr-sharing"
       description="Send photos from your phone's share sheet straight into a bulk import."
     >
-      <div className="hr-platform-switch" role="group" aria-label="Instructions for">
-        {PLATFORMS.map(p => (
-          <button
-            key={p.id}
-            type="button"
-            className={`hr-platform-option${platform === p.id ? ' is-active' : ''}`}
-            aria-pressed={platform === p.id}
-            onClick={() => setPlatform(p.id)}
-          >{p.label}</button>
-        ))}
-      </div>
+      <Segmented
+        label="Instructions for"
+        fill
+        className="hr-share-platforms"
+        options={PLATFORMS}
+        value={platform}
+        onChange={setPlatform}
+      />
 
       {platform === 'android' ? (
         <div className="hr-share-recipe">

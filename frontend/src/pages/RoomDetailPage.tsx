@@ -5,6 +5,7 @@ import { Link, useParams } from 'react-router';
 import { getRoom } from '../api/rooms';
 import { CaseGridSkeleton, CaseTile } from '../components/cases/CaseTile';
 import { HatRow } from '../components/hats/HatRow';
+import { PageHeader } from '../components/ui/PageHeader';
 import { StatusPill } from '../components/ui/StatusPill';
 
 /**
@@ -52,12 +53,9 @@ export function RoomDetailPage() {
   if (isLoading || !data) {
     return (
       <>
-        <header className="hr-cr-head">
-          <div className="hr-cr-title">
-            <Link to="/rooms" className="hr-cr-back">Rooms</Link>
-            <span className="hr-skeleton hr-skeleton-line hr-room-skel-title" aria-hidden="true" />
-          </div>
-        </header>
+        {/* The way back works before the room arrives; the grid below is
+            the one "Loading room…" announcement. */}
+        <PageHeader back={{ to: '/rooms', label: 'Rooms' }} loading />
         <CaseGridSkeleton count={4} label="Loading room…" />
       </>
     );
@@ -72,16 +70,16 @@ export function RoomDetailPage() {
 
   return (
     <>
-      <header className="hr-cr-head">
-        <div className="hr-cr-title">
-          <Link to="/rooms" className="hr-cr-back">Rooms</Link>
-          <h1>{data.name}</h1>
-          <p className="hr-cr-sub">
+      <PageHeader
+        back={{ to: '/rooms', label: 'Rooms' }}
+        title={data.name}
+        summary={
+          <>
             <span>{summary}</span>
             {data.is_default && <StatusPill tone="info">Default</StatusPill>}
-          </p>
-        </div>
-      </header>
+          </>
+        }
+      />
 
       {/* Out on the shelf, first. See the module docstring. */}
       {loose.length > 0 && (

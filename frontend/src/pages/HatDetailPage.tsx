@@ -9,6 +9,7 @@ import { ColorEditModal } from '../components/common/ColorEditModal';
 import { AnalysisStatus } from '../components/hats/AnalysisStatus';
 import { HatNotesCard } from '../components/hats/HatNotesCard';
 import { TagUrlRow } from '../components/common/TagUrlRow';
+import { PageHeader } from '../components/ui/PageHeader';
 import { Panel } from '../components/ui/Panel';
 import { StatusPill } from '../components/ui/StatusPill';
 import { Skeleton } from '../components/ui/Skeleton';
@@ -95,18 +96,17 @@ function freshHat(res: unknown, id: number): HatRead | null {
   return res && typeof res === 'object' && (res as { id?: unknown }).id === id ? res as HatRead : null;
 }
 
-/** The page's shape while the hat loads: photo, then two cards of text. */
+/** The page's shape while the hat loads: title, photo, then two cards of text. */
 function HatDetailSkeleton() {
   return (
     <>
-      {/* One announcement for the page; the other three are shape only. */}
-      <div className="hr-hat-head">
-        <Skeleton height={34} width={180} label="Loading hat…" />
-      </div>
+      {/* The title's place is held by the header's own bar (decoration). The
+          photo carries the page's one announcement; the rest are shape only. */}
+      <PageHeader loading />
       <div className="hr-hat-layout">
         <div className="hr-hat-aside">
           <div className="card hr-panel">
-            <div className="card-body"><Skeleton height={300} decorative /></div>
+            <div className="card-body"><Skeleton height={300} label="Loading hat…" /></div>
           </div>
         </div>
         <div className="hr-hat-main">
@@ -348,26 +348,28 @@ export function HatDetailPage() {
 
   return (
     <>
-      <div className="hr-hat-head">
-        <h1 className="hr-hat-title">
-          <HatHeadingId hat={data} />
-        </h1>
-        {/* `flex-wrap` so the row breaks onto a second line instead of
-            overflowing the viewport on a phone — this is the row that a
-            long badge used to push out of shape. */}
-        <div className="hr-hat-badges">
-          {/* Renders whatever the construction says, rather than one badge per
-              known flag. A hat in a specialty fabric used to show no badge at
-              all: the two booleans could only describe HYDRO and HYDROLite. */}
-          {data.construction && (
-            <span className="badge bg-info" title={CONSTRUCTION_TITLES[data.construction] || `${data.construction} construction`}>
-              {data.construction}
-            </span>
-          )}
-          <AnalysisStatus hat={data} />
-          <ConditionBadge condition={data.condition} />
-        </div>
-      </div>
+      {/* The badges are the header's status cluster, which wraps onto its
+          own line on a phone instead of overflowing the viewport — this is
+          the row that a long badge used to push out of shape. */}
+      <PageHeader
+        code
+        title={<HatHeadingId hat={data} />}
+        status={
+          <>
+            {/* Renders whatever the construction says, rather than one badge
+                per known flag. A hat in a specialty fabric used to show no
+                badge at all: the two booleans could only describe HYDRO and
+                HYDROLite. */}
+            {data.construction && (
+              <span className="badge bg-info" title={CONSTRUCTION_TITLES[data.construction] || `${data.construction} construction`}>
+                {data.construction}
+              </span>
+            )}
+            <AnalysisStatus hat={data} />
+            <ConditionBadge condition={data.condition} />
+          </>
+        }
+      />
 
       {/* Photo first — it is how you know you are on the right hat — then
           what the hat is and what it is worth, then everything else. On a

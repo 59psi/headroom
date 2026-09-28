@@ -11,8 +11,8 @@ describe('optionLabel', () => {
   });
 
   it('falls back to a readable form before the options load, or for a value they lack', () => {
-    expect(optionLabel(undefined, 'x_large')).toBe('x large');
-    expect(optionLabel(styles, 'the_shore')).toBe('the shore');
+    expect(optionLabel(undefined, 'x_large')).toBe('X Large');
+    expect(optionLabel(styles, 'the_shore')).toBe('The Shore');
   });
 
   it('matches numeric option values by their string form', () => {

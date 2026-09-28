@@ -8,6 +8,7 @@ import {
 } from '../api/hats';
 import { NewCaseModal } from '../components/common/NewCaseModal';
 import { Combobox } from '../components/common/Combobox';
+import { PageHeader } from '../components/ui/PageHeader';
 import { Panel } from '../components/ui/Panel';
 import { useToast } from '../components/ui/Toast';
 import { useDebouncedValue } from '../lib/useDebouncedValue';
@@ -222,12 +223,22 @@ export function EditHatPage() {
     mutation.mutate();
   }
 
+  // Back to the hat without saving — named by its id, as Edit case names its
+  // case. Present from the first paint, labeled plain "Hat" for the moment a
+  // cold load has no id to show yet: arriving with the hat instead would push
+  // the title down just as the form replaced its skeleton.
+  const backToHat = Number.isNaN(id) ? undefined : {
+    to: `/hats/${id}`,
+    label: hat.data ? (hat.data.display_id || `Hat #${hat.data.id}`) : 'Hat',
+    title: 'Back to this hat without saving',
+  };
+
   // The title stays up while the hat and the option lists load, so the page
   // does not blink from a spinner to a form.
   if (hat.isLoading || options.isLoading) {
     return (
       <>
-        <h1 className="mb-3">Edit hat</h1>
+        <PageHeader back={backToHat} title="Edit hat" />
         <HatFormSkeleton />
       </>
     );
@@ -247,12 +258,7 @@ export function EditHatPage() {
 
   return (
     <>
-      <div className="hr-edit-head">
-        <h1>Edit hat</h1>
-        <Link to={`/hats/${id}`} className="hr-edit-sub font-mono" title="Back to this hat without saving">
-          {hat.data.display_id || `Hat #${hat.data.id}`}
-        </Link>
-      </div>
+      <PageHeader back={backToHat} title="Edit hat" />
 
       <form onSubmit={handleSubmit}>
         <PhotoCard onCapture={onCapture} previewUrl={photoPreview} />

@@ -5,12 +5,14 @@ import { getCase, deleteCase, updateCase } from '../api/cases';
 import { listRooms } from '../api/rooms';
 import { hatLabelsUrl } from '../api/settings';
 import { tileSrc } from '../lib/photo';
+import { useHatLabels } from '../lib/labels';
 import { CaseCollage } from '../components/cases/CaseCollage';
 import { CaseFillMeter, caseFillLabel, caseTypeLabel } from '../components/cases/CaseTile';
 import { invalidateHatViews } from '../lib/invalidate';
 import { TagUrlRow } from '../components/common/TagUrlRow';
 import { ErrorNote } from '../components/common/ErrorNote';
 import { isNotFound } from '../api/client';
+import { PageHeader } from '../components/ui/PageHeader';
 import { Panel } from '../components/ui/Panel';
 import { StatusPill } from '../components/ui/StatusPill';
 import { SaveState, mutationSaveStatus } from '../components/ui/SaveState';
@@ -24,6 +26,7 @@ export function CaseDetailPage() {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const toast = useToast();
+  const labels = useHatLabels();
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['case', displayId],
@@ -165,20 +168,19 @@ export function CaseDetailPage() {
 
   return (
     <>
-      <header className="hr-cr-head">
-        <div className="hr-cr-title">
-          <Link to="/cases" className="hr-cr-back">Cases</Link>
-          <h1 className="font-mono hr-case-title">{data.display_id}</h1>
-          <p className="hr-cr-sub">
+      <PageHeader
+        back={{ to: '/cases', label: 'Cases' }}
+        code
+        title={data.display_id}
+        summary={
+          <>
             <span>{caseTypeLabel(data)} · <Link to={`/rooms/${data.room_id}`}>{data.room_name}</Link></span>
             {fill === 'overfull' && <StatusPill tone="warn">Overfull</StatusPill>}
             {fill === 'full' && <StatusPill tone="info">Full</StatusPill>}
-          </p>
-        </div>
-        <div className="hr-cr-actions">
-          <Link to={`/cases/${displayId}/edit`} className="btn btn-outline-secondary btn-sm">Edit case</Link>
-        </div>
-      </header>
+          </>
+        }
+        actions={<Link to={`/cases/${displayId}/edit`} className="btn btn-outline-secondary btn-sm">Edit case</Link>}
+      />
 
       {/* The hats, not a picture of the case. Every case looks identical from
           the outside, so a photo of one carried no information — and an EMPTY
@@ -243,7 +245,7 @@ export function CaseDetailPage() {
                   <span className="hr-case-hatrow-text">
                     <span className="hr-case-hatrow-id">{h.display_id}</span>
                     <span className="hr-case-hatrow-sub">
-                      {h.style.replace(/_/g, ' ')} {h.is_beanie ? '(beanie)' : ''}
+                      {labels.style(h.style)} {h.is_beanie ? '(beanie)' : ''}
                     </span>
                   </span>
                   <span className="hr-cr-chevron" aria-hidden="true" />

@@ -9,8 +9,11 @@ import {
 } from '../components/hats/HatFilters';
 import type { HatRead } from '../types';
 import { tileSrc } from '../lib/photo';
+import { useHatLabels } from '../lib/labels';
 import { placementOf, type Placement } from '../lib/placement';
 import { HatRow } from '../components/hats/HatRow';
+import { PageHeader } from '../components/ui/PageHeader';
+import { Segmented, type SegmentedOption } from '../components/ui/Segmented';
 
 type View = 'list' | 'gallery';
 
@@ -40,6 +43,21 @@ function writeView(v: View) {
   }
 }
 
+/** Two glyphs everyone reads the same way; the label is each button's name
+ *  and tooltip. */
+const VIEW_OPTIONS: ReadonlyArray<SegmentedOption<View>> = [
+  {
+    value: 'list',
+    label: 'List view',
+    icon: <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><rect x="0" y="1" width="16" height="3" rx="1"/><rect x="0" y="6.5" width="16" height="3" rx="1"/><rect x="0" y="12" width="16" height="3" rx="1"/></svg>,
+  },
+  {
+    value: 'gallery',
+    label: 'Gallery view',
+    icon: <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><rect x="0" y="0" width="7" height="7" rx="1"/><rect x="9" y="0" width="7" height="7" rx="1"/><rect x="0" y="9" width="7" height="7" rx="1"/><rect x="9" y="9" width="7" height="7" rx="1"/></svg>,
+  },
+];
+
 const PLACEMENTS: readonly Placement[] = ['case', 'room', 'none'];
 
 function readPlacement(v: string | null): 'all' | Placement {
@@ -47,6 +65,7 @@ function readPlacement(v: string | null): 'all' | Placement {
 }
 
 function GalleryItem({ hat }: { hat: HatRead }) {
+  const labels = useHatLabels();
   return (
     <Link to={`/hats/${hat.id}`} className="card hr-cp-tile">
       {hat.photo_path ? (
@@ -61,7 +80,7 @@ function GalleryItem({ hat }: { hat: HatRead }) {
             {hat.brand}{hat.model_name ? ` · ${hat.model_name}` : ''}
           </div>
         )}
-        <div className="hr-cp-tile-meta">{hat.style.replace(/_/g, ' ')}</div>
+        <div className="hr-cp-tile-meta">{labels.style(hat.style)}</div>
         <ColorSwatches colors={hat.colors} showLabels={false} />
       </div>
     </Link>
@@ -181,41 +200,36 @@ export function HatsPage() {
     ? filteredData.length === total ? `${total}` : `${filteredData.length} of ${total}`
     : '';
 
-  function chip(value: 'all' | Placement, label: string, count?: number) {
-    const on = filterAssignment === value;
-    return (
-      <button
-        type="button"
-        className={`hr-cp-chip${on ? ' is-active' : ''}`}
-        aria-pressed={on}
-        onClick={() => setFilterAssignment(value)}
-      >
-        {label}
-        {count !== undefined && count > 0 && <span className="hr-cp-chip-count">{count}</span>}
-      </button>
-    );
-  }
+  // Where the hat is. "In a room" only appears once a hat is kept that way
+  // (or while it is the filter in force, so it can still be seen and turned
+  // off) — a collection with nothing in a room is not offered a chip that
+  // could only empty the page. Counts mark the placements worth a second
+  // look, and only when non-zero.
+  const placementOptions: SegmentedOption<'all' | Placement>[] = [
+    { value: 'all', label: 'All' },
+    { value: 'case', label: 'In a case' },
+    ...(placementCounts.room > 0 || filterAssignment === 'room'
+      ? [{ value: 'room' as const, label: 'In a room', count: placementCounts.room || undefined }]
+      : []),
+    { value: 'none', label: 'Unassigned', count: unassignedCount || undefined },
+  ];
 
   const header = (
-    <header className="hr-cp-head">
-      <div className="hr-cp-head-title">
-        <h1>Hats</h1>
-        {countText && (
-          <span className="hr-cp-head-count" aria-live="polite">
-            {countText}<span className="visually-hidden"> hats</span>
-          </span>
-        )}
-      </div>
-      <div className="hr-cp-head-actions">
-        <Link to="/hats/import" className="btn btn-outline-secondary btn-sm" aria-label="Bulk import" title="Bulk import">
-          <svg className="hr-cp-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M8 11V2.5M4.5 6 8 2.5 11.5 6M2.5 13.5h11" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-          Import
-        </Link>
-        <Link to="/hats/new" className="btn btn-primary btn-sm">Add hat</Link>
-      </div>
-    </header>
+    <PageHeader
+      title="Hats"
+      count={countText && <>{countText}<span className="visually-hidden"> hats</span></>}
+      actions={
+        <>
+          <Link to="/hats/import" className="btn btn-outline-secondary btn-sm" aria-label="Bulk import" title="Bulk import">
+            <svg className="hr-cp-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M8 11V2.5M4.5 6 8 2.5 11.5 6M2.5 13.5h11" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            Import
+          </Link>
+          <Link to="/hats/new" className="btn btn-primary btn-sm">Add hat</Link>
+        </>
+      }
+    />
   );
 
   // A failed fetch must not render as an empty collection — Home, Valuation
@@ -250,38 +264,25 @@ export function HatsPage() {
           isOpen={filtersOpen}
           onToggle={setFiltersOpen}
         />
-        {/* Quick chips: where the hat is. "In a room" only appears once a hat
-            is kept that way, so a collection that is all cases sees two chips. */}
+        {/* Quick chips: where the hat is. Only once there is a choice to
+            make — a collection that is all in cases has nothing to narrow. */}
         {!isLoading && (unassignedCount > 0 || placementCounts.room > 0 || filterAssignment !== 'all') && (
-          <div className="hr-cp-chips" role="group" aria-label="Where the hat is kept">
-            {chip('all', 'All')}
-            {chip('case', 'In a case')}
-            {(placementCounts.room > 0 || filterAssignment === 'room') && chip('room', 'In a room', placementCounts.room)}
-            {chip('none', 'Unassigned', unassignedCount)}
-          </div>
+          <Segmented
+            variant="chips"
+            label="Where the hat is kept"
+            options={placementOptions}
+            value={filterAssignment}
+            onChange={setFilterAssignment}
+          />
         )}
-        <div className="hr-cp-seg hr-cp-toolbar-end" role="group" aria-label="View">
-          <button
-            type="button"
-            className="hr-cp-seg-btn"
-            aria-pressed={view === 'list'}
-            onClick={() => setView('list')}
-            title="List view"
-            aria-label="List view"
-          >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><rect x="0" y="1" width="16" height="3" rx="1"/><rect x="0" y="6.5" width="16" height="3" rx="1"/><rect x="0" y="12" width="16" height="3" rx="1"/></svg>
-          </button>
-          <button
-            type="button"
-            className="hr-cp-seg-btn"
-            aria-pressed={view === 'gallery'}
-            onClick={() => setView('gallery')}
-            title="Gallery view"
-            aria-label="Gallery view"
-          >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><rect x="0" y="0" width="7" height="7" rx="1"/><rect x="9" y="0" width="7" height="7" rx="1"/><rect x="0" y="9" width="7" height="7" rx="1"/><rect x="9" y="9" width="7" height="7" rx="1"/></svg>
-          </button>
-        </div>
+        <Segmented
+          label="View"
+          iconOnly
+          className="hr-cp-toolbar-end"
+          options={VIEW_OPTIONS}
+          value={view}
+          onChange={setView}
+        />
       </div>
 
       {filtersOpen ? (

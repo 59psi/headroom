@@ -6,82 +6,8 @@
    tile's fill meter, the one Full/Overfull flag, the active filter — and on
    the one primary action per block, not on every id and count. */
 
-/* ----- Page head ---------------------------------------------------- */
-/* Title block on the left (a back link above the h1 when the page is a
-   child of a list, a one-line summary under it), the page's actions on the
-   right. Wraps on a phone rather than squeezing the h1. */
-.hr-cr-head {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 0.75rem 1rem;
-  flex-wrap: wrap;
-  margin-bottom: 1.1rem;
-}
-
-.hr-cr-title { flex: 1 1 12rem; min-width: 0; }
-
-.hr-cr-title h1 { overflow-wrap: anywhere; }
-
-.hr-cr-back {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  min-height: 32px;
-  margin-bottom: 0.1rem;
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  color: var(--text-muted);
-  text-decoration: none;
-  border-radius: var(--radius-xs);
-  transition: color var(--dur-fast) ease;
-}
-
-.hr-cr-back::before {
-  content: '';
-  width: 0.42rem;
-  height: 0.42rem;
-  border-left: 1.5px solid currentColor;
-  border-bottom: 1.5px solid currentColor;
-  transform: rotate(45deg);
-}
-
-.hr-cr-back:hover { color: var(--neon-cyan); }
-
-.hr-cr-back:focus-visible {
-  outline: 2px solid var(--neon-cyan);
-  outline-offset: 2px;
-}
-
-@media (pointer: coarse) {
-  .hr-cr-back { min-height: 44px; }
-}
-
-.hr-cr-sub {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.35rem 0.6rem;
-  margin: 0.35rem 0 0;
-  font-size: var(--fs-sm);
-  color: var(--text-secondary);
-}
-
-.hr-cr-sub a {
-  color: var(--text);
-  text-decoration: underline;
-  text-decoration-color: rgba(0, 240, 255, 0.45);
-  text-underline-offset: 3px;
-}
-
-.hr-cr-sub a:hover { color: var(--neon-cyan); }
-
-.hr-cr-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
+/* The page head (back link, title, summary, actions) is `ui/PageHeader`,
+   styled in ui.css. */
 
 /* Inline SVG glyphs in buttons: the size of the label's text, never a
    color of their own. */
@@ -91,16 +17,11 @@
   flex: none;
 }
 
-/* A case id as the page title. Mono because it is a code on a sticker, and
-   cyan because it is THE thing this page is about — the one accent in the
-   head. The display face would read "A-OO1" with a letter O. */
-.hr-case-title.font-mono {
-  color: var(--neon-cyan);
-  letter-spacing: 0.04em;
-  text-shadow: 0 0 18px rgba(0, 240, 255, 0.35);
-}
-
 /* ----- Cases toolbar ------------------------------------------------ */
+/* The type filter (`ui/Segmented`, equal segments) above the room select on
+   a phone; side by side from a tablet up. The filter is an inset track with
+   the chosen segment tinted: three gradient-filled buttons in a row made the
+   FILTER the brightest thing on the page, above the cases it filters. */
 .hr-cr-toolbar {
   display: grid;
   gap: 0.6rem;
@@ -113,89 +34,6 @@
     justify-content: space-between;
     align-items: center;
   }
-}
-
-/* Segmented type filter: one inset track, the active segment tinted. Three
-   gradient-filled buttons in a row made the FILTER the brightest thing on
-   the page, above the cases it filters. */
-.hr-cr-seg {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(0, 1fr);
-  gap: 0.25rem;
-  padding: 0.25rem;
-  border-radius: var(--radius-sm);
-  background: var(--surface-inset);
-  border: 1px solid var(--border-soft);
-}
-
-@media (min-width: 768px) {
-  .hr-cr-seg { grid-auto-columns: auto; }
-}
-
-.hr-cr-seg-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.3rem;
-  min-width: 0;
-  min-height: 38px;
-  padding: 0.35rem 0.4rem;
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--text-secondary);
-  font-family: var(--font-body);
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  line-height: 1.2;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: color var(--dur-fast) ease, background var(--dur-fast) ease, box-shadow var(--dur) ease;
-}
-
-@media (min-width: 768px) {
-  .hr-cr-seg-btn { padding: 0.35rem 0.95rem; gap: 0.45rem; }
-}
-
-@media (pointer: coarse) {
-  .hr-cr-seg-btn { min-height: 44px; }
-}
-
-.hr-cr-seg-btn:hover { color: var(--text); background: var(--surface-hover); }
-
-.hr-cr-seg-btn:focus-visible {
-  outline: 2px solid var(--neon-cyan);
-  outline-offset: 1px;
-}
-
-.hr-cr-seg-btn.is-active {
-  color: var(--text);
-  background: rgba(255, 46, 182, 0.14);
-  box-shadow: inset 0 0 0 1px rgba(255, 46, 182, 0.45), 0 0 14px rgba(255, 46, 182, 0.18);
-}
-
-.hr-cr-seg-count {
-  min-width: 1.25rem;
-  padding: 0 0.3rem;
-  border-radius: var(--radius-pill);
-  background: var(--surface-raised);
-  font-family: var(--font-mono);
-  font-size: var(--fs-2xs);
-  font-weight: 600;
-  line-height: 1.6;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.hr-cr-seg-btn.is-active .hr-cr-seg-count {
-  color: #ffd3ef;
-  background: rgba(255, 46, 182, 0.2);
-}
-
-/* Below a 360px phone the counts are what gives: the labels must fit. */
-@media (max-width: 359px) {
-  .hr-cr-seg-count { display: none; }
 }
 
 /* ----- Case grid + tile --------------------------------------------- */
@@ -665,13 +503,6 @@ a.hr-case-tile:hover .hr-case-tile-id { color: var(--neon-cyan); }
 .hr-room-add { width: 100%; }
 
 /* ----- Room detail -------------------------------------------------- */
-.hr-room-skel-title.hr-skeleton-line {
-  display: block;
-  height: 1.9rem;
-  width: 45%;
-  margin-top: 0.2rem;
-}
-
 .hr-cr-section { margin-bottom: 1.75rem; }
 
 .hr-cr-section-head {

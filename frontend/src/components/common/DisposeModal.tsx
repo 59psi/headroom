@@ -1,7 +1,7 @@
 import { useId, useState } from 'react';
 import { Modal } from './Modal';
 import { ErrorNote } from './ErrorNote';
-import { ChoiceGroup } from './ColorScopePicker';
+import { Segmented } from '../ui/Segmented';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { disposeHat } from '../../api/hats';
 import { invalidateHatViews } from '../../lib/invalidate';
@@ -89,7 +89,7 @@ export function DisposeModal({ hatId, show, onClose }: Props) {
           were two taps and an iOS picker wheel away. */}
       <span className="form-label" id={viaLabelId}>What happened</span>
       <div className="mb-3">
-        <ChoiceGroup
+        <Segmented
           variant="chips"
           labelledBy={viaLabelId}
           options={DISPOSITIONS}

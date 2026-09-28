@@ -13,6 +13,7 @@ import { DEFAULT_HAT_BASICS } from '../components/hats/HatFormFields';
 import { invalidateHatViews } from '../lib/invalidate';
 import { formatBytes } from '../lib/format';
 import { ErrorNote } from '../components/common/ErrorNote';
+import { PageHeader } from '../components/ui/PageHeader';
 import { Panel } from '../components/ui/Panel';
 import { StatusPill, type PillTone } from '../components/ui/StatusPill';
 import { Skeleton } from '../components/ui/Skeleton';
@@ -232,10 +233,10 @@ export function BulkImportPage() {
 
   return (
     <>
-      <div className="hr-import-head">
-        <h1>Bulk import</h1>
-        <Link to="/hats" className="btn btn-outline-secondary btn-sm">← Hats</Link>
-      </div>
+      <PageHeader
+        title="Bulk import"
+        actions={<Link to="/hats" className="btn btn-outline-secondary btn-sm">← Hats</Link>}
+      />
 
       {/* The option lists feed the defaults form below; a failed fetch used
           to render three empty selects with no explanation. */}

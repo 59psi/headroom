@@ -6,6 +6,7 @@ import { listRooms } from '../api/rooms';
 import { CAPACITY_PLACEHOLDER, DEFAULT_REGULAR_CAPACITY } from '../lib/capacity';
 import { invalidateHatViews } from '../lib/invalidate';
 import { ErrorNote } from '../components/common/ErrorNote';
+import { PageHeader } from '../components/ui/PageHeader';
 import { Panel } from '../components/ui/Panel';
 import { useToast } from '../components/ui/Toast';
 
@@ -44,12 +45,7 @@ export function NewCasePage() {
 
   return (
     <>
-      <header className="hr-cr-head">
-        <div className="hr-cr-title">
-          <Link to="/cases" className="hr-cr-back">Cases</Link>
-          <h1>New case</h1>
-        </div>
-      </header>
+      <PageHeader back={{ to: '/cases', label: 'Cases' }} title="New case" />
 
       <form onSubmit={handleSubmit} className="hr-case-form">
         <Panel

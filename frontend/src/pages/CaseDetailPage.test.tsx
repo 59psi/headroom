@@ -87,6 +87,21 @@ function renderCase() {
   );
 }
 
+describe('CaseDetailPage — header', () => {
+  it('titles the page with the case id as a code, under a way back to Cases, with Edit beside it', async () => {
+    renderCase();
+
+    const title = await screen.findByRole('heading', { level: 1, name: 'A-001' });
+    expect(title).toHaveClass('hr-page-head-code');
+    const head = title.closest('header')!;
+    const back = within(head).getByRole('link', { name: 'Cases' });
+    expect(back).toHaveAttribute('href', '/cases');
+    expect(back.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(head).getByRole('link', { name: 'Study' })).toHaveAttribute('href', '/rooms/1');
+    expect(within(head).getByRole('link', { name: 'Edit case' })).toHaveAttribute('href', '/cases/A-001/edit');
+  });
+});
+
 describe('CaseDetailPage — delete', () => {
   it('asks in the app first, with the TRUE consequence — and Cancel deletes nothing', async () => {
     const user = userEvent.setup();

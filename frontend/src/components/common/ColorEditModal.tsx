@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Modal } from './Modal';
 import { ErrorNote } from './ErrorNote';
-import { ChoiceGroup } from './ColorScopePicker';
+import { Segmented } from '../ui/Segmented';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { updateHatColors } from '../../api/hats';
 import { useToast } from '../ui/Toast';
@@ -200,7 +200,7 @@ export function ColorEditModal({ hatId, colors, editingRank, onClose }: Props) {
 
       {/* Chips rather than a <select>: four words, one tap. */}
       <span className="form-label" id="color-tier-label">Tier</span>
-      <ChoiceGroup
+      <Segmented
         variant="chips"
         labelledBy="color-tier-label"
         options={TIERS}

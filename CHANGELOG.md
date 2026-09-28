@@ -6,6 +6,58 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.80.0] — 2026-09-27
+
+A UI polish pass: the same synthwave look, grown up. The neon, gradients,
+glows and flicker all stay — they now mark state and the one main action on
+each card instead of every label — and changes apply in place with immediate
+feedback instead of through separate Save buttons and browser pop-ups.
+
+### Changed
+
+- **Type and buttons.** Card titles, form labels, badges and small captions
+  are set in Inter in sentence case; the display faces are kept for page
+  titles, the wordmark, big figures, prices and the nav. Buttons share one
+  case and weight, and each card has at most one gradient (primary) button.
+- **Settings.** A side rail with section descriptions on wide screens and a
+  sticky segmented strip on phones, plus a **Search settings** box that finds
+  any card across all five sections by name or by a related word. Every card
+  leads with a one-word status pill (*Connected*, *Not set*, *Running*,
+  *Nothing to do* …), a one-line description, and its longer explanation
+  folded under **How this works** — nothing was removed, it moved. The
+  Analysis tab shows the count of hats whose analysis failed.
+- **Changes apply in place.** Switches and pickers (guest browsing, the
+  Claude model, exact-color search) save the moment they change, with a
+  *Saving… / Saved* note; several updates show immediately and roll back if
+  the server refuses. A short notice in the corner confirms each change.
+  Loading content holds its shape with placeholders instead of a spinner.
+- **Confirmations are in the app.** Every "are you sure?" is now an in-app
+  dialog that names the consequence, focuses **Cancel** for destructive
+  actions, and works in the installed iOS app (which suppresses browser
+  dialogs after a few). Passkey naming uses the same dialog.
+- **Hat page.** Photo first, then the summary and actions; notes save as you
+  type (⌘/Ctrl + Enter saves at once); style and size read as their proper
+  names ("A-Game") everywhere they appear.
+- Saving a Claude API key tests the connection straight away; the key and
+  model cards show *Connected* only after a passing test.
+- The case, room, collection and hat pages and Settings share one page
+  header — the way back, the title, a count or one-line summary, and the
+  page's actions — and one segmented control. Edit hat's link back to its hat
+  now sits above the title, as on Edit case. Login, guest and
+  shared-collection pages use the same calm card language.
+
+### Fixed
+
+- A replaced site logo now updates in the nav and on the home page, not only
+  in its settings card. The logo status carries a `version` that changes with
+  the file.
+- Changing a filter on the Hats or Search page no longer scrolls the list
+  back to the top.
+- A small font subset was blocked by the app's own content policy on every
+  page load and fell back to a system face; fonts are now always served as
+  files.
+- Sticky bars no longer slide under the status bar in the installed iOS app.
+
 ## [2.79.1] — 2026-09-27
 
 Dependency and toolchain refresh. No behavior changes, no migration.

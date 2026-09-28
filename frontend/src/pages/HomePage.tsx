@@ -6,6 +6,7 @@ import { listAllHats } from '../api/hats';
 import { listRooms } from '../api/rooms';
 import { getLogo } from '../api/settings';
 import { logoSrc } from '../lib/photo';
+import { useHatLabels } from '../lib/labels';
 import { StatTiles, StatTilesSkeleton } from '../components/charts/Charts';
 import { Panel } from '../components/ui/Panel';
 import { money, valueCases, valueCollection } from '../lib/valuation';
@@ -29,6 +30,7 @@ export function HomePage() {
   const hats = useQuery({ queryKey: ['hats'], queryFn: listAllHats });
   const rooms = useQuery({ queryKey: ['rooms'], queryFn: listRooms });
   const logo = useQuery({ queryKey: ['settings', 'logo'], queryFn: getLogo });
+  const labels = useHatLabels();
   const [activeIndex, setActiveIndex] = useState(0);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const touchStartX = useRef<number | null>(null);
@@ -313,7 +315,7 @@ export function HomePage() {
                     sixth-level heading straight under the page's h1. */}
                 <div className="carousel-caption">
                   <span className="hr-cp-caption-id">{hat.display_id || `Hat #${hat.id}`}</span>
-                  <small>{hat.style.replace(/_/g, ' ')}</small>
+                  <small>{labels.style(hat.style)}</small>
                 </div>
               </Link>
             ))}

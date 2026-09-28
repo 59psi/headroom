@@ -8,21 +8,9 @@
    aiming at. */
 
 /* ===== Hat detail: header ============================================ */
-.hr-hat-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 0.5rem 1rem;
-  flex-wrap: wrap;
-  margin-bottom: 1rem;
-}
-
-.hr-hat-title {
-  margin: 0;
-  font-family: var(--font-mono);
-  color: var(--neon-cyan);
-  text-shadow: 0 0 18px rgba(0, 240, 255, 0.35);
-}
+/* The head itself — the id as a mono title, the badges at its right — is
+   `ui/PageHeader` (`code`, `status`), styled in ui.css, as are the headers of
+   the Add / Edit hat forms and Bulk import. */
 
 /* The case half of the id is a breadcrumb; underlined in a dimmer cyan so
    it reads as a link without shouting over the id itself. */
@@ -35,13 +23,6 @@
 }
 
 .hr-crumb-link:hover { text-decoration-color: currentColor; }
-
-.hr-hat-badges {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-  flex-wrap: wrap;
-}
 
 /* The analysis badge in the pills' voice: sentence case at caption size.
    Tracked caps made "2/4 · IDENTIFYING" the loudest words in the header. */
@@ -341,22 +322,6 @@
 .hr-notes-error > .alert { flex: 1 1 14rem; }
 
 /* ===== Hat forms ===================================================== */
-.hr-edit-head {
-  display: flex;
-  align-items: baseline;
-  gap: 0.35rem 0.85rem;
-  flex-wrap: wrap;
-  margin-bottom: 1rem;
-}
-
-.hr-edit-sub {
-  font-size: var(--fs-sm);
-  color: var(--text-secondary);
-  text-decoration: none;
-}
-
-.hr-edit-sub:hover { color: var(--neon-cyan); }
-
 /* Style full width on a phone (its option labels are the long ones), Size
    and Condition two-up; all three in a row from a tablet up. */
 .hr-form-grid {
@@ -585,85 +550,7 @@ body.hr-picker-open .hr-form-actions {
   .hr-color-names { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
-/* ===== Choice group (ColorScopePicker's ChoiceGroup) ================= */
-.hr-choice {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 0.25rem;
-  max-width: 100%;
-}
-
-/* One joined strip — the filter look. */
-.hr-choice.is-segmented {
-  flex-wrap: nowrap;
-  padding: 0.2rem;
-  border-radius: var(--radius-sm);
-  background: var(--surface-inset);
-  border: 1px solid var(--border-soft);
-}
-
-/* Separate pills that wrap — the form-choice look. */
-.hr-choice.is-chips {
-  display: flex;
-  gap: 0.5rem;
-}
-
-.hr-choice-btn {
-  min-height: 36px;
-  padding: 0.35rem 0.8rem;
-  border: 1px solid transparent;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--text-secondary);
-  font-family: var(--font-body);
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  line-height: 1.2;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: color var(--dur-fast) ease, background var(--dur-fast) ease, border-color var(--dur-fast) ease, box-shadow var(--dur) ease;
-}
-
-@media (pointer: coarse) {
-  .hr-choice-btn { min-height: 44px; }
-}
-
-.hr-choice-btn:hover { color: var(--text); background: var(--surface-hover); }
-
-.hr-choice-btn:focus-visible {
-  outline: 2px solid var(--neon-cyan);
-  outline-offset: 1px;
-}
-
-.hr-choice-btn.is-active {
-  color: var(--text);
-  background: rgba(255, 46, 182, 0.14);
-  box-shadow: inset 0 0 0 1px rgba(255, 46, 182, 0.45), 0 0 14px rgba(255, 46, 182, 0.18);
-}
-
-.hr-choice.is-chips .hr-choice-btn {
-  padding: 0.4rem 1rem;
-  border-color: var(--border);
-  border-radius: var(--radius-pill);
-  background: var(--surface-raised);
-}
-
-.hr-choice.is-chips .hr-choice-btn.is-active {
-  border-color: rgba(255, 46, 182, 0.6);
-  background: rgba(255, 46, 182, 0.14);
-  box-shadow: 0 0 14px rgba(255, 46, 182, 0.18);
-}
-
 /* ===== Bulk import =================================================== */
-.hr-import-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-  margin-bottom: 1rem;
-}
-
 .hr-import-defaults {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -787,7 +674,6 @@ body.hr-picker-open .hr-form-actions {
 
 @media (prefers-reduced-motion: reduce) {
   .hr-photo-drop,
-  .hr-choice-btn,
   .hr-import-job,
   .hr-color-row.hr-color-row-btn { transition: none; }
 }

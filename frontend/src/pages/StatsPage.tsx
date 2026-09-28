@@ -17,6 +17,7 @@ import {
   BarList, ChartCard, Donut, StatTiles, StatTilesSkeleton, TimeSeries,
   type ChartDatum, type TimePoint,
 } from '../components/charts/Charts';
+import { PageHeader } from '../components/ui/PageHeader';
 import { Panel } from '../components/ui/Panel';
 import {
   BASIS_LABEL, money, moneyPrecise, realizedTotals, valueCases, valueCollection, valueHat,
@@ -156,15 +157,15 @@ function Section({ id, title, children }: { id: SectionId; title: string; childr
 
 function PageHead() {
   return (
-    <header className="hr-cp-head">
-      <div className="hr-cp-head-title">
-        <h1>Stats</h1>
-      </div>
-      <div className="hr-cp-head-actions">
-        <Link to="/valuation" className="btn btn-outline-secondary btn-sm">Valuation →</Link>
-        <Link to="/" className="btn btn-outline-secondary btn-sm">← Home</Link>
-      </div>
-    </header>
+    <PageHeader
+      title="Stats"
+      actions={
+        <>
+          <Link to="/valuation" className="btn btn-outline-secondary btn-sm">Valuation →</Link>
+          <Link to="/" className="btn btn-outline-secondary btn-sm">← Home</Link>
+        </>
+      }
+    />
   );
 }
 

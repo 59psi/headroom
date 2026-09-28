@@ -210,51 +210,12 @@
 
 /* ----- Share photos to Headroom ------------------------------------- */
 
-/* Two-way platform switch; the segmented look of the Settings tab strip, at
-   card scale. */
-.hr-platform-switch {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: 1fr;
-  gap: 0.25rem;
-  width: 100%;
+/* The two-way platform switch (`ui/Segmented`, equal halves): capped so on
+   a wide card the halves stay button-sized instead of stretching into two
+   long bars. */
+.hr-share-platforms {
   max-width: 22rem;
   margin-bottom: 1rem;
-  padding: 0.25rem;
-  border-radius: var(--radius-sm);
-  background: var(--surface-inset);
-  border: 1px solid var(--border-soft);
-}
-
-.hr-platform-option {
-  min-height: 40px;
-  padding: 0.35rem 0.75rem;
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--text-secondary);
-  font-family: var(--font-body);
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  cursor: pointer;
-  transition: color var(--dur-fast) ease, background var(--dur-fast) ease, box-shadow var(--dur) ease;
-}
-
-@media (pointer: coarse) {
-  .hr-platform-option { min-height: 44px; }
-}
-
-.hr-platform-option:hover { color: var(--text); background: var(--surface-hover); }
-
-.hr-platform-option:focus-visible {
-  outline: 2px solid var(--neon-cyan);
-  outline-offset: 1px;
-}
-
-.hr-platform-option.is-active {
-  color: var(--text);
-  background: rgba(255, 46, 182, 0.14);
-  box-shadow: inset 0 0 0 1px rgba(255, 46, 182, 0.45), 0 0 14px rgba(255, 46, 182, 0.18);
 }
 
 .hr-share-recipe {

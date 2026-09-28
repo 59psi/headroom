@@ -5,11 +5,13 @@ import { listCases } from '../api/cases';
 import { getRoomOptions } from '../api/rooms';
 import { caseLabelsUrl } from '../api/settings';
 import { CaseGridSkeleton, CaseTile } from '../components/cases/CaseTile';
+import { PageHeader } from '../components/ui/PageHeader';
+import { Segmented } from '../components/ui/Segmented';
 import { DEFAULT_BEANIE_CAPACITY, DEFAULT_REGULAR_CAPACITY } from '../lib/capacity';
 
 type CaseTypeFilter = 'all' | 'archive' | 'daily_wear';
 
-const TYPE_FILTERS: { value: CaseTypeFilter; label: string }[] = [
+const TYPE_FILTERS: ReadonlyArray<{ value: CaseTypeFilter; label: string }> = [
   { value: 'all', label: 'All' },
   { value: 'archive', label: 'Archive' },
   { value: 'daily_wear', label: 'Daily wear' },
@@ -132,48 +134,43 @@ export function CasesPage() {
 
   return (
     <>
-      <header className="hr-cr-head">
-        <div className="hr-cr-title">
-          <h1>Cases</h1>
-          {data && data.length > 0 && (
-            <p className="hr-cr-sub">
-              {plural(data.length, 'case')} · {plural(hatTotal, 'hat')}
-              {filtering && <> · showing {filtered.length}</>}
-            </p>
-          )}
-        </div>
-        <div className="hr-cr-actions">
-          <a
-            href={caseLabelsUrl()}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="btn btn-outline-secondary btn-sm"
-            title="Printable QR labels for every case"
-          >
-            <TagIcon /> Labels
-          </a>
-          <Link to="/cases/new" className="btn btn-primary btn-sm">
-            <PlusIcon /> New case
-          </Link>
-        </div>
-      </header>
+      <PageHeader
+        title="Cases"
+        summary={data && data.length > 0 && (
+          <>
+            {plural(data.length, 'case')} · {plural(hatTotal, 'hat')}
+            {filtering && <> · showing {filtered.length}</>}
+          </>
+        )}
+        actions={
+          <>
+            <a
+              href={caseLabelsUrl()}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn btn-outline-secondary btn-sm"
+              title="Printable QR labels for every case"
+            >
+              <TagIcon /> Labels
+            </a>
+            <Link to="/cases/new" className="btn btn-primary btn-sm">
+              <PlusIcon /> New case
+            </Link>
+          </>
+        }
+      />
 
       {!error && (
         <div className="hr-cr-toolbar">
-          <div className="hr-cr-seg" role="group" aria-label="Case type">
-            {TYPE_FILTERS.map(f => (
-              <button
-                key={f.value}
-                type="button"
-                aria-pressed={typeFilter === f.value}
-                className={`hr-cr-seg-btn${typeFilter === f.value ? ' is-active' : ''}`}
-                onClick={() => setFilter('type', f.value)}
-              >
-                {f.label}
-                {data && <span className="hr-cr-seg-count">{typeCounts[f.value]}</span>}
-              </button>
-            ))}
-          </div>
+          {/* Equal segments across the phone's width. The counts wait for the
+              data rather than showing a row of zeros while it loads. */}
+          <Segmented
+            label="Case type"
+            fill
+            options={TYPE_FILTERS.map(f => ({ ...f, count: data ? typeCounts[f.value] : undefined }))}
+            value={typeFilter}
+            onChange={v => setFilter('type', v)}
+          />
           <select
             aria-label="Room"
             className="form-select"

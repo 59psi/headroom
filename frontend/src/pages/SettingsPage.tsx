@@ -26,6 +26,7 @@ import { FrozenPricesCard } from '../components/settings/FrozenPricesCard';
 import { GuestViewCard } from '../components/settings/GuestViewCard';
 import { TrustCertCard } from '../components/settings/TrustCertCard';
 import { useAnalysisErrorCount, analysisErrorLabel } from '../components/layout/AnalysisErrorBadge';
+import { PageHeader } from '../components/ui/PageHeader';
 
 /**
  * Settings, grouped by what you came here to do.
@@ -195,7 +196,10 @@ export function SettingsPage() {
 
   return (
     <>
-      <h1 className="mb-3">Settings</h1>
+      {/* The page title only. What is specific to Settings is the section
+          heading inside the shell below (the chosen section's name and
+          blurb, beside the rail), not this. */}
+      <PageHeader title="Settings" />
 
       <div className="hr-settings">
         {/* The side column on a wide screen (sticky, beside the cards). On a

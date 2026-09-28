@@ -13,6 +13,7 @@ import { Link } from 'react-router';
 import { listAllHats, listDisposedHats } from '../api/hats';
 import { listCases } from '../api/cases';
 import { BarList, ChartCard, StatTiles, StatTilesSkeleton } from '../components/charts/Charts';
+import { PageHeader } from '../components/ui/PageHeader';
 import { Panel } from '../components/ui/Panel';
 import { Skeleton } from '../components/ui/Skeleton';
 import {
@@ -93,15 +94,15 @@ function BucketTable({ title, column, buckets }: { title: string; column: string
 
 function PageHead() {
   return (
-    <header className="hr-cp-head">
-      <div className="hr-cp-head-title">
-        <h1>Valuation</h1>
-      </div>
-      <div className="hr-cp-head-actions">
-        <Link to="/stats" className="btn btn-outline-secondary btn-sm">Stats →</Link>
-        <Link to="/" className="btn btn-outline-secondary btn-sm">← Home</Link>
-      </div>
-    </header>
+    <PageHeader
+      title="Valuation"
+      actions={
+        <>
+          <Link to="/stats" className="btn btn-outline-secondary btn-sm">Stats →</Link>
+          <Link to="/" className="btn btn-outline-secondary btn-sm">← Home</Link>
+        </>
+      }
+    />
   );
 }
 

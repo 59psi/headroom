@@ -5,6 +5,7 @@ import { createHat, uploadHatPhoto } from '../api/hats';
 import { getApiKeyStatus } from '../api/settings';
 import { NewCaseModal } from '../components/common/NewCaseModal';
 import { ErrorNote } from '../components/common/ErrorNote';
+import { PageHeader } from '../components/ui/PageHeader';
 import { useToast } from '../components/ui/Toast';
 import {
   useHatFormOptions, useHatPhoto, PhotoCard, HatBasicsCard, HatFormSkeleton, HatFormActions,
@@ -83,7 +84,7 @@ export function AddHatPage() {
   if (options.isLoading) {
     return (
       <>
-        <h1 className="mb-3">Add hat</h1>
+        <PageHeader title="Add hat" />
         <HatFormSkeleton />
       </>
     );
@@ -91,7 +92,7 @@ export function AddHatPage() {
 
   return (
     <>
-      <h1 className="mb-3">Add hat</h1>
+      <PageHeader title="Add hat" />
 
       {photo && apiKey.data && !apiKey.data.configured && (
         <div className="alert alert-warning mb-3">

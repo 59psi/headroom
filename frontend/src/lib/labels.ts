@@ -12,7 +12,22 @@ type Option = { value: string | number; label: string };
  * value through the option list, said "A-Game".
  */
 export function optionLabel(opts: ReadonlyArray<Option> | undefined, value: string): string {
-  return opts?.find(o => String(o.value) === value)?.label ?? value.replace(/_/g, ' ');
+  return opts?.find(o => String(o.value) === value)?.label ?? readableValue(value);
+}
+
+/**
+ * A stored enum value made presentable without the option list: `a_game` →
+ * "A Game". For the pages that cannot fetch the list — the guest and shared
+ * views have no session, and `/api/meta` sits behind sign-in — and for the
+ * moment before it loads everywhere else. Close to the server's label, not
+ * identical ("A Game" vs "A-Game"); lowercase "a game" was neither.
+ */
+export function readableValue(value: string): string {
+  return value
+    .split('_')
+    .filter(Boolean)
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
 }
 
 /**

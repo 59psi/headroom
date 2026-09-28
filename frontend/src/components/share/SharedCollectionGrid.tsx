@@ -1,6 +1,7 @@
 import { Link } from 'react-router';
 import type { SharedHat } from '../../types';
 import { CapGlyph } from './PublicPage';
+import { readableValue } from '../../lib/labels';
 
 /**
  * The collection as an outside viewer sees it.
@@ -101,7 +102,7 @@ function Tile({ hat }: { hat: SharedHat }) {
         <div className="hr-share-thumb is-empty"><CapGlyph /></div>
       )}
       <div className="hr-share-name">
-        {[hat.brand, hat.model_name].filter(Boolean).join(' ') || hat.style.replace(/_/g, ' ')}
+        {[hat.brand, hat.model_name].filter(Boolean).join(' ') || readableValue(hat.style)}
       </div>
       {hat.colors.length > 0 && (
         <div className="hr-share-swatches">

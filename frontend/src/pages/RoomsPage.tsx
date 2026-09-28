@@ -4,6 +4,7 @@ import { Link } from 'react-router';
 import { listRooms, createRoom, updateRoom, deleteRoom, setDefaultRoom } from '../api/rooms';
 import { invalidateHatViews } from '../lib/invalidate';
 import { ErrorNote } from '../components/common/ErrorNote';
+import { PageHeader } from '../components/ui/PageHeader';
 import { Panel } from '../components/ui/Panel';
 import { StatusPill } from '../components/ui/StatusPill';
 import { Skeleton } from '../components/ui/Skeleton';
@@ -360,14 +361,10 @@ export function RoomsPage() {
 
   return (
     <>
-      <header className="hr-cr-head">
-        <div className="hr-cr-title">
-          <h1>Rooms</h1>
-          {rooms && (
-            <p className="hr-cr-sub">{plural(rooms.length, 'room')} · {plural(caseTotal, 'case')}</p>
-          )}
-        </div>
-      </header>
+      <PageHeader
+        title="Rooms"
+        summary={rooms && <>{plural(rooms.length, 'room')} · {plural(caseTotal, 'case')}</>}
+      />
 
       <Panel
         title="Your rooms"

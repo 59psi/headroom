@@ -6,6 +6,7 @@ import { getColorPalette, searchHats, searchHatsByColor } from '../api/search';
 import { ColorScopePicker, COLOR_SCOPES } from '../components/common/ColorScopePicker';
 import { ColorSwatches } from '../components/common/ColorSwatch';
 import { ConditionBadge } from '../components/common/ConditionBadge';
+import { PageHeader } from '../components/ui/PageHeader';
 import { Switch } from '../components/ui/Switch';
 import { tileSrc } from '../lib/photo';
 import { useDebouncedValue } from '../lib/useDebouncedValue';
@@ -229,19 +230,17 @@ export function SearchPage() {
 
   return (
     <>
-      <header className="hr-cp-head">
-        <div className="hr-cp-head-title">
-          <h1>Search</h1>
-        </div>
-        {/* Lives here rather than in the nav: it is an occasional
-            housekeeping task, and searching is the frame of mind you're
-            already in when you go looking for a hat you think you saw twice. */}
-        <div className="hr-cp-head-actions">
+      <PageHeader
+        title="Search"
+        // Lives here rather than in the nav: it is an occasional housekeeping
+        // task, and searching is the frame of mind you're already in when you
+        // go looking for a hat you think you saw twice.
+        actions={
           <Link to="/duplicates" className="btn btn-outline-secondary btn-sm">
             Find duplicates
           </Link>
-        </div>
-      </header>
+        }
+      />
 
       <form onSubmit={handleSubmit} className="hr-cp-search" role="search">
         <div className="hr-field-row">

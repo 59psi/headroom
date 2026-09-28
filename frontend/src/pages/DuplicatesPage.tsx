@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import { findDuplicates } from '../api/search';
 import { ConditionBadge } from '../components/common/ConditionBadge';
+import { PageHeader } from '../components/ui/PageHeader';
 import { Panel } from '../components/ui/Panel';
 import { Skeleton } from '../components/ui/Skeleton';
 import { StatusPill } from '../components/ui/StatusPill';
@@ -23,14 +24,10 @@ export function DuplicatesPage() {
   });
 
   const header = (
-    <header className="hr-cp-head">
-      <div className="hr-cp-head-title">
-        <h1>Possible duplicates</h1>
-      </div>
-      <div className="hr-cp-head-actions">
-        <Link to="/search" className="btn btn-outline-secondary btn-sm">← Search</Link>
-      </div>
-    </header>
+    <PageHeader
+      title="Possible duplicates"
+      actions={<Link to="/search" className="btn btn-outline-secondary btn-sm">← Search</Link>}
+    />
   );
 
   if (isLoading) {

@@ -4,6 +4,7 @@ import { getGuestHat } from '../api/guest';
 import { CapGlyph, PublicNotice, PublicPage } from '../components/share/PublicPage';
 import { ImageLightbox } from '../components/common/ImageLightbox';
 import { Panel } from '../components/ui/Panel';
+import { readableValue } from '../lib/labels';
 
 /**
  * One hat, as a guest sees it.
@@ -56,7 +57,7 @@ export function GuestHatPage() {
   }
 
   const title = [data.brand, data.model_name].filter(Boolean).join(' ')
-    || data.style.replace(/_/g, ' ');
+    || readableValue(data.style);
 
   return (
     <PublicPage narrow>
@@ -75,7 +76,7 @@ export function GuestHatPage() {
       <div className="hr-public-head">
         <h1>{title}</h1>
         <p className="hr-public-sub">
-          {data.style.replace(/_/g, ' ')}
+          {readableValue(data.style)}
           {data.display_id && <> · <span className="font-mono">{data.display_id}</span></>}
         </p>
       </div>

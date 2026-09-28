@@ -7,6 +7,7 @@ import { getCase, updateCase } from '../api/cases';
 import { listRooms } from '../api/rooms';
 import { CAPACITY_PLACEHOLDER } from '../lib/capacity';
 import { invalidateHatViews } from '../lib/invalidate';
+import { PageHeader } from '../components/ui/PageHeader';
 import { Panel } from '../components/ui/Panel';
 import { Skeleton } from '../components/ui/Skeleton';
 import { useToast } from '../components/ui/Toast';
@@ -157,12 +158,7 @@ export function EditCasePage() {
 
   return (
     <>
-      <header className="hr-cr-head">
-        <div className="hr-cr-title">
-          <Link to={`/cases/${displayId}`} className="hr-cr-back">{displayId}</Link>
-          <h1>Edit case {displayId}</h1>
-        </div>
-      </header>
+      <PageHeader back={{ to: `/cases/${displayId}`, label: displayId }} title={`Edit case ${displayId}`} />
       {body}
     </>
   );
