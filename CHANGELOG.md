@@ -6,6 +6,21 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.82.1] — 2026-09-28
+
+Dependency refresh. No behavior changes, no migration.
+
+### Changed
+
+- Frontend: Vitest 5, jsdom 30.1 and TanStack Query 5.103. The test setup now
+  provides object URLs itself: Vitest's jsdom shim for them depends on a jsdom
+  internal that 30.1 changed, which made every photo-upload test fail without
+  any change to the app.
+- Backend: `rembg` floor raised to 2.0.85; `networkx`, `tifffile` and
+  `watchfiles` refreshed to the latest releases past the lock's 7-day
+  cooldown. `requirements.txt` re-exported from the new `uv.lock`.
+- CI: `setup-uv` 10.2.0.
+
 ## [2.82.0] — 2026-09-28
 
 Upgrades without a checklist.
