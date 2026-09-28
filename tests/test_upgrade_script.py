@@ -226,6 +226,34 @@ esac
     assert not restarted.exists()
 
 
+@pytest.mark.parametrize(
+    ("help_text", "expected"),
+    [
+        ("--max-used-space bytes   Maximum amount", "builder prune -f --max-used-space 6GB"),
+        ("--keep-storage bytes   Amount of disk", "builder prune -f --keep-storage 6GB"),
+        ("--filter filter   Provide filter values", "builder prune -f --filter until=168h"),
+    ],
+)
+async def test_the_build_cache_is_capped_by_size_where_docker_can(sandbox, tmp_path, help_text, expected):
+    """An age filter freed nothing on the Pi: a box that upgrades weekly has
+    no cache older than a week. A size cap keeps the newest layers only."""
+    calls = tmp_path / "calls"
+    _stub(sandbox["bin"], "docker", f"""
+if [ "$*" = "builder prune --help" ]; then echo "{help_text}"; exit 0; fi
+echo "$*" >> "{calls}"
+""")
+    sandbox["run"]("prune_build_cache")
+    assert calls.read_text().strip() == expected
+
+
+async def test_help_prints_the_whole_header(sandbox):
+    result = subprocess.run(["bash", str(SCRIPT), "--help"], capture_output=True, text=True, check=True)
+    assert result.stdout.startswith("Upgrade a Docker install of Headroom in place")
+    assert "HEADROOM_BUILD_CACHE_CAP" in result.stdout
+    assert "tests/test_upgrade_script.py" in result.stdout  # the header's last line
+    assert "set -euo pipefail" not in result.stdout
+
+
 async def test_uncommitted_changes_stop_the_upgrade(sandbox):
     repo = sandbox["repo"]
     for args in (["init", "-q"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]):

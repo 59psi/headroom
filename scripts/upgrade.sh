@@ -25,7 +25,8 @@
 #   7. waits for the container's healthcheck (/health/ready) to pass
 #   8. restarts any Caddy container whose served Caddyfile differs from the
 #      file on disk
-#   9. with --prune-build-cache: drops Docker build cache older than a week
+#   9. with --prune-build-cache: caps Docker build cache at 6 GB
+#      (HEADROOM_BUILD_CACHE_CAP)
 #
 # "Back up first" is not here because the app does it itself: the first boot
 # of a new version snapshots the database to
@@ -233,6 +234,26 @@ refresh_caddy() {
   done
 }
 
+# Cap Docker's build cache instead of aging it out. An age filter did nothing
+# on the Pi it was written for: every release rebuilds, so the whole 29 GB was
+# less than a week old. A size cap keeps the newest layers — the ones the next
+# build reuses — and drops the rest. `--max-used-space` is Docker 28+;
+# `--keep-storage` is its predecessor; the age filter is the last resort.
+prune_build_cache() {
+  local cap="${HEADROOM_BUILD_CACHE_CAP:-6GB}" help
+  help="$(docker builder prune --help 2>/dev/null || true)"
+  if grep -q -- '--max-used-space' <<<"$help"; then
+    log "capping build cache at $cap"
+    docker builder prune -f --max-used-space "$cap" >/dev/null
+  elif grep -q -- '--keep-storage' <<<"$help"; then
+    log "capping build cache at $cap"
+    docker builder prune -f --keep-storage "$cap" >/dev/null
+  else
+    log "pruning build cache older than a week"
+    docker builder prune -f --filter until=168h >/dev/null
+  fi
+}
+
 main() {
   local tz="" pull=1 prune=0
   while [ $# -gt 0 ]; do
@@ -241,7 +262,9 @@ main() {
       --tz=*) tz="${1#--tz=}"; shift ;;
       --no-pull) pull=0; shift ;;
       --prune-build-cache) prune=1; shift ;;
-      -h|--help) sed -n '2,33p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; return 0 ;;
+      # The header comment, however long it grows: every line after the
+      # shebang up to the first line that is not a comment.
+      -h|--help) awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "${BASH_SOURCE[0]}"; return 0 ;;
       *) die "unknown option: $1 (see --help)" ;;
     esac
   done
@@ -269,8 +292,7 @@ main() {
   refresh_caddy
 
   if [ "$prune" = 1 ]; then
-    log "pruning build cache older than a week"
-    docker builder prune -f --filter until=168h >/dev/null
+    prune_build_cache
   fi
 
   log "running $(docker exec "$APP_CONTAINER" python -c 'import importlib.metadata as m; print(m.version("headroom"))' 2>/dev/null || echo '?')"
