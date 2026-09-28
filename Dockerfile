@@ -179,8 +179,18 @@ from rembg import new_session; new_session('${REMBG_MODEL}')" \
 COPY pyproject.toml uv.lock* ./
 COPY src ./src
 COPY README.md ./
+# Then the installers' leftovers go, after the LAST step that touches the venv:
+# uv leaves a world-writable `.lock` in every venv it installs into, which put
+# a file the app user could write inside the code the image promises is
+# read-only (CI's `find -writable` caught it). Nothing at runtime takes that
+# lock — it serializes uv's own installs, and there are none after this — and
+# `go-w` over the whole venv makes the invariant hold for anything else an
+# installer leaves behind, not just the one file found. (Cleaned after the
+# earlier `uv pip install` instead, `uv sync` here simply wrote it back.)
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev
+    uv sync --frozen --no-dev \
+ && rm -f /opt/venv/.lock \
+ && chmod -R go-w /opt/venv
 
 
 # ============================================================ #
