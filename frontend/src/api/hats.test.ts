@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { listAllHats, listDisposedHats, FULL_COLLECTION_LIMIT } from './hats';
+import { listAllHats, listDisposedHats, logWear, FULL_COLLECTION_LIMIT } from './hats';
 import { hatFixture } from '../test/fixtures';
 
 /**
@@ -85,5 +85,28 @@ describe('listAllHats — the whole collection means the whole collection', () =
     await listDisposedHats();
 
     expect(String(fetchMock.mock.calls[0][0])).toContain('status=disposed');
+  });
+});
+
+describe('logWear — a wear lands on the wearer\'s day', () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('sends this device\'s calendar day as worn_at, not an empty body', async () => {
+    // 11:30 pm local — the hour a UTC server already calls tomorrow anywhere
+    // west of Greenwich. Built from local fields, so the expected day is the
+    // same in whatever zone the suite runs.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 8, 27, 23, 30));
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true, status: 200, headers: new Headers(), json: async () => hatFixture({ id: 7 }),
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await logWear(7);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain('/api/hats/7/wear');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({ worn_at: '2026-09-27' });
   });
 });

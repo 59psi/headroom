@@ -31,6 +31,7 @@ import zipfile
 from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
+from typing import NamedTuple
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -293,36 +294,60 @@ async def build_export(
     resolved = await asyncio.to_thread(_resolve_images, sources)
 
     # Cards second, on the loop, while the ORM objects are still attached and
-    # their relationships loaded. Fast: string formatting only.
-    cards: list[tuple[str, Path | None, str]] = []
+    # their relationships loaded. Fast: string formatting only. Each card is
+    # rendered both ways — with its photo and without — because whether the
+    # photo makes it into the zip is only known once `_zip_it` has tried to
+    # write it, and that happens on a thread that must not touch the ORM.
+    cards: list[_Card] = []
     for hat in hats:
         path = resolved.get(hat.id)
         name = _image_name(hat) if path is not None else None
-        cards.append((_hat_card(hat, name, include_values), path, name or ""))
+        without_photo = _hat_card(hat, None, include_values)
+        cards.append(_Card(
+            with_photo=_hat_card(hat, name, include_values) if name else without_photo,
+            without_photo=without_photo,
+            path=path,
+            name=name,
+        ))
 
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    page = _PAGE.format(
-        title=escape(title),
-        count=len(hats),
-        generated=generated,
-        cards="\n".join(c for c, _p, _n in cards),
-    )
-    blob = await asyncio.to_thread(_zip_it, cards, page)
+    header = {"title": escape(title), "count": len(hats), "generated": generated}
+    blob = await asyncio.to_thread(_zip_it, cards, header)
     return blob, f"headroom-collection-{generated}.zip"
 
 
-def _zip_it(cards: list[tuple[str, Path | None, str]], page: str) -> bytes:
-    """Pack the rendered page and the images. Pure CPU + disk — no ORM here."""
+class _Card(NamedTuple):
+    """One hat's card, rendered both ways, and the image it would show."""
+
+    with_photo: str
+    without_photo: str
+    path: Path | None
+    name: str | None
+
+
+def _zip_it(cards: list[_Card], header: dict) -> bytes:
+    """Pack the images, then the page. Pure CPU + disk — no ORM here.
+
+    The page is assembled AFTER the images, from what was actually written.
+    It used to be rendered first, so an image that failed to go in left its
+    card pointing at `images/<id>.webp` — a file the zip does not contain, a
+    broken picture rather than the "no photo" the card is meant to show.
+    """
     buf = io.BytesIO()
+    rendered: list[str] = []
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for _card, path, name in cards:
-            if path is None or not name:
+        for card in cards:
+            if card.path is None or not card.name:
+                rendered.append(card.without_photo)
                 continue
             try:
-                zf.write(path, f"images/{name}")
+                zf.write(card.path, f"images/{card.name}")
             except OSError:
-                # One unreadable file must not cost the whole download; the
-                # card already rendered and simply shows no photo.
-                logger.info("Export: could not add %s", path)
-        zf.writestr("index.html", page)
+                # One unreadable file must not cost the whole download: that
+                # card goes out without its photo.
+                logger.info("Export: could not add %s", card.path)
+                rendered.append(card.without_photo)
+                continue
+            rendered.append(card.with_photo)
+        zf.writestr("index.html", _PAGE.format(cards="\n".join(rendered), **header))
     return buf.getvalue()

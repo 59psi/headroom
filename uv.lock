@@ -682,7 +682,7 @@ wheels = [
 
 [[package]]
 name = "headroom"
-version = "2.80.0"
+version = "2.81.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },
@@ -729,7 +729,7 @@ requires-dist = [
     { name = "onnxruntime" },
     { name = "pillow" },
     { name = "pillow-heif" },
-    { name = "pydantic" },
+    { name = "pydantic", specifier = ">=2.10" },
     { name = "pydantic-settings" },
     { name = "python-multipart" },
     { name = "qrcode", specifier = ">=8.2" },

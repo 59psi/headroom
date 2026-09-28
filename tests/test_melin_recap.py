@@ -793,7 +793,7 @@ async def test_a_construction_word_in_the_COLORWAY_half_vetoes_nothing(monkeypat
     Reading the whole string made `Trenches Icon Hydro - Denim` look like a
     Denim product, so a HYDRO hat was vetoed from its OWN item and fell back to
     the line median — a correctly recorded construction made pricing WORSE than
-    leaving it blank. CLAUDE.md documents this trap with this same example.
+    leaving it blank.
     """
     from headroom.services.melin_recap import fetch_resale_stats
 
@@ -832,7 +832,7 @@ async def test_a_construction_in_the_MODEL_half_still_vetoes(monkeypatch):
 
 async def test_hydro_and_hydrolite_veto_each_other(monkeypatch):
     """`HYDRO` is a SUBSTRING of `HYDROLite` and they are different products at
-    different prices — the confusion CLAUDE.md warns about repeatedly."""
+    different prices, so a substring test would confuse them."""
     from headroom.services.melin_recap import _rival_construction
 
     assert _rival_construction("Trenches Icon HYDROLite - Black", "HYDRO") is True
@@ -933,3 +933,141 @@ async def test_the_pages_of_one_sweep_share_one_connection_pool(monkeypatch):
     built.clear()
     await mr.query_listings({"pub_category": "odysea", "page": 3})
     assert len(built) == 1
+
+
+# ---- one read per category per sweep ------------------------------------ #
+
+
+async def test_a_manual_price_costs_no_marketplace_request(monkeypatch):
+    """The MANUAL check used to run AFTER the fetch: a hand-priced Melin hat
+    still walked its whole category (five page requests, measured) for a
+    number that was then thrown away."""
+    from headroom.models.hat import Hat
+    from headroom.services.hat_analysis_pipeline import RESALE_SKIPPED, refresh_melin_resale
+
+    calls = _stub_pages(monkeypatch, [[_listing("A-Game Hydro - Red", 8000)]])
+    hat = Hat(condition="new", size="classic", style="a_game", brand="Melin",
+              model_name="A-Game Hydro", resale_price=250.0, resale_price_scope="manual")
+
+    assert await refresh_melin_resale(hat) == RESALE_SKIPPED
+    assert calls == [], "a protected hat spent marketplace requests"
+    assert hat.resale_price == 250.0
+
+
+async def test_a_sweep_reads_each_category_once(monkeypatch):
+    """Three hats in one category were fifteen page requests for five
+    distinct pages: every hat re-walked the category. Inside one
+    `shared_client()` block — the sweep — a category is read once."""
+    import headroom.services.melin_recap as mr
+
+    monkeypatch.setattr(mr, "PAGE_SIZE", 2)
+    calls = _stub_pages(monkeypatch, [
+        [_listing("A-Game Hydro - Red", 8000), _listing("A-Game Hydro - Gray", 9000)],
+        [_listing("A-Game Hydro - Navy", 10000)],
+    ])
+
+    async with mr.shared_client():
+        for _ in range(3):
+            stats = await mr.fetch_resale_stats("a_game", "A-Game Hydro")
+            assert stats and stats["count"] == 3
+
+    assert len(calls) == 2, f"one walk of the category per sweep, not per hat: {len(calls)}"
+
+
+async def test_outside_a_sweep_every_lookup_sees_the_live_market(monkeypatch):
+    """Nothing is remembered between two separate analyses — the cache lives
+    and dies with a sweep's block."""
+    import headroom.services.melin_recap as mr
+
+    calls = _stub_pages(monkeypatch, [[_listing("A-Game Hydro - Red", 8000)] * 3])
+
+    await mr.fetch_resale_stats("a_game", "A-Game Hydro")
+    await mr.fetch_resale_stats("a_game", "A-Game Hydro")
+
+    assert len(calls) == 2
+
+
+async def test_a_nested_block_joins_the_sweep_rather_than_replacing_it(monkeypatch):
+    """`query_all_listings` opens its own block. Inside a sweep that used to
+    swap in a fresh pool for the call's duration; it now joins the sweep's."""
+    import headroom.services.melin_recap as mr
+
+    async with mr.shared_client() as outer:
+        async with mr.shared_client() as inner:
+            assert inner is outer
+        assert mr._shared_client.get() is outer, "the inner block closed the sweep's pool"
+
+
+async def test_a_failed_read_is_not_remembered(monkeypatch):
+    """The next hat in the sweep retries a category the marketplace failed
+    on, rather than inheriting the failure."""
+    import headroom.services.melin_recap as mr
+
+    attempts = {"n": 0}
+
+    async def _flaky(params):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise mr.MelinRecapError("blip")
+        return [_listing("A-Game Hydro - Red", 8000)] * 3
+
+    monkeypatch.setattr(mr, "query_listings", _flaky)
+
+    async with mr.shared_client():
+        with pytest.raises(mr.MelinRecapError):
+            await mr.fetch_resale_stats("a_game", "A-Game Hydro")
+        assert await mr.fetch_resale_stats("a_game", "A-Game Hydro")
+
+
+# ---- one size vocabulary --------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("C", "classic"), ("classic", "classic"), ("standard", "classic"),
+        ("S", "small"), ("sm", "small"), ("Small", "small"),
+        ("XL", "x_large"), ("X-Large", "x_large"), ("Extra Large", "x_large"),
+        ("x_large", "x_large"),
+        ("One Size", None), ("", None),
+    ],
+)
+async def test_listing_sizes_read_the_same_vocabulary_as_order_lines(raw, expected):
+    """The marketplace had its own, smaller size map. "sm", "standard",
+    "Extra Large" and "x_large" sized an order line but left a listing
+    unsized, so those listings dropped out of every size-matched comparison.
+    """
+    from headroom.services import catalog_service
+    from headroom.services.melin_recap import _listing_facts
+
+    facts = _listing_facts(_listing("A-Game Hydro - Red", 8000, size=raw))
+
+    assert facts.size == expected
+    assert facts.size == catalog_service.normalize_size(raw)
+
+
+# ---- malformed rows ------------------------------------------------------- #
+
+
+async def test_a_malformed_listing_is_skipped_and_its_neighbors_still_price(monkeypatch):
+    """Rows come from somebody else's API. One that is not an object, or
+    carries a price that is not a number, used to raise out of the whole
+    pricing call as an AttributeError or TypeError."""
+    from headroom.services.melin_recap import fetch_resale_stats
+
+    _stub_query(monkeypatch, [
+        "not a listing",
+        {"attributes": "not an object"},
+        {"attributes": {"title": "A-Game Hydro - X", "price": {"amount": "8000"}}},
+        {"attributes": {"title": "A-Game Hydro - Y", "price": "free"}},
+        {"attributes": {"title": 7, "price": {"amount": 7000}, "publicData": "x"}},
+        _listing("A-Game Hydro - Red", 8000),
+        _listing("A-Game Hydro - Gray", 9000),
+        _listing("A-Game Hydro - Navy", 10000),
+    ])
+
+    stats = await fetch_resale_stats("a_game", None)
+
+    assert stats is not None
+    assert stats["count"] == 4, "the four usable rows priced, the rest were skipped"
+    assert stats["median"] == 8500.0 / 100

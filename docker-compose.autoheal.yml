@@ -25,7 +25,14 @@
 
 services:
   autoheal:
-    image: willfarrell/autoheal:1.2.0
+    # `latest`, pinned by DIGEST. This was `1.2.0`, a 2021 build — holding a
+    # root-equivalent socket — and the newest semver tag upstream publishes,
+    # so no updater could ever move it: the project ships as `latest`
+    # (rebuilt 2026-09-28, multi-arch incl. arm64). The digest is what makes
+    # it a pin: what runs is exactly what was reviewed, and Dependabot's
+    # docker-compose ecosystem bumps the digest when `latest` moves, as a PR
+    # with CI in front of it rather than a silent pull.
+    image: willfarrell/autoheal:latest@sha256:a83ba5a269ddff3bb2a9e0c59de2cfb9993c09d64a8b6584c4607ab5f6a69177
     restart: unless-stopped
     # Bounded like the app is: an unbounded json-file log on a Pi's SD card
     # and an unbounded sidecar were the two limits the app service carried
@@ -46,6 +53,12 @@ services:
       # Waiting further just extends the outage.
       AUTOHEAL_START_PERIOD: "0"
       AUTOHEAL_INTERVAL: "30"
+      # How long a restart waits for the app to stop before killing it. The
+      # default is Docker's 10 s, which ignores the app's own
+      # `stop_grace_period: 60s` — a restart from here would SIGKILL a WAL
+      # checkpoint or a backup mid-write, the exact failure that grace period
+      # exists to prevent. Matched to it.
+      AUTOHEAL_DEFAULT_STOP_TIMEOUT: "60"
     volumes:
       # Read-only: sufficient to list containers and POST a restart.
       - /var/run/docker.sock:/var/run/docker.sock:ro

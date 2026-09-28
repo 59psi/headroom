@@ -3,15 +3,20 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request, Response
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.database import get_db
-from headroom.services import export_service, report_service, tag_service
-from headroom.services.activity_service import log_activity
-from headroom.services.label_service import render_case_labels, render_hat_labels
+from headroom.routes._api import DomainErrorRoute
+from headroom.services import (
+    activity_service,
+    export_service,
+    label_service,
+    report_service,
+    tag_service,
+)
 
-router = APIRouter()
+router = APIRouter(route_class=DomainErrorRoute)
 
 
 @router.get("/inventory-report", response_class=HTMLResponse)
@@ -27,7 +32,15 @@ async def inventory_report(
     return HTMLResponse(html)
 
 
-@router.get("/collection-export", response_class=StreamingResponse)
+@router.get(
+    "/collection-export",
+    # A plain `Response`, and declared as one with the zip media type. It was
+    # annotated `StreamingResponse` while returning the whole archive from
+    # memory, so the OpenAPI document described a body it never sent and
+    # declared no content for the one it did.
+    response_class=Response,
+    responses={200: {"content": {"application/zip": {}}}},
+)
 async def collection_export(
     title: str = "The Collection",
     include_values: bool = False,
@@ -49,7 +62,7 @@ async def collection_export(
         include_values=include_values,
         include_disposed=include_disposed,
     )
-    await log_activity(
+    await activity_service.log_activity(
         db, kind="collection.exported", entity_type="collection", entity_id=None,
         summary=f"Collection exported ({len(blob):,} bytes)",
         details={"include_values": include_values, "include_disposed": include_disposed},
@@ -66,7 +79,7 @@ async def collection_export(
 async def case_labels(request: Request, db: AsyncSession = Depends(get_db)):
     """Printable QR label sheet — one label per case."""
     base, _source = await tag_service.get_tag_base(db, str(request.base_url))
-    return HTMLResponse(await render_case_labels(db, base))
+    return HTMLResponse(await label_service.render_case_labels(db, base))
 
 
 @router.get("/hat-labels", response_class=HTMLResponse)
@@ -81,4 +94,6 @@ async def hat_labels(
     do this: a case's worth at a time, with that case open in front of you.
     """
     base, _source = await tag_service.get_tag_base(db, str(request.base_url))
-    return HTMLResponse(await render_hat_labels(db, base, case_display_id=case))
+    return HTMLResponse(
+        await label_service.render_hat_labels(db, base, case_display_id=case)
+    )

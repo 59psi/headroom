@@ -1,16 +1,15 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { ErrorNote } from '../components/common/ErrorNote';
 import { Link, useSearchParams } from 'react-router';
 import { getColorPalette, searchHats, searchHatsByColor } from '../api/search';
 import { ColorScopePicker, COLOR_SCOPES } from '../components/common/ColorScopePicker';
-import { ColorSwatches } from '../components/common/ColorSwatch';
-import { ConditionBadge } from '../components/common/ConditionBadge';
+import { HatRow } from '../components/hats/HatRow';
 import { PageHeader } from '../components/ui/PageHeader';
 import { Switch } from '../components/ui/Switch';
-import { tileSrc } from '../lib/photo';
+import { plural } from '../lib/format';
+import { qk } from '../lib/queryKeys';
 import { useDebouncedValue } from '../lib/useDebouncedValue';
-import { useHatLabels } from '../lib/labels';
 import {
   useHatFilters, HatFilterBar, FilterToggleButton, ActiveFilterChips, useMirrorToUrl,
   collectGeneralColors, matchesHatFilters,
@@ -31,12 +30,12 @@ export const SEARCH_DEBOUNCE_MS = 350;
  * How to describe the swatch a color search matched on, or '' for the hat's
  * main color (which needs no explanation).
  *
- * Derived from `matched_rank` rather than from the swatch's own `tier` string:
- * rank is assigned positionally by every writer on the server, while `tier`
- * comes from the client on the manual-edit path and can disagree with the
- * position it is stored at. Since rank is also what the server's ordering
- * penalty uses, deriving the label from it keeps the words and the order
- * telling the same story.
+ * Derived from `matched_rank`, because rank is what the server's ordering
+ * penalty weighs a match by — deriving the words from the same number keeps
+ * the words and the order telling the same story. A swatch's `tier` is the
+ * owner's say about how much of the hat it covers (the edit forms offer it,
+ * starting from the rank), which is a different question from where it
+ * ranks.
  */
 export function matchedRankLabel(rank: number): string {
   if (rank <= 1) return '';
@@ -78,51 +77,31 @@ function ResultsSkeleton() {
   );
 }
 
+/**
+ * One result: the Hats tab's own row (`HatRow`), so a hat is named and laid
+ * out the same wherever it is listed — this page kept a third copy of that
+ * row, which had already drifted into calling a loose hat "#12" — plus, for a
+ * color search, which swatch matched and how closely.
+ */
 function ResultRow({ hat }: { hat: SearchResult | ColorSearchResult }) {
-  const labels = useHatLabels();
   return (
-    <Link to={`/hats/${hat.id}`} className="card hr-cp-row">
-      <div className="card-body hr-cp-row-body">
-        {hat.photo_path ? (
-          <img src={tileSrc(hat)} alt="" className="hr-thumb hr-cp-row-thumb hr-cp-thumb-72" />
-        ) : (
-          <div className="hr-cp-row-thumb hr-cp-thumb-72 hr-cp-thumb-empty" aria-hidden="true" />
-        )}
-        <div className="hr-cp-row-main">
-          <div className="hr-cp-row-top">
-            <div className="hr-cp-row-id">{hat.display_id || `#${hat.id}`}</div>
-            <ConditionBadge condition={hat.condition} />
-          </div>
-          {(hat.brand || hat.model_name) && (
-            <div className="hr-cp-row-name">
-              {[hat.brand, hat.model_name].filter(Boolean).join(' ')}
-            </div>
-          )}
-          <div className="hr-cp-row-meta">
-            {labels.style(hat.style)} · {labels.size(hat.size)}
-            {(hat.case_display_id || hat.room_name) && (
-              <> · {[hat.case_display_id && `Case ${hat.case_display_id}`, hat.room_name].filter(Boolean).join(' · ')}</>
-            )}
-          </div>
-          <ColorSwatches colors={hat.colors} showLabels={false} />
-          {'matched_hex' in hat && (
-            <div className="hr-cp-match">
-              matched
-              <span className="hr-cp-dot hr-cp-dot-sm" style={{ background: hat.matched_hex }} aria-hidden="true" />
-              <span className="font-mono">Δ{hat.distance.toFixed(0)}</span>
-              {/* Without this, the ordering looks broken: a hat whose
-                  ACCENT is exactly your color shows Δ0 and still sits
-                  below a hat whose main color is Δ5, because the
-                  server weighs a match by how much of the hat wears
-                  it. The label is what makes that legible. */}
-              {matchedRankLabel(hat.matched_rank) && (
-                <span>· {matchedRankLabel(hat.matched_rank)}</span>
-              )}
-            </div>
+    <HatRow hat={hat} thumb={72}>
+      {'matched_hex' in hat && (
+        <div className="hr-cp-match">
+          matched
+          <span className="hr-cp-dot hr-cp-dot-sm" style={{ background: hat.matched_hex }} aria-hidden="true" />
+          <span className="font-mono">Δ{hat.distance.toFixed(0)}</span>
+          {/* Without this, the ordering looks broken: a hat whose
+              ACCENT is exactly your color shows Δ0 and still sits
+              below a hat whose main color is Δ5, because the
+              server weighs a match by how much of the hat wears
+              it. The label is what makes that legible. */}
+          {matchedRankLabel(hat.matched_rank) && (
+            <span>· {matchedRankLabel(hat.matched_rank)}</span>
           )}
         </div>
-      </div>
-    </Link>
+      )}
+    </HatRow>
   );
 }
 
@@ -163,21 +142,27 @@ export function SearchPage() {
   // Search as you type. The form still submits (Enter, the button) for an
   // immediate search; this runs the same search once typing pauses.
   const settledQuery = useDebouncedValue(query, SEARCH_DEBOUNCE_MS);
-  useEffect(() => {
+  // Run when the SETTLED TEXT changes, and only then — adjusted during render,
+  // the way React documents responding to a changed value, rather than in an
+  // effect. The effect it replaces could only get "only then" by leaving
+  // `searchTerm` and `colorHex` out of its dependency list (re-running on
+  // them would undo a color pick the moment it happens), which is exactly
+  // the omission the exhaustive-deps lint exists to catch; here they are
+  // simply read, current, when the text changes.
+  const [lastSettled, setLastSettled] = useState(settledQuery);
+  if (settledQuery !== lastSettled) {
+    setLastSettled(settledQuery);
     const term = settledQuery.trim();
-    // Already showing it (a submit got there first, or nothing changed).
-    if (term === searchTerm) return;
-    // An emptied box during a color search is the color pick clearing it,
-    // not a request to leave the color results.
-    if (!term && colorHex) return;
-    if (term) setColorHex(null);
-    setSearchTerm(term);
-    // Keyed on the settled text alone: re-running when `searchTerm` or
-    // `colorHex` change would undo a color pick the moment it happens.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settledQuery]);
+    // Already showing it (a submit got there first), or an emptied box during
+    // a color search — that is the color pick clearing it, not a request to
+    // leave the color results.
+    if (term !== searchTerm && !(!term && colorHex)) {
+      if (term) setColorHex(null);
+      setSearchTerm(term);
+    }
+  }
 
-  const paletteQ = useQuery({ queryKey: ['meta', 'colors'], queryFn: getColorPalette });
+  const paletteQ = useQuery({ queryKey: qk.meta.colors(), queryFn: getColorPalette });
 
   // Room is applied server-side here — the API returns an already-filtered set,
   // which is why it isn't part of `matchesHatFilters`.
@@ -187,24 +172,47 @@ export function SearchPage() {
   // stay on screen (dimmed) instead of the list blanking to a spinner on
   // every pause in typing.
   const textQ = useQuery({
-    queryKey: ['search', searchTerm, exactColors, roomIdParam, colorScope],
+    queryKey: qk.search.text(searchTerm, exactColors, roomIdParam ?? null, colorScope),
     queryFn: () => searchHats(searchTerm, exactColors, roomIdParam, colorScope),
     enabled: !colorHex && searchTerm.length > 0,
     placeholderData: keepPreviousData,
   });
 
   const colorQ = useQuery({
-    queryKey: ['search', 'color', colorHex, roomIdParam],
+    queryKey: qk.search.color(colorHex, roomIdParam ?? null),
     queryFn: () => searchHatsByColor(colorHex!, roomIdParam),
     enabled: !!colorHex,
     placeholderData: keepPreviousData,
   });
 
+  // Every picker change COMMITS through the native `change` event: it fires
+  // when a choice is made (the picker closes, or a value is entered), not on
+  // each step of a drag the way React's `onChange` — the `input` event — does.
+  // It used to run from `onBlur`, so merely tabbing past the picker ran a
+  // color search with its default color and wiped the text search, and a
+  // second blur toggled that search back off. A pick is not a toggle: the
+  // color chosen is the color searched.
+  const pickerRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const picker = pickerRef.current;
+    if (!picker) return;
+    const commit = () => {
+      setSearchTerm('');
+      setQuery('');
+      setColorHex(picker.value);
+    };
+    picker.addEventListener('change', commit);
+    return () => picker.removeEventListener('change', commit);
+  }, []);
+
   const activeQ = colorHex ? colorQ : textQ;
-  const data: SearchResult[] | ColorSearchResult[] | undefined = activeQ.data;
+  const data: SearchResult[] | ColorSearchResult[] | undefined = colorHex ? colorQ.data : textQ.data?.results;
+  // Every match the server counted — past the rows it returns for a text
+  // search (`SearchAnswer.total`). A color search is ranked and cut by
+  // distance, so its rows ARE its answer.
+  const total = colorHex ? colorQ.data?.length ?? 0 : textQ.data?.total ?? 0;
   const isLoading = activeQ.isLoading;
   const isStale = activeQ.isPlaceholderData;
-  const error = activeQ.error;
   const hasQuery = !!colorHex || searchTerm.length > 0;
 
   const availableColors = useMemo(() => collectGeneralColors(data), [data]);
@@ -220,7 +228,9 @@ export function SearchPage() {
     setSearchTerm(query.trim());
   }
 
-  function pickColor(hex: string) {
+  // A palette swatch is a toggle button (`aria-pressed`): tapping the lit one
+  // again turns the color search off. The free picker is not — see above.
+  function toggleSwatch(hex: string) {
     setSearchTerm('');
     setQuery('');
     setColorHex(prev => (prev === hex ? null : hex));
@@ -289,16 +299,18 @@ export function SearchPage() {
               title={c.name}
               aria-label={`Search hats near ${c.name}`}
               aria-pressed={colorHex === c.hex}
-              onClick={() => pickColor(c.hex)}
+              onClick={() => toggleSwatch(c.hex)}
               style={{ background: c.hex }}
             />
           ))}
           <label className="hr-cp-any-color">
+            {/* `onChange` only keeps the swatch in step while the picker is
+                open; the search runs on the native `change` (`pickerRef`). */}
             <input
+              ref={pickerRef}
               type="color"
               value={pickerHex}
               onChange={e => setPickerHex(e.target.value)}
-              onBlur={() => pickColor(pickerHex)}
               aria-label="Pick any color"
             />
             any color
@@ -317,14 +329,14 @@ export function SearchPage() {
       )}
 
       {hasQuery && isLoading && <ResultsSkeleton />}
-      <ErrorNote of={{ isError: !!error, error }} what="Search failed" />
+      <ErrorNote of={activeQ} what="Search failed" />
       <ErrorNote of={paletteQ} what="Could not load the color palette" />
 
       {data && hasQuery && (
         <>
           <div className="hr-cp-results-head">
             <div className="hr-cp-results-count" aria-live="polite">
-              {filteredData.length} of {data.length} result{data.length !== 1 ? 's' : ''}{' '}
+              {filteredData.length} of {plural(total, 'result')}{' '}
               {colorHex ? (
                 <>
                   nearest to
@@ -332,6 +344,10 @@ export function SearchPage() {
                 </>
               ) : (
                 <>for &ldquo;{searchTerm}&rdquo;</>
+              )}
+              {/* Past the cap: the rows shown are the first of more. */}
+              {total > data.length && (
+                <span className="hr-cp-refine"> — showing the first {data.length}, refine your search</span>
               )}
               {activeQ.isFetching && <span className="hr-cp-updating">Updating…</span>}
             </div>

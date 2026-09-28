@@ -18,7 +18,9 @@
  */
 import type { ReactNode } from 'react';
 
-type Failing = { isError: boolean; error: unknown };
+/** Anything that can fail the way `ErrorNote` reports: a TanStack query or
+ *  mutation, or a hand-built `{ isError, error }` for a multi-step action. */
+export type Failing = { isError: boolean; error: unknown };
 
 export function describeError(err: unknown): string {
   // `apiFetch` throws `Error` with a readable message already built by

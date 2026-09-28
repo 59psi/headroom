@@ -12,6 +12,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from headroom.schemas.common import clean_text
 
 #: Days a share link lasts when the caller does not say.
 #:
@@ -31,7 +32,12 @@ DEFAULT_SHARE_EXPIRY_DAYS = 30
 
 
 class ShareLinkCreate(BaseModel):
-    label: str = Field("Shared collection", max_length=80)
+    #: Cleaned like every other name on the wire — and this one more than
+    #: most, because it is the title of the one page people outside the house
+    #: see. As a bare `str` it served a bidi override and a NUL to anonymous
+    #: viewers, the exact spoof `CleanText` exists to strip. Required once
+    #: cleaned: a label of only spaces is refused rather than published blank.
+    label: clean_text(80, required=True) = "Shared collection"
     #: Omitted → `DEFAULT_SHARE_EXPIRY_DAYS`. An explicit `null` → never
     #: expires, which is why this cannot simply default to the constant: those
     #: two have to stay distinguishable, and a plain default would collapse
@@ -83,6 +89,11 @@ class SharedHat(BaseModel):
     brand: str | None
     model_name: str | None
     style: str
+    #: The style as every screen prints it (`STYLE_LABELS`: "A-Game"). An
+    #: outside viewer cannot read `/api/meta` for the labels, so the guest and
+    #: share pages printed `style` with its underscores swapped ("A Game").
+    #: Derived from `style`, which is already public — nothing new leaves.
+    style_label: str
     photo_url: str | None
     #: The 320 px WebP the authenticated grids render, on the same public
     #: route with `?variant=thumb`. The shared and guest grids served the

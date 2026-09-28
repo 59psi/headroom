@@ -60,6 +60,16 @@ describe('NewCaseModal', () => {
     expect(await screen.findByText('Case D-003 created')).toBeInTheDocument();
   });
 
+  it('is the New case page’s own fields — a failed room list is named as such', async () => {
+    // The dialog kept a third copy of the type and room selects, and reported
+    // a failed room list as a bare reason with no word of what had failed.
+    rooms.listRooms.mockRejectedValue(new Error('database is locked'));
+    renderWithProviders(<NewCaseModal show onClose={() => {}} onCreated={() => {}} />);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not load rooms — database is locked');
+    expect(screen.getByRole('combobox', { name: 'Case type' })).toHaveValue('archive');
+  });
+
   it('renders nothing while hidden, and fetches nothing', () => {
     renderWithProviders(<NewCaseModal show={false} onClose={() => {}} onCreated={() => {}} />);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();

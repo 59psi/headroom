@@ -19,19 +19,18 @@ redaction correct.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.config import settings
 from headroom.database import get_db
 from headroom.limits import max_body_bytes
+from headroom.routes._api import DomainErrorRoute
 from headroom.schemas.admin import EffectiveConfig
 from headroom.services import analysis_queue, backup_service, import_service, settings_service
 from headroom.utils import disk
 
-router = APIRouter()
+router = APIRouter(route_class=DomainErrorRoute)
 
 
 @router.get("/config", response_model=EffectiveConfig)
@@ -47,13 +46,8 @@ async def effective_config(db: AsyncSession = Depends(get_db)):
     """
     space = disk.check(settings.upload_dir)
     model_id, model_source = await settings_service.get_anthropic_model(db)
-    try:
-        upload = await backup_service.resolve_upload_argv(db, Path("/probe.tar.gz"))
-        upload_configured = upload is not None
-    except ValueError:
-        # A stored destination that no longer validates IS configured — and
-        # broken. Reporting it as absent would hide the exact thing worth seeing.
-        upload_configured = True
+    # Configured-and-broken counts as configured — see `upload_configured`.
+    upload_configured = await backup_service.upload_configured(db)
     return {
         "workers": {
             # `expected` vs `alive` is the whole point of reporting both: they

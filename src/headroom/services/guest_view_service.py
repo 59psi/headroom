@@ -29,11 +29,9 @@ from __future__ import annotations
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.models.hat import Hat
-from headroom.services import settings_service
+from headroom.services import search_service, settings_service, share_link_service
 
 #: App-settings key. Absent or anything but "1" means disabled.
-from headroom.services import share_link_service
-from headroom.services import search_service
 GUEST_VIEW_KEY = "guest_view_enabled"
 
 

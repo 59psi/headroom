@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
-import { getSizes, getStyles } from '../api/hats';
+import { getConditions, getSizes, getStyles } from '../api/hats';
+import { qk } from './queryKeys';
 
 type Option = { value: string | number; label: string };
 
@@ -34,12 +35,19 @@ export function readableValue(value: string): string {
  * Labels for a hat's enum fields, from the same cached `['meta', …]` queries
  * the filters and the edit form already hold — so on most screens this costs
  * no request at all.
+ *
+ * Signed-in screens only: `/api/meta` is behind sign-in, and on a page with
+ * no session its 401 would bounce the viewer to the login screen. The guest
+ * and share views get the words with each hat instead (`SharedHat.style_label`,
+ * from the same server table).
  */
 export function useHatLabels() {
-  const styles = useQuery({ queryKey: ['meta', 'styles'], queryFn: getStyles });
-  const sizes = useQuery({ queryKey: ['meta', 'sizes'], queryFn: getSizes });
+  const styles = useQuery({ queryKey: qk.meta.styles(), queryFn: getStyles });
+  const sizes = useQuery({ queryKey: qk.meta.sizes(), queryFn: getSizes });
+  const conditions = useQuery({ queryKey: qk.meta.conditions(), queryFn: getConditions });
   return {
     style: (value: string) => optionLabel(styles.data, value),
     size: (value: string) => optionLabel(sizes.data, value),
+    condition: (value: string) => optionLabel(conditions.data, value),
   };
 }

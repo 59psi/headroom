@@ -4,13 +4,13 @@
  * and "finished" is announced only when this page watched it finish.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../test/utils';
 import { caseFixture } from '../test/fixtures';
 import { BulkImportPage } from './BulkImportPage';
 import * as settingsApi from '../api/settings';
-import type { ImportJob } from '../types';
+import type { ImportJobRead } from '../types';
 
 vi.mock('../api/settings', async (importOriginal) => {
   const { stubAll } = await import('../test/stubModule');
@@ -35,7 +35,7 @@ vi.mock('../api/cases', async (importOriginal) => {
 
 const api = vi.mocked(settingsApi);
 
-function job(over: Partial<ImportJob> = {}): ImportJob {
+function job(over: Partial<ImportJobRead> = {}): ImportJobRead {
   return {
     id: 7, created_at: '2026-09-27T10:00:00Z', finished_at: null,
     total: 2, done: 0, errors: 0, skipped: 0, status: 'running',
@@ -74,6 +74,11 @@ describe('BulkImportPage — picking and starting', () => {
     expect(defaults).toEqual({ case_id: 4, condition: 'new', size: 'classic', style: 'a_game' });
     expect(await screen.findByText('Import started — 2 photos queued')).toBeInTheDocument();
     expect(await screen.findByRole('heading', { name: 'Import #7' })).toBeInTheDocument();
+  });
+
+  it('counts a case’s hats in words that agree — "1 hat", never "1 hats"', async () => {
+    renderWithProviders(<BulkImportPage />, { route: '/hats/import' });
+    expect(await screen.findByRole('option', { name: 'A-004 (1 hat)' })).toBeInTheDocument();
   });
 
   it('takes dropped images, skipping duplicates and anything that is not an image', async () => {
@@ -178,6 +183,19 @@ describe('BulkImportPage — a running job', () => {
     expect(await screen.findByText(/Couldn't load import job #99/)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Start a new import' }));
     expect(await screen.findByRole('heading', { name: 'Photos' })).toBeInTheDocument();
+  });
+
+  it('stops polling a job it cannot load — a bad ?job= is not asked for every 2s forever', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+    try {
+      api.getImportJob.mockRejectedValue(new Error('Import job not found'));
+      renderWithProviders(<BulkImportPage />, { route: '/hats/import?job=99' });
+      await vi.waitFor(() => expect(api.getImportJob).toHaveBeenCalledTimes(1));
+      await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+      expect(api.getImportJob).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('does not announce an old job that was already finished', async () => {

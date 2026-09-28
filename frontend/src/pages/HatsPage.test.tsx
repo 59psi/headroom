@@ -56,7 +56,7 @@ const HATS = [
   hatFixture({ id: 1, display_id: 'A-001-01', style: 'a_game', brand: 'melin' }),
   hatFixture({ id: 2, display_id: 'A-001-02', style: 'odysea', brand: 'melin' }),
   // Loose: no case, no room — "Unassigned". No shelf id, so its gallery tile
-  // reads "#3".
+  // goes by its model, "Loose One" (`hatName`), as its list row does.
   hatFixture({ id: 3, display_id: null, case_display_id: null, model_name: 'Loose One', style: 'odysea', brand: 'Other' }),
 ];
 
@@ -123,7 +123,7 @@ describe('HatsPage', () => {
     // Only #2 is an Odysea by melin.
     expect(await screen.findByText('A-001-02')).toBeInTheDocument();
     expect(screen.queryByText('A-001-01')).toBeNull();
-    expect(screen.queryByText('#3')).toBeNull();
+    expect(screen.queryByText('Loose One')).toBeNull();
     expect(screen.getByText('1 of 3')).toBeInTheDocument();
 
     // The chip uses the option's label once the options load, not the slug.
@@ -133,7 +133,7 @@ describe('HatsPage', () => {
     // Style gone, brand still applied: both melin hats.
     expect(await screen.findByText('A-001-01')).toBeInTheDocument();
     expect(screen.getByText('A-001-02')).toBeInTheDocument();
-    expect(screen.queryByText('#3')).toBeNull();
+    expect(screen.queryByText('Loose One')).toBeNull();
     await waitFor(() => expect(searchParams().get('style')).toBeNull());
     expect(searchParams().get('brand')).toBe('melin');
   });
@@ -147,7 +147,7 @@ describe('HatsPage', () => {
     await user.click(within(chips).getByRole('button', { name: /unassigned/i }));
 
     expect(within(chips).getByRole('button', { name: /unassigned/i })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByText('#3')).toBeInTheDocument();
+    expect(screen.getByText('Loose One')).toBeInTheDocument();
     expect(screen.queryByText('A-001-01')).toBeNull();
     await waitFor(() => expect(searchParams().get('placement')).toBe('none'));
 
@@ -236,5 +236,19 @@ describe('HatsPage', () => {
 
     expect(await screen.findByText('A-001-01')).toBeInTheDocument();
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('ties the Brand label to its select, so tapping the word focuses it', async () => {
+    const user = userEvent.setup();
+    renderHats();
+    await screen.findByText('A-001-01');
+    await user.click(screen.getByRole('button', { name: /filters/i }));
+
+    const label = await screen.findByText('Brand', { selector: 'label' });
+    const select = screen.getByRole('combobox', { name: 'Brand' });
+    expect(label).toHaveAttribute('for', select.id);
+    expect(select).not.toHaveAttribute('aria-label');
+    await user.click(label);
+    expect(select).toHaveFocus();
   });
 });

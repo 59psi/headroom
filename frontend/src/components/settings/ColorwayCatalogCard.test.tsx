@@ -23,11 +23,45 @@ function status(over: Partial<CatalogStatus> = {}): CatalogStatus {
     entries: 550, models: 188, colorways: 188, last_harvest: null,
     progress: sweepProgressFixture(),
     in_flight: false,
+    failed_categories: [],
     ...over,
   };
 }
 
 beforeEach(() => { vi.clearAllMocks(); });
+
+describe('ColorwayCatalogCard — a harvest that lost categories', () => {
+  it('reads "Partial" and names what it could not read, instead of "Ready"', async () => {
+    mocked.getColorwayStatus.mockResolvedValue(status({ failed_categories: ['Beanies', 'Caps'] }));
+    renderWithProviders(<ColorwayCatalogCard />);
+
+    expect(await screen.findByText('Partial', { selector: '.hr-pill' })).toBeInTheDocument();
+    expect(screen.getByText(/Couldn.t read 2 categories: Beanies, Caps/)).toBeInTheDocument();
+  });
+
+  it('reads "Failed" when it lost every category and has nothing', async () => {
+    mocked.getColorwayStatus.mockResolvedValue(status({
+      entries: 0, models: 0, colorways: 0, failed_categories: ['Hats'],
+    }));
+    renderWithProviders(<ColorwayCatalogCard />);
+    expect(await screen.findByText('Failed', { selector: '.hr-pill' })).toBeInTheDocument();
+  });
+
+  it('refreshes the colorway pickers when a harvest finishes, not when it starts', async () => {
+    let inFlight = true;
+    mocked.getColorwayStatus.mockImplementation(async () => status({ in_flight: inFlight }));
+
+    const { client } = renderWithProviders(<ColorwayCatalogCard />);
+    await screen.findByText('Harvesting', { selector: '.hr-pill' });
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+    inFlight = false;
+    await client.refetchQueries({ queryKey: ['admin', 'colorway-status'] });
+    await screen.findByText('Ready', { selector: '.hr-pill' });
+
+    expect(invalidate.mock.calls.map(([f]) => JSON.stringify(f?.queryKey)))
+      .toContain(JSON.stringify(['meta', 'colorways']));
+  });
+});
 
 describe('ColorwayCatalogCard — what is in the catalog', () => {
   it('shows the real counts as tiles', async () => {

@@ -10,7 +10,7 @@ server, see [OPERATIONS.md](OPERATIONS.md).
 Open the app (`http://<host>:8000`). The first visit asks you to **create
 the owner account** (username + password, 8+ characters) — everything in
 the app requires signing in from then on. Once you're in, two things worth
-doing immediately from **Settings → Account**:
+doing immediately from **Settings → Device → Account**:
 
 - **Add a passkey** so future sign-ins are Face ID / Touch ID (works over
   HTTPS or on localhost).
@@ -22,11 +22,15 @@ Then configure the integrations in **Settings**:
 1. **Claude API key** — paste an Anthropic key
    ([console.anthropic.com](https://console.anthropic.com/)) and save; the
    connection is tested as it saves, and the card's status reads
-   *Connected* once it passes (*Test connection* re-runs it later). This
+   *Connected* once it passes (*Test connection* re-runs it later). The test
+   sends the same request a real analysis does, only tiny — so a model that
+   cannot do an analysis fails it, and each test costs about 2,500 input
+   tokens rather than a handful. This
    powers full hat identification: brand, specific model, colorway, colors
    and design notes. (Retail price comes from a lookup table of melin's real
-   list prices first; Claude's estimate fills in only where the table has no
-   row.)
+   list prices first, except that a higher Claude estimate is kept — the
+   table never pulls a higher price down; Claude's estimate fills in where
+   the table has no row.)
 2. **Google Vision key** — fallback brand detection for whenever Claude is
    unavailable. Colors fall back automatically without any key.
 3. **eBay comparable listings (optional)** — a Production App ID + Cert ID enables
@@ -51,8 +55,9 @@ Every card leads with a one-word status (*Connected*, *Not set*, *Running*,
 *Nothing to do*) so the thing that needs attention stands out; the long
 explanation of each is folded under **How this works**. Switches and
 pickers apply the moment you change them — there is no separate Save — and
-a short notice in the corner confirms each change. Anything destructive
-asks first, in the app, and says what it will do.
+each change is confirmed, either by a *Saving… / Saved* note beside the
+control or by a short notice in the corner. Anything destructive asks first,
+in the app, and says what it will do.
 
 Nothing is mandatory: with zero keys, photos still upload, backgrounds are
 still removed, and fallback color swatches still appear.
@@ -76,8 +81,8 @@ still removed, and fallback color swatches still appear.
   since avoiding the cram is the reason to set it.
   Cases get display IDs like `A-001` (archive) or `D-001` (daily wear),
   auto-sequenced.
-- **Hats** can also live unassigned (no case). Sizes: small / classic /
-  x-large.
+- **Hats** can also live unassigned (no case). Sizes: Small / Classic /
+  X Large.
 
 ## 3. Adding hats
 
@@ -94,7 +99,7 @@ Three ways, fastest first:
      *Install app*); "Share to Headroom" then appears in the system share
      sheet. Multi-select works and drops straight into a bulk-import job.
    - **iOS**: Apple doesn't support web share targets, so open *Settings →
-     Share photos to Headroom* for a one-time Shortcut recipe. Afterwards,
+     Sharing → Share photos to Headroom* for a one-time Shortcut recipe. Afterwards,
      Photos → Share → *Add to Headroom*.
 
 ## 4. What happens to a photo
@@ -122,7 +127,9 @@ re-runs only the background removal from the original photo, for a bill the
 model clipped, without spending a Claude call. For the whole collection,
 Settings → Analysis → *Analysis queue* has **Re-analyze every hat**, a
 per-cause **Retry** for hats a transient error knocked over (an overload is
-worth retrying; a photo that has gone is not, and the card says which), and
+worth retrying; a photo that has gone is not, and neither is a missing-key
+failure while no key is set — the card says which, and its Retry count only
+includes hats a retry can actually fix), and
 a *Recent runs* list where each run expands into its own hat-by-hat log.
 
 Photos are capped at 20 MB each; a bulk import batch at 750 MB and 100
@@ -163,16 +170,21 @@ wrong colorway on it. The preview step shows every proposed match before
 anything is written (`?dry_run=true` on the API does the same).
 
 If a run does go wrong, it's reversible: **unmatch** a single purchase, or
-unmatch every one at once, which returns them all to the pool and clears the
-values they set (leaving anything you've edited since alone). The purchase
-records survive — only the links are broken — so you can re-run matching once
-the collection is in better shape.
+unmatch every one at once, which returns them all to the pool and clears
+exactly the values each match wrote. A value you typed yourself stays even if
+it happens to agree with the receipt, and so does anything you've edited
+since. Each link records what it wrote; a link made before Headroom kept that
+record clears nothing when unmatched — the purchase just goes back to the
+pool. The purchase records survive — only the links are broken — so you can
+re-run matching once the collection is in better shape. Every import and
+every match is written to the activity log.
 
 ## 5. Colors & style
 
-- Detected colors come as tiered swatches (primary / secondary / tertiary)
-  and are searchable.
-- **Tap a swatch to edit** — your correction sticks.
+- Detected colors come as tiered swatches (primary / secondary / tertiary /
+  accent) and are searchable.
+- **Tap a swatch to edit** — your correction sticks, re-analysis included.
+  Remove every swatch to hand colors back to analysis.
 - The style you picked at creation (A-Game, Odysea, …) is **ground truth**:
   analysis never overwrites it.
 
@@ -233,8 +245,9 @@ live classic worn model listings"*.
 Each hat uses the best signal it has:
 
 1. **Your price** — a resale price you typed is used exactly as given, and
-   analysis will never overwrite it. Clear the field to hand the hat back to
-   the live feed.
+   analysis will never overwrite it; the re-pricing sweep skips the hat
+   without even asking the marketplace. Clear the field to hand the hat back
+   to the live feed.
 2. **Model comps** — the median of live listings for that model in your hat's
    condition and size.
 3. **From retail** — no comparable listings, so a share of estimated new
@@ -268,33 +281,44 @@ valuable, most expensive, most worn and best cost-per-wear.
 
 ## 7. Search — finding *the* hat
 
-Two ways in, both returning cards with the photo, the hat's name (brand +
-model when known), and **where it lives** ("📍 Case A-012 · Office"):
+Three ways in. Search results are cards with the photo, the hat's name
+(brand + model when known), and **where it lives** ("Case A-012 · Office"):
 
-- **Text search** — multi-term AND across name, brand, style, condition,
-  size, colors, room, and artist/collab (`navy classic melin` finds navy,
-  classic-size Melins; construction is matched as text, so `hydro` finds every
-  HYDRO — and HYDROLite, which is a HYDRO-family build — while `hydrolite`
-  stays precise and returns only those, and `canvas` finds a hat you recorded
-  as Waxed Canvas; `skye walker` finds that signature series). Color terms match the normalized
-  palette vocabulary by default; toggle *Match exact color names* to match the
-  analyzer's original phrasing. Disposed hats never appear — they're not
-  findable on a shelf.
+- **Text search** — multi-term AND: every word must match something — brand,
+  model, colorway, style, construction, condition, size, room, colors, or
+  artist/collab (`navy classic melin` finds navy, classic-size Melins;
+  construction is matched as text, so `hydro` finds every HYDRO — and
+  HYDROLite, which is a HYDRO-family build — while `hydrolite` stays precise
+  and returns only those, and `canvas` finds a hat you recorded as Waxed
+  Canvas; `skye walker` finds that signature series). Color words match a
+  hat's **main colors** by default — its first two swatches — so a black cap
+  with a pink logo is not a "pink" hat; *Color terms match* switches to
+  **Accents only** (logos, piping, underbrims — how you find a collab mark)
+  or **Any** swatch. Color terms match the normalized palette vocabulary by
+  default; toggle *Match exact color names* to match the analyzer's original
+  phrasing. At most 50 results are listed; if a search reaches 50, add a word
+  to narrow it. Disposed hats never appear — they're not findable on a shelf.
 - **Find duplicates** — the button beside the Search heading (or `/duplicates`).
   Bulk-importing a camera roll can turn two photos of one hat into two hats,
   and past a hundred or so you stop noticing; the collection then reports more
   than you own and the valuation follows it. Grouped on what's *recorded* —
   model, colorway, size — never on the photos, since two shots of one hat look
-  different and two different hats in one colorway look the same. **exact**
+  different and two different hats in one colorway look the same. Names that
+  differ only by punctuation, accents or capitals count as the same
+  (`Skye-Walker` and `Skye Walker`). **exact**
   means everything matches; **likely** means same model and size with a
   colorway missing on one side, which is what an unanalyzed twin looks like.
   Two hats naming *different* colorways are never grouped. Nothing is deleted
   — open a hat and dispose of it, or leave it if you really do own two.
 - **Search by color** — tap a palette swatch (or pick any color with the
-  color-wheel input) and every hat is ranked by *perceptual closeness* to
-  it, using the actual stored hex values rather than names. A hat whose
-  secondary color matches still surfaces, with the matched swatch and a Δ
-  distance shown on the card. This is the "show me light blue options"
+  color-wheel input) and you get the hats of that **color family**, nearest
+  first by *perceptual closeness* to it, using the actual stored hex values
+  rather than names — up to 30. The family is decided first, so a gray hat
+  never turns up in a purple search however close the numbers look. A hat
+  whose secondary color matches still surfaces, but below hats that *are*
+  that color, and an accent only counts when it is a close match; the card
+  shows the matched swatch, a Δ distance, and "secondary" or "accent" when
+  the match wasn't the main color. This is the "show me light blue options"
   flow — it works no matter what the color was called.
 
 ## 8. Selling / disposing
@@ -306,7 +330,9 @@ keeps its history, frees its case slot, and disappears from default lists
 `?status=disposed`/`all` API parameter — there is no disposed-hats list in
 the UI). Sold prices feed the Valuation page's realized totals. The hat page's
 **Undo — restore to active** puts it back — into its case if there's still
-room, unassigned otherwise.
+room; if the case is full, the hat comes back loose in that case's room
+rather than nowhere. (If the case itself has been deleted since, the hat
+comes back unassigned.)
 
 ## 9. Reports & backups
 
@@ -314,7 +340,8 @@ room, unassigned otherwise.
   printer-friendly HTML report (thumbnails, totals, best-available value
   per hat). Use the browser's Print → *Save as PDF* for an insurance rider.
 - **Backup** — Settings → Upkeep → *Backups* downloads a `tar.gz` of the
-  database + photos on demand (**Download full backup**, or **Database only**);
+  database + photos on demand (**Download full backup**, or **Database only**
+  — the database alone, without photos or the HTTPS certificate authority);
   scheduled backups run server-side, and the *Off-site backup* card beside it
   ships each one to a NAS or cloud remote (see
   [OPERATIONS.md §4](OPERATIONS.md#4-backups--restore)).
@@ -335,11 +362,18 @@ Wear count, last-worn date, and **cost-per-wear** (what you paid ÷ wears)
 show under the photo; the Valuation page's *Wear rotation* card lists the
 five hats that have gone longest without sun. Mis-taps: hit *undo*.
 
+The app sends the day it is **on your phone**, so a tap at 11 pm counts for
+today wherever you are. A client that sends no date — the iOS Shortcut, a
+script — gets the **server's** calendar day instead, which follows the host's
+time zone: under Docker set `TZ` in `.env` (`TZ=America/Los_Angeles`; the
+compose file forwards it). Unset, the server's day is UTC's, so on the US
+west coast a date-less tap after 5 pm lands on tomorrow.
+
 ### Tags: QR stickers and NFC
 
 A tag carries one URL and nothing else, so a printed QR and an NFC sticker
-are the same thing in two formats. **Settings → Tags & labels** has both
-sheets:
+are the same thing in two formats. **Settings → Sharing → Tags & labels**
+has both sheets:
 
 - **Hat labels** — one per hat, sized for the sweatband. Scanning opens a
   one-tap **"Wore it today"** screen: photo, name, one big button. That's
@@ -347,7 +381,9 @@ sheets:
   the phone in the other. A case's detail page has *Print labels for these
   hats*, which is the realistic way to do it: a case's worth at a time.
 - **Case labels** — one per case with its ID, room and fill count.
-  Scanning opens that case's contents.
+  Scanning opens that case's contents. A case number is never reused, so
+  the label of a deleted or retyped case finds nothing rather than opening
+  a different case.
 
 **For NFC**, use any tag writer (NFC Tools on iOS, NXP TagWriter on
 Android) and write the URL as a **URI record** — iOS reads those from the
@@ -357,14 +393,19 @@ text underneath, and each hat and case page has a **Copy** button.
 > **Set the tag host first.** By default tags use whatever address you're
 > browsing on, so if you happen to be on `http://192.168.1.50:8000` every
 > tag you write names a DHCP lease that will eventually move. Pin
-> `http://headroom.local:8000` in **Settings → Tags & labels** before you
-> write a batch. It must include `http://` — an NFC URI record needs a
-> scheme, and a QR without one is read as plain text rather than a link.
+> `http://headroom.local:8000` in **Settings → Sharing → Tags & labels**
+> before you write a batch. It must include `http://` (or `https://`) — an NFC URI record
+> needs a scheme, and a QR without one is read as plain text rather than a
+> link — and it is the scheme, host and optional port **only**: no path,
+> `?` or `#`, because the tag's own path is appended to it (a trailing `/`
+> is dropped for you).
 
 Stickers can't be rewritten, so hat tags are keyed on the hat's internal id
 rather than its `A-012-03` display id: moving a hat to another case changes
 the display id, and a label printed with one would keep scanning and
-silently open a *different* hat.
+silently open a *different* hat. An internal id is never reused, either —
+delete a hat and its sticker stays dead rather than one day opening the next
+hat you add.
 
 ## 11. Showing off: share links
 
@@ -377,16 +418,18 @@ forgotten one shouldn't. Revoke a link any time. Great for the group chat.
 
 **Guest browsing** (same tab) is the link-free version: switch it on and
 the login page grows a *Browse the collection as a guest* link that shows
-the same read-only gallery to anyone who can reach the app. Off by default,
-and invisible while off.
+the same read-only gallery to anyone who can reach the app — your network on
+a LAN install, the whole internet on the Let's Encrypt overlay. Off by
+default, and invisible while off.
 
 ## 11½. Handing someone a copy
 
 A share link is the better answer when the person can reach the app — it stays
-current and you can revoke it. But the app lives on your own network, so that
-link resolves for nobody outside the house.
+current and you can revoke it. But a share link only resolves where the app
+does: on a LAN install that is your own network, so the link works for nobody
+outside the house.
 
-**Settings → Share the collection** downloads a **`.zip`**. Unpack it and open
+**Settings → Sharing → Share the collection** downloads a **`.zip`**. Unpack it and open
 `index.html` in any browser: every hat with its photo, colors, where it lives,
 and your notes. It works offline forever and needs no login, no server and no
 internet.
@@ -412,14 +455,15 @@ it with, why you kept it. It saves as you type (a small *Saving… / Saved*
 beside it says when), and ⌘/Ctrl + Enter saves at once.
 
 It is the one free-text field on a hat that **nothing automatic ever writes**.
-Re-analyzing a hat rewrites its colors, model name and design notes; it never
-touches this. Notes travel with the hat into the zip export above.
+Re-analyzing a hat rewrites its model name and design notes (and its colors,
+unless you edited them); it never touches this. Notes travel with the hat into
+the zip export above.
 
 ---
 
 ## 12. Audit trail
 
 Every significant change (creates, edits, dispositions, imports, setting
-changes) lands in an append-only activity log — the Settings page shows
-recent entries. Old entries are pruned automatically after the retention
-window (90 days by default).
+changes) lands in an append-only activity log — **Settings → Upkeep →
+Recent activity** shows recent entries. Old entries are pruned automatically
+after the retention window (90 days by default).

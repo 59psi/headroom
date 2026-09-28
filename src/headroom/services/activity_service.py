@@ -21,6 +21,11 @@ from headroom.services.task_health import TaskHealth
 logger = logging.getLogger(__name__)
 
 
+#: Days an audit row is kept when `HEADROOM_ACTIVITY_LOG_RETENTION_DAYS` is
+#: unset — the figure the docs quote, named once.
+DEFAULT_RETENTION_DAYS = 90
+
+
 def retention_days() -> int:
     """The retention window, live from the environment.
 
@@ -28,7 +33,7 @@ def retention_days() -> int:
     rows removed" reads as either "nothing was old enough" or "nothing ran",
     and the window is what tells them apart.
     """
-    return max(1, env_int("HEADROOM_ACTIVITY_LOG_RETENTION_DAYS", 90))
+    return max(1, env_int("HEADROOM_ACTIVITY_LOG_RETENTION_DAYS", DEFAULT_RETENTION_DAYS))
 
 
 async def log_activity(
@@ -93,6 +98,27 @@ async def list_activity(
     stmt = stmt.offset(max(0, offset)).limit(max(1, min(limit, 500)))
     result = await db.execute(stmt)
     return list(result.scalars().all())
+
+
+async def latest_for(db: AsyncSession, entity_type: str, entity_id: int) -> ActivityLog | None:
+    """The newest row about one entity, or None — for a writer deciding
+    whether its change continues one the log already records."""
+    result = await db.execute(
+        select(ActivityLog)
+        .where(ActivityLog.entity_type == entity_type, ActivityLog.entity_id == entity_id)
+        .order_by(ActivityLog.occurred_at.desc(), ActivityLog.id.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+def details_of(row: ActivityLog) -> dict:
+    """A row's `details` as a dict — `{}` when absent or not a JSON object."""
+    try:
+        details = json.loads(row.details) if row.details else {}
+    except ValueError:
+        return {}
+    return details if isinstance(details, dict) else {}
 
 
 async def count_activity(db: AsyncSession) -> int:

@@ -82,6 +82,30 @@ async def test_casing_and_spacing_do_not_hide_a_duplicate(client):
     assert groups[0]["confidence"] == "exact"
 
 
+async def test_punctuation_does_not_hide_a_duplicate(client):
+    """`A-Game` and `A Game` were one model to the purchase matcher and two
+    hats to this report, which folded with the vocabulary's punctuation-keeping
+    rule. Both use `naming.name_key` now. Model names are written straight to
+    the row, the way the analyzer does, so no write-time canonicalization
+    quietly makes the two spellings agree before the report looks."""
+    from sqlalchemy import update as sa_update
+
+    from headroom.models.hat import Hat
+    from tests.conftest import test_session_factory
+
+    a = await _add(client, brand="Melin", colorway="Black")
+    b = await _add(client, brand="Melin", colorway="Black")
+    async with test_session_factory() as db:
+        await db.execute(sa_update(Hat).where(Hat.id == a["id"]).values(model_name="A-Game Hydro"))
+        await db.execute(sa_update(Hat).where(Hat.id == b["id"]).values(model_name="A Game Hydro"))
+        await db.commit()
+
+    groups = await _groups(client)
+
+    assert len(groups) == 1
+    assert groups[0]["confidence"] == "exact"
+
+
 async def test_hats_with_nothing_recorded_are_not_all_one_giant_group(client):
     """Without an identity floor, every un-analyzed hat matches every other on
     "same size, same style" and the report is one useless group."""

@@ -12,7 +12,6 @@ story, that is the worst available failure mode.
 from __future__ import annotations
 
 import asyncio
-
 from pathlib import Path
 
 import pytest

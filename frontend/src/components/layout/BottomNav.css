@@ -103,14 +103,14 @@
 
 .bottom-nav .nav-item.active .hr-tab-icon {
   color: var(--neon-pink);
-  background: rgba(255, 46, 182, 0.15);
+  background: rgb(var(--neon-pink-rgb) / 0.15);
   box-shadow:
-    inset 0 0 0 1px rgba(255, 46, 182, 0.42),
-    0 0 16px rgba(255, 46, 182, 0.22);
+    inset 0 0 0 1px rgb(var(--neon-pink-rgb) / 0.42),
+    0 0 16px rgb(var(--neon-pink-rgb) / 0.22);
 }
 
 .bottom-nav .nav-item.active svg {
-  filter: drop-shadow(0 0 5px rgba(255, 46, 182, 0.75));
+  filter: drop-shadow(0 0 5px rgb(var(--neon-pink-rgb) / 0.75));
 }
 
 .bottom-nav .nav-item:focus-visible {

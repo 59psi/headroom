@@ -1,7 +1,8 @@
 import { useId, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getEbayCreds, setEbayCreds, deleteEbayCreds, testEbayCreds } from '../../api/settings';
-import type { EbayCredsStatus } from '../../types';
+import { qk } from '../../lib/queryKeys';
+import type { EbayCredsStatus, EbayTestResult } from '../../types';
 import { ErrorNote } from '../common/ErrorNote';
 import { Panel } from '../ui/Panel';
 import { StatusPill } from '../ui/StatusPill';
@@ -19,8 +20,6 @@ function envPill(env: EbayCredsStatus['detected_env']) {
   return null;
 }
 
-type TestResult = { ok: boolean; stage: string; detail: string };
-
 /**
  * The card's state in one word — and only as strong a word as the evidence.
  *
@@ -29,7 +28,7 @@ type TestResult = { ok: boolean; stage: string; detail: string };
  * "Failing". A sandbox keyset is known bad before any test — it 401s on every
  * call — so it outranks a plain "Configured".
  */
-function statePill(status: EbayCredsStatus, test: TestResult | null) {
+function statePill(status: EbayCredsStatus, test: EbayTestResult | null) {
   if (!status.configured) return <StatusPill tone="off">Not set</StatusPill>;
   if (test?.ok) return <StatusPill tone="ok">Connected</StatusPill>;
   if (test) return <StatusPill tone="error" title={test.detail}>Failing</StatusPill>;
@@ -42,10 +41,10 @@ export function EbayCredsCard() {
   const toast = useToast();
   const confirm = useConfirm();
   const formId = useId();
-  const ebay = useQuery({ queryKey: ['admin', 'ebay'], queryFn: getEbayCreds });
+  const ebay = useQuery({ queryKey: qk.admin.ebay(), queryFn: getEbayCreds });
   const [ebayAppId, setEbayAppId] = useState('');
   const [ebayCertId, setEbayCertId] = useState('');
-  const [ebayTestResult, setEbayTestResult] = useState<TestResult | null>(null);
+  const [ebayTestResult, setEbayTestResult] = useState<EbayTestResult | null>(null);
 
   const saveEbayMut = useMutation({
     mutationFn: () => setEbayCreds({ app_id: ebayAppId.trim(), cert_id: ebayCertId.trim() }),
@@ -58,8 +57,8 @@ export function EbayCredsCard() {
       // The PUT answers with the new status, so the card flips to Configured
       // (masked id, detected environment) without waiting on a refetch.
       // "Connected" still waits for a passing Test connection — see statePill.
-      qc.setQueryData(['admin', 'ebay'], saved);
-      qc.invalidateQueries({ queryKey: ['admin', 'ebay'] });
+      qc.setQueryData(qk.admin.ebay(), saved);
+      qc.invalidateQueries({ queryKey: qk.admin.ebay() });
     },
   });
 
@@ -68,7 +67,7 @@ export function EbayCredsCard() {
     onSuccess: () => {
       setEbayTestResult(null);
       toast.success('eBay credentials removed');
-      qc.invalidateQueries({ queryKey: ['admin', 'ebay'] });
+      qc.invalidateQueries({ queryKey: qk.admin.ebay() });
     },
   });
 

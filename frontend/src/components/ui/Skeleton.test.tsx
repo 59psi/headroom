@@ -19,6 +19,16 @@ describe('Skeleton', () => {
     expect(screen.getAllByRole('status')).toHaveLength(1);
   });
 
+  it('says nothing at all when decorative — hidden, not a second status', () => {
+    // A page with four skeletons read "Loading… Loading… Loading… Loading…";
+    // all but one are decorative, and decorative means invisible to a reader.
+    const { container } = render(<><Skeleton /><Skeleton decorative lines={3} /></>);
+    expect(screen.getAllByRole('status')).toHaveLength(1);
+    const quiet = container.querySelectorAll('.hr-skeleton-wrap')[1];
+    expect(quiet).toHaveAttribute('aria-hidden', 'true');
+    expect(quiet).not.toHaveTextContent('Loading');
+  });
+
   it('takes a more specific label', () => {
     render(<Skeleton label="Loading share links…" />);
     expect(screen.getByRole('status')).toHaveTextContent('Loading share links…');

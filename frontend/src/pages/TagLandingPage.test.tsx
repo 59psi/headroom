@@ -14,24 +14,24 @@ import { renderWithProviders } from '../test/utils';
 import { hatFixture } from '../test/fixtures';
 import { TagLandingPage } from './TagLandingPage';
 import * as hatsApi from '../api/hats';
+import { ApiError } from '../api/client';
+import { localToday } from '../lib/dates';
 import type { HatRead } from '../types';
 
 vi.mock('../api/hats', async (importOriginal) => {
   const { stubAll } = await import('../test/stubModule');
-  return {
-    ...stubAll(await importOriginal<object>()),
-    getHat: vi.fn(),
-    logWear: vi.fn(async () => ({})),
-    undoLatestWear: vi.fn(async () => ({})),
-  };
+  return { ...stubAll(await importOriginal<object>()), getHat: vi.fn() };
 });
 
 const mocked = vi.mocked(hatsApi);
 
-/** The server logs wears against the UTC date, so the page must agree. */
-function utcToday() {
-  return new Date().toISOString().slice(0, 10);
-}
+// Both wear routes answer with the hat as it now stands, as the server does.
+beforeEach(() => {
+  mocked.logWear.mockImplementation(async id =>
+    hatFixture({ id, model_name: 'Coronado', date_last_worn: localToday(), wear_count: 1 }));
+  mocked.undoLatestWear.mockImplementation(async id =>
+    hatFixture({ id, model_name: 'Coronado', date_last_worn: null, wear_count: 0 }));
+});
 
 function renderTag(hat: HatRead | Error, id = 5) {
   if (hat instanceof Error) mocked.getHat.mockRejectedValue(hat);
@@ -63,7 +63,7 @@ describe('TagLandingPage', () => {
   });
 
   it('does not offer to log a wear that is already recorded', async () => {
-    renderTag(hatFixture({ model_name: 'Coronado', date_last_worn: utcToday() }));
+    renderTag(hatFixture({ model_name: 'Coronado', date_last_worn: localToday() }));
 
     expect(await screen.findByText(/worn today/i)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /wore it today/i })).toBeNull();
@@ -79,8 +79,24 @@ describe('TagLandingPage', () => {
   });
 
   it('explains itself when the tag names a hat that no longer exists', async () => {
-    renderTag(new Error('404'));
+    renderTag(new ApiError('Hat not found', 404));
     expect(await screen.findByText(/tag not recognized/i)).toBeInTheDocument();
+  });
+
+  it('does not report a server failure as a hat that is gone', async () => {
+    // A locked database or a dropped connection is not a deleted hat: the
+    // person is holding it. They get the reason and a retry, not "no longer
+    // in the collection".
+    const user = userEvent.setup();
+    renderTag(new ApiError('database is locked', 500));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('database is locked');
+    expect(screen.queryByText(/tag not recognized/i)).toBeNull();
+    expect(screen.queryByText(/no longer in the collection/i)).toBeNull();
+
+    mocked.getHat.mockResolvedValue(hatFixture({ model_name: 'Coronado' }));
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByText('Coronado')).toBeInTheDocument();
   });
 
   it('does not call the API for a tag with a non-numeric id', async () => {
@@ -144,15 +160,47 @@ describe('TagLandingPage', () => {
 
   it('undoes a wear and confirms it', async () => {
     const user = userEvent.setup();
-    renderTag(hatFixture({ model_name: 'Coronado', date_last_worn: utcToday(), wear_count: 1 }));
+    renderTag(hatFixture({ model_name: 'Coronado', date_last_worn: localToday(), wear_count: 1 }));
     // The refetch after the undo returns the hat as the server now has it.
     mocked.getHat.mockResolvedValue(hatFixture({ model_name: 'Coronado', date_last_worn: null, wear_count: 0 }));
 
     await user.click(await screen.findByRole('button', { name: /undo/i }));
 
     await waitFor(() => expect(mocked.undoLatestWear).toHaveBeenCalledWith(5));
-    expect(await screen.findByText('Wear undone')).toBeInTheDocument();
+    expect(await screen.findByText('Last wear removed')).toBeInTheDocument();
     expect(await screen.findByRole('button', { name: /wore it today/i })).toBeInTheDocument();
+  });
+
+  it('judges "worn today" by the day on the phone, not the day in Greenwich', async () => {
+    // 8 pm on the 27th in Los Angeles is already the 28th in UTC. A hat worn
+    // that morning is worn TODAY — comparing against the UTC date offered a
+    // second wear of it every evening.
+    const tz = process.env.TZ;
+    process.env.TZ = 'America/Los_Angeles';
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-28T03:00:00Z'));
+    try {
+      renderTag(hatFixture({ model_name: 'Coronado', date_last_worn: '2026-09-27' }));
+      expect(await screen.findByText(/worn today/i)).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /wore it today/i })).toBeNull();
+    } finally {
+      vi.useRealTimers();
+      process.env.TZ = tz;
+    }
+  });
+
+  it('names an unidentified hat by its shelf id, as every other screen does', async () => {
+    renderTag(hatFixture({ model_name: null, display_id: 'A-001-01' }));
+    expect(await screen.findByRole('heading', { level: 1, name: 'A-001-01' })).toBeInTheDocument();
+    expect(screen.queryByText(/Unidentified hat/)).toBeNull();
+    // Not repeated in the line under it.
+    expect(screen.getByText('Classic')).toBeInTheDocument();
+  });
+
+  it('names the size the way the rest of the app does', async () => {
+    mocked.getSizes.mockResolvedValue([{ value: 'x_large', label: 'XL' }]);
+    renderTag(hatFixture({ model_name: 'Coronado', size: 'x_large' }));
+    expect(await screen.findByText(/XL · A-001-01/)).toBeInTheDocument();
   });
 
   it('holds the page shape while the hat loads', () => {

@@ -194,6 +194,33 @@ describe('CaseDetailPage — move to another room', () => {
     expect(cases.updateCase).toHaveBeenCalledWith('A-001', { room_id: 1 });
   });
 
+  it('refreshes every view the move shows in — both rooms, and every hat inside', async () => {
+    // A moved case changes both rooms' counts and contents, and every hat in
+    // it reports a new room name; the move settles through the shared list.
+    const user = userEvent.setup();
+    const { client } = renderCase();
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+
+    const picker = await screen.findByRole('combobox', { name: 'Room' });
+    await screen.findByRole('option', { name: 'Den' });
+    await user.selectOptions(picker, 'Den');
+
+    await waitFor(() => {
+      const keys = invalidate.mock.calls.map(c => JSON.stringify((c[0] as { queryKey: unknown }).queryKey));
+      expect(keys).toEqual(expect.arrayContaining(['["hats"]', '["rooms"]', '["room"]', '["case"]', '["hat"]']));
+    });
+  });
+
+  it('names an orphaned case’s room as missing, without a link to a room that is gone', async () => {
+    server = { ...server, room_id: 99, room_name: null };
+    renderCase();
+
+    const title = await screen.findByRole('heading', { level: 1, name: 'A-001' });
+    const head = title.closest('header')!;
+    expect(within(head).getByText(/No room/)).toBeInTheDocument();
+    expect(within(head).queryByRole('link', { name: /No room/ })).toBeNull();
+  });
+
   it('puts the old room back, with the reason, when the server refuses', async () => {
     cases.updateCase.mockRejectedValueOnce(new Error('Room 2 not found'));
     const user = userEvent.setup();

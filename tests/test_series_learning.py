@@ -170,6 +170,24 @@ async def test_canonicalizing_a_construction_keeps_the_derived_flags_honest(
     assert hat.hydro is False, "HYDRO must not match inside HYDROLite"
 
 
+async def test_respelling_a_construction_keeps_whose_it_is(client, db_session):
+    """The snap is a respelling, not a new answer: an owner's construction is
+    still the owner's afterwards, or a later construction audit would treat
+    it as a guess it may clear. The setter keeps provenance only across a
+    change of CASE; the vocabulary also folds punctuation, so `brushed-cotton`
+    snapping to `Brushed Cotton` used to drop the source on the floor."""
+    from headroom.services.construction_audit import OWNER_SOURCE
+
+    hat_id = await _hat(client)
+    hat = (await db_session.execute(select(Hat).where(Hat.id == hat_id))).scalar_one()
+    hat.set_construction("brushed-cotton", source=OWNER_SOURCE)
+
+    await _canonicalize_analysis_text(db_session, hat)
+
+    assert hat.construction == "Brushed Cotton"
+    assert hat.construction_source == OWNER_SOURCE
+
+
 async def test_canonicalizing_is_a_no_op_for_an_unanalyzed_hat(client, db_session):
     hat_id = await _hat(client)
     hat = (await db_session.execute(select(Hat).where(Hat.id == hat_id))).scalar_one()

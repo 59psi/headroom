@@ -48,11 +48,75 @@ async def test_health_answers_head(anon_client):
     assert (await anon_client.head("/health/ready")).status_code in (200, 503)
 
 
-@pytest.mark.parametrize("path", ["/health/readyz", "/api/does-not-exist", "/api/hats/x/y/z"])
+async def test_an_spa_route_is_the_shell(client):
+    """The control for the typo test below: the catch-all exists and answers.
+
+    Without it, "not the shell" is also what an app with NO catch-all answers
+    — which is what CI ran for releases, since its backend job never builds
+    `frontend/dist` and `create_app()` registers the catch-all only when that
+    directory exists. The suite now serves a stub bundle (`spa_bundle` in
+    conftest); this proves it is there.
+    """
+    from tests.conftest import SPA_SHELL_MARKER
+
+    resp = await client.get("/hats/12")
+
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+    assert SPA_SHELL_MARKER in resp.text
+
+
+#: One probe per first segment the SPA fallback refuses (`app._NOT_SPA_PREFIXES`).
+#: `/uploads` bare, because `/uploads/<file>` is the static mount's to answer
+#: and never reaches the fallback.
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/health/readyz",
+        "/api/does-not-exist",
+        "/api/hats/x/y/z",
+        "/uploads",
+        "/openapi.json/x",
+        "/docs",
+        "/redoc/x",
+    ],
+)
 async def test_a_typo_under_an_api_prefix_is_a_404_not_the_shell(client, path):
+    from tests.conftest import SPA_SHELL_MARKER
+
     resp = await client.get(path)
     assert resp.status_code == 404, (path, resp.status_code)
     assert "text/html" not in resp.headers.get("content-type", ""), path
+    assert SPA_SHELL_MARKER not in resp.text, path
+
+
+@pytest.mark.parametrize("path", ["//api/hats", "//health/ready", "//uploads/hats/p.png"])
+async def test_a_doubled_leading_slash_is_not_the_shell(tmp_path, monkeypatch, path):
+    """`//api/hats` matches no route and no gate prefix, so it fell through to
+    the SPA catch-all and answered `index.html` with a 200 — HTML from what
+    reads as the hats endpoint. No SPA route begins with a second slash."""
+    from tests.test_security import _make_app_with_dist
+
+    client, _dist, _secret = _make_app_with_dist(tmp_path, monkeypatch)
+    assert client.get("/").status_code == 200, "precondition: the SPA route exists"
+
+    # A full URL: a bare "//api/hats" is a scheme-relative reference to a HOST
+    # named `api`, which is not the request a browser or curl sends.
+    resp = client.get(f"http://testserver{path}")
+    assert resp.request.url.raw_path.startswith(b"//"), "precondition: the doubled slash is sent"
+
+    assert resp.status_code == 404, (path, resp.status_code)
+    assert resp.json() == {"detail": "Not found"}
+
+
+async def test_the_api_docs_pages_are_not_served(client):
+    """Their Swagger/ReDoc bundles come from a CDN the CSP blocks, so behind
+    the login they were blank pages. The schema itself stays (gated)."""
+    for path in ("/docs", "/redoc"):
+        resp = await client.get(path)
+        assert resp.status_code == 404, (path, resp.status_code)
+        assert "text/html" not in resp.headers.get("content-type", ""), path
+    assert (await client.get("/openapi.json")).status_code == 200
 
 
 async def test_big_json_is_gzipped_when_asked(client):

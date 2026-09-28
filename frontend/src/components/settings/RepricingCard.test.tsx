@@ -27,13 +27,50 @@ const mocked = vi.mocked(api);
 function status(over: Partial<RepricingStatus> = {}): RepricingStatus {
   return {
     enabled: true, interval_hours: 24, last_run_at: null, last_success_at: null,
-    last_error: null, consecutive_failures: 0, last_repriced: 0, last_considered: 0,
+    last_error: null, consecutive_failures: 0, last_unreachable: 0, last_repriced: 0,
+    last_considered: 0,
     progress: sweepProgressFixture(),
     ...over,
   };
 }
 
 beforeEach(() => { vi.clearAllMocks(); });
+
+describe('RepricingCard — a sweep that reached no one', () => {
+  it('reads a partial outage as one, not as a quiet market', async () => {
+    mocked.getRepricing.mockResolvedValue(status({
+      last_success_at: '2026-08-27T04:00:00Z', last_repriced: 0, last_considered: 234,
+      last_unreachable: 234,
+    }));
+
+    renderWithProviders(<RepricingCard />);
+
+    expect(await screen.findByText('Partial')).toBeInTheDocument();
+    expect(screen.getByText(/234 hats couldn.t reach the marketplace/)).toBeInTheDocument();
+  });
+
+  it('refreshes every hat view when a background sweep finishes under it', async () => {
+    // A background sweep answers 202 long before any price moves, so the
+    // refresh belongs to the running -> stopped edge — and the scheduled
+    // sweep reaches that edge with nobody pressing anything.
+    let running = true;
+    mocked.getRepricing.mockImplementation(async () => status({
+      progress: sweepProgressFixture({ running, done: 1, total: 9 }),
+    }));
+
+    const { client } = renderWithProviders(<RepricingCard />);
+    await screen.findByText('Sweeping');
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+    running = false;
+    await client.refetchQueries({ queryKey: ['admin', 'repricing'] });
+    await screen.findByText('Scheduled');
+
+    const keys = invalidate.mock.calls.map(([f]) => JSON.stringify(f?.queryKey));
+    for (const k of [['hats'], ['hat'], ['case'], ['admin', 'shared-prices']]) {
+      expect(keys).toContain(JSON.stringify(k));
+    }
+  });
+});
 
 describe('RepricingCard', () => {
   it('distinguishes "no sweep yet" from "a sweep that changed nothing"', async () => {

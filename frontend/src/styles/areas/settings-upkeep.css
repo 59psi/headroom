@@ -26,8 +26,8 @@
   padding: 0.6rem 0.85rem;
   font-size: var(--fs-sm);
   line-height: 1.5;
-  color: #ffb1c1;
-  background: rgba(255, 56, 96, 0.08);
+  color: var(--tint-red-light);
+  background: rgb(var(--neon-red-rgb) / 0.08);
   border-left: 2px solid var(--neon-red);
   border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
 }
@@ -35,8 +35,8 @@
 /* A gap rather than a fault — no off-site copy set up yet. Yellow, the ink of
    the warn pill above it, so the sentence and the pill agree on how bad it is. */
 .hr-upkeep-alert.is-warn {
-  color: #ffe98f;
-  background: rgba(255, 225, 86, 0.07);
+  color: var(--tint-yellow);
+  background: rgb(var(--neon-yellow-rgb) / 0.07);
   border-left-color: var(--neon-yellow);
 }
 
@@ -63,8 +63,8 @@
 
 /* Same inks as the status pills, so a sentence and the pill above it read as
    the same state. */
-.hr-upkeep-ok-text { color: #8dff7a; }
-.hr-upkeep-bad-text { color: #ff8aa3; }
+.hr-upkeep-ok-text { color: var(--tint-green); }
+.hr-upkeep-bad-text { color: var(--tint-red); }
 
 p.hr-upkeep-bad-text {
   margin: 0.4rem 0 0;
@@ -168,6 +168,16 @@ p.hr-upkeep-bad-text {
 
 .hr-upkeep-more { margin-top: 0.6rem; }
 
+/* The restore steps in the card's help. Each carries a whole command, so the
+   items get air between them; the commands themselves wrap anywhere (the
+   shared inline-code rule), which a phone needs for a 120-character line. */
+.hr-upkeep-restore {
+  margin: 0 0 0.75rem;
+  padding-left: 1.25rem;
+}
+
+.hr-upkeep-restore > li + li { margin-top: 0.4rem; }
+
 /* ----- Off-site backup --------------------------------------------- */
 
 /* Where the copies go and whether the last one landed — the answer the card
@@ -228,8 +238,8 @@ p.hr-upkeep-bad-text {
   background: var(--surface-raised);
 }
 
-.hr-upkeep-result.is-ok { color: #b9ffad; border-left-color: var(--neon-green); background: rgba(57, 255, 20, 0.06); }
-.hr-upkeep-result.is-bad { color: #ffb1c1; border-left-color: var(--neon-red); background: rgba(255, 56, 96, 0.08); }
+.hr-upkeep-result.is-ok { color: var(--tint-green-light); border-left-color: var(--neon-green); background: rgb(var(--neon-green-rgb) / 0.06); }
+.hr-upkeep-result.is-bad { color: var(--tint-red-light); border-left-color: var(--neon-red); background: rgb(var(--neon-red-rgb) / 0.08); }
 
 .hr-upkeep-setup { margin: 0.75rem 0 0.85rem; }
 
@@ -237,7 +247,7 @@ p.hr-upkeep-bad-text {
   margin-top: 0.6rem;
   padding: 0.75rem 0.9rem;
   background: var(--surface-inset);
-  border-left: 2px solid rgba(0, 240, 255, 0.35);
+  border-left: 2px solid rgb(var(--neon-cyan-rgb) / 0.35);
   border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
 }
 
@@ -311,7 +321,7 @@ p.hr-upkeep-bad-text {
   top: 0.9rem;
   bottom: 0.9rem;
   width: 1px;
-  background: linear-gradient(to bottom, rgba(177, 78, 255, 0.55), rgba(0, 240, 255, 0.12));
+  background: linear-gradient(to bottom, rgb(var(--neon-purple-rgb) / 0.55), rgb(var(--neon-cyan-rgb) / 0.12));
 }
 
 .hr-upkeep-event {
@@ -340,7 +350,7 @@ p.hr-upkeep-bad-text {
 .hr-upkeep-event.is-bad .hr-upkeep-event-dot {
   border-color: var(--neon-red);
   background: var(--neon-red);
-  box-shadow: 0 0 8px rgba(255, 56, 96, 0.8);
+  box-shadow: 0 0 8px rgb(var(--neon-red-rgb) / 0.8);
 }
 
 .hr-upkeep-event-body {
@@ -360,11 +370,22 @@ p.hr-upkeep-bad-text {
 .hr-upkeep-event-summary a {
   color: inherit;
   text-decoration: underline;
-  text-decoration-color: rgba(0, 240, 255, 0.4);
+  text-decoration-color: rgb(var(--neon-cyan-rgb) / 0.4);
   text-underline-offset: 3px;
 }
 
 .hr-upkeep-event-summary a:hover { color: var(--neon-cyan); }
+
+/* The link IS the whole summary line (the row's subject), so on a
+   touchscreen it becomes that line's full-width block at the documented
+   44px rather than a 17px run of underlined text. */
+@media (pointer: coarse) {
+  .hr-upkeep-event-summary a {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+  }
+}
 
 .hr-upkeep-event-summary a:focus-visible {
   outline: 2px solid var(--neon-cyan);

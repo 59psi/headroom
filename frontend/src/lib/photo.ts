@@ -11,7 +11,7 @@
  * none until the startup backfill reaches them, and a slow tile beats a broken
  * one. Full-size views (the hat page lightbox) deliberately do NOT use this.
  */
-export function tileSrc(hat: { thumb_path: string | null; photo_path: string | null }): string {
+export function tileSrc(hat: { thumb_path?: string | null; photo_path: string | null }): string {
   return uploadUrl(hat.thumb_path ?? hat.photo_path);
 }
 

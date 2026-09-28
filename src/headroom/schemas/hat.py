@@ -1,12 +1,33 @@
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from enum import StrEnum
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
+from headroom.models.hat import ResaleScope
+from headroom.schemas.case import CaseType
 from headroom.schemas.common import (
-    Brand, Colorway, Construction, Counterparty, LogoDetected, LongNotes, ModelName, Money,
-    Series, ShortNotes, StyleDescriptor,
+    Brand,
+    Colorway,
+    Construction,
+    Counterparty,
+    LogoDetected,
+    LongNotes,
+    ModelName,
+    Money,
+    Series,
+    ShortNotes,
+    StyleDescriptor,
+    clean_text,
 )
 
 _NON_WORD = re.compile(r"[^a-z0-9]+")
@@ -22,6 +43,17 @@ class HatSize(StrEnum):
     small = "small"
     classic = "classic"
     x_large = "x_large"
+
+
+#: How each size is printed — the option label and every list (served by
+#: `GET /api/meta/sizes`). Beside the enum for the reason `STYLE_LABELS` is:
+#: search matches on it too. The value is `x_large`, every page says
+#: `X Large`, and a search for `x-large` or `xlarge` found nothing.
+SIZE_LABELS: dict[str, str] = {
+    "small": "Small",
+    "classic": "Classic",
+    "x_large": "X Large",
+}
 
 
 class HatStyle(StrEnum):
@@ -106,6 +138,13 @@ STYLE_LABELS: dict[str, str] = {
 }
 
 
+def condition_label(value: str) -> str:
+    """How a condition is printed — "New With Tags". One rule for the option
+    list (`GET /api/meta/conditions`) and the server-rendered report, which
+    printed the value with its underscores swapped out ("new with tags")."""
+    return value.replace("_", " ").title()
+
+
 def is_beanie_style(style: str | None) -> bool:
     """Whether a style value denotes a beanie. The one place that decides."""
     return bool(style) and str(style) in BEANIE_STYLES
@@ -142,8 +181,9 @@ KNOWN_CONSTRUCTIONS: tuple[str, ...] = (
 
 def _construction_tokens(text: str | None) -> frozenset[str]:
     """Words of `text`, lowercased, punctuation and hyphens treated as spaces —
-    the same bag `melin_recap.model_tokens` and `catalog_service._model_tokens`
-    build, so a construction found here is found by the matcher too."""
+    the split `naming.token_set` makes (the tokenizer the matcher and the
+    marketplace pricer share) for these ASCII names, so a construction found
+    here is found by the matcher too."""
     return frozenset(_NON_WORD.sub(" ", (text or "").lower()).split())
 
 
@@ -158,8 +198,8 @@ def constructions_in(text: str | None) -> frozenset[str]:
     """The known constructions `text` names — each as its canonical spelling.
 
     Token-SUBSET, so `Wool Blend` needs both words and `HYDROLite` is its own
-    token rather than a HYDRO with a suffix (the substring confusion CLAUDE.md
-    warns about repeatedly). Four modules used to answer this question with
+    token rather than a HYDRO with a suffix (a substring test reads every
+    HYDROLite as a HYDRO too). Four modules used to answer this question with
     four tokenizations of their own; this is the one they share.
     """
     have = _construction_tokens(text)
@@ -201,12 +241,52 @@ HAT_DEFAULTS: dict[str, str] = {
 }
 
 
+class ColorTier(StrEnum):
+    """How much of the hat a color covers. The vocabulary the Claude tool
+    schema already enforces (`claude_analysis`), now enforced on the manual
+    edit path too."""
+
+    primary = "primary"
+    secondary = "secondary"
+    tertiary = "tertiary"
+    accent = "accent"
+
+
+class AnalysisStatus(StrEnum):
+    """Where a hat's analysis stands. `pending` is the only non-terminal one."""
+
+    pending = "pending"
+    ok = "ok"
+    fallback = "fallback"
+    skipped = "skipped"
+    error = "error"
+
+
+class AnalysisStage(StrEnum):
+    """The step a running analysis is on — `hat_analysis_pipeline.STAGE_*`,
+    held to these values by `tests/test_wire_vocabulary.py`."""
+
+    cutout = "cutout"
+    identifying = "identifying"
+    pricing = "pricing"
+    resale = "resale"
+
+
 class ColorTag(BaseModel):
+    """A hat's color as it is READ back — lenient on purpose.
+
+    Not the write body. It was both, which is how `PUT /colors` came to store a
+    5,000-character name into a `String(50)`, `javascript:alert(1)` as a hex,
+    `banana` as a tier and a bidi override in a name. `ColorTagWrite` below is
+    the body; this stays tolerant because a row a hand-edited database holds
+    must not 500 the whole hat list.
+    """
+
     color_name: str
     general_color: str = ""
     hex_value: str
     dominance_rank: int
-    tier: str = "primary"
+    tier: ColorTier = ColorTier.primary
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -221,8 +301,69 @@ class ColorTag(BaseModel):
 
     @field_validator("tier", mode="before")
     @classmethod
-    def _primary_when_null(cls, v: str | None) -> str:
-        return v or "primary"
+    def _primary_when_null_or_unknown(cls, v: str | None) -> ColorTier:
+        # Unknown degrades like NULL does, for the same reason: every write
+        # path now refuses a tier outside the vocabulary, so only a row edited
+        # by hand can carry one, and that must not take the hat list down.
+        try:
+            return ColorTier(v)
+        except ValueError:
+            return ColorTier.primary
+
+
+#: The most colors one hat may carry. Claude returns at most five and the
+#: mask extractor three; this leaves room for a person adding accents by hand
+#: and refuses the 3,000-row body the unbounded list accepted.
+MAX_COLORS_PER_HAT = 20
+
+_HEX_RE = re.compile(r"^#[0-9a-f]{6}$")
+
+
+def _canonical_hex(value: object) -> object:
+    """`8CB9E1`, `#8cb9e1` and `#8cb` are the same color; store one spelling.
+
+    Normalizes before the pattern check rather than instead of it: the case,
+    the missing `#` and CSS's three-digit shorthand are spellings, anything
+    else (`javascript:…`, `#12`) is not a color and is refused.
+    """
+    if not isinstance(value, str):
+        return value
+    v = value.strip().lower()
+    if not v.startswith("#"):
+        v = f"#{v}"
+    if len(v) == 4:
+        v = "#" + "".join(ch * 2 for ch in v[1:])
+    return v
+
+
+def _is_hex(value: str) -> str:
+    if not _HEX_RE.match(value):
+        raise ValueError("must be a #rrggbb color")
+    return value
+
+
+#: `#rrggbb`, lowercase — the only shape `hat_colors.hex_value` (String(7))
+#: holds and the color-distance search can parse.
+HexColor = Annotated[str, BeforeValidator(_canonical_hex), AfterValidator(_is_hex)]
+
+
+class ColorTagWrite(BaseModel):
+    """One color in a `PUT /api/hats/{id}/colors` body.
+
+    Sized to `hat_colors` (`color_name` String(50), `general_color` String(30))
+    and cleaned like every other name on the wire. No `dominance_rank`: the
+    route ranks by position and always has, so a required field it then
+    discarded was a promise the server did not keep — clients may still send
+    it, and it is ignored.
+    """
+
+    #: Blank means "name it after the hex" — the palette name the swatch snaps
+    #: to, which is a real name rather than a stand-in like "unnamed".
+    color_name: clean_text(50) = None
+    #: Blank means "derive it from the hex" (snapped to the palette).
+    general_color: clean_text(30) = None
+    hex_value: HexColor
+    tier: ColorTier = ColorTier.primary
 
 
 def construction_from_flags(hydrolite: bool | None, hydro: bool | None) -> str | None:
@@ -244,6 +385,27 @@ def construction_from_flags(hydrolite: bool | None, hydro: bool | None) -> str |
     return None
 
 
+def _not_in_the_future(v: date) -> date:
+    """"Last worn 2099-01-01" is a typo, not a plan.
+
+    Tomorrow by UTC is allowed and nothing later: the furthest-ahead zone runs
+    UTC+14, so UTC's date plus one is the latest calendar day it is anywhere,
+    and a client ahead of the server's day is still telling the truth. UTC
+    rather than `date.today()`, which reads the host's zone and so refused a
+    real "tomorrow" on a dev machine west of Greenwich.
+    """
+    if v > datetime.now(timezone.utc).date() + timedelta(days=1):
+        raise ValueError("cannot be in the future")
+    return v
+
+
+#: A calendar day a hat was worn. One definition for every door the date comes
+#: through: the rule used to live on `WearCreate` alone, so `PUT /api/hats/{id}`
+#: stored `2099-01-01` as the last-worn date — and because a wear only ever
+#: moves that date FORWARD, no real wear could correct it afterwards.
+WornDate = Annotated[date, AfterValidator(_not_in_the_future)]
+
+
 class HatCreate(BaseModel):
     case_id: int | None = None
     # Put the hat straight in a room, with no case. Ignored when `case_id` is
@@ -255,7 +417,7 @@ class HatCreate(BaseModel):
     style: HatStyle
     # Free-form: "HYDRO", "HYDROLite", "Thermal", or whatever the tag says.
     construction: Construction = None
-    date_last_worn: date | None = None
+    date_last_worn: WornDate | None = None
     # Both accepted at creation because the owner frequently knows them while
     # the analyzer cannot: a collection name is printed on the box or the hang
     # tag, not visible in a photo of the hat. Withholding these until the Edit
@@ -284,12 +446,14 @@ class HatCreate(BaseModel):
 
 
 class HatUpdate(BaseModel):
+    # OMITTED means "leave it"; these four have no "cleared" state, so an
+    # explicit `null` is refused below rather than reaching a NOT NULL column.
     limited_edition: bool | None = None
     condition: HatCondition | None = None
     size: HatSize | None = None
     style: HatStyle | None = None
     construction: Construction = None
-    date_last_worn: date | None = None
+    date_last_worn: WornDate | None = None
     # Deprecated, accepted for back-compat. Read `construction` instead.
     #
     # NOT folded into `construction` here, unlike `HatCreate`: doing that needs
@@ -311,15 +475,86 @@ class HatUpdate(BaseModel):
     estimated_new_price: Money | None = None
     resale_price: Money | None = None
 
+    @field_validator("limited_edition", "condition", "size", "style", mode="before")
+    @classmethod
+    def _omit_rather_than_null(cls, v: object) -> object:
+        # `hat_service.update_hat` applies `model_dump(exclude_unset=True)`, so
+        # an explicit null used to travel all the way to the commit and come
+        # back as an IntegrityError — a 500 and an `error.unhandled` row for
+        # what is a malformed request. The null-vs-omitted distinction is the
+        # one `CaseUpdate.capacity` draws; these fields simply have no null.
+        if v is None:
+            raise ValueError("may be omitted but not null")
+        return v
+
+
+class DisposedVia(StrEnum):
+    """How a hat left the collection — the one closed vocabulary on a hat that
+    was a bare `str` validated by hand (a 400 where every other enum answers
+    422 at the schema). Style, size and condition are all `StrEnum`s; this is
+    the same shape for the same reason."""
+
+    SOLD = "sold"
+    GIFTED = "gifted"
+    LOST = "lost"
+    TRASHED = "trashed"
+    TRADE = "trade"
+
+
+# ---- the price-provenance clumps, on the wire ------------------------------- #
+#
+# One base per `models.hat` mixin (`NewPriceColumns`, `ResaleColumns`,
+# `EbayCompsColumns`, `DispositionColumns`), so each clump's names are declared
+# once on each side of the ORM instead of restated field by field wherever they
+# travel. `HatRead` inherits all four and `schemas.admin.EbayComps` IS the eBay
+# one; the wire shape stays flat, so clients see the same keys.
+# `tests/test_schema_consistency.py::test_each_price_clump_is_one_set_of_names_
+# from_model_to_wire` holds each base to its mixin, name for name.
+
+
+class NewPriceFields(BaseModel):
+    estimated_new_price: float | None = None
+    estimated_new_price_source: str | None = None
+
+
+class ResaleFields(BaseModel):
+    resale_price: float | None = None
+    resale_price_source: str | None = None
+    resale_price_url: str | None = None
+    resale_checked_at: datetime | None = None
+    resale_price_scope: ResaleScope | None = None
+
+
+class EbayComps(BaseModel):
+    """The price block `find_comps` writes onto a hat."""
+
+    ebay_avg_price: float | None = None
+    ebay_median_price: float | None = None
+    ebay_listing_count: int | None = None
+    ebay_search_url: str | None = None
+    ebay_checked_at: datetime | None = None
+
+
+class DispositionFields(BaseModel):
+    disposed_at: datetime | None = None
+    disposed_via: DisposedVia | None = None
+    disposed_price: float | None = None
+    disposed_to: str | None = None
+    disposed_notes: str | None = None
+
 
 # Populated straight off the ORM object via `HatRead.model_validate(hat)` —
 # every field below is either a Hat column or one of the derived properties on
-# the model, so there is no hand-written mapper to keep in step. Adding a column
-# is still FOUR edits — the model, `database._HAT_COLUMN_DDL`, this class and
-# `frontend/src/types/index.ts` — and skipping one is silent (CLAUDE.md, "Adding
-# a Hat column"). (Kept as a comment, not a docstring: docstrings surface in the
-# public OpenAPI schema, and this is an internal note.)
-class HatRead(BaseModel):
+# the model, so there is no hand-written mapper to keep in step. Adding a hat
+# column is the model, its static DDL in `database._HAT_COLUMN_DDL`, a field
+# here (or in the clump base it belongs to) and its mirror in
+# `frontend/src/types/index.ts`; `tests/test_schema_consistency.py`
+# (`test_an_upgraded_database_has_every_model_column` and
+# `test_each_price_clump_is_one_set_of_names_from_model_to_wire`) fails when
+# the first two disagree or a clump loses a name. (Kept as a
+# comment, not a docstring: docstrings surface in the public OpenAPI schema,
+# and this is an internal note.)
+class HatRead(NewPriceFields, ResaleFields, EbayComps, DispositionFields):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -330,7 +565,11 @@ class HatRead(BaseModel):
     limited_edition: bool = False
     display_id: str | None
     case_display_id: str | None
-    case_type: str | None
+    # The closed vocabularies below are published AS enums, so the OpenAPI
+    # document states them and `tests/test_wire_vocabulary.py` can hold the
+    # TypeScript unions that restate them to the same values. As bare `str`
+    # they were four hand-typed copies nothing checked.
+    case_type: CaseType | None
     photo_path: str | None
     original_path: str | None = None
     thumb_path: str | None = None
@@ -346,6 +585,9 @@ class HatRead(BaseModel):
     hydro: bool = False
     is_beanie: bool
     colors: list[ColorTag]
+    # "owner" when a person set these colors — re-analysis then keeps them, and
+    # the hat page can say so; null when analysis wrote them.
+    colors_source: str | None = None
     room_id: int | None
     room_name: str | None
 
@@ -362,64 +604,45 @@ class HatRead(BaseModel):
     design_notes: str | None = None
     # Yours. No analysis path ever writes it.
     owner_notes: str | None = None
-    estimated_new_price: float | None = None
-    estimated_new_price_source: str | None = None
-    resale_price: float | None = None
-    resale_price_source: str | None = None
-    resale_price_url: str | None = None
-    resale_checked_at: datetime | None = None
-    resale_price_scope: str | None = None
-    analysis_status: str | None = None
-    analysis_stage: str | None = None
+    # The new-price and resale clumps come from `NewPriceFields` and
+    # `ResaleFields`; the disposition and eBay ones from their bases too.
+    analysis_status: AnalysisStatus | None = None
+    analysis_stage: AnalysisStage | None = None
     analysis_stage_at: datetime | None = None
     analysis_job_id: int | None = None
     analysis_error: str | None = None
     analyzed_at: datetime | None = None
 
-    # v0.3 — disposition
-    disposed_at: datetime | None = None
-    disposed_via: str | None = None
-    disposed_price: float | None = None
-    disposed_to: str | None = None
-    disposed_notes: str | None = None
-
-    # v0.4 — eBay comps
-    ebay_avg_price: float | None = None
-    ebay_median_price: float | None = None
-    ebay_listing_count: int | None = None
-    ebay_search_url: str | None = None
-    ebay_checked_at: datetime | None = None
-
     created_at: datetime
     updated_at: datetime
 
     @model_validator(mode="after")
-    def _stage_only_while_pending(self) -> "HatRead":
-        """A stage is meaningless once the analysis has finished.
+    def _stage_only_while_running(self) -> "HatRead":
+        """A stage is meaningless once the work it describes has finished.
 
         Derived here rather than cleared at each terminal transition: eight
         separate places set a terminal `analysis_status`, and any one of them
         forgetting would leave the UI reporting a step that stopped running —
         a stale spinner with a confident label, which is worse than no label.
         Doing it once, on the way out, makes that impossible.
+
+        Two kinds of work run, not one. An analysis runs while the status is
+        `pending`. A RE-CUT (`POST /recut`) deliberately leaves the analysis
+        record alone — status included — and works from the retained original,
+        so it is identified by what it does to the hat: the canonical photo is
+        the uncut original until the new cutout lands. Keyed on the status
+        alone, the page showed that original, background and all, with no
+        sign anything was happening, and had no reason to poll.
         """
-        if self.analysis_status != "pending":
+        recutting = (
+            self.analysis_stage == AnalysisStage.cutout
+            and self.original_path is not None
+            and self.photo_path == self.original_path
+        )
+        if self.analysis_status != AnalysisStatus.pending and not recutting:
             self.analysis_stage = None
             self.analysis_stage_at = None
         return self
-
-
-class DisposedVia(StrEnum):
-    """How a hat left the collection — the one closed vocabulary on a hat that
-    was a bare `str` validated by hand (a 400 where every other enum answers
-    422 at the schema). Style, size and condition are all `StrEnum`s; this is
-    the same shape for the same reason."""
-
-    SOLD = "sold"
-    GIFTED = "gifted"
-    LOST = "lost"
-    TRASHED = "trashed"
-    TRADE = "trade"
 
 
 class HatDispose(BaseModel):
@@ -440,7 +663,9 @@ class HatDispose(BaseModel):
 
 
 class ColorsUpdate(BaseModel):
-    colors: list[ColorTag]
+    """The whole palette, in the order it should be ranked. Replaces the set."""
+
+    colors: list[ColorTagWrite] = Field(max_length=MAX_COLORS_PER_HAT)
 
 
 class HatAssign(BaseModel):
@@ -457,13 +682,7 @@ class HatAssign(BaseModel):
 
 
 class WearCreate(BaseModel):
-    worn_at: date | None = None  # default: today (UTC)
-
-    @field_validator("worn_at")
-    @classmethod
-    def _not_in_the_future(cls, v: date | None) -> date | None:
-        # "Last worn 2099-01-01" is a typo, not a plan. Tomorrow is allowed:
-        # the client's calendar day can be ahead of the server's UTC one.
-        if v is not None and v > date.today() + timedelta(days=1):
-            raise ValueError("worn_at cannot be in the future")
-        return v
+    #: The wearer's calendar day. Clients should send it: "today" is a
+    #: question about where the person is, and the server's answer — see
+    #: `hat_service.owner_today` — is only a fallback for clients that don't.
+    worn_at: WornDate | None = None

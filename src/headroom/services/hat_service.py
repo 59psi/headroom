@@ -1,7 +1,10 @@
-from datetime import datetime, timezone
+import logging
+from collections.abc import Mapping, Sequence
+from datetime import date, datetime, timedelta, timezone
 
-from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy import case, func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
@@ -10,43 +13,57 @@ from headroom.config import settings as cfg
 from headroom.models.case import Case
 from headroom.models.catalog import Purchase
 from headroom.models.hat import Hat, ResaleScope
+from headroom.models.hat_color import HatColor
 from headroom.models.room import Room
+from headroom.models.wear_log import WearLog
 from headroom.schemas.hat import (
     KNOWN_CONSTRUCTIONS,
+    AnalysisStatus,
+    ColorTagWrite,
     HatCreate,
     HatDispose,
     HatUpdate,
     construction_from_flags,
     is_beanie_style,
 )
+from headroom.services import (
+    activity_service,
+    construction_audit,
+    ebay_service,
+    errors,
+    retail_pricing,
+    vocabulary,
+)
 from headroom.services import capacity as capacity_rules
+from headroom.services.color_extraction import normalize_color_name, normalize_hex_name
 from headroom.utils.photo import (
     THUMBS_DIR,
     export_derivative_path,
     make_export_image_async,
     make_thumbnail_async,
 )
-from headroom.services import retail_pricing
-from headroom.services import vocabulary
-from headroom.services.activity_service import log_and_commit
+
+logger = logging.getLogger(__name__)
 
 
-from headroom.models.hat_color import HatColor
-from headroom.services.color_extraction import normalize_hex_name
 def hat_loads():
-    """The eager-load set every Hat query needs (CLAUDE.md: always selectinload).
+    """The eager-load set every Hat query needs — relationships are loaded with
+    `selectinload`, never lazily, on an async session.
 
     One definition, PUBLIC. It was copy-pasted at three call sites inside this
     module, then restated by hand in six other services — three of which had
     dropped `direct_room` and were saved only by the mapper's `lazy="selectin"`.
-    Any query that returns hats splats this. `wear_logs` is deliberately absent:
-    the model already declares it `lazy="selectin"`.
+    Any query that returns hats splats this. `wear_logs` is deliberately
+    absent: what a hat read shows is the count, and the wear functions below
+    query `WearLog` themselves rather than depending on how the relationship
+    happens to be loaded.
     """
     return (
         selectinload(Hat.case).selectinload(Case.room),
         selectinload(Hat.direct_room),
         selectinload(Hat.colors),
     )
+
 
 async def _reload_hat(db: AsyncSession, hat_id: int) -> Hat:
     db.expire_all()
@@ -92,6 +109,21 @@ async def normalize_existing_colors(db: AsyncSession) -> int:
 async def _validate_capacity(
     db: AsyncSession, case_id: int, is_beanie: bool, exclude_hat_id: int | None = None
 ) -> None:
+    """Refuse (`errors.Conflict`) a hat the case cannot take."""
+    refusal = await _capacity_refusal(db, case_id, is_beanie, exclude_hat_id)
+    if refusal is not None:
+        raise errors.Conflict(refusal)
+
+
+async def _capacity_refusal(
+    db: AsyncSession, case_id: int, is_beanie: bool, exclude_hat_id: int | None = None
+) -> str | None:
+    """Why the case cannot take this hat, or None when it can.
+
+    A question with an answer rather than a check that raises, because one
+    caller — restoring a disposed hat — has a perfectly good plan B when the
+    answer is no, and used to get there by catching its own HTTP 409.
+    """
     # Disposed hats no longer occupy a slot.
     query = select(Hat).where(Hat.case_id == case_id, Hat.disposed_at.is_(None))
     if exclude_hat_id:
@@ -120,19 +152,18 @@ async def _validate_capacity(
     # the read model and the write path could have disagreed about the one
     # thing a 409 on save exists to prevent. Only the WORDING is decided here.
     if is_beanie and not room.accepts_beanie:
-        detail = (
+        return (
             "Case already contains regular hats — cannot mix types"
             if regular_count
             else f"Case has reached max beanie capacity ({room.limit_beanie})"
         )
-        raise HTTPException(status_code=409, detail=detail)
     if not is_beanie and not room.accepts_regular:
-        detail = (
+        return (
             "Case already contains beanies — cannot mix types"
             if beanie_count
             else f"Case has reached max regular hat capacity ({room.limit_regular})"
         )
-        raise HTTPException(status_code=409, detail=detail)
+    return None
 
 
 async def create_hat(db: AsyncSession, data: HatCreate) -> Hat:
@@ -151,7 +182,7 @@ async def _create_hat_locked(db: AsyncSession, data: HatCreate) -> Hat:
     if data.case_id is not None:
         case = await db.get(Case, data.case_id)
         if not case:
-            raise HTTPException(status_code=404, detail="Case not found")
+            raise errors.NotFound("Case not found")
         await _validate_capacity(db, data.case_id, is_beanie)
         position = await _get_next_position(db, data.case_id)
     elif data.room_id is not None:
@@ -162,7 +193,7 @@ async def _create_hat_locked(db: AsyncSession, data: HatCreate) -> Hat:
         # not exist — reporting no room at all, which looks like the placement
         # simply didn't take.
         if not await db.get(Room, data.room_id):
-            raise HTTPException(status_code=404, detail="Room not found")
+            raise errors.NotFound("Room not found")
 
     hat = Hat(
         case_id=data.case_id,
@@ -191,11 +222,12 @@ async def _create_hat_locked(db: AsyncSession, data: HatCreate) -> Hat:
     hat.set_construction(
         await vocabulary.canonicalize(
             db, Hat.construction, data.construction, known=KNOWN_CONSTRUCTIONS
-        )
+        ),
+        source=construction_audit.OWNER_SOURCE,
     )
     db.add(hat)
     await db.commit()
-    await log_and_commit(
+    await activity_service.log_and_commit(
         db, kind="hat.created", entity_type="hat", entity_id=hat.id,
         summary=f"Hat #{hat.id} created · style={data.style} size={data.size}",
     )
@@ -260,8 +292,52 @@ async def get_hat_or_none(db: AsyncSession, hat_id: int) -> Hat | None:
 async def get_hat(db: AsyncSession, hat_id: int) -> Hat:
     hat = await get_hat_or_none(db, hat_id)
     if not hat:
-        raise HTTPException(status_code=404, detail="Hat not found")
+        raise errors.NotFound("Hat not found")
     return hat
+
+
+async def ensure_case_accepts(db: AsyncSession, case_id: int, style: str) -> None:
+    """Refuse up front a case a hat of `style` could not be created into.
+
+    For callers that commit to work BEFORE the hat exists — the bulk import
+    spools every photo to disk and queues them, and only the worker, minutes
+    later, called `create_hat`. A case id that did not exist, or one already
+    full, therefore surfaced as N failed items after a 750 MB upload had been
+    accepted with a 202. `create_hat` still checks under the placement lock;
+    this is the early answer, not the authoritative one.
+    """
+    if await db.get(Case, case_id) is None:
+        raise errors.NotFound("Case not found")
+    await _validate_capacity(db, case_id, is_beanie_style(style))
+
+
+#: How long one notes-editing session runs, as the audit log counts it.
+NOTES_SESSION = timedelta(minutes=10)
+
+
+async def _continues_notes_session(db: AsyncSession, hat_id: int, changed_fields: list[str]) -> bool:
+    """Whether this save is more of a notes edit the log already records.
+
+    The notes box autosaves on every pause in typing (~900 ms), and each save
+    is a PUT that changed `owner_notes` — so a paragraph typed in bursts wrote
+    a "Hat #N updated" row per pause, each carrying the whole previous text,
+    crowding the Recent activity card and the retention table with one edit.
+
+    A notes-only save within `NOTES_SESSION` of a notes-only row that is this
+    hat's newest is the same session, and is not logged again. The row that
+    stands is the session's FIRST, whose `previous` is the text from before
+    the session began — the one worth being able to go back to. Nothing is
+    rewritten: the log stays append-only. Any other field, any other row in
+    between, or a longer pause starts a new record.
+    """
+    if changed_fields != ["owner_notes"]:
+        return False
+    last = await activity_service.latest_for(db, "hat", hat_id)
+    if last is None or last.kind != "hat.updated":
+        return False
+    if activity_service.details_of(last).get("fields") != ["owner_notes"]:
+        return False
+    return last.occurred_at >= datetime.now(timezone.utc) - NOTES_SESSION
 
 
 def _price_changed(stored: float | None, sent: float | None) -> bool:
@@ -274,6 +350,8 @@ def _price_changed(stored: float | None, sent: float | None) -> bool:
 async def update_hat(db: AsyncSession, hat_id: int, data: HatUpdate) -> Hat:
     hat = await get_hat(db, hat_id)
     update_data = data.model_dump(exclude_unset=True)
+    # Every field SENT; narrowed to the ones that actually changed once the
+    # writes below have run.
     changed_fields = list(update_data.keys())
     # Captured BEFORE the writes below. The audit row used to record only which
     # field names changed, which is enough to say something happened and
@@ -309,7 +387,8 @@ async def update_hat(db: AsyncSession, hat_id: int, data: HatUpdate) -> Hat:
             await vocabulary.canonicalize(
                 db, Hat.construction, update_data.pop("construction"),
                 known=KNOWN_CONSTRUCTIONS,
-            )
+            ),
+            source=construction_audit.OWNER_SOURCE,
         )
     elif legacy_sent:
         # `elif` on the CONSTRUCTION test, which is the thing it is an
@@ -332,7 +411,7 @@ async def update_hat(db: AsyncSession, hat_id: int, data: HatUpdate) -> Hat:
         # old two-value vocabulary silently overwriting the richer one that
         # replaced it.
         if legacy_text is not None or hat.hydro or hat.hydrolite:
-            hat.set_construction(legacy_text)
+            hat.set_construction(legacy_text, source=construction_audit.OWNER_SOURCE)
 
     if update_data.get("artist_series"):
         update_data["artist_series"] = await vocabulary.canonicalize(
@@ -385,9 +464,21 @@ async def update_hat(db: AsyncSession, hat_id: int, data: HatUpdate) -> Hat:
     for field, value in update_data.items():
         setattr(hat, field, value)
 
+    # Log what CHANGED, not what was sent. The Edit form PUTs every field, so
+    # "the keys in the body" named `construction` on a save that only touched
+    # the notes — and `construction_audit.owner_set_hat_ids` reads a
+    # `hat.updated` row naming `construction` as proof the owner typed it. An
+    # untouched analyzer guess re-sent by the form was thereby promoted to the
+    # owner's answer and shielded from the audit's Clear, exactly the
+    # promotion `Hat.set_construction` refuses for the same re-send. Compared
+    # after the writes, so a value the vocabulary snapped back onto the stored
+    # spelling reads as unchanged too.
+    changed_fields = [f for f in changed_fields if getattr(hat, f, None) != previous[f]]
+    previous = {f: previous[f] for f in changed_fields}
+
     await db.commit()
-    if changed_fields:
-        await log_and_commit(
+    if changed_fields and not await _continues_notes_session(db, hat_id, changed_fields):
+        await activity_service.log_and_commit(
             db, kind="hat.updated", entity_type="hat", entity_id=hat_id,
             summary=f"Hat #{hat_id} updated",
             details={
@@ -415,7 +506,7 @@ async def delete_hat(db: AsyncSession, hat_id: int) -> None:
     )
     await db.delete(hat)
     await db.commit()
-    await log_and_commit(
+    await activity_service.log_and_commit(
         db, kind="hat.deleted", entity_type="hat", entity_id=hat_id,
         summary=f"Hat #{hat_id} permanently deleted",
     )
@@ -452,7 +543,7 @@ async def _assign_hat_locked(
     if case_id is not None:
         case = await db.get(Case, case_id)
         if not case:
-            raise HTTPException(status_code=404, detail="Case not found")
+            raise errors.NotFound("Case not found")
         await _validate_capacity(db, case_id, hat.is_beanie)
         position = await _get_next_position(db, case_id)
         hat.case_id = case_id
@@ -462,7 +553,7 @@ async def _assign_hat_locked(
     elif room_id is not None:
         room = await db.get(Room, room_id)
         if not room:
-            raise HTTPException(status_code=404, detail="Room not found")
+            raise errors.NotFound("Room not found")
         # Through the model's one writer of "no longer in a case", not by
         # hand — this function carried two more copies of the three-column
         # write `Hat.detach_from_case` was created to be the only home of.
@@ -473,7 +564,7 @@ async def _assign_hat_locked(
         where = "unassigned"
 
     await db.commit()
-    await log_and_commit(
+    await activity_service.log_and_commit(
         db, kind="hat.assigned", entity_type="hat", entity_id=hat_id,
         summary=f"Hat #{hat_id} {where}",
     )
@@ -499,7 +590,7 @@ async def dispose_hat(db: AsyncSession, hat_id: int, data: HatDispose) -> Hat:
     # "previously held" hats if we want that later. Capacity check ignores
     # disposed hats already.
     await db.commit()
-    await log_and_commit(
+    await activity_service.log_and_commit(
         db, kind="hat.disposed", entity_type="hat", entity_id=hat_id,
         summary=f"Hat #{hat_id} disposed via {via}"
                 + (f" for ${data.price:.2f}" if data.price else ""),
@@ -531,42 +622,347 @@ async def _undispose_hat_locked(db: AsyncSession, hat_id: int) -> Hat:
     # occupancy it should.
     target_case_id = hat.case_id
     if target_case_id is not None:
-        try:
-            # The case may have been deleted while this hat was disposed —
-            # `_validate_capacity` counts hats, and a case with no hats looks
-            # exactly like an empty one whether or not the row still exists, so
-            # it cannot catch this on its own. Without the check the hat comes
-            # back pointing at a case id that resolves to nothing, and every
-            # read that walks `hat.case.room` gets None where it expects a room.
-            if await db.get(Case, target_case_id) is None:
-                raise HTTPException(status_code=404, detail="Case no longer exists")
-            await _validate_capacity(db, target_case_id, hat.is_beanie, exclude_hat_id=hat.id)
+        # The case may have been deleted while this hat was disposed —
+        # `_capacity_refusal` counts hats, and a case with no hats looks
+        # exactly like an empty one whether or not the row still exists, so
+        # it cannot catch this on its own. Without the check the hat comes
+        # back pointing at a case id that resolves to nothing, and every
+        # read that walks `hat.case.room` gets None where it expects a room.
+        target_case = await db.get(Case, target_case_id)
+        fits = target_case is not None and await _capacity_refusal(
+            db, target_case_id, hat.is_beanie, exclude_hat_id=hat.id
+        ) is None
+        if fits:
             # Reassign to a fresh slot: the hat's old position may have been
             # taken by another hat added while it was disposed. Keeping the
             # stale position_in_case would duplicate display IDs / QR labels.
             hat.position_in_case = await _get_next_position(db, target_case_id)
-        except HTTPException:
-            # Doesn't fit any more (the case filled up while this hat was
-            # disposed, or its capacity was lowered). Come back loose in the
-            # case's room rather than nowhere: `detach_from_case` is the one
-            # definition of that, and skipping it here is what made a restore
-            # into a full case silently un-room the hat. The 8 -> 6 beanie
-            # change in 2.57.0 widened this from rare to routine.
-            room_id = None
-            if target_case_id is not None:
-                target_case = await db.get(Case, target_case_id)
-                room_id = target_case.room_id if target_case else None
-            hat.detach_from_case(room_id)
+        else:
+            # Gone, or doesn't fit any more (the case filled up while this hat
+            # was disposed, or its capacity was lowered). Come back loose in
+            # the case's room rather than nowhere: `detach_from_case` is the
+            # one definition of that, and skipping it here is what made a
+            # restore into a full case silently un-room the hat. The 8 -> 6
+            # beanie change in 2.57.0 widened this from rare to routine.
+            #
+            # A plain branch, not an exception handler: this used to raise its
+            # own HTTP 404 and catch it alongside `_validate_capacity`'s 409,
+            # so an HTTP status stood in for a placement decision.
+            hat.detach_from_case(target_case.room_id if target_case else None)
     hat.disposed_at = None
     hat.disposed_via = None
     hat.disposed_price = None
     hat.disposed_to = None
     hat.disposed_notes = None
     await db.commit()
-    await log_and_commit(
+    await activity_service.log_and_commit(
         db, kind="hat.undisposed", entity_type="hat", entity_id=hat_id,
         summary=f"Hat #{hat_id} restored from disposed state",
     )
+    return await _reload_hat(db, hat_id)
+
+
+#: Audit kinds for the writes below, named once so a test or a filter that
+#: looks one up cannot drift from the spelling that writes it.
+KIND_COLORS = "hat.colors_updated"
+KIND_PHOTO = "hat.photo_replaced"
+KIND_WORN = "hat.worn"
+KIND_WEAR_UNDONE = "hat.wear_undone"
+
+#: `Hat.colors_source` for a palette a PERSON set (`set_colors`, i.e.
+#: `PUT /api/hats/{id}/colors`); NULL means analysis wrote the colors. Owned
+#: here beside its one reader, `replace_analysis_colors` — the gate every
+#: analysis path writes colors through — the way `construction_audit.
+#: OWNER_SOURCE` sits beside the audit that skips on it. Not in the pipeline:
+#: the pipeline imports this module for the color rules, so a constant there
+#: would make the writer (`set_colors`) import its own importer.
+COLORS_OWNER_SOURCE = "owner"
+
+#: `hat_colors.color_name` is String(50), and `ColorTagWrite` refuses more.
+_COLOR_NAME_MAX = 50
+
+
+def _color_rows(colors: Sequence[ColorTagWrite]) -> list[HatColor]:
+    """The stored rows for a palette, ranked by position — for every writer.
+
+    The owner's edit and both analysis paths used to build rows three ways,
+    and only the edit applied the rules below; analysis wrote whatever came
+    back, so a stored row could hold what the edit form would refuse.
+    """
+    rows = []
+    for rank, c in enumerate(colors, start=1):
+        # An explicitly-typed general_color is a CORRECTION and must win. This
+        # used to derive the name from the hex whenever a hex was present, so
+        # editing a mis-detected color to "green" while its (wrong) gray hex
+        # stayed put simply re-derived "gray" and overwrote the fix — the edit
+        # looked like it silently reverted. Only fall back to the hex when the
+        # field is blank. Names still snap to the palette's spelling so the
+        # general_color chip search keeps matching.
+        from_hex = normalize_hex_name(c.hex_value, "")
+        general = normalize_color_name(c.general_color) if c.general_color else from_hex
+        rows.append(HatColor(
+            color_name=c.color_name or from_hex,
+            general_color=general,
+            hex_value=c.hex_value,
+            dominance_rank=rank,
+            tier=c.tier.value,
+        ))
+    return rows
+
+
+def analysis_color(
+    name: str | None, hex_value: str, tier: str, *, general: str | None = None
+) -> ColorTagWrite | None:
+    """An analyzer's color as the wire type the owner's edits go through.
+
+    So every stored row round-trips through `ColorTagWrite`: the name cleaned
+    like any other and trimmed to the column (an analyzer is not a client to
+    be refused, so an over-long name is cut rather than rejected). The tool
+    schema already pins hex and tier, but it is a request to the model, not a
+    guarantee — a color the wire type still refuses is dropped, logged,
+    rather than stored or allowed to fail the whole analysis.
+    `general=None` derives the palette name from the hex.
+    """
+    try:
+        return ColorTagWrite(
+            color_name=(name or "").strip()[:_COLOR_NAME_MAX] or None,
+            general_color=general,
+            hex_value=hex_value,
+            tier=tier,
+        )
+    except ValidationError as exc:
+        logger.warning(
+            "Dropped an analyzed color the wire type refuses (%r, %r, %r): %s",
+            name, hex_value, tier, exc.errors()[0]["msg"] if exc.errors() else exc,
+        )
+        return None
+
+
+def replace_analysis_colors(hat: Hat, colors: Sequence[ColorTagWrite]) -> bool:
+    """Replace `hat`'s palette with an analysis's, unless the owner set it.
+
+    The one gate every analysis color write goes through — Claude's and the
+    fallback's. False, with nothing written, when the palette is the owner's
+    (`COLORS_OWNER_SOURCE`): their correction sticks through any re-analysis,
+    the way a manual price does. Mutates `hat`; the caller commits.
+    """
+    if hat.colors_source == COLORS_OWNER_SOURCE:
+        return False
+    hat.colors.clear()
+    hat.colors.extend(_color_rows(colors))
+    return True
+
+
+async def set_colors(db: AsyncSession, hat_id: int, colors: Sequence[ColorTagWrite]) -> Hat:
+    """Replace a hat's palette with `colors`, ranked by position.
+
+    Rank by position, ignoring whatever the client sent. Ranks are the only
+    handle the UI has on a row — it edits and removes BY rank — so a duplicate
+    makes one tap hit two colors, and a gap invites one: the add path picks
+    `colors.length + 1`, which collides the moment the ranks aren't dense
+    (ranks [1,3] + length 2 → 3). Storing them verbatim let that state
+    persist. Position is already the client's intended order, so this is
+    authoritative rather than a guess.
+
+    Lived in the route, which is why it was the one hat edit the activity log
+    never saw: every other hat write funnels through this module and is
+    audited here.
+
+    Setting a palette makes it the OWNER's (`colors_source`), so a later
+    re-analysis leaves it alone; an empty list hands the colors back to
+    analysis. A person correcting "gray" to "forest green" and then tapping
+    Reanalyze used to get the analyzer's gray back, with nothing saying why.
+    """
+    hat = await get_hat(db, hat_id)
+    previous = [c.color_name for c in sorted(hat.colors, key=lambda c: c.dominance_rank)]
+    for color in list(hat.colors):
+        await db.delete(color)
+
+    rows = _color_rows(colors)
+    for row in rows:
+        row.hat_id = hat.id
+        db.add(row)
+    stored = [row.color_name for row in rows]
+    hat.colors_source = COLORS_OWNER_SOURCE if rows else None
+
+    await db.commit()
+    await activity_service.log_and_commit(
+        db, kind=KIND_COLORS, entity_type="hat", entity_id=hat_id,
+        summary=f"Hat #{hat_id} colors edited",
+        details={"previous": previous, "colors": stored},
+    )
+    return await _reload_hat(db, hat_id)
+
+
+async def replace_photo(db: AsyncSession, hat_id: int, photo_rel: str) -> Hat:
+    """Make `photo_rel` (under the upload dir) the hat's photo and mark it for analysis.
+
+    Deletes the outgoing photo and everything derived from it. Missing any of
+    these leaves orphaned files on disk and, worse, a `thumb_path` pointing at
+    the previous hat's thumbnail — the grid would show the old picture.
+
+    The export derivative is NOT named by a column, so it cannot be picked up
+    by iterating the paths on the hat: it is derived from the canonical
+    photo's filename. 2.24.0 added it and this loop kept deleting three
+    things, so every re-shot hat leaked an 800px WebP. No stale-image risk
+    (the cache is mtime-checked against its source) — just a slow leak on a Pi.
+
+    The caller queues (or runs) the analysis; this only records the photo.
+    """
+    hat = await get_hat(db, hat_id)
+    if hat.photo_path:
+        export_derivative_path(cfg.upload_dir, hat.photo_path).unlink(missing_ok=True)
+    for stale in (hat.photo_path, hat.original_path, hat.thumb_path):
+        if stale:
+            (cfg.upload_dir / stale).unlink(missing_ok=True)
+    hat.original_path = None
+    hat.thumb_path = None
+    hat.photo_path = photo_rel
+    hat.analysis_status = AnalysisStatus.pending.value
+    hat.analysis_error = None
+    hat.analyzed_at = None
+    await db.commit()
+    await activity_service.log_and_commit(
+        db, kind=KIND_PHOTO, entity_type="hat", entity_id=hat_id,
+        summary=f"Hat #{hat_id} photo replaced",
+    )
+    return await _reload_hat(db, hat_id)
+
+
+def owner_today() -> date:
+    """The calendar day a wear with no stated date lands on: the box's own day.
+
+    A person's "today", not a timestamp — which is why this is not the
+    `datetime.now(timezone.utc)` convention. That rule is for instants; a UTC
+    calendar day logged every tap after 17:00 in California as TOMORROW, and
+    the once-a-day idempotency then split the owner's day at 5 pm.
+
+    The best answer is the client's, and the app sends it (`WearCreate.
+    worn_at`). This is the fallback for a client that doesn't — the iOS
+    Shortcut, a script — and it follows the host's zone (`TZ`), which on a
+    box in the owner's house is the owner's day. Unset, it is UTC, exactly
+    what it was before.
+    """
+    return datetime.now(timezone.utc).astimezone().date()
+
+
+async def log_wear(db: AsyncSession, hat_id: int, worn_at: date | None = None) -> Hat:
+    """One tap: "wearing this today". Idempotent per day.
+
+    Appends to the wear log and moves `date_last_worn` forward — never back,
+    so a backdated wear adds to the count without pretending to be the most
+    recent. The wear row keeps the date the tap REPLACED
+    (`WearLog.date_last_worn_before`): `date_last_worn` is also typed by hand,
+    and a hand-typed date has no wear row behind it for an undo to fall back on.
+    """
+    hat = await get_hat(db, hat_id)
+    if hat.disposed_at is not None:
+        raise errors.Conflict("Hat is disposed")
+    day = worn_at or owner_today()
+    if day in await _wear_days(db, hat_id):
+        return hat
+
+    previous = hat.date_last_worn
+    db.add(WearLog(hat_id=hat.id, worn_at=day, date_last_worn_before=previous))
+    if previous is None or day > previous:
+        hat.date_last_worn = day
+    # Same transaction as the wear itself, not `log_and_commit`: the audit row
+    # says a wear happened, so it exists exactly when the wear does — a tap
+    # that loses the same-day race below leaves neither behind.
+    await activity_service.log_activity(
+        db, kind=KIND_WORN, entity_type="hat", entity_id=hat_id,
+        summary=f"Hat #{hat_id} worn {day.isoformat()}",
+        details={
+            "worn_at": day.isoformat(),
+            "previous_date_last_worn": previous.isoformat() if previous else None,
+        },
+    )
+    try:
+        await db.commit()
+    except IntegrityError:
+        # A concurrent tap won the same-day slot (uq_wear_hat_day) — the day
+        # is already logged, so this tap is simply a no-op.
+        await db.rollback()
+    return await _reload_hat(db, hat_id)
+
+
+async def _wear_days(db: AsyncSession, hat_id: int) -> set[date]:
+    """The days a hat has a wear logged — queried, not read off `Hat.wear_logs`,
+    which no hat query loads (reads need only the count)."""
+    return set(
+        (await db.execute(select(WearLog.worn_at).where(WearLog.hat_id == hat_id))).scalars()
+    )
+
+
+async def undo_wear(db: AsyncSession, hat_id: int) -> Hat:
+    """Undo the most recent wear entry (mis-taps happen) — and ONLY that.
+
+    `date_last_worn` goes back to what it would have been without the tap:
+    the latest remaining wear, or the date the tap replaced (kept on the wear
+    row itself), whichever is later. It used to be "the previous wear, else
+    nothing", which treated the wear log as the only source of the date — so
+    a hand-entered last-worn date, tapped over by mistake and undone, was
+    simply erased. And a date the undone wear did not set (typed since, or
+    later than the wear) is not touched at all.
+
+    The replaced date was first recovered from the tap's activity-log row,
+    which erased the hand-typed date all over again once the retention prune
+    took that row — 90 days by default, one if the operator says so.
+    """
+    hat = await get_hat(db, hat_id)
+    logs = list(
+        (
+            await db.execute(
+                select(WearLog).where(WearLog.hat_id == hat_id).order_by(WearLog.worn_at)
+            )
+        ).scalars()
+    )
+    if not logs:
+        raise errors.NotFound("No wear entries to undo")
+    latest = logs[-1]
+    if hat.date_last_worn == latest.worn_at:
+        candidates = [w.worn_at for w in logs[:-1]]
+        if latest.date_last_worn_before is not None:
+            candidates.append(latest.date_last_worn_before)
+        hat.date_last_worn = max(candidates, default=None)
+    await db.delete(latest)
+    await activity_service.log_activity(
+        db, kind=KIND_WEAR_UNDONE, entity_type="hat", entity_id=hat_id,
+        summary=f"Hat #{hat_id} wear on {latest.worn_at.isoformat()} undone",
+    )
+    await db.commit()
+    return await _reload_hat(db, hat_id)
+
+
+#: The columns an eBay comps block writes — `ebay_service.find_comps`' keys.
+EBAY_COMP_FIELDS = (
+    "ebay_avg_price",
+    "ebay_median_price",
+    "ebay_listing_count",
+    "ebay_search_url",
+    "ebay_checked_at",
+)
+
+
+def apply_ebay_comps(hat: Hat, comps: Mapping[str, object]) -> None:
+    """Write a comps block onto `hat` — these five columns and nothing else.
+
+    Named columns rather than `setattr` over whatever keys arrived: a service
+    returning one key more would otherwise write it onto the hat unseen.
+    """
+    for field in EBAY_COMP_FIELDS:
+        setattr(hat, field, comps.get(field))
+
+
+async def refresh_ebay_comps(db: AsyncSession, hat_id: int) -> Hat:
+    """Re-query eBay for one hat and persist the comps. `ebay_service.EbayError`
+    propagates — the caller decides what an unreachable marketplace means."""
+    hat = await get_hat(db, hat_id)
+    comps = await ebay_service.find_comps(
+        db, brand=hat.brand, model=hat.model_name, style=hat.style,
+    )
+    apply_ebay_comps(hat, comps)
+    await db.commit()
     return await _reload_hat(db, hat_id)
 
 
@@ -824,8 +1220,27 @@ async def count_by_analysis_status(db: AsyncSession, status: str) -> int:
     return int(result.scalar() or 0)
 
 
+def _alarming_failure_filters(expected: str | None) -> tuple[ColumnElement[bool], ...]:
+    """`failed_analysis_filters`, minus failures that begin with `expected`.
+
+    For the nav badge and the error list, which say "go look". On an install
+    with no Claude key at all, every photographed hat carries "No Anthropic
+    API key configured…" — a normal outcome of the Basic ID the docs say is
+    enough ("Nothing is mandatory"), not N failures: three keyless uploads put
+    a red "3 hats failed analysis" on the Settings tab. The failures card
+    still shows those hats, as ONE group whose `unretryable_reason` is the
+    single "Add a key" nudge. The caller decides what is expected
+    (`analysis_job_service.expected_failure_prefix`), because that depends on
+    the key as configured now, which this module does not read.
+    """
+    filters = failed_analysis_filters()
+    if not expected:
+        return filters
+    return (*filters, ~Hat.analysis_error.startswith(expected, autoescape=True))
+
+
 async def list_failed_analyses(
-    db: AsyncSession, limit: int = 20, newest_first: bool = True
+    db: AsyncSession, limit: int = 20, newest_first: bool = True, *, expected: str | None = None
 ) -> list[Hat]:
     """Hats whose analysis FAILED — by `failed_analysis_filters`, not by status.
 
@@ -841,11 +1256,14 @@ async def list_failed_analyses(
     `skipped` (no API key) is the same shape. Carrying a failure string is the
     whole test, and it is what gets cleared on success — so it is the field
     that tracks whether a failure is still outstanding.
+
+    `expected` names a failure text that is not a problem on this install —
+    see `_alarming_failure_filters`.
     """
     query = (
         select(Hat)
         .options(*hat_loads())
-        .where(*failed_analysis_filters())
+        .where(*_alarming_failure_filters(expected))
     )
     if newest_first:
         query = query.order_by(Hat.analyzed_at.desc().nulls_last(), Hat.id.desc())
@@ -855,13 +1273,14 @@ async def list_failed_analyses(
     return list(result.scalars().all())
 
 
-async def count_failed_analyses(db: AsyncSession) -> int:
+async def count_failed_analyses(db: AsyncSession, *, expected: str | None = None) -> int:
     """How many hats carry an outstanding analysis failure. Backs the nav badge.
 
     A SQL COUNT over the whole set, never `len()` of the capped list above —
-    the badge is a count and a truncated one would be a lie.
+    the badge is a count and a truncated one would be a lie. Same `expected`
+    exclusion as the list, so the badge counts what the list shows.
     """
     result = await db.execute(
-        select(func.count(Hat.id)).where(*failed_analysis_filters())
+        select(func.count(Hat.id)).where(*_alarming_failure_filters(expected))
     )
     return int(result.scalar() or 0)

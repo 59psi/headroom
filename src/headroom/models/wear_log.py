@@ -25,3 +25,12 @@ class WearLog(Base):
     hat_id: Mapped[int] = mapped_column(Integer, ForeignKey("hats.id"), index=True)
     worn_at: Mapped[date] = mapped_column(Date)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, server_default=func.now())
+    #: What `hats.date_last_worn` held when this wear was logged — the date an
+    #: undo of THIS wear hands back. The wear log alone cannot answer that:
+    #: `date_last_worn` is also typed by hand, and a hand-typed date has no
+    #: wear row behind it, so an undo that fell back to "the previous wear"
+    #: erased it. On the row, not in the activity log where it was first kept:
+    #: that log is pruned by age (`HEADROOM_ACTIVITY_LOG_RETENTION_DAYS`), and
+    #: an undo must not stop working once the audit trail of the tap expires.
+    #: NULL for wears logged before this column existed, which undo as before.
+    date_last_worn_before: Mapped[date | None] = mapped_column(Date, nullable=True)

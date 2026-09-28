@@ -11,8 +11,9 @@
 # Installs (only what's missing — safe to re-run):
 #   * uv        — brew on macOS, otherwise the official Astral installer
 #   * Node      — brew on macOS, NodeSource on apt/dnf Linux. Accepts an
-#                 existing Node 22.22+ (react-router 8's engines floor; the
-#                 Node 20 line is EOL as of 2026-04-30);
+#                 existing Node that every locked package's `engines`
+#                 accepts: 22.22.2+ on the 22 line, 24.15+ on the 24 line, or
+#                 26+ (jsdom 30's range; 23, 25 and early 24 are refused);
 #                 a FRESH install gets 26, matching the Docker image.
 #   * Docker    — WITHOUT Docker Desktop:
 #                   macOS: docker CLI + compose + buildx + colima (brew)
@@ -22,8 +23,6 @@
 #                 your own.
 #
 set -euo pipefail
-
-cd "$(dirname "$0")/.."
 
 INSTALL_DOCKER=1
 BUILD_SPA=1
@@ -98,21 +97,50 @@ ensure_uv() {
 }
 
 # ------------------------------------------------------------------ #
-# Node.js — accept 22.22+, install 26 (matches the Docker image)
+# Node.js — accept what the lockfile accepts, install 26 (the image's)
 #
-# 22.22 is not arbitrary: react-router 8 declares `engines: node >=22.22.0`,
-# which now supersedes vite/@vitejs/plugin-react's `^20.19.0 || >=22.12.0`
-# (and the Node 20 line went end-of-life 2026-04-30). Checking only the major
-# would wave through 22.0, and checking vite's old 22.12 would wave through a
-# Node the engines check then warns about. `npm ci` only ERRORS on an engines
-# mismatch when `engine-strict` is set — which `frontend/.npmrc` now sets, so
-# the floor is enforced in the Docker build and CI rather than only warned.
-# Track the HIGHEST floor any dependency declares.
+# What `npm ci` will run on is the INTERSECTION of every locked package's
+# `engines.node`, and `frontend/.npmrc` sets `engine-strict`, so anything
+# outside it is a hard EBADENGINE error. That set is not "at least N" any
+# more: jsdom 30 declares `^22.22.2 || ^24.15.0 || >=26.0.0`, which refuses
+# Node 23, Node 25 and 24.0–24.14 — the last of those an LTS line people
+# actually run. A single floor (this was `>= 22.22`) passed all of them here
+# and then died in `npm ci`.
+#
+# So the accepted set is spelled as data: one minimum per supported release
+# line, plus the major from which everything is accepted. `frontend/
+# package.json`'s `engines` states the same range, and
+# `tests/test_toolchain_pins.py` derives the intersection from
+# `package-lock.json` and checks this function against it version by
+# version — so a dependency that narrows the range fails a test, not a setup.
 # ------------------------------------------------------------------ #
-# 0 = usable (>= 22.22), 1 = too old or absent. One `node -v`, no subshells.
+NODE_LINE_MINIMUMS="22.22.2 24.15.0"
+NODE_OPEN_FROM_MAJOR=26
+# What a fresh install gets. The Docker image's `FROM node:` major and CI's
+# `node-version` must match it; the toolchain test holds all three together.
+NODE_INSTALL_MAJOR=26
+
+# 0 = usable, 1 = outside the accepted set or absent. One `node -v`.
 node_ok() {
-  [[ $(node -v 2>/dev/null) =~ ^v([0-9]+)\.([0-9]+) ]] || return 1
-  (( BASH_REMATCH[1] > 22 || (BASH_REMATCH[1] == 22 && BASH_REMATCH[2] >= 22) ))
+  [[ $(node -v 2>/dev/null) =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+) ]] || return 1
+  local major=${BASH_REMATCH[1]} minor=${BASH_REMATCH[2]} patch=${BASH_REMATCH[3]}
+  local line lmajor lminor lpatch
+  if (( major >= NODE_OPEN_FROM_MAJOR )); then return 0; fi
+  for line in $NODE_LINE_MINIMUMS; do
+    IFS=. read -r lmajor lminor lpatch <<< "$line"
+    if (( major == lmajor )); then
+      if (( minor > lminor || (minor == lminor && patch >= lpatch) )); then return 0; fi
+      return 1
+    fi
+  done
+  return 1
+}
+
+# The accepted set, for messages.
+node_range() {
+  local line out=""
+  for line in $NODE_LINE_MINIMUMS; do out+="${line%%.*}.x from ${line}, "; done
+  printf '%s%s+' "$out" "$NODE_OPEN_FROM_MAJOR"
 }
 
 # npm — the Docker image pins npm 12 in its frontend stage (Dockerfile
@@ -172,23 +200,24 @@ ensure_npm() {
 ensure_node() {
   if node_ok; then return 0; fi
   if command -v node &>/dev/null; then
-    log "Node $(node -v) is too old (need 22.22+) — upgrading..."
+    log "Node $(node -v) is outside what the frontend's dependencies accept ($(node_range)) — installing ${NODE_INSTALL_MAJOR}..."
   else
-    log "Installing Node.js..."
+    log "Installing Node.js ${NODE_INSTALL_MAJOR}..."
   fi
   if [ "$OS" = "Darwin" ]; then
     ensure_brew
     brew install node
   elif command -v apt-get &>/dev/null; then
-    run_remote_installer "https://deb.nodesource.com/setup_26.x" $SUDO bash
+    run_remote_installer "https://deb.nodesource.com/setup_${NODE_INSTALL_MAJOR}.x" $SUDO bash
     $SUDO apt-get install -y nodejs
   elif command -v dnf &>/dev/null; then
-    run_remote_installer "https://rpm.nodesource.com/setup_26.x" $SUDO bash
+    run_remote_installer "https://rpm.nodesource.com/setup_${NODE_INSTALL_MAJOR}.x" $SUDO bash
     $SUDO dnf install -y nodejs
   else
-    die "No supported package manager found — install Node.js 22.22+ from https://nodejs.org/ and re-run."
+    die "No supported package manager found — install Node.js ${NODE_INSTALL_MAJOR} from https://nodejs.org/ and re-run."
   fi
-  node_ok || die "Node install failed or is still < 22.22."
+  hash -r 2>/dev/null || true
+  node_ok || die "Node install failed, or $(node -v 2>/dev/null || echo 'none') is still outside $(node_range)."
 }
 
 # ------------------------------------------------------------------ #
@@ -196,9 +225,14 @@ ensure_node() {
 #   macOS: docker CLI + compose/buildx plugins + colima (lightweight VM)
 #   Linux: native Docker Engine via Docker's official install script
 # ------------------------------------------------------------------ #
+#: 1 once `docker info` has answered — the DAEMON, not merely the CLI. Read by
+#: the --docker-only path, which must not print "ready" over a dead engine.
+DOCKER_READY=0
+
 ensure_docker() {
   if docker info &>/dev/null; then
     log "Docker is already installed and running — leaving it alone."
+    DOCKER_READY=1
     return 0
   fi
 
@@ -235,9 +269,26 @@ ensure_docker() {
     return 0
   fi
 
-  docker info &>/dev/null || docker --version &>/dev/null \
-    || warn "Docker installed but the daemon isn't reachable yet — see notes above."
+  # The DAEMON, and only the daemon. This was `docker info || docker --version
+  # || warn`, and `--version` answers from the CLI alone — so with the engine
+  # installed but not running (or this user not yet in the docker group) the
+  # warning never fired, and `--docker-only` went on to print "ready".
+  if docker info &>/dev/null; then
+    DOCKER_READY=1
+  elif command -v docker &>/dev/null; then
+    warn "Docker is installed but the daemon isn't reachable yet — see notes above"
+    warn "  (a fresh docker-group membership needs a new login; 'docker info' shows why)."
+  else
+    warn "Docker did not install — see https://docs.docker.com/engine/install/"
+  fi
 }
+
+# Everything above defines; everything below runs. Sourcing the file stops
+# here, which is how tests/test_setup_script.py runs the REAL `node_ok` and
+# `ensure_docker` against stubbed tools instead of grepping this file's text.
+[[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0
+
+cd "$(dirname "$0")/.."
 
 # ------------------------------------------------------------------ #
 # Run it
@@ -245,8 +296,11 @@ ensure_docker() {
 if [ "$DOCKER_ONLY" -eq 1 ]; then
   ensure_docker
   echo ""
-  log "Docker engine ready. Next: docker compose up --build"
-  exit 0
+  if [ "$DOCKER_READY" -eq 1 ]; then
+    log "Docker engine ready. Next: docker compose up --build"
+    exit 0
+  fi
+  die "Docker isn't reachable yet — see the warning above. Once 'docker info' works: docker compose up --build"
 fi
 
 ensure_uv

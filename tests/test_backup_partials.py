@@ -84,6 +84,39 @@ async def test_a_partial_left_by_a_dead_process_is_invisible_and_swept(
     assert real.exists()
 
 
+async def test_while_the_archive_is_being_written_only_the_partial_name_exists(
+    isolated_upload_dir, tmp_path, monkeypatch
+):
+    """The invariant itself, observed mid-write rather than inferred.
+
+    The two tests above cannot tell the designs apart: the crash test raises,
+    and the cleanup `except` unlinks the file under EITHER name, so writing
+    straight to the final name passed them both. A SIGKILL runs no cleanup,
+    so what matters is what is on disk WHILE the tar is open — this looks
+    from inside the write, from the last step before the archive closes.
+    """
+    _seed(tmp_path, monkeypatch)
+    target = backup_service._backup_dir() / backup_service._timestamped_name()
+    seen: dict = {}
+
+    def _observe(tar):
+        seen["final_exists"] = target.exists()
+        seen["partial_exists"] = backup_service.partial_path(target).exists()
+        seen["listed"] = backup_service._list_backups_sync()
+        seen["newest_age"] = backup_service._seconds_since_newest_backup_sync()
+
+    monkeypatch.setattr(backup_service, "_add_ca_to_tar", _observe)
+
+    backup_service._build_tarball_sync(target)
+
+    assert seen, "the archive was written without reaching the observation point"
+    assert seen["final_exists"] is False, "the archive existed under its real name before it was whole"
+    assert seen["partial_exists"] is True, "the write was not going to the .partial name"
+    assert seen["listed"] == [], "a half-written archive was listed as a backup"
+    assert seen["newest_age"] is None, "a half-written archive counted as the newest backup"
+    assert target.exists() and not backup_service.partial_path(target).exists()
+
+
 async def test_a_finished_archive_is_whole_and_under_its_final_name(
     isolated_upload_dir, tmp_path, monkeypatch
 ):

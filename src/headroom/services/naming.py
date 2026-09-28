@@ -1,7 +1,7 @@
 """How a product name is read: ONE tokenizer and ONE splitter.
 
 Two modules compared names and each had its own reading. `melin_recap`
-stripped punctuation (a fix CLAUDE.md records — `Odysea Hydro "Have More
+stripped punctuation (an earlier fix — `Odysea Hydro "Have More
 Fun"` demanded the tokens `"have` and `fun"`, which no listing title has ever
 carried) while `catalog_service._model_tokens` still split on whitespace, so
 the SAME quoted name was priceable on the marketplace and unmatchable against
@@ -15,8 +15,16 @@ melin wrote with an em dash landed in the catalog as a model called
 `Trenches Hydro — Camo` with no colorway.
 
 Both live here now, and both sides of every comparison go through the same
-functions — the CLAUDE.md rule that a normalization applied to one side is a
-comparison between two alphabets.
+functions — because a normalization applied to only one side turns a
+comparison into one between two alphabets.
+
+So does the ONE answer to "are these the same name?" (`name_key`). There
+were three: these tokens (accent-SENSITIVE, punctuation-blind), `vocabulary`'s
+fold (accent-blind, punctuation-sensitive) and duplicate detection, which
+borrowed the vocabulary's. `Piña`/`Pina` was one colorway to the vocabulary
+and two products to the matcher; `A-Game`/`A Game` was one model to the
+matcher and two hats to the duplicate report. Every comparison folds case,
+width, accents AND punctuation the same way now.
 """
 
 from __future__ import annotations
@@ -29,20 +37,27 @@ import unicodedata
 SEPARATORS = (" — ", " – ", " - ")
 
 
-def normalize(text: str | None) -> str:
-    """NFKC (fullwidth → ASCII, ligatures apart) and casefolded."""
-    return unicodedata.normalize("NFKC", text or "").casefold()
+def fold(text: str | None) -> str:
+    """The one character-level fold: width, accents and case.
+
+    NFKD takes a fullwidth `Ｏ` to `O` and splits `ñ` into `n` plus a combining
+    mark; dropping the marks leaves the base letters. Accents fold because in
+    this collection they are the same drop typed with and without a long-press
+    on a phone keyboard (see `vocabulary`), not two different products.
+    """
+    decomposed = unicodedata.normalize("NFKD", text or "")
+    return "".join(c for c in decomposed if not unicodedata.combining(c)).casefold()
 
 
 def tokens(text: str | None) -> tuple[str, ...]:
     """Word tokens: letters and digits, everything else a separator.
 
     `A-Game` → (`a`, `game`); `"Have More Fun"` → (`have`, `more`, `fun`);
-    `Ｏdysea` → (`odysea`,).
+    `Ｏdysea` → (`odysea`,); `Piña` → (`pina`,).
     """
     out: list[str] = []
     current: list[str] = []
-    for ch in normalize(text):
+    for ch in fold(text):
         if ch.isalnum():
             current.append(ch)
         elif current:
@@ -58,6 +73,17 @@ def token_set(text: str | None) -> frozenset[str]:
     """`tokens` as a set — what containment and equality compare. Cached:
     purchase matching is quadratic and tokenizes several strings per pair."""
     return frozenset(tokens(text))
+
+
+def name_key(text: str | None) -> str:
+    """The key two spellings of one name share: its tokens, in order.
+
+    `A-Game`, `A Game` and `a-game` → `a game`; `Piña` and `PINA` → `pina`.
+    Ordered, unlike `token_set`, because a spelling is a sequence — `Grey
+    Heather` is not a way of writing `Heather Grey`. Empty for a value with no
+    letters or digits, which callers read as "nothing to match on".
+    """
+    return " ".join(tokens(text))
 
 
 def split_model_colorway(text: str | None) -> tuple[str | None, str | None]:

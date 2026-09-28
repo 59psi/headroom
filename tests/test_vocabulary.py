@@ -147,6 +147,57 @@ async def test_curated_constructions_keep_their_canonical_casing(client):
     assert len([o for o in options if o.casefold() == "hydrolite"]) == 1
 
 
+async def test_a_stored_punctuation_variant_is_offered_as_the_curated_spelling(
+    client, db_session
+):
+    """`wool-blend` on the row (an import, or a value from before the key
+    folded punctuation) and `Wool Blend` in the curated list are one fabric —
+    saving either stores `Wool Blend`. The picker compared by casefold with
+    no curated list, so it offered both."""
+    from sqlalchemy import update as sa_update
+
+    from headroom.models.hat import Hat
+
+    hat = await _add(client, construction="Wool Blend")
+    await db_session.execute(
+        sa_update(Hat).where(Hat.id == hat["id"]).values(construction="wool-blend")
+    )
+    await db_session.commit()
+
+    options = (await client.get("/api/meta/constructions")).json()
+
+    assert [o for o in options if "wool" in o.casefold()] == ["Wool Blend"]
+
+
+async def test_the_picker_suggests_the_spelling_a_write_would_store(client, db_session):
+    """With `NEON` on one hat and `Neon` on three, typing either stores
+    `Neon` — but the picker offered `NEON`, the first spelling in sort order,
+    and the analysis prompt is handed the same list as the spelling to use
+    EXACTLY. One rule (`_preferred`) now decides both."""
+    from sqlalchemy import update as sa_update
+
+    from headroom.models.hat import Hat
+
+    hats = [await _add(client, artist_series="Neon") for _ in range(4)]
+    await db_session.execute(
+        sa_update(Hat).where(Hat.id == hats[0]["id"]).values(artist_series="NEON")
+    )
+    await db_session.commit()
+
+    assert (await client.get("/api/meta/collections")).json() == ["Neon"]
+    assert (await _add(client, artist_series="neon"))["artist_series"] == "Neon"
+
+
+async def test_punctuation_is_a_spelling_not_a_different_name(client):
+    """`naming.name_key` is the one "same name" rule, shared with the purchase
+    matcher — which already read `A-Game` and `A Game` as one model."""
+    first = await _add(client, artist_series="Skye-Walker")
+    second = await _add(client, artist_series="Skye Walker")
+
+    assert second["artist_series"] == first["artist_series"] == "Skye-Walker"
+    assert (await client.get("/api/meta/collections")).json() == ["Skye-Walker"]
+
+
 async def test_collections_suggestions_exclude_hats_with_none(client):
     """Most hats have no collection; they must not become an empty suggestion."""
     await _add(client)

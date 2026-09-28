@@ -63,14 +63,30 @@ describe('MdnsCard', () => {
   });
 
   it('states a missing IPv6 rather than omitting the row', async () => {
-    // The absence IS the diagnosis: with no IPv6 record every lookup of the
-    // name stalls for the client's full resolver timeout, which reads as a slow
-    // or dead site rather than a missing record. An omitted row would hide it.
+    // Which families the name answers for is what a client resolving it
+    // gets, so "none" is shown, not hidden. It no longer claims the host has
+    // no IPv6 — an interface pinned by IPv4 advertises none on purpose — nor
+    // that lookups will be slow, which the NSEC responder stopped being true.
     mocked.getMdnsStatus.mockResolvedValue(status({ ipv6: null }));
     renderWithProviders(<MdnsCard />);
 
     expect(await screen.findByText('IPv6')).toBeInTheDocument();
-    expect(screen.getByText(/none on this host/)).toBeInTheDocument();
+    expect(screen.getByText('none advertised')).toBeInTheDocument();
+    expect(screen.queryByText(/lookups may be slow/)).not.toBeInTheDocument();
+  });
+
+  it('keeps the name in its slot and says why nothing is advertised beneath it', async () => {
+    // A long, actionable reason used to be printed IN the name slot, in bold
+    // monospace, instead of the name.
+    const reason = "HEADROOM_MDNS_HOSTNAME='hats.local' is not a bare host label. Set it to `hats`.";
+    mocked.getMdnsStatus.mockResolvedValue(status({
+      advertising: false, url: null, ip: null, ipv6: null,
+      hostname: 'hats.local.local', error: reason,
+    }));
+    renderWithProviders(<MdnsCard />);
+
+    expect(await screen.findByText('hats.local.local')).toBeInTheDocument();
+    expect(screen.getByText(reason)).toHaveClass('hr-mdns-error');
   });
 
   it('does not claim to be advertising when it is only enabled', async () => {

@@ -126,6 +126,37 @@ async def test_export_survives_a_photo_row_pointing_at_nothing(client, db_sessio
     assert not [n for n in zf.namelist() if n.startswith("images/")]
 
 
+async def test_a_photo_that_fails_to_zip_leaves_no_broken_image_behind(
+    client, db_session, isolated_upload_dir, monkeypatch
+):
+    """The page was rendered BEFORE the images were written, so a photo that
+    failed to go into the zip left its card pointing at `images/<id>.webp` — a
+    file the archive does not contain. It must fall back to the no-photo card,
+    as the comment beside the write always claimed it did."""
+    from headroom.config import settings
+
+    hat_id = await _hat(client)
+    _write_photo(settings.upload_dir / "hats" / "big.png", size=(900, 900))
+    row = await _row(db_session, hat_id)
+    row.photo_path = "hats/big.png"
+    await db_session.commit()
+
+    real_write = zipfile.ZipFile.write
+
+    def failing_write(self, filename, arcname=None, *a, **kw):
+        if arcname and arcname.startswith("images/"):
+            raise OSError("unreadable")
+        return real_write(self, filename, arcname, *a, **kw)
+
+    monkeypatch.setattr(zipfile.ZipFile, "write", failing_write)
+
+    zf = await _export(client)
+    page = zf.read("index.html").decode()
+    assert not [n for n in zf.namelist() if n.startswith("images/")]
+    assert f"images/{hat_id}.webp" not in page, "a card points at a file the zip lacks"
+    assert 'class="noimg"' in page
+
+
 async def test_export_re_encodes_at_800px_from_the_canonical_photo(
     client, db_session, isolated_upload_dir
 ):
@@ -209,8 +240,8 @@ async def test_the_export_does_no_image_work_on_the_event_loop(
     """
     import threading
 
-    from headroom.services import export_service
     from headroom.config import settings
+    from headroom.services import export_service
 
     hat_id = await _hat(client)
     _write_photo(settings.upload_dir / "hats" / "loop.png")

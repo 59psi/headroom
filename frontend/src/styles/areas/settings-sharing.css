@@ -115,8 +115,8 @@
 
 @keyframes hrShareFresh {
   0%, 25% {
-    border-color: rgba(0, 240, 255, 0.7);
-    box-shadow: 0 0 0 1px rgba(0, 240, 255, 0.45), 0 0 18px rgba(0, 240, 255, 0.22);
+    border-color: rgb(var(--neon-cyan-rgb) / 0.7);
+    box-shadow: 0 0 0 1px rgb(var(--neon-cyan-rgb) / 0.45), 0 0 18px rgb(var(--neon-cyan-rgb) / 0.22);
   }
   100% {
     border-color: var(--border-soft);
@@ -233,7 +233,7 @@
   color: var(--neon-cyan);
   font-weight: 600;
   text-decoration: underline;
-  text-decoration-color: rgba(0, 240, 255, 0.4);
+  text-decoration-color: rgb(var(--neon-cyan-rgb) / 0.4);
   text-underline-offset: 2px;
 }
 

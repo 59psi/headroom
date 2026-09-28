@@ -12,7 +12,7 @@ import { renderWithProviders } from '../../test/utils';
 import { TrustCertCard } from './TrustCertCard';
 import * as settingsApi from '../../api/settings';
 import * as clipboard from '../../lib/clipboard';
-import type { TlsStatus } from '../../types';
+import type { TlsStatusRead } from '../../types';
 
 vi.mock('../../api/settings', async (importOriginal) => {
   const { stubAll } = await import('../../test/stubModule');
@@ -26,13 +26,13 @@ vi.mock('../../lib/clipboard', () => ({ copyText: vi.fn() }));
 const tlsApi = vi.mocked(settingsApi);
 const copyText = vi.mocked(clipboard.copyText);
 
-function tls(over: Partial<TlsStatus> = {}): TlsStatus {
+function tls(over: Partial<TlsStatusRead> = {}): TlsStatusRead {
   return {
     applicable: true, host: 'headroom.local', port: 443,
     not_before: '2026-08-23T22:44:33Z', not_after: '2026-08-24T10:44:33Z',
     days_remaining: 0.5, expired: false, needs_attention: false,
-    hostname_ok: true, ca_sha256: 'CB:08:88:5B:FD:B7:F7:DD', error: null,
-    ca_changed: false, ca_expected_sha256: 'CB:08:88:5B:FD:B7:F7:DD',
+    hostname_ok: true, ca_sha256: 'CB:08:88:5B:FD:B7:F7:DD', chain_matches_ca: true,
+    error: null, ca_changed: false, ca_expected_sha256: 'CB:08:88:5B:FD:B7:F7:DD',
     issuer_not_after: '2034-11-12T00:00:00Z', clamped_by_issuer: false, ...over,
   };
 }
@@ -199,6 +199,39 @@ describe('TrustCertCard', () => {
     expect(screen.getByText(/root is untouched/i)).toBeInTheDocument();
   });
 
+  it('catches a served chain from another authority behind a perfect root file', async () => {
+    // The CA-restore state: root.crt is the original authority (so no
+    // "changed"), the leaf is valid and covers the name — and it was signed
+    // by the authority Caddy minted in between, so every device refuses it.
+    // This card used to show "Currently serving a valid certificate" here.
+    tlsApi.caCertificateAvailable.mockResolvedValue(true);
+    tlsApi.getTlsStatus.mockResolvedValue(tls({ chain_matches_ca: false, days_remaining: 700 }));
+
+    renderWithProviders(<TrustCertCard />);
+
+    expect(await screen.findByText(/served is from a different authority/i)).toBeInTheDocument();
+    expect(screen.getByText('Wrong authority')).toBeInTheDocument();
+    expect(screen.queryByText('Valid')).not.toBeInTheDocument();
+    expect(screen.queryByText(/good until/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/rm -rf \/data\/caddy\/certificates\/local/)).toBeInTheDocument();
+  });
+
+  it('labels the fingerprint as served only once the chain has been checked', async () => {
+    // `ca_sha256` is the exported root file. When the served chain was not
+    // (or could not be) checked against it, "now serving" is a claim nobody
+    // verified.
+    tlsApi.caCertificateAvailable.mockResolvedValue(true);
+    tlsApi.getTlsStatus.mockResolvedValue(tls({
+      ca_changed: true, ca_sha256: 'NEW:FF:EE', ca_expected_sha256: 'OLD:AA:BB',
+      chain_matches_ca: null,
+    }));
+
+    renderWithProviders(<TrustCertCard />);
+
+    expect(await screen.findByText('Now handing out')).toBeInTheDocument();
+    expect(screen.queryByText('Now serving')).not.toBeInTheDocument();
+  });
+
   it('stays quiet when the authority is the one the devices trust', async () => {
     tlsApi.caCertificateAvailable.mockResolvedValue(true);
 
@@ -206,6 +239,7 @@ describe('TrustCertCard', () => {
 
     await screen.findByText(/Install the certificate/i);
     expect(screen.queryByText(/certificate authority has changed/i)).toBeNull();
+    expect(screen.queryByText(/from a different authority/i)).toBeNull();
   });
 });
 

@@ -18,11 +18,32 @@
  */
 
 :root {
+  /* === Channels ==================================================== */
+  /* Each palette color's R G B, once. The color tokens below are built from
+     these, and every translucent variant anywhere is written against them,
+     as in `rgb(var(--neon-pink-rgb) / 0.35)`. The neons used to be restated
+     as literal 255, 46, 182-style triplets about two hundred times across
+     the sheets, so a palette change was a search-and-replace with no way to
+     know it had found them all. `tokens.test.ts` refuses a raw triplet that
+     one of these names. */
+  --bg-deep-rgb: 6 0 17;
+  --bg-surface-rgb: 15 5 36;
+  --bg-card-rgb: 22 10 48;
+  --text-muted-rgb: 154 134 196;
+  --neon-pink-rgb: 255 46 182;
+  --neon-cyan-rgb: 0 240 255;
+  --neon-purple-rgb: 177 78 255;
+  --neon-orange-rgb: 255 140 66;
+  --neon-yellow-rgb: 255 225 86;
+  --neon-green-rgb: 57 255 20;
+  --neon-red-rgb: 255 56 96;
+  --neon-sky-rgb: 74 168 255;
+  --neon-rose-rgb: 255 107 157;
+
   /* === Canvas ====================================================== */
-  --bg-deep: #060011;          /* page background */
-  --bg-surface: #0f0524;       /* base surfaces */
-  --bg-card: #160a30;          /* cards */
-  --bg-card-hover: #1c0f3e;
+  --bg-deep: rgb(var(--bg-deep-rgb));        /* page background */
+  --bg-surface: rgb(var(--bg-surface-rgb));  /* base surfaces */
+  --bg-card: rgb(var(--bg-card-rgb));        /* cards */
   --bg-elevated: #21134a;      /* dropdown / modal */
   --bg-input: #0c041f;
 
@@ -36,53 +57,55 @@
   --text-secondary: #b6a3d6;
   /* AA-compliant for small text on the near-black grounds (was #7c6aa3 at
      4.38:1, below 4.5:1, and used at 0.65-0.8 rem). ~5.0:1 on --bg-deep. */
-  --text-muted: #9a86c4;
+  --text-muted: rgb(var(--text-muted-rgb));
   --text-on-neon: #06010f;
 
   /* === Neon palette =============================================== */
-  --neon-pink: #ff2eb6;
-  --neon-pink-soft: rgba(255, 46, 182, 0.6);
-  --neon-cyan: #00f0ff;
-  --neon-cyan-soft: rgba(0, 240, 255, 0.6);
-  --neon-purple: #b14eff;
-  --neon-orange: #ff8c42;
-  --neon-yellow: #ffe156;
-  --neon-green: #39ff14;
-  --neon-red: #ff3860;
+  --neon-pink: rgb(var(--neon-pink-rgb));
+  --neon-cyan: rgb(var(--neon-cyan-rgb));
+  --neon-purple: rgb(var(--neon-purple-rgb));
+  --neon-orange: rgb(var(--neon-orange-rgb));
+  --neon-yellow: rgb(var(--neon-yellow-rgb));
+  --neon-green: rgb(var(--neon-green-rgb));
+  --neon-red: rgb(var(--neon-red-rgb));
   /* Seventh and eighth chart series — a sky blue and a rose that stay
      distinguishable from the six above on the dark canvas. */
-  --neon-sky: #4aa8ff;
-  --neon-rose: #ff6b9d;
+  --neon-sky: rgb(var(--neon-sky-rgb));
+  --neon-rose: rgb(var(--neon-rose-rgb));
 
-  /* === Aliases for legacy bootstrap overrides ====================== */
-  --color-bg: var(--bg-deep);
-  --color-surface: var(--bg-card);
-  --color-primary: var(--neon-pink);
-  --color-primary-hover: #ff5cc8;
-  --color-primary-light: rgba(255, 46, 182, 0.12);
-  --color-accent: var(--neon-cyan);
-  --color-accent-light: rgba(0, 240, 255, 0.12);
-  --color-text: var(--text);
-  --color-text-secondary: var(--text-secondary);
-  --color-border: var(--border);
-  --color-danger: var(--neon-red);
-  --color-success: var(--neon-green);
+  /* === Readable tints ============================================== */
+  /* A neon lightened until it reads as TEXT on the dark grounds: the full
+     neons are for dots, bars and borders, and at caption size several of
+     them fail contrast or vibrate. These were hand-typed hex values, each
+     repeated across four or five sheets. `-light` is the step brighter, for
+     a hovered or pressed state and for text on a tinted panel. */
+  --tint-pink: #ff6ccb;
+  --tint-pink-light: #ffd3ef;
+  --tint-red: #ff8aa3;
+  --tint-red-light: #ffb1c1;
+  --tint-green: #8dff7a;
+  --tint-green-light: #b9ffad;
+  --tint-purple: #d9a8ff;
+  --tint-cyan: #7ff6ff;
+  --tint-yellow: #ffe98f;
+  /* Inline `code` ink: a lavender off the text color, so a key or a path
+     reads as a value inside the sentence without shouting. */
+  --tint-code: #e7d8ff;
+  /* The destructive fill, one step lighter under the pointer. */
+  --neon-red-hover: #ff5c7a;
 
   /* === Gradients =================================================== */
-  --gradient-sunset: linear-gradient(135deg, #ff6b35 0%, #ff2eb6 50%, #b14eff 100%);
-  --gradient-pink-cyan: linear-gradient(135deg, #ff2eb6 0%, #00f0ff 100%);
-  --gradient-cyan-purple: linear-gradient(135deg, #00f0ff 0%, #b14eff 100%);
+  --gradient-sunset: linear-gradient(135deg, #ff6b35 0%, var(--neon-pink) 50%, var(--neon-purple) 100%);
+  --gradient-pink-cyan: linear-gradient(135deg, var(--neon-pink) 0%, var(--neon-cyan) 100%);
+  --gradient-cyan-purple: linear-gradient(135deg, var(--neon-cyan) 0%, var(--neon-purple) 100%);
   --gradient-card: linear-gradient(180deg, rgba(255, 255, 255, 0.04) 0%, rgba(255, 255, 255, 0) 100%);
-  --gradient-primary: var(--gradient-pink-cyan);
-  --gradient-hero: var(--gradient-sunset);
 
   /* === Shadows / Glows ============================================ */
   --shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
   --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.6);
   --shadow-hover: 0 18px 50px rgba(0, 0, 0, 0.7);
-  --glow-pink: 0 0 20px rgba(255, 46, 182, 0.45), 0 0 40px rgba(255, 46, 182, 0.18);
-  --glow-cyan: 0 0 20px rgba(0, 240, 255, 0.45), 0 0 40px rgba(0, 240, 255, 0.18);
-  --glow-purple: 0 0 20px rgba(177, 78, 255, 0.45), 0 0 40px rgba(177, 78, 255, 0.18);
+  --glow-pink: 0 0 20px rgb(var(--neon-pink-rgb) / 0.45), 0 0 40px rgb(var(--neon-pink-rgb) / 0.18);
+  --glow-cyan: 0 0 20px rgb(var(--neon-cyan-rgb) / 0.45), 0 0 40px rgb(var(--neon-cyan-rgb) / 0.18);
 
   /* === Typography ================================================= */
   /* The `… Variable` names come first because that is what the
@@ -113,7 +136,7 @@
   /* === Surfaces =================================================== */
   /* Three steps of depth inside a card: the card itself, a recessed well
      (metric tiles, inputs) and a raised hover. */
-  --surface-inset: rgba(6, 0, 17, 0.55);
+  --surface-inset: rgb(var(--bg-deep-rgb) / 0.55);
   --surface-raised: rgba(255, 255, 255, 0.035);
   --surface-hover: rgba(255, 255, 255, 0.06);
 
@@ -152,9 +175,9 @@ body {
   margin: 0;
   min-height: 100vh;
   background:
-    radial-gradient(ellipse 1200px 600px at 80% -10%, rgba(177, 78, 255, 0.18), transparent 60%),
-    radial-gradient(ellipse 900px 500px at 0% 110%, rgba(255, 46, 182, 0.18), transparent 65%),
-    radial-gradient(ellipse 700px 400px at 50% 50%, rgba(0, 240, 255, 0.06), transparent 70%),
+    radial-gradient(ellipse 1200px 600px at 80% -10%, rgb(var(--neon-purple-rgb) / 0.18), transparent 60%),
+    radial-gradient(ellipse 900px 500px at 0% 110%, rgb(var(--neon-pink-rgb) / 0.18), transparent 65%),
+    radial-gradient(ellipse 700px 400px at 50% 50%, rgb(var(--neon-cyan-rgb) / 0.06), transparent 70%),
     var(--bg-deep);
   background-attachment: fixed;
   color: var(--text);
@@ -174,8 +197,8 @@ body {
     z-index: 0;
     pointer-events: none;
     background:
-      linear-gradient(to right, rgba(177, 78, 255, 0.06) 1px, transparent 1px) 0 0 / 60px 60px,
-      linear-gradient(to bottom, rgba(177, 78, 255, 0.06) 1px, transparent 1px) 0 0 / 60px 60px;
+      linear-gradient(to right, rgb(var(--neon-purple-rgb) / 0.06) 1px, transparent 1px) 0 0 / 60px 60px,
+      linear-gradient(to bottom, rgb(var(--neon-purple-rgb) / 0.06) 1px, transparent 1px) 0 0 / 60px 60px;
     mask-image: radial-gradient(ellipse 80% 60% at 50% 100%, #000 0%, transparent 70%);
   }
 }
@@ -193,7 +216,7 @@ a {
 
 a:hover {
   color: var(--neon-pink);
-  text-shadow: 0 0 8px rgba(255, 46, 182, 0.5);
+  text-shadow: 0 0 8px rgb(var(--neon-pink-rgb) / 0.5);
 }
 
 ::selection {

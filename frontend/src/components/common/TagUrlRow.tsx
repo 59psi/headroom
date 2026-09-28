@@ -1,7 +1,8 @@
-import { useRef, useState } from 'react';
+import { useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getTagBase } from '../../api/settings';
-import { copyText } from '../../lib/clipboard';
+import { qk } from '../../lib/queryKeys';
+import { CopyButton } from '../ui/CopyButton';
 
 /**
  * Copy the URL to write onto an NFC tag for this hat or case.
@@ -12,21 +13,11 @@ import { copyText } from '../../lib/clipboard';
  * lease. See `tag_service.get_tag_base`.
  */
 export function TagUrlRow({ kind, ident }: { kind: 'h' | 'c'; ident: string | number }) {
-  const { data } = useQuery({ queryKey: ['settings', 'tags'], queryFn: getTagBase });
+  const { data } = useQuery({ queryKey: qk.settings.tags(), queryFn: getTagBase });
   const inputRef = useRef<HTMLInputElement>(null);
-  const [copied, setCopied] = useState(false);
 
   if (!data) return null;
   const url = `${data.base_url}/t/${kind}/${ident}`;
-
-  async function copy() {
-    // See `lib/clipboard.copyText` — the secure-context check and the
-    // selection fallback lived here first and are shared now.
-    if (await copyText(url, inputRef.current)) {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1600);
-    }
-  }
 
   return (
     <div className="hr-tag-url-row">
@@ -42,9 +33,10 @@ export function TagUrlRow({ kind, ident }: { kind: 'h' | 'c'; ident: string | nu
           readOnly
           onFocus={e => e.currentTarget.select()}
         />
-        <button type="button" className="btn btn-outline-secondary btn-sm" onClick={copy}>
-          {copied ? '✓' : 'Copy'}
-        </button>
+        {/* The field doubles as the plain-http fallback: `copyText` selects
+            it for the legacy copy command, and leaves it selected when even
+            that is refused. */}
+        <CopyButton text={url} what="NFC tag URL" fallbackInput={inputRef} />
       </div>
     </div>
   );

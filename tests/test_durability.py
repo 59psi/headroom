@@ -23,7 +23,6 @@ import pytest
 from sqlalchemy import text
 
 from headroom import database
-
 from tests.conftest import test_engine as engine_under_test
 
 pytestmark = pytest.mark.anyio

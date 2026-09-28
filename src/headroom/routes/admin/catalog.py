@@ -9,6 +9,8 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.database import get_db
+from headroom.routes import _background
+from headroom.routes._api import DomainErrorRoute
 from headroom.schemas.admin import (
     CatalogRefreshStarted,
     CatalogStatus,
@@ -21,19 +23,13 @@ from headroom.schemas.admin import (
     UnmatchAllResult,
     UnmatchOneResult,
 )
-from headroom.services import catalog_service
-from headroom.services.locks import loop_lock
-from headroom.services.melin_recap import MelinRecapError
+from headroom.services import catalog_service, locks, melin_recap
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(route_class=DomainErrorRoute)
 
-#: Strong references to in-flight harvests. asyncio keeps only a weak
-#: reference to a running task, so without this the collector can take a
-#: harvest mid-flight — and a harvest that vanishes never reaches the `finally`
-#: that releases the claim, which is the permanent lockout `create_task` was
-#: chosen to avoid in the first place.
+#: In-flight harvests, held strongly — see `_background.launch`.
 _running_harvests: set[asyncio.Task] = set()
 
 
@@ -68,10 +64,8 @@ async def refresh_colorway_catalog(request: Request):
     per-category isolation the harvest exists to provide. The card re-enables
     the moment the 202 lands, so pressing twice is ordinary behavior.
 
-    `create_task`, not `BackgroundTasks`, for the reason `run_repricing_all`
-    documents: background tasks do not run if the response fails to send, and a
-    claim whose release never runs disables the endpoint for the life of the
-    process.
+    Started through `_background.launch`, the shape `run_repricing_all`
+    shares: the claim is released however the harvest ends.
     """
     if not catalog_service.claim_harvest():
         return CatalogRefreshStarted(
@@ -85,9 +79,11 @@ async def refresh_colorway_catalog(request: Request):
     # unopenable one under test, so the STARTED path of this endpoint could
     # never run in the suite and had no test; only the refusal branch did.
     factory = request.app.state.session_factory
-    task = asyncio.create_task(_harvest_in_background(factory))
-    _running_harvests.add(task)
-    task.add_done_callback(_running_harvests.discard)
+    _background.launch(
+        _harvest_in_background(factory),
+        release=catalog_service.release_harvest,
+        running=_running_harvests,
+    )
     return CatalogRefreshStarted()
 
 
@@ -97,15 +93,10 @@ async def _harvest_in_background(session_factory) -> None:
         async with session_factory() as db:
             result = await catalog_service.harvest_catalog(db)
         logger.info("Colorway catalog refresh finished: %s", result)
-    except MelinRecapError as exc:
+    except melin_recap.MelinRecapError as exc:
         logger.warning("Colorway catalog refresh failed: %s", exc)
     except Exception:
         logger.exception("Colorway catalog refresh crashed")
-    finally:
-        # `finally`, not the happy path: CancelledError is a BaseException, and
-        # a harvest canceled at shutdown that kept the slot would refuse every
-        # press after the next start.
-        catalog_service.release_harvest()
 
 
 @router.post("/purchases/import", response_model=ImportPreview | ImportResult)
@@ -121,7 +112,11 @@ async def import_purchases(
     `?dry_run=true` reports what WOULD be imported and matched and writes
     nothing. Importing runs the matcher, which mutates hats, and a bulk import
     of years of order history is exactly the case where seeing the proposed
-    matches first is worth the extra round trip — there is no undo for it.
+    matches first is worth the extra round trip. A run that does go wrong is
+    reversible — `POST /purchases/{id}/unmatch` breaks one link and
+    `POST /purchases/unmatch-all` breaks every one, reverting the fields each
+    wrote — but that is a repair after the fact, and the preview is the check
+    before it.
     """
     if dry_run:
         return await catalog_service.preview_import(db, data.items)
@@ -129,7 +124,7 @@ async def import_purchases(
     # imports of the same file running together each saw none and wrote
     # every line twice (measured: qty 2 → 4 rows, both requests 200). The
     # matcher that follows mutates hats and is not reentrant either.
-    async with loop_lock("purchase-import"):
+    async with locks.loop_lock("purchase-import"):
         result = await catalog_service.import_purchases(db, data.items)
         match = await catalog_service.match_purchases_to_hats(db)
     return {**result, **match}

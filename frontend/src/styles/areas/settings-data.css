@@ -21,6 +21,16 @@
   color: var(--text-secondary);
 }
 
+/* A figure with a caveat the owner should act on — a sweep that could not
+   reach the marketplace, a harvest that lost categories. */
+.hr-sd-metric-note.is-warn { color: var(--neon-yellow); }
+
+/* A sweep's last failure (`SweepProgressBar`), in the error ink. */
+.hr-sweep-error {
+  color: var(--tint-red);
+  overflow-wrap: anywhere;
+}
+
 /* ----- Small print ---------------------------------------------------- */
 /* Source sentences, footnotes, "Failed at:" — the 0.72rem text these cards
    used to set with inline styles, one spelling per card. */
@@ -48,7 +58,7 @@
   margin: 0.75rem 0 0;
   font-size: var(--fs-xs);
   line-height: 1.5;
-  color: #ff8aa3;
+  color: var(--tint-red);
   overflow-wrap: anywhere;
 }
 
@@ -100,9 +110,9 @@
 .hr-sd-callout {
   padding: 0.85rem 1rem;
   border-radius: var(--radius-sm);
-  border: 1px solid rgba(0, 240, 255, 0.28);
+  border: 1px solid rgb(var(--neon-cyan-rgb) / 0.28);
   border-left: 3px solid var(--neon-cyan);
-  background: rgba(0, 240, 255, 0.05);
+  background: rgb(var(--neon-cyan-rgb) / 0.05);
   color: var(--text);
 }
 
@@ -231,7 +241,7 @@
 .hr-sd-link-dot.is-linked {
   border-color: transparent;
   background: var(--neon-green);
-  box-shadow: 0 0 6px rgba(57, 255, 20, 0.7);
+  box-shadow: 0 0 6px rgb(var(--neon-green-rgb) / 0.7);
 }
 
 /* ----- eBay credentials ---------------------------------------------- */

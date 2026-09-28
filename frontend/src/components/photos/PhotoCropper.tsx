@@ -61,9 +61,17 @@ async function getCroppedJpeg(
     }, 'image/jpeg', 0.92);
   });
 
-  // Always end up with a .jpg name so the backend's pipeline picks the right MIME
+  return new File([blob], croppedFileName(filename), { type: 'image/jpeg' });
+}
+
+/**
+ * The name a crop is uploaded under: always `.jpg`, because it IS a JPEG now
+ * whatever was picked — a `photo.heic` crop still named `.heic` would send the
+ * server's pipeline down the HEIC path for JPEG bytes.
+ */
+export function croppedFileName(filename: string): string {
   const base = filename.replace(/\.[^/.]+$/, '') || 'photo';
-  return new File([blob], `${base}.jpg`, { type: 'image/jpeg' });
+  return `${base}.jpg`;
 }
 
 function loadImage(src: string): Promise<HTMLImageElement> {
@@ -104,7 +112,7 @@ export function PhotoCropper({ imageUrl, filename, onCancel, onUseOriginal, onCr
   }
 
   return (
-    <Modal title="Crop photo" onClose={onCancel} maxWidth={600} bodyStyle={{ padding: 0 }}
+    <Modal title="Crop photo" onClose={onCancel} maxWidth={600} bodyClassName="hr-cropper-body"
       footer={(
         <>
           {/* Three distinct intents, three buttons. "Use Original" used to be

@@ -1,19 +1,23 @@
 import { useQuery } from '@tanstack/react-query';
 import { useParams } from 'react-router';
 import { getSharedCollection } from '../api/share';
+import { isNotFound } from '../api/client';
 import { SharedCollectionGrid, SharedCollectionSkeleton } from '../components/share/SharedCollectionGrid';
 import { PublicNotice, PublicPage } from '../components/share/PublicPage';
-
+import { PublicLoadError } from '../components/share/PublicLoadError';
+import { plural } from '../lib/format';
+import { qk } from '../lib/queryKeys';
 
 /** Public, read-only collection view — reached via a share-link token. */
 export function SharePage() {
   const { token } = useParams<{ token: string }>();
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['public-share', token],
+  const shareQ = useQuery({
+    queryKey: qk.publicShare(token),
     queryFn: () => getSharedCollection(token!),
     enabled: !!token,
     retry: false,
   });
+  const { data, isLoading, error } = shareQ;
 
   if (isLoading) {
     return (
@@ -25,7 +29,12 @@ export function SharePage() {
       </PublicPage>
     );
   }
-  if (error || !data) {
+  // A 404 is the link itself: never issued, expired or revoked. Anything else
+  // is the server, and must not tell a good link's holder it was revoked.
+  if (error && !isNotFound(error)) {
+    return <PublicPage><PublicLoadError query={shareQ} /></PublicPage>;
+  }
+  if (!data) {
     return (
       <PublicPage>
         <PublicNotice
@@ -41,7 +50,7 @@ export function SharePage() {
       <div className="hr-public-head">
         <h1>{data.label}</h1>
         <p className="hr-public-sub">
-          {data.hat_count} hat{data.hat_count !== 1 ? 's' : ''} · shared via Headroom
+          {plural(data.hat_count, 'hat')} · shared via Headroom
         </p>
       </div>
 

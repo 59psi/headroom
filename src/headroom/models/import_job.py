@@ -28,8 +28,11 @@ class ImportJobItem(Base):
     __tablename__ = "import_job_items"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # No `ondelete="CASCADE"`: with no `PRAGMA foreign_keys` SQLite never ran
+    # it. The cascade that does run is the ORM's, on `ImportJob.items`. Same
+    # reasoning as `HatColor.hat_id`.
     job_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("import_jobs.id", ondelete="CASCADE"), index=True
+        Integer, ForeignKey("import_jobs.id"), index=True
     )
     filename: Mapped[str] = mapped_column(String(255))
     status: Mapped[str] = mapped_column(String(20), default="queued")
@@ -38,4 +41,7 @@ class ImportJobItem(Base):
     bytes: Mapped[int] = mapped_column(Integer, default=0)
     staged_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
-    job: Mapped["ImportJob"] = relationship(back_populates="items")
+    # `lazy="raise"`: the worker navigates by `item.job_id` (`db.get(ImportJob,
+    # ...)`), never through this attribute, and a default lazy load is a
+    # `MissingGreenlet` under AsyncSession anyway. "raise" names the mistake.
+    job: Mapped["ImportJob"] = relationship(back_populates="items", lazy="raise")

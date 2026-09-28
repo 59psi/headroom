@@ -228,22 +228,27 @@ async def test_the_share_target_requires_auth_but_the_share_page_does_not(anon_c
     fixture, so deleting those two lines left the suite green and the endpoint
     unauthenticated.
     """
+    from tests.conftest import SPA_SHELL_MARKER
+
     posted = await anon_client.post(
         "/share", files=[("photos", ("a.jpg", b"\xff\xd8\xff", "image/jpeg"))]
     )
     assert posted.status_code == 401, "the share TARGET must not be open"
 
-    # The public share page keeps working — a bad token is a 404 from the SPA
-    # route, never a 401, or sharing a link would demand a login.
+    # The public share page keeps working: the SPA shell, signed out, whatever
+    # the token — the page itself asks `/api/public/share/<token>` whether it
+    # is real. Asserting only "not 401" passed on a routing 404 too, which is
+    # what it got wherever the SPA catch-all was not registered.
     page = await anon_client.get("/share/some-token")
-    assert page.status_code != 401, "the public share page must stay open"
+    assert page.status_code == 200, "the public share page must stay open"
+    assert SPA_SHELL_MARKER in page.text, "the share page is not the SPA shell"
 
 
 # ---- The open set is a policy, so pin it -------------------------------- #
 
 
-#: Every route path an anonymous caller is ALLOWED to reach. Anything the app
-#: serves that is not matched here must answer 401.
+#: Every route an anonymous caller is ALLOWED to reach, as (method, path) —
+#: exactly, never by prefix. Anything else the app serves must answer 401.
 #:
 #: This list is the point of the test below. Authorization for ~85 data-bearing
 #: endpoints rests on one `startswith` tuple in `auth.py`, and nothing asserted
@@ -252,60 +257,144 @@ async def test_the_share_target_requires_auth_but_the_share_page_does_not(anon_c
 #: had already happened: `/openapi.json`, `/docs` and `/redoc` begin with none
 #: of the protected prefixes and served the entire route surface, every schema
 #: and every field name to anonymous callers on an internet-facing deployment.
-_ANONYMOUS_OK = (
-    "/health",              # liveness + readiness, for the container check
-    "/api/auth/",           # login, setup, status — the way in
-    "/api/public/",         # branding logo, guest view, share links, CA cert
-)
+#:
+#: Exact rather than by prefix because a prefix here skips everything under
+#: it. This list used to open all of `/api/auth/`, the one prefix the gate
+#: middleware ALSO opens, where `require_user` on each route is the only thing
+#: between a stranger and the account — `/me`, the API token, the password,
+#: and passkey registration, which asks for no password at all. With the
+#: prefix skipped, a `require_user` that let anonymous callers through (or
+#: fell back to the first user) left the suite green. Each open route is
+#: listed by name, so adding one is a decision written down here.
+_ANONYMOUS_OK = frozenset({
+    # Liveness + readiness, for the container check.
+    ("GET", "/health"),
+    ("GET", "/health/ready"),
+    # The way in. Everything else under /api/auth/ is the signed-in account.
+    ("GET", "/api/auth/status"),
+    ("POST", "/api/auth/setup"),
+    ("POST", "/api/auth/login"),
+    ("POST", "/api/auth/logout"),
+    ("POST", "/api/auth/passkeys/login/options"),
+    ("POST", "/api/auth/passkeys/login/verify"),
+    # The public surface. The logo and the CA certificate are public by
+    # nature; the share and guest views are gated inside the handler by a
+    # share token or the owner's guest-view setting, not by a session.
+    ("GET", "/api/public/branding/logo"),
+    ("GET", "/api/public/ca-certificate"),
+    ("GET", "/api/public/share/{token}"),
+    ("GET", "/api/public/share/{token}/photo/{hat_id}"),
+    ("GET", "/api/public/guest/collection"),
+    ("GET", "/api/public/guest/hat/{hat_id}"),
+    ("GET", "/api/public/guest/photo/{hat_id}"),
+})
 
-#: The SPA catch-all, which MUST answer anonymously or the login page cannot
-#: render. It serves the shell and static assets only — every data call the
-#: app then makes goes through `/api/`, which is gated. Listed separately from
-#: the prefixes above because it is a whole-path match, not a prefix, and
-#: because it is the one entry here that is load-bearing for being open.
-_ANONYMOUS_OK_EXACT = ("/{full_path}",)
+# Not listed: the SPA catch-all, which MUST answer anonymously or the login
+# page cannot render. It is `include_in_schema=False`, so the enumeration
+# below never meets it; `test_the_share_target_requires_auth_but_the_share_page_does_not`
+# and the tag-landing test hold it open instead.
 
 
-def _is_allowed_anonymous(path: str) -> bool:
-    return path in _ANONYMOUS_OK_EXACT or any(
-        path.startswith(p) for p in _ANONYMOUS_OK
-    )
+def _is_allowed_anonymous(method: str, path: str) -> bool:
+    return (method.upper(), path) in _ANONYMOUS_OK
+
+
+def _probe_path(raw_path: str) -> str:
+    """`{hat_id}` → an id that will not resolve; `{token}` → junk."""
+    return re.sub(r"\{[^}]+\}", "999999999", raw_path)
+
+
+def _operations(app):
+    """Every (METHOD, path) in the app's own OpenAPI document."""
+    for raw_path, operations in app.openapi()["paths"].items():
+        for method in operations:
+            if method.lower() in ("get", "post", "put", "delete", "patch"):
+                yield method.upper(), raw_path
 
 
 async def test_every_api_path_is_gated_unless_it_is_on_the_allowlist(anon_client, app):
-    """Enumerate the app's OWN route table and probe each path anonymously.
+    """Enumerate the app's OWN route table and probe each route anonymously.
 
     Deliberately driven from `app.openapi()` rather than a hand-written list:
     a hand-written list cannot notice a route that was added, which is the only
-    failure mode that matters here. A new endpoint under a new prefix either
-    lands on the allowlist above — a decision someone has to write down — or
-    this test fails.
+    failure mode that matters here. A new endpoint either lands on the
+    allowlist above — a decision someone has to write down — or this test
+    fails.
 
-    Path parameters are filled with a value that cannot exist. A 404 is a pass:
-    it means the gate let the request through to a handler that then found
-    nothing, which is correct for an allowlisted path, and for a gated one the
-    401 fires before the handler ever runs.
+    An owner exists, with a session and an API token; the caller presents
+    neither. With no account in the database, a guard that wrongly resolved
+    "somebody" would find nobody and still answer 401, and the test could not
+    tell a working guard from one that impersonates the owner.
+
+    Path parameters are filled with a value that cannot exist; for a gated
+    route the 401 fires before the handler ever runs.
     """
-    paths = app.openapi()["paths"]
-    assert len(paths) > 50, "sanity: the route table should be substantial"
+    from tests.conftest import _seed_owner
+
+    await _seed_owner()
+    operations = list(_operations(app))
+    assert len(operations) > 50, "sanity: the route table should be substantial"
 
     unguarded: list[str] = []
-    for raw_path, operations in paths.items():
-        if _is_allowed_anonymous(raw_path):
+    for method, raw_path in operations:
+        if _is_allowed_anonymous(method, raw_path):
             continue
-        # `{hat_id}` → an id that will not resolve; `{token}` → junk.
-        probe = re.sub(r"\{[^}]+\}", "999999999", raw_path)
-        for method in operations:
-            if method.lower() not in ("get", "post", "put", "delete", "patch"):
-                continue
-            resp = await anon_client.request(method.upper(), probe)
-            if resp.status_code != 401:
-                unguarded.append(f"{method.upper()} {raw_path} -> {resp.status_code}")
+        resp = await anon_client.request(method, _probe_path(raw_path))
+        if resp.status_code != 401:
+            unguarded.append(f"{method} {raw_path} -> {resp.status_code}")
 
     assert not unguarded, (
         "these are reachable without authentication and are not on the "
         "allowlist in this file:\n  " + "\n  ".join(unguarded)
     )
+
+
+async def test_every_allowlisted_route_exists_and_is_open(anon_client, app):
+    """The allowlist's other half: each entry names a real route that answers.
+
+    An entry for a route that was renamed or removed exempts nothing, and in
+    the one list that says what is open, a dead entry reads as policy — the
+    SPA catch-all sat here for releases although the enumeration above never
+    sees it. And an open route that started demanding a login would lock the
+    owner out of the way in. (A handler that crashes raises straight into the
+    test through the ASGI transport, so "answers" means more than "not 401".)
+    """
+    from tests.conftest import _seed_owner
+
+    await _seed_owner()
+    served = set(_operations(app))
+    assert _ANONYMOUS_OK <= served, sorted(_ANONYMOUS_OK - served)
+
+    for method, raw_path in sorted(_ANONYMOUS_OK):
+        resp = await anon_client.request(method, _probe_path(raw_path))
+        assert resp.status_code != 401, f"{method} {raw_path} demanded a login"
+
+
+@pytest.mark.parametrize(
+    "method,path",
+    [
+        ("GET", "/api/auth/me"),
+        ("POST", "/api/auth/token/reveal"),
+        ("POST", "/api/auth/token/rotate"),
+        ("POST", "/api/auth/password"),
+        ("GET", "/api/auth/passkeys"),
+        ("POST", "/api/auth/passkeys/register/options"),
+        ("POST", "/api/auth/passkeys/register/verify"),
+        ("DELETE", "/api/auth/passkeys/1"),
+    ],
+)
+async def test_the_account_routes_refuse_an_anonymous_caller(anon_client, method, path):
+    """Named, because the gate middleware opens all of `/api/auth/` and these
+    routes are guarded by `require_user` alone. An owner exists and the caller
+    is anonymous, so a guard that resolved the wrong principal — or none —
+    shows up here as something other than the 401."""
+    from tests.conftest import _seed_owner
+
+    await _seed_owner()
+    resp = await anon_client.request(method, path, json={})
+
+    assert resp.status_code == 401, (method, path, resp.status_code, resp.text)
+    assert resp.json() == {"detail": "Authentication required"}
 
 
 async def test_the_schema_itself_is_not_public(anon_client):

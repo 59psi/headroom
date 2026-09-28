@@ -7,6 +7,7 @@ import {
 } from '../api/auth';
 import { getPasskeyAssertion, passkeysSupported } from '../lib/webauthn';
 import { PUBLIC_LOGO_URL } from '../api/public';
+import { qk } from '../lib/queryKeys';
 import { ErrorNote, describeError } from '../components/common/ErrorNote';
 import { Skeleton } from '../components/ui/Skeleton';
 
@@ -49,6 +50,14 @@ export function safeNext(raw: string | null): string {
 }
 
 /**
+ * The shortest password the server accepts — `schemas/auth._PASSWORD_MIN`,
+ * which answers anything shorter with a 422. Named once here for the two
+ * places this page states it (the hint and the submit guard), which had
+ * each typed their own `8`.
+ */
+export const PASSWORD_MIN = 8;
+
+/**
  * Words for a failed PASSKEY sign-in.
  *
  * Dismissing the passkey sheet, or letting it time out, rejects with a
@@ -85,8 +94,12 @@ export function LoginPage() {
   // was the thing actually up.
   const [busy, setBusy] = useState<null | 'password' | 'passkey'>(null);
   const [error, setError] = useState<string | null>(null);
+  // Which field the error is ABOUT, kept apart from its wording: the confirm
+  // box was marked invalid by comparing the message to one sentence, so any
+  // rewording of that sentence would silently unmark the field.
+  const [mismatch, setMismatch] = useState(false);
 
-  const status = useQuery({ queryKey: ['auth', 'status'], queryFn: getAuthStatus, staleTime: 0 });
+  const status = useQuery({ queryKey: qk.auth.status(), queryFn: getAuthStatus, staleTime: 0 });
 
   // Redirecting during render queues a state update in another component
   // mid-render (and runs twice under StrictMode). An effect is the supported
@@ -102,7 +115,9 @@ export function LoginPage() {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    if (needsSetup && password !== confirm) {
+    const mismatched = needsSetup && password !== confirm;
+    setMismatch(mismatched);
+    if (mismatched) {
       setError('Passwords do not match');
       return;
     }
@@ -125,6 +140,7 @@ export function LoginPage() {
 
   async function withPasskey() {
     setError(null);
+    setMismatch(false);
     setBusy('passkey');
     try {
       const { state_id, options } = await passkeyLoginOptions();
@@ -205,7 +221,7 @@ export function LoginPage() {
                       <EyeIcon open={showPassword} />
                     </button>
                   </div>
-                  {needsSetup && <div className="form-text">At least 8 characters</div>}
+                  {needsSetup && <div className="form-text">At least {PASSWORD_MIN} characters</div>}
                 </div>
                 {needsSetup && (
                   <div className="mb-3">
@@ -217,7 +233,7 @@ export function LoginPage() {
                       value={confirm}
                       onChange={e => setConfirm(e.target.value)}
                       autoComplete="new-password"
-                      aria-invalid={error === 'Passwords do not match' || undefined}
+                      aria-invalid={mismatch || undefined}
                     />
                   </div>
                 )}
@@ -250,7 +266,7 @@ export function LoginPage() {
                 <button
                   type="submit"
                   className="btn btn-primary w-100 btn-lg"
-                  disabled={busy !== null || !username.trim() || password.length < 8}
+                  disabled={busy !== null || !username.trim() || password.length < PASSWORD_MIN}
                 >
                   {busy === 'password' && <span className="hr-btn-spinner" aria-hidden="true" />}
                   {busy === 'password'

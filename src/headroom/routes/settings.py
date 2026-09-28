@@ -1,6 +1,5 @@
 import asyncio
 import os
-import tempfile
 from dataclasses import asdict
 from pathlib import Path
 
@@ -11,40 +10,56 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from headroom.auth import require_admin
 from headroom.config import settings
 from headroom.database import get_db
+from headroom.routes import _uploads
+from headroom.routes._api import DomainErrorRoute
 from headroom.schemas.settings import (
     ApiKeyStatus,
     ApiKeyTestResult,
     ApiKeyUpdate,
-    MdnsStatus,
-    TlsStatusRead,
-    ModelStatus,
-    ModelUpdate,
     GuestViewStatus,
     GuestViewUpdate,
     LogoStatus,
+    MdnsStatus,
+    ModelStatus,
+    ModelUpdate,
     TagBaseStatus,
     TagBaseUpdate,
+    TlsStatusRead,
 )
 from headroom.services import (
     activity_service,
     ca_vault,
+    claude_analysis,
     guest_view_service,
     mdns_service,
-    tls_health,
     settings_service,
     tag_service,
-)
-from headroom.services.claude_analysis import verify_api_key
-from headroom.utils.photo import (
-    UNREADABLE_IMAGE_DETAIL,
-    UnreadableImage,
-    decoded_image,
-    validate_image_content_type,
+    tls_health,
 )
 from headroom.utils import branding
-from headroom.utils.upload import copy_upload_capped
+from headroom.utils import photo as photo_utils
 
-router = APIRouter(prefix="/api/settings", tags=["settings"])
+router = APIRouter(prefix="/api/settings", tags=["settings"], route_class=DomainErrorRoute)
+
+
+async def _audit(db: AsyncSession, kind: str, summary: str) -> None:
+    """Record a settings change and commit it.
+
+    Every setter here writes one, not just the keys and the guest switch. The
+    tag host decides where every printed QR label and NFC sticker points, the
+    model decides what every analysis costs and returns, and the logo is on
+    the one page strangers see — "when did that change" is a question the log
+    has to be able to answer for each of them.
+
+    Through `log_and_commit`: the setting itself is already committed by the
+    time this runs, so a failed audit commit (a "database is locked" under
+    worker contention) must not turn a saved change into a 500 that invites a
+    retry. It used to be `log_activity` plus a bare commit, which did.
+    """
+    await activity_service.log_and_commit(
+        db, kind=kind, entity_type="system", entity_id=None, summary=summary,
+    )
+
 
 LOGO_MAX_HEIGHT = 96
 
@@ -73,7 +88,7 @@ async def get_logo():
 def _encode_logo_sync(tmp_path: Path, staging: Path) -> None:
     """Decode, resize and re-encode the upload as PNG — into `staging`, not
     into place. Sync; runs under `to_thread`."""
-    with decoded_image(tmp_path) as img:
+    with photo_utils.decoded_image(tmp_path) as img:
         # Always written as PNG so transparency survives; only opaque modes
         # need the RGB conversion first.
         if img.mode not in ("RGBA", "P", "LA"):
@@ -85,7 +100,7 @@ def _encode_logo_sync(tmp_path: Path, staging: Path) -> None:
 
 
 @router.post("/logo", response_model=LogoStatus)
-async def upload_logo(photo: UploadFile):
+async def upload_logo(photo: UploadFile, db: AsyncSession = Depends(get_db)):
     """Replace the site logo.
 
     The old logo is removed only AFTER the new one has been read, decoded and
@@ -97,31 +112,30 @@ async def upload_logo(photo: UploadFile):
 
     The read and the Pillow work run off the event loop; both are blocking.
     """
-    if not validate_image_content_type(photo.content_type):
+    if not photo_utils.validate_image_content_type(photo.content_type):
         raise HTTPException(status_code=400, detail="Invalid image type")
 
     branding_dir = branding.branding_dir()
     branding_dir.mkdir(parents=True, exist_ok=True)
 
     suffix = Path(photo.filename or "logo.png").suffix.lower()
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        tmp_path = Path(tmp.name)
     staging = branding_dir / ".logo.png.tmp"
     try:
-        with tmp_path.open("wb") as fh:
-            await asyncio.to_thread(copy_upload_capped, photo, fh, what="Logo")
-        try:
-            await asyncio.to_thread(_encode_logo_sync, tmp_path, staging)
-        except UnreadableImage as exc:
-            raise HTTPException(status_code=400, detail=UNREADABLE_IMAGE_DETAIL) from exc
+        async with _uploads.spooled_upload(photo, suffix=suffix, what="Logo") as tmp_path:
+            try:
+                await asyncio.to_thread(_encode_logo_sync, tmp_path, staging)
+            except photo_utils.UnreadableImage as exc:
+                raise HTTPException(
+                    status_code=400, detail=photo_utils.UNREADABLE_IMAGE_DETAIL
+                ) from exc
         # Only now is there something to replace the old logo WITH.
         branding.remove_logo()
         out_path = branding_dir / f"{branding.LOGO_STEM}.png"
         os.replace(staging, out_path)
     finally:
-        tmp_path.unlink(missing_ok=True)
         staging.unlink(missing_ok=True)
 
+    await _audit(db, "settings.logo_set", "Site logo replaced")
     # The same status the GET reports, version included — the client puts this
     # straight into its cache, and without the new version every open page
     # would go on showing the old image under the unchanged URL.
@@ -129,8 +143,9 @@ async def upload_logo(photo: UploadFile):
 
 
 @router.delete("/logo", status_code=204)
-async def delete_logo():
+async def delete_logo(db: AsyncSession = Depends(get_db)):
     branding.remove_logo()
+    await _audit(db, "settings.logo_cleared", "Site logo removed")
 
 
 # ---------------------------- API keys -------------------------------- #
@@ -165,11 +180,7 @@ def _mount_key_routes(provider: settings_service.KeyProvider) -> None:
     )
     async def set_key(data: ApiKeyUpdate, db: AsyncSession = Depends(get_db)):
         await settings_service.set_key(db, provider, data.api_key)
-        await activity_service.log_activity(
-            db, kind="settings.key_set", entity_type="system", entity_id=None,
-            summary=f"{provider.label} set/updated",
-        )
-        await db.commit()
+        await _audit(db, "settings.key_set", f"{provider.label} set/updated")
         return await status(db)
 
     @router.delete(
@@ -180,11 +191,7 @@ def _mount_key_routes(provider: settings_service.KeyProvider) -> None:
     )
     async def delete_key(db: AsyncSession = Depends(get_db)):
         await settings_service.clear_key(db, provider)
-        await activity_service.log_activity(
-            db, kind="settings.key_cleared", entity_type="system", entity_id=None,
-            summary=f"{provider.label} cleared",
-        )
-        await db.commit()
+        await _audit(db, "settings.key_cleared", f"{provider.label} cleared")
 
 
 for _provider in (settings_service.ANTHROPIC_KEY, settings_service.GOOGLE_VISION_KEY):
@@ -198,7 +205,7 @@ async def test_api_key(db: AsyncSession = Depends(get_db)):
     if not key:
         return ApiKeyTestResult(ok=False, detail="No API key configured.")
     model, _msrc = await settings_service.get_anthropic_model(db)
-    ok, detail = await verify_api_key(key, model=model)
+    ok, detail = await claude_analysis.verify_api_key(key, model=model)
     return ApiKeyTestResult(ok=ok, detail=detail)
 
 
@@ -255,6 +262,7 @@ async def get_model(db: AsyncSession = Depends(get_db)):
 @router.put("/model", response_model=ModelStatus, dependencies=[Depends(require_admin)])
 async def set_model(data: ModelUpdate, db: AsyncSession = Depends(get_db)):
     await settings_service.set_anthropic_model(db, data.model_id)
+    await _audit(db, "settings.model_set", f"Claude model set to {data.model_id}")
     model_id, source = await settings_service.get_anthropic_model(db)
     return ModelStatus(model_id=model_id, source=source, default_model_id=settings.anthropic_model)
 
@@ -263,6 +271,7 @@ async def set_model(data: ModelUpdate, db: AsyncSession = Depends(get_db)):
 async def clear_model(db: AsyncSession = Depends(get_db)):
     """Reset to env / built-in default."""
     await settings_service.clear_anthropic_model(db)
+    await _audit(db, "settings.model_cleared", "Claude model reset to the default")
 
 
 # ---------------------------- Tag base URL --------------------------- #
@@ -289,6 +298,7 @@ async def set_tag_base(
     data: TagBaseUpdate, request: Request, db: AsyncSession = Depends(get_db)
 ):
     await tag_service.set_tag_base(db, data.base_url)
+    await _audit(db, "settings.tag_base_set", f"Tag host set to {data.base_url}")
     return await _tag_status(db, request)
 
 
@@ -296,6 +306,7 @@ async def set_tag_base(
 async def clear_tag_base(db: AsyncSession = Depends(get_db)):
     """Fall back to whatever host the request arrives on."""
     await tag_service.set_tag_base(db, None)
+    await _audit(db, "settings.tag_base_cleared", "Tag host cleared — tags follow the request host")
 
 
 # ---------------------------- Guest view ----------------------------- #
@@ -316,12 +327,5 @@ async def set_guest_view(data: GuestViewUpdate, db: AsyncSession = Depends(get_d
     question the log should be able to answer.
     """
     await guest_view_service.set_enabled(db, data.enabled)
-    await activity_service.log_activity(
-        db,
-        kind="settings.guest_view",
-        entity_type="system",
-        entity_id=None,
-        summary=f"Guest view {'enabled' if data.enabled else 'disabled'}",
-    )
-    await db.commit()
+    await _audit(db, "settings.guest_view", f"Guest view {'enabled' if data.enabled else 'disabled'}")
     return GuestViewStatus(enabled=await guest_view_service.is_enabled(db))

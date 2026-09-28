@@ -4,7 +4,10 @@ import { ErrorNote } from './ErrorNote';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { createCase } from '../../api/cases';
 import { listRooms } from '../../api/rooms';
+import type { CaseType } from '../../lib/caseTypes';
 import { invalidateHatViews } from '../../lib/invalidate';
+import { qk } from '../../lib/queryKeys';
+import { CaseFields, defaultRoomId } from '../cases/CaseFields';
 import { useToast } from '../ui/Toast';
 
 interface Props {
@@ -14,20 +17,17 @@ interface Props {
 }
 
 export function NewCaseModal({ show, onClose, onCreated }: Props) {
-  const [caseType, setCaseType] = useState('archive');
+  const [caseType, setCaseType] = useState<CaseType>('archive');
   const [roomId, setRoomId] = useState<number | ''>('');
   const qc = useQueryClient();
   const toast = useToast();
   // Before the `show` early return below: hooks run on every render.
   const formId = useId();
 
-  const roomsQ = useQuery({ queryKey: ['rooms'], queryFn: listRooms, enabled: show });
-  const rooms = roomsQ.data ?? [];
-  // Never a hardcoded 1: any room can carry `is_default`, and the room that
-  // does can be changed or deleted. Blank until the rooms load, then whichever
-  // one is actually flagged.
-  const selectedRoom = roomId !== '' ? roomId : (rooms.find(r => r.is_default)?.id ?? '');
-
+  const roomsQ = useQuery({ queryKey: qk.rooms(), queryFn: listRooms, enabled: show });
+  // The New case page's rule, from the same helper: the room picked, else the
+  // one flagged default — never a hardcoded 1.
+  const selectedRoom = defaultRoomId(roomsQ.data, roomId);
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -69,26 +69,21 @@ export function NewCaseModal({ show, onClose, onCreated }: Props) {
           Enter-to-submit form: browsers submit implicitly only from a text
           field, and this dialog has none — two selects. */}
       <form id={formId} onSubmit={e => { e.preventDefault(); if (!mutation.isPending) mutation.mutate(); }}>
-        <label className="form-label" htmlFor={`${formId}-type`}>Case type</label>
-        <select id={`${formId}-type`} className="form-select mb-3" value={caseType} onChange={e => setCaseType(e.target.value)}>
-          <option value="archive">Archive</option>
-          <option value="daily_wear">Daily wear</option>
-        </select>
-        <label className="form-label" htmlFor={`${formId}-room`}>Room</label>
-        <select
-          id={`${formId}-room`}
-          className="form-select"
-          value={selectedRoom}
-          disabled={roomsQ.isLoading}
-          onChange={e => setRoomId(Number(e.target.value))}
-        >
-          {roomsQ.isLoading && <option value="">Loading rooms…</option>}
-          {rooms.map(r => (
-            <option key={r.id} value={r.id}>{r.name}</option>
-          ))}
-        </select>
+        {/* The New case page's own fields (`CaseFields`), less the capacity
+            this quick dialog does not ask for — so the three case forms
+            cannot disagree on what a type is called, which room a new case
+            starts in, or how a failed room list is reported (it says so
+            under the room picker). */}
+        <CaseFields
+          idPrefix={formId}
+          caseType={caseType}
+          onCaseType={setCaseType}
+          roomId={selectedRoom}
+          onRoomId={setRoomId}
+          roomsQ={roomsQ}
+        />
       </form>
-      <ErrorNote of={[mutation, roomsQ]} className="mt-3 mb-0" />
+      <ErrorNote of={mutation} className="mt-3 mb-0" />
     </Modal>
   );
 }

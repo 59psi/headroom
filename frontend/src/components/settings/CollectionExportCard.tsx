@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { collectionExportUrl } from '../../api/settings';
 import { Panel } from '../ui/Panel';
+import { StatusPill } from '../ui/StatusPill';
 import { useToast } from '../ui/Toast';
 
 /**
@@ -22,6 +23,12 @@ export function CollectionExportCard() {
     <Panel
       title="Share the collection"
       className="hr-sharing"
+      // A download has no state to report, but every card leads with a word:
+      // this one says whether the money goes in, which is the choice the card
+      // is about and the thing most worth seeing before pressing Download.
+      status={includeValues
+        ? <StatusPill tone="warn" title="The export will include estimated values">With values</StatusPill>
+        : <StatusPill tone="ok" title="No prices go into the export">No prices</StatusPill>}
       description="A .zip anyone can open in a browser — offline, no login, no prices unless you add them."
       help={
         <>

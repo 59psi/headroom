@@ -116,4 +116,24 @@ describe('CasesPage', () => {
 
     expect(await screen.findByRole('link', { name: 'Create first case' })).toHaveAttribute('href', '/cases/new');
   });
+
+  it('retries a failed load in place instead of asking for a reload', async () => {
+    const user = userEvent.setup();
+    cases.listCases.mockRejectedValueOnce(new Error('database is locked'));
+    renderWithProviders(<CasesPage />, { route: '/cases' });
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('database is locked');
+    expect(alert).not.toHaveTextContent(/reload/i);
+    await user.click(within(alert).getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByText('A-001')).toBeInTheDocument();
+  });
+
+  it('says so when the room filter could not load, rather than offering only "All rooms"', async () => {
+    rooms.getRoomOptions.mockRejectedValue(new Error('database is locked'));
+    renderWithProviders(<CasesPage />, { route: '/cases' });
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not load the room filter — database is locked');
+    expect(screen.getByText('A-001')).toBeInTheDocument();
+  });
 });

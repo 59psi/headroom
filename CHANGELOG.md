@@ -6,6 +6,110 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.81.0] — 2026-09-28
+
+A whole-project review pass: every documented behavior was checked against
+the running code, and every confirmed problem is fixed here, each with a test
+that fails without the fix.
+
+### Upgrade notes
+
+- **Take a backup first.** The first boot rebuilds the `hats` table once so
+  that hat ids are never handed out again after a delete (a printed hat tag
+  can no longer open a different hat). New columns are added automatically.
+- **Off-site backup with rclone:** the compose overlay no longer uses
+  `RCLONE_CONF`. It mounts a writable directory, `HEADROOM_RCLONE_CONFIG_DIR`
+  (default `~/.config/headroom-rclone`), so token refreshes persist. Move your
+  `rclone.conf` there; see OPERATIONS §off-site backup.
+- **rsync / Synology destinations are folders now.** Archives accumulate inside
+  the named folder instead of replacing one file each night. Point the
+  destination at a directory.
+- **Environment values are validated.** `HEADROOM_*` switches accept
+  1/true/yes/on and 0/false/no/off; anything else keeps the default and logs a
+  warning (it used to read as "off"). `HEADROOM_MDNS_HOSTNAME` must be a single
+  lowercase label and `HEADROOM_MDNS_INTERFACE` an IPv4 address or `all`, or
+  advertising stays off with the reason shown on the LAN discovery card.
+  `HEADROOM_LOG_LEVEL` accepts the five standard level names.
+- **CORS is off by default** (`HEADROOM_CORS_ORIGINS` defaults to empty, and
+  compose no longer sets it). The app is same-origin, including behind the
+  Vite dev proxy; set it only for a genuinely separate front end.
+- **Set `TZ`** in `.env` (compose now forwards it) so days logged from a tag
+  scan fall on your local date. Taps in the app already send the device's day.
+- **"Database only" backups** no longer include the local HTTPS certificate
+  authority's keys; full backups still do.
+
+### Fixed
+
+- Releasing selected frozen prices released every frozen price; it now
+  releases exactly the hats ticked.
+- Restoring a backup: the in-app instruction and OPERATIONS now remove the
+  database's stale write-ahead log, which could otherwise replay changes made
+  after the backup. The CA restore recipe also clears Caddy's issued
+  certificates so the restored authority is the one served.
+- Hand-corrected colors are kept: re-analyzing a hat no longer replaces a
+  palette you edited. Clearing your edits hands the palette back to analysis.
+- Unmatching a purchase reverts only the fields the match wrote, and the
+  construction audit skips constructions you typed.
+- "Wearing this today" logs your local day; undoing a mis-tap restores the
+  last-worn date you had typed; a last-worn date in the future is refused on
+  every form.
+- A marketplace or Google Vision reply that is not valid JSON no longer throws
+  away a completed Claude analysis (or, in bulk import, the hat).
+- Models that cannot take a forced tool call (Fable 5.1 and newer) are called
+  the way they accept, and **Test connection** now sends the real analysis
+  request shape, so it fails when analysis would.
+- Hats without a Claude key are told to add one, and the retry count on the
+  analysis queue only counts hats a retry can help.
+- **Redo cutout** shows its progress and the finished cutout; an interrupted
+  re-cut goes back to the previous cutout on restart.
+- Search shows the true number of matches when it lists the first 50, matches
+  colorway, and finds sizes however they are typed ("x-large", "xlarge"). Changing a
+  hat now refreshes open search and duplicate results.
+- A HEIC logo uploads on the first try after a restart.
+- An oversize photo upload no longer leaves a large temporary file behind, and
+  backup staging now uses the data volume instead of memory-backed `/tmp`.
+- The scheduled "only when changed" backup check compares the collection's
+  contents, so restarts and no-op price sweeps no longer create new archives.
+- The TLS card's "authority changed" warning checks the chain Caddy actually
+  serves; pinning an mDNS interface advertises that interface's address.
+- Case numbers are never reissued after a retype or delete, so printed case
+  labels always open the case they were printed for.
+- Many smaller input checks: colors, share-link labels, purchase imports, tag
+  base URL, eBay and API keys (pasted quotes and spaces are trimmed; malformed
+  keys are refused with a clear message), bulk-import defaults.
+- Purchase dates show the right day in every time zone.
+
+### Security
+
+- Password confirmations (reveal or rotate the API token, change password)
+  are rate-limited and audited like sign-in.
+- Stricter validation on passkey sign-in and on several admin inputs.
+- `/docs` and `/redoc` are no longer served; `/openapi.json` stays behind
+  sign-in.
+- In the container image, the app's code, Python environment, background-
+  removal model and web bundle are all read-only to the user the app runs as;
+  CI checks this from inside the built image. A different rembg model is now
+  chosen at build time (`REMBG_MODEL` build argument), not downloaded at run
+  time.
+
+### Changed
+
+- The activity log records more of what changes: color edits, wears and
+  undos, photo replacements, room renames, case edits, and model, logo and tag
+  settings. Edits list only the fields that changed.
+- Pages load on demand and the framework code is cached separately, so the
+  first screen on a phone downloads much less.
+- The home carousel pauses on interaction and respects "reduce motion".
+- Tap targets reach 44 px on touch everywhere.
+- The frontend is linted in CI (Rules of Hooks, exhaustive effect
+  dependencies).
+
+### Docs
+
+- README, USAGE and OPERATIONS were re-verified against the code: the update
+  command keeps your compose overlays, backup and restore recipes match the
+  current layout, and setup's Node requirements are stated correctly.
+
 ## [2.80.0] — 2026-09-27
 
 A UI polish pass: the same synthwave look, grown up. The neon, gradients,

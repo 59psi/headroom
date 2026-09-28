@@ -41,9 +41,8 @@ from sqlalchemy import func, select
 
 from headroom.config import env_flag, env_float, env_int
 from headroom.models.hat import Hat, ResaleScope
-from headroom.services import hat_analysis_pipeline
-from headroom.services.melin_recap import MelinRecapError
-from headroom.services import sweep_progress
+from headroom.services import hat_analysis_pipeline, melin_recap, sweep_progress
+from headroom.services.locks import loop_lock
 
 logger = logging.getLogger(__name__)
 
@@ -123,14 +122,23 @@ class RepricingHealth:
 
 _health = RepricingHealth()
 
+
 #: One sweep at a time, process-wide. The scheduled loop and the manual
 #: "Re-price now" button are separate entry points into the same few-hundred
 #: sequential calls against somebody else's public API, and nothing otherwise
 #: stops them overlapping — or stops two clicks doing so. Pacing each sweep
 #: politely while allowing two to run at once would be a courtesy that only
-#: looks like one. Single-process by design (see CLAUDE.md), so an in-memory
-#: lock is sufficient.
-_sweep_lock = asyncio.Lock()
+#: looks like one. Single-process by design, so an in-memory lock is
+#: sufficient.
+#:
+#: A `locks.loop_lock`, not a module-level `asyncio.Lock()`: a lock binds to
+#: the loop that first makes it wait, so the module-level one raised "bound to
+#: a different event loop" once a second loop contended it — any test after
+#: the first to do so, or a second `asyncio.run` in a script. That is the
+#: failure `services/locks` exists to remove, and this lock predated it.
+def _sweep_lock() -> asyncio.Lock:
+    return loop_lock("reprice-sweep")
+
 
 #: Is a FULL sweep queued or running? Distinct from `progress.running`, and the
 #: distinction is the whole point.
@@ -253,7 +261,7 @@ async def _eligible_hats(
     return list((await db.execute(stmt)).scalars().all())
 
 
-async def count_eligible(session_factory=None, *, stale_before=None) -> int:
+async def count_eligible(session_factory, *, stale_before=None) -> int:
     """How many hats are still awaiting a sweep.
 
     Lets a bounded manual run say "50 done, 184 to go" instead of leaving the
@@ -268,12 +276,9 @@ async def count_eligible(session_factory=None, *, stale_before=None) -> int:
     button that does nothing. The sweep stamps `resale_checked_at` on EVERY
     attempt (including the ones it cannot price), so "checked before this run
     started, or never" is exactly the set a further press would visit.
+
+    `session_factory` is required, for the reason `reprice_once` gives.
     """
-    if session_factory is None:
-        from headroom.database import async_session  # noqa: PLC0415 — import cycle
-
-        session_factory = async_session
-
     async with session_factory() as db:
         return int(
             (
@@ -285,7 +290,7 @@ async def count_eligible(session_factory=None, *, stale_before=None) -> int:
 
 
 async def reprice_once(
-    session_factory=None, limit: int | None = None, *, stale_before: datetime | None = None,
+    session_factory, limit: int | None = None, *, stale_before: datetime | None = None,
 ) -> tuple[int, int]:
     """One sweep. Returns (repriced, considered). Raises only on a total failure.
 
@@ -303,20 +308,21 @@ async def reprice_once(
 
     `session_factory` is the seam: the route passes
     `request.app.state.session_factory` (which tests swap for the test DB) and
-    the background loop passes the real one. Reaching for the module-level
-    `async_session` here instead is the same mistake `error_handler` documents
-    — it works in production and silently talks to the wrong database
-    everywhere else.
+    the background loop passes the one the lifespan hands it. Reaching for the
+    module-level `async_session` here instead is the same mistake
+    `error_handler` documents — it works in production and silently talks to
+    the wrong database everywhere else.
+
+    Required, not defaulted. It used to fall back to `database.async_session`
+    through a function-local import whose `noqa` claimed an import cycle there
+    was none of, and no caller ever took that branch: every one passes a
+    factory. The default only let a future caller forget the seam and have it
+    work by accident in production.
     """
-    if session_factory is None:
-        from headroom.database import async_session  # noqa: PLC0415 — import cycle
-
-        session_factory = async_session
-
     delay = repricing_delay_seconds()
 
     # One sweep at a time — see `_sweep_lock`.
-    async with _sweep_lock, session_factory() as db:
+    async with _sweep_lock(), session_factory() as db:
         hats = await _eligible_hats(db, limit=limit, stale_before=stale_before)
         # try/finally, not a happy-path call at the bottom: a sweep that raises
         # and leaves `running` true reads as permanently in flight, which is
@@ -330,7 +336,13 @@ async def reprice_once(
         # false signal this record exists to remove.
         error: str | None = None
         try:
-            return await _sweep(db, hats, delay)
+            # One marketplace block for the whole sweep: one connection pool,
+            # and each category read ONCE (`melin_recap.shared_client` caches
+            # per block; failed reads are not cached). Without it a 234-hat
+            # shelf re-downloaded every category once per hat in it, against
+            # somebody else's public API.
+            async with melin_recap.shared_client():
+                return await _sweep(db, hats, delay)
         except Exception as exc:
             error = str(exc)[:300]
             raise
@@ -401,13 +413,13 @@ async def _sweep(db, hats: list, delay: float) -> tuple[int, int]:
         # two used to be indistinguishable — `record_success`, `last_error`
         # null, "0 of 234 hats changed price" — so the sweep now fails the
         # way its own bookkeeping expects a failure to look.
-        raise MelinRecapError(
+        raise melin_recap.MelinRecapError(
             f"the marketplace was unreachable for all {unreachable} hats swept"
         )
     return repriced, len(hats)
 
 
-async def _loop(session_factory=None) -> None:
+async def _loop(session_factory) -> None:
     interval = repricing_interval_hours() * 3600.0
     logger.info(
         "Re-pricing scheduler started: every %.1f hours, %.1fs between hats",
@@ -454,7 +466,7 @@ async def _loop(session_factory=None) -> None:
         await asyncio.sleep(interval)
 
 
-async def start_repricing(session_factory=None) -> asyncio.Task | None:
+async def start_repricing(session_factory) -> asyncio.Task | None:
     """Start the sweep loop. Returns the task so the lifespan can cancel it."""
     if not repricing_enabled():
         logger.info("Re-pricing scheduler disabled (HEADROOM_REPRICING_ENABLED)")

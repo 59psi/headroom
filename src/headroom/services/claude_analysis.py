@@ -2,8 +2,15 @@
 
 Sends a hat photo to the configured Claude model, requests structured output via tool-use
 (brand, model, style descriptor, colors with tier, estimated retail price, design
-notes, and a confidence label). Uses prompt caching for the system prompt so
-repeated analysis calls are cheap.
+notes, and a confidence label).
+
+The system prompt carries a cache breakpoint, so the tools + system prefix
+(about 2,500 tokens) is written once and read cheaply by every later hat in
+the cache window — ON MODELS WHOSE MINIMUM CACHEABLE PREFIX IS BELOW THAT.
+Sonnet 5, Opus 5, Opus 4.8 and the Fable models (512–1024 tokens) cache it;
+Haiku 4.5 and Opus 4.6 need 4,096, so there the marker is a silent no-op — no
+error, just full price on every call. Each analysis logs the cache read/write
+token counts, which is how to tell which of the two a given model is doing.
 """
 
 from __future__ import annotations
@@ -452,6 +459,122 @@ def _anthropic_client(api_key: str, timeout: float, **kw) -> AsyncAnthropic:
     return AsyncAnthropic(api_key=api_key, timeout=timeout, **kw)
 
 
+#: Models known to ACCEPT a forced `tool_choice` (`{"type": "tool", ...}`).
+#:
+#: An allow-list, deliberately, not a list of the models that refuse. Claude
+#: Fable 5.1, Mythos 5.1 and Opus 5.5 answer a forced tool choice with a 400
+#: ("tool_choice: type "tool" and "any" are not supported for this model"),
+#: and Fable 5.1 was on the Settings roster as "most capable" — so every hat
+#: analyzed with it failed and fell back, while the key Test (a bare ping, no
+#: tools) reported the model reachable. A deny-list has to be updated for
+#: every new model that drops forced tool use, and forgetting fails every
+#: analysis; with an allow-list an unlisted model gets `auto`, which every
+#: model accepts, and forgetting costs nothing but the guarantee below.
+_FORCED_TOOL_CHOICE_MODELS = frozenset({
+    "claude-sonnet-5", "claude-opus-5", "claude-fable-5",
+    "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6",
+    "claude-opus-4-5", "claude-sonnet-4-5", "claude-haiku-4-5",
+    "claude-opus-4-1", "claude-opus-4", "claude-sonnet-4",
+})
+
+#: Output room for the forced path: the tool call alone, which runs a few
+#: hundred tokens.
+_FORCED_MAX_TOKENS = 1024
+#: Output room for the `auto` path. The models known to refuse forced tool use
+#: think on every request and cannot be told not to, and thinking tokens
+#: count against `max_tokens` — 1024 would routinely be spent before the tool
+#: call began, ending in `stop_reason: max_tokens` and no answer. Billing is
+#: for tokens produced, not for the ceiling.
+_AUTO_MAX_TOKENS = 8192
+
+
+def _accepts_forced_tool_choice(model_id: str) -> bool:
+    """Is `model_id` a listed model, bare or with an 8-digit date suffix?
+
+    The suffix has to be a DATE: `claude-opus-5-5` is `claude-opus-5` plus
+    "-5", and a looser prefix match would hand Opus 5.5 the forced choice it
+    rejects.
+    """
+    if model_id in _FORCED_TOOL_CHOICE_MODELS:
+        return True
+    base, _, suffix = model_id.rpartition("-")
+    return len(suffix) == 8 and suffix.isdigit() and base in _FORCED_TOOL_CHOICE_MODELS
+
+
+def _analysis_request(model_id: str, content: list[dict]) -> dict:
+    """The Messages API request an analysis sends, as keyword arguments.
+
+    ONE builder, used by `analyze_hat_image` and by `verify_api_key` alike, so
+    the Test button exercises the shape a real analysis sends — system,
+    tools, and above all `tool_choice`, which is where a model can refuse a
+    request that a bare ping would pass.
+
+    Where the model allows it, the tool is FORCED: a structured answer is then
+    guaranteed rather than asked for. Elsewhere `auto`, with the system prompt
+    and the user turn both instructing the call; `analyze_hat_image` still
+    treats a reply without one as an error. `strict: true` would add a
+    schema-valid-arguments guarantee on that path, but this schema uses
+    `pattern`, `minItems`/`maxItems` and an optional `construction`, which
+    strict mode does not accept as written — and the parse below already
+    turns a malformed answer into a typed error.
+    """
+    forced = _accepts_forced_tool_choice(model_id)
+    return {
+        "model": model_id,
+        "max_tokens": _FORCED_MAX_TOKENS if forced else _AUTO_MAX_TOKENS,
+        "system": [
+            {
+                "type": "text",
+                "text": SYSTEM_PROMPT,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ],
+        "tools": [HAT_ANALYSIS_TOOL],
+        "tool_choice": (
+            {"type": "tool", "name": HAT_ANALYSIS_TOOL["name"]} if forced else {"type": "auto"}
+        ),
+        "messages": [{"role": "user", "content": content}],
+    }
+
+
+def _request_timeout(max_tokens: int) -> float:
+    """How long to wait for an answer of up to `max_tokens`, in seconds.
+
+    The request is not streamed, so nothing comes back until the whole answer
+    is written, and the timeout is a cap on generation time. 30 s
+    (`http_timeout`) fits the forced path's 1024 tokens; it cut the `auto`
+    path's 8192 off part-way through the thinking those models always do — and
+    the SDK retries a timeout, so each abandoned attempt was paid for. The
+    budget is the SDK's own for a non-streaming request (an hour per 128k
+    output tokens, `_calculate_nonstreaming_timeout`), never below the
+    configured timeout. Analysis runs in the background worker, so a long
+    ceiling costs no one a wait; it is only a ceiling.
+    """
+    return max(config_settings.http_timeout, 3600 * max_tokens / 128_000)
+
+
+def _log_usage(image_name: str, model_id: str, message: object) -> None:
+    """One line per analysis with the token counts, cache counts included.
+
+    "Prompt caching enabled" is only true on a model whose minimum cacheable
+    prefix fits under this prompt (see the module docstring), and the API
+    says nothing when it does not — `cache_read_input_tokens` simply stays
+    zero. Logging the counts makes that visible from the container log
+    instead of from the bill.
+    """
+    usage = getattr(message, "usage", None)
+    if usage is None:
+        return
+    logger.info(
+        "Claude usage for %s (%s): input=%s cache_read=%s cache_write=%s output=%s",
+        image_name, model_id,
+        getattr(usage, "input_tokens", None),
+        getattr(usage, "cache_read_input_tokens", None),
+        getattr(usage, "cache_creation_input_tokens", None),
+        getattr(usage, "output_tokens", None),
+    )
+
+
 async def analyze_hat_image(
     image_path: Path,
     api_key: str,
@@ -484,43 +607,21 @@ async def analyze_hat_image(
 
     user_text = _owner_context(selected_style, selected_construction, known_series)
 
+    content = [
+        {
+            "type": "image",
+            "source": {"type": "base64", "media_type": media_type, "data": b64},
+        },
+        {"type": "text", "text": user_text},
+    ]
+
     # `async with`: each `AsyncAnthropic` owns an httpx connection pool, and one
     # was built per analysis and never closed — a pool of sockets per hat left to
     # the garbage collector.
-    async with _anthropic_client(api_key, config_settings.http_timeout) as client:
+    request = _analysis_request(model_id, content)
+    async with _anthropic_client(api_key, _request_timeout(request["max_tokens"])) as client:
         try:
-            message = await client.messages.create(
-                model=model_id,
-                max_tokens=1024,
-                system=[
-                    {
-                        "type": "text",
-                        "text": SYSTEM_PROMPT,
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ],
-                tools=[HAT_ANALYSIS_TOOL],
-                tool_choice={"type": "tool", "name": "record_hat_analysis"},
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "image",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": media_type,
-                                    "data": b64,
-                                },
-                            },
-                            {
-                                "type": "text",
-                                "text": user_text,
-                            },
-                        ],
-                    }
-                ],
-            )
+            message = await client.messages.create(**request)
         # Logged here, not only where the caller happens to catch it. This module
         # declared a logger and never used it, so the most expensive and most
         # externally-dependent call in the app was the one with no voice of its
@@ -536,13 +637,30 @@ async def analyze_hat_image(
             logger.exception("Claude analysis failed unexpectedly for %s", image_path.name)
             raise ClaudeAnalysisError(f"Unexpected analysis failure: {exc}") from exc
 
+    _log_usage(image_path.name, model_id, message)
+
     tool_block = next(
         (b for b in message.content if getattr(b, "type", None) == "tool_use"), None
     )
     if tool_block is None:
-        raise ClaudeAnalysisError("Claude did not return a tool_use block.")
+        # The stop reason is the diagnosis: `max_tokens` means thinking used
+        # the room, `refusal` a safety decline, `end_turn` a plain-text reply
+        # on a model where the tool could only be asked for, not forced.
+        stop = getattr(message, "stop_reason", None)
+        raise ClaudeAnalysisError(
+            f"Claude did not return a tool_use block (stop_reason: {stop})."
+        )
 
     payload = tool_block.input
+    # Checked before parsing, not after. The `.get` calls below assume an
+    # object, and a list (or anything else) raised AttributeError — which is
+    # not in the except below, so it escaped the pipeline's
+    # `ClaudeAnalysisError` handling and failed the run instead of falling
+    # back. The docstring promises this type for every parse failure.
+    if not isinstance(payload, dict):
+        raise ClaudeAnalysisError(
+            f"Could not parse Claude response: tool input is a {type(payload).__name__}, not an object"
+        )
     try:
         colors = [
             AnalyzedColor(name=c["name"], hex=c["hex"], tier=c.get("tier", "primary"))
@@ -560,25 +678,38 @@ async def analyze_hat_image(
             design_notes=payload.get("design_notes", ""),
             estimated_new_price_usd=payload.get("estimated_new_price_usd"),
             colors=colors,
-            raw=payload if isinstance(payload, dict) else None,
+            raw=payload,
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ClaudeAnalysisError(f"Could not parse Claude response: {exc}") from exc
 
 
+#: Output ceiling for the Test request. It exists to be ACCEPTED, not answered:
+#: every refusal worth testing for (key, credit, model id, request shape) is
+#: decided before a token is generated.
+_VERIFY_MAX_TOKENS = 16
+
+
 async def verify_api_key(api_key: str, model: str | None = None) -> tuple[bool, str]:
-    """Cheap reachability check for a key + model combo. Returns (ok, message)."""
+    """Check a key + model combo with the request an analysis sends. Returns (ok, message).
+
+    Same system prompt, same tool, same `tool_choice` as `analyze_hat_image`
+    (`_analysis_request` builds both), with "ping" in place of the photo. It
+    used to send a bare ping with no tools, so a model that rejects the
+    analysis request's shape — Fable 5.1 refusing a forced tool choice —
+    tested "OK" and then failed every hat. It costs the prompt's ~2,500 input
+    tokens rather than a handful; on a caching model that write is what the
+    next analysis reads.
+    """
     if not api_key:
         return False, "No API key provided."
     model_id = model or config_settings.anthropic_model
+    request = _analysis_request(model_id, [{"type": "text", "text": "ping"}])
+    request["max_tokens"] = _VERIFY_MAX_TOKENS
     try:
         async with _anthropic_client(api_key, 10.0) as client:
-            await client.messages.create(
-                model=model_id,
-                max_tokens=4,
-                messages=[{"role": "user", "content": "ping"}],
-            )
-        return True, f"OK — model '{model_id}' reachable."
+            await client.messages.create(**request)
+        return True, f"OK — model '{model_id}' accepts the analysis request."
     except AuthenticationError:
         return False, "Authentication failed — check the key."
     except APIError as exc:

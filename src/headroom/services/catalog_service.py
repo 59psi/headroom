@@ -15,30 +15,35 @@ cost basis (`purchase_price`, `purchased_at`) and fill `colorway`.
 from __future__ import annotations
 
 import asyncio
-
+import json
 import logging
-from collections.abc import Sequence
-from typing import NamedTuple
+from collections.abc import Collection, Sequence
 from datetime import datetime, timezone
+from typing import NamedTuple
 
-from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import ColumnElement, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from headroom.models.catalog import ColorwayEntry, Purchase
 from headroom.models.hat import Hat
-from headroom.schemas.hat import BEANIE_STYLES, CONSTRUCTION_TOKENS
 from headroom.schemas.admin import PurchaseLine
-from headroom.services import sweep_progress, vocabulary
-from headroom.services import naming
-from headroom.services.activity_service import log_and_commit
-from headroom.services.melin_recap import (
-    PAGE_SIZE,
-    STYLE_TO_CATEGORY,
-    MelinRecapError,
-    query_listings,
-    shared_client,
+from headroom.schemas.hat import BEANIE_STYLES, CONSTRUCTION_TOKENS
+
+# `melin_recap` as a MODULE, and every name read through it at call time.
+# `query_listings` is the single network seam (conftest stubs it for the whole
+# suite), and a by-name import bound this module to the REAL function at
+# import: whether the harvest saw the stub depended on which test imported
+# this module first, and only the socket-level refusal stood between the
+# harvest and the live marketplace. `activity_service` likewise: its
+# `log_activity` is patched by the audit tests.
+from headroom.services import (
+    activity_service,
+    errors,
+    melin_recap,
+    naming,
+    sweep_progress,
+    vocabulary,
 )
 
 logger = logging.getLogger(__name__)
@@ -103,7 +108,7 @@ def harvest_in_flight() -> bool:
     return _harvest_claimed or progress.running
 
 
-# Page size is `melin_recap.PAGE_SIZE`, imported rather than restated: the
+# Page size is `melin_recap.PAGE_SIZE`, read rather than restated: the
 # harvest used to carry its own `_PER_PAGE = 100` AND send it under the wrong
 # key (`per_page`; the Sharetribe parameter is `perPage`). The API ignored the
 # unknown key and served its default page, which happened to be 100 — so the
@@ -141,8 +146,8 @@ async def _fetch_page(params: dict, attempts: int = 3) -> list[dict]:
     delay = 1.0
     for attempt in range(1, attempts + 1):
         try:
-            return await query_listings(params)
-        except MelinRecapError:
+            return await melin_recap.query_listings(params)
+        except melin_recap.MelinRecapError:
             if attempt == attempts:
                 raise
             await asyncio.sleep(delay)
@@ -157,7 +162,7 @@ async def _sweep_category(db: AsyncSession, category: str, now) -> tuple[int, in
         listings = await _fetch_page(
             {
                 "pub_category": category,
-                "perPage": PAGE_SIZE,
+                "perPage": melin_recap.PAGE_SIZE,
                 "page": page,
                 "fields.listing": "title",
             }
@@ -187,7 +192,7 @@ async def _sweep_category(db: AsyncSession, category: str, now) -> tuple[int, in
                 row.listing_count += 1
                 row.last_seen = now
         await db.commit()
-        if len(listings) < PAGE_SIZE:
+        if len(listings) < melin_recap.PAGE_SIZE:
             break
     return seen, new
 
@@ -208,7 +213,7 @@ async def harvest_catalog(db: AsyncSession) -> dict:
     # exception here reaches nobody. Leaving `running` true would make a crashed harvest
     # read as one still in flight, forever — the precise false signal the
     # progress record exists to remove.
-    progress.begin(len(STYLE_TO_CATEGORY))
+    progress.begin(len(melin_recap.STYLE_TO_CATEGORY))
     # try/FINALLY, with the error recorded in `except` — see the same shape in
     # `repricing.reprice_once`. `except Exception` alone misses CancelledError
     # (a BaseException), which would leave a canceled harvest reporting itself
@@ -224,11 +229,11 @@ async def harvest_catalog(db: AsyncSession) -> dict:
         # result dict, which the background task hands to nobody.
         _last_failed_categories[:] = result["failed_categories"]
         if result["failed_categories"] and len(result["failed_categories"]) == len(
-            STYLE_TO_CATEGORY
+            melin_recap.STYLE_TO_CATEGORY
         ):
             error = (
                 f"every category failed ({len(result['failed_categories'])} of "
-                f"{len(STYLE_TO_CATEGORY)}) — the marketplace was unreachable; "
+                f"{len(melin_recap.STYLE_TO_CATEGORY)}) — the marketplace was unreachable; "
                 "the catalog was not updated"
             )
         return result
@@ -250,8 +255,8 @@ async def _harvest(db, now) -> dict:
     new_entries = 0
     failed: list[str] = []
     # One connection pool for the whole run — see `melin_recap.shared_client`.
-    async with shared_client():
-        for category in STYLE_TO_CATEGORY.values():
+    async with melin_recap.shared_client():
+        for category in melin_recap.STYLE_TO_CATEGORY.values():
             progress.start_unit(category)
             try:
                 seen, new = await _sweep_category(db, category, now)
@@ -329,6 +334,27 @@ async def catalog_stats(db: AsyncSession) -> dict:
     }
 
 
+#: A catalog model name carrying any character outside printable ASCII.
+_NON_ASCII_GLOB = "*[^ -~]*"
+
+
+def _model_prefilter(tokens: Collection[str]) -> ColumnElement[bool]:
+    """SQL narrowing for "the catalog model contains every token" — a SUPERSET.
+
+    One `ILIKE '%token%'` per token decides the question for ASCII names. It
+    cannot for the rest: `naming` folds accents (`Piña` → `pina`) and SQLite
+    cannot, so `ILIKE '%pina%'` misses a stored `Piña` and the pre-filter would
+    silently drop a row the token test accepts. Any name with a non-ASCII
+    character is therefore passed through unfiltered, to be decided by the
+    token test in Python like every other row. Such names are rare, which is
+    what keeps the narrowing worth doing.
+    """
+    return or_(
+        and_(*[ColorwayEntry.model_name.ilike(f"%{token}%") for token in tokens]),
+        ColorwayEntry.model_name.op("GLOB")(_NON_ASCII_GLOB),
+    )
+
+
 async def catalog_options(
     db: AsyncSession, q: str | None = None, model: str | None = None, limit: int = 25
 ) -> list[dict]:
@@ -353,23 +379,24 @@ async def catalog_options(
     the exact confusion `_rival_construction` and the HatFilters predicate both
     guard against by word boundary, in the one picker that writes the field.
     The SQL keeps the `ILIKE`s as a coarse pre-filter (a superset of the token
-    match, and small), and the real test is `_model_tokens` set containment in
+    match, and small), and the real test is `naming.token_set` containment in
     Python — the same rule `is_real_product` applies to the analyzer's answer.
     """
     if model:
-        wanted = _model_tokens(model)
+        wanted = naming.token_set(model)
         stmt = select(
             ColorwayEntry.model_name, ColorwayEntry.colorway, ColorwayEntry.listing_count
         ).where(
             ColorwayEntry.colorway.is_not(None),
-            *[ColorwayEntry.model_name.ilike(f"%{token}%") for token in wanted]
-            or [func.lower(ColorwayEntry.model_name) == model.strip().lower()],
+            _model_prefilter(wanted)
+            if wanted
+            else func.lower(ColorwayEntry.model_name) == model.strip().lower(),
         )
         if q:
             stmt = stmt.where(ColorwayEntry.colorway.ilike(f"%{q}%"))
         best: dict[str, int] = {}
         for entry_model, colorway, count in (await db.execute(stmt)).all():
-            if wanted and not wanted <= _model_tokens(entry_model):
+            if wanted and not wanted <= naming.token_set(entry_model):
                 continue
             best[colorway] = max(best.get(colorway, 0), int(count or 0))
         ranked = sorted(best.items(), key=lambda kv: (-kv[1], kv[0]))
@@ -420,8 +447,8 @@ async def _units_to_add(
     """How many rows this order line still needs. Returns (wanted, price, size).
 
     Extracted because `import_purchases` and `preview_import` each had a
-    byte-identical copy. CLAUDE.md promises "the preview predicts the import
-    exactly"; with two copies that was a claim maintained by hand, and the
+    byte-identical copy. The preview promises to predict the import exactly;
+    with two copies that was a claim maintained by hand, and the
     dedupe key is exactly where it had already gone wrong once (a key without
     `size` collapsed a real order that bought one model in two sizes).
 
@@ -507,13 +534,25 @@ async def import_purchases(db: AsyncSession, items: list[PurchaseLine | dict]) -
                 )
             )
             imported += 1
+    # In the same transaction as the rows: an import is a significant change
+    # (it is where a cost basis comes from), and it was the one bulk writer in
+    # this module with no audit trail at all.
+    await activity_service.log_activity(
+        db, kind="purchase.imported", entity_type="purchase",
+        summary=f"Imported {imported} purchase unit(s), skipped {skipped}",
+        details={"imported": imported, "skipped": skipped},
+    )
     await db.commit()
     return {"imported": imported, "skipped": skipped}
 
 
-# How order lines spell sizes, mapped to the app's vocabulary. Order emails
-# render the variant as the customer sees it ("Transit / Classic"), which is
-# title-cased and occasionally abbreviated; `Hat.size` stores the enum value.
+# How order lines AND marketplace listings spell sizes, mapped to the app's
+# vocabulary. Order emails render the variant as the customer sees it
+# ("Transit / Classic"), which is title-cased and occasionally abbreviated;
+# melin Recap listings carry a size code in publicData ("C", "S", "XL"), and
+# `melin_recap._listing_facts` reads it through `normalize_size` too. Two
+# readers, so a new spelling added here for one is understood by both.
+# `Hat.size` stores the enum value.
 _SIZE_ALIASES: dict[str, str] = {
     "classic": "classic",
     "c": "classic",
@@ -764,23 +803,14 @@ COLOR_WORD = 3
 PRICE_EXACT = 6
 
 
-#: Every word that is a CONSTRUCTION rather than a product line, split the way
-#: `_model_tokens` splits. Used to retry the model gate with the construction
-#: removed — see `_model_tier`. Shared with the pipeline and the pricer via
-#: `schemas.hat`, so the four modules that ask "which construction does this
-#: text assert" cannot drift apart on the answer.
-_CONSTRUCTION_TOKENS: frozenset[str] = CONSTRUCTION_TOKENS
-
-
-def _model_tokens(name: str | None) -> frozenset[str]:
-    """Model name as a bag of comparable words — `naming.token_set`.
-
-    This used to be its own tokenizer, splitting on whitespace and hyphens
-    only, while `melin_recap.model_tokens` stripped punctuation: the same
-    quoted name was priceable and unmatchable. One reading now, cached there
-    (matching is quadratic and tokenizes several strings per pair).
-    """
-    return naming.token_set(name)
+# Names are read as bags of comparable words through `naming.token_set` — the
+# one tokenizer the matcher and the marketplace pricer share (cached there;
+# matching is quadratic and tokenizes several strings per pair). This module
+# used to keep its own, splitting on whitespace and hyphens only, while the
+# pricer stripped punctuation: the same quoted name was priceable and
+# unmatchable. `CONSTRUCTION_TOKENS` (from `schemas.hat`) is every word that
+# is a construction rather than a product line, split the same way; the model
+# gate retries with those removed — see `_model_tier`.
 
 
 def _color_words(hat: Hat) -> frozenset[str]:
@@ -793,8 +823,8 @@ def _color_words(hat: Hat) -> frozenset[str]:
     """
     words: set[str] = set()
     for c in hat.colors or []:
-        words |= set(_model_tokens(c.general_color))
-        words |= set(_model_tokens(c.color_name))
+        words |= set(naming.token_set(c.general_color))
+        words |= set(naming.token_set(c.color_name))
     return frozenset(words)
 
 
@@ -821,8 +851,8 @@ def _model_tier(hat_model: str | None, purchase_model: str) -> int | None:
     did not, which does not happen — and allowing it would let one generic
     receipt line claim any specific hat in the family.
     """
-    hat_tokens = _model_tokens(hat_model)
-    purchase_tokens = _model_tokens(purchase_model)
+    hat_tokens = naming.token_set(hat_model)
+    purchase_tokens = naming.token_set(purchase_model)
     if not hat_tokens or not purchase_tokens:
         return None
     if hat_tokens == purchase_tokens:
@@ -852,8 +882,8 @@ def _model_tier(hat_model: str | None, purchase_model: str) -> int | None:
     # claim any Trenches line. Removing one known vocabulary word from both
     # sides cannot introduce a new line, only reveal that two names describe
     # the same one.
-    hat_bare = hat_tokens - _CONSTRUCTION_TOKENS
-    purchase_bare = purchase_tokens - _CONSTRUCTION_TOKENS
+    hat_bare = hat_tokens - CONSTRUCTION_TOKENS
+    purchase_bare = purchase_tokens - CONSTRUCTION_TOKENS
     # A name made ENTIRELY of construction words ("Hydro") strips to nothing,
     # and the empty set is a subset of everything — it would match the whole
     # shelf. Fall back to the strict comparison above rather than that.
@@ -898,7 +928,7 @@ def _match_score(purchase: Purchase, hat: Hat) -> int | None:
     # because melin puts the series in either half ("Trenches Links Hydro" vs
     # "Trenches Icon Hydro - Camo"). A bonus, never a veto: 102 hats have no
     # series recorded at all, and absence is not disagreement.
-    title_tokens = _model_tokens(purchase.item_title)
+    title_tokens = naming.token_set(purchase.item_title)
 
     # A stated construction that CONTRADICTS the title rules the hat out.
     #
@@ -909,13 +939,13 @@ def _match_score(purchase: Purchase, hat: Hat) -> int | None:
     # already follow — both sides stating something, and disagreeing, is the
     # one case where silence would be better than a guess. HYDROLite is
     # checked as its own token, so it does not read as a HYDRO.
-    hat_construction = _model_tokens(hat.construction) & _CONSTRUCTION_TOKENS
-    title_construction = title_tokens & _CONSTRUCTION_TOKENS
+    hat_construction = naming.token_set(hat.construction) & CONSTRUCTION_TOKENS
+    title_construction = title_tokens & CONSTRUCTION_TOKENS
     if hat_construction and title_construction and not (hat_construction & title_construction):
         return None
 
     for stated in (hat.artist_series, hat.construction):
-        tokens = _model_tokens(stated)
+        tokens = naming.token_set(stated)
         if tokens and tokens <= title_tokens:
             score += STATED_FIELD
 
@@ -925,7 +955,7 @@ def _match_score(purchase: Purchase, hat: Hat) -> int | None:
     # only: the analyzer names a dominant color ("brown"), melin names a
     # product colorway ("Bone Brown"), and plenty of pairs are both true
     # without sharing a word.
-    pcw = _model_tokens(purchase.colorway)
+    pcw = naming.token_set(purchase.colorway)
     if pcw and (pcw & _color_words(hat)):
         score += COLOR_WORD
 
@@ -1112,8 +1142,8 @@ def assign_purchases(
     is the wrong mechanism for "did this hat get its price".
 
     (That helper, `_by_scarcity`, outlived its caller by several releases. It
-    had no call site at all, while this docstring, `CLAUDE.md` and a test
-    docstring all described it as the thing carrying the result — the test
+    had no call site at all, while this docstring, the project notes and a
+    test docstring all described it as the thing carrying the result — the test
     going as far as to claim a sabotage check against a function that never
     ran. Deleted. The lesson is narrow and worth keeping: when an algorithm is
     replaced, the prose explaining the old one is the part that survives.)
@@ -1251,14 +1281,32 @@ async def match_purchases_to_hats(db: AsyncSession, *, dry_run: bool = False) ->
 
         purchase.hat_id = hat.id
         linked_hat_ids.add(hat.id)
+        writes: dict[str, object] = {}
         if purchase.colorway and not hat.colorway:
             # Through the vocabulary, like every other colorway writer: a
             # receipt's spelling must converge on the one already on record.
             hat.colorway = await vocabulary.canonicalize(db, Hat.colorway, purchase.colorway)
+            writes["colorway"] = hat.colorway
         if purchase.price is not None and hat.purchase_price is None:
             hat.purchase_price = purchase.price
+            writes["purchase_price"] = purchase.price
         if purchase.order_date is not None and hat.purchased_at is None:
             hat.purchased_at = purchase.order_date
+            writes["purchased_at"] = purchase.order_date.isoformat()
+        # What THIS link actually wrote — the only thing an unmatch may undo.
+        # See `_revert_hat_fields`.
+        purchase.match_writes = json.dumps(writes)
+        # One audit row per link, in the same transaction as the writes. A
+        # match puts a cost onto a hat, and it was the one hat-mutating path
+        # here with no trail while its own undo was logged.
+        await activity_service.log_activity(
+            db, kind="purchase.matched", entity_type="purchase", entity_id=purchase.id,
+            summary=(
+                f"Purchase #{purchase.id} matched to hat #{hat.id}"
+                + (f" · set {', '.join(sorted(writes))}" if writes else "")
+            ),
+            details={"hat_id": hat.id, "set": writes},
+        )
         matched += 1
 
     if dry_run:
@@ -1282,25 +1330,46 @@ async def match_purchases_to_hats(db: AsyncSession, *, dry_run: bool = False) ->
     }
 
 
-def _revert_hat_fields(purchase: Purchase, hat: Hat) -> list[str]:
-    """Undo what THIS purchase wrote onto the hat. Returns the fields cleared.
+#: The hat fields a match can write, in the order `_revert_hat_fields` checks.
+_MATCH_FIELDS = ("purchase_price", "purchased_at", "colorway")
 
-    Each field is cleared only if it still holds the exact value the match
-    put there. Anything edited since belongs to whoever edited it, and a
-    reversal that overwrote a hand-typed price would be a worse bug than the
-    mis-match it was undoing — the same class of silent clobber that made an
-    automatic feed erase manual resale prices.
+
+def _revert_hat_fields(purchase: Purchase, hat: Hat) -> list[str]:
+    """Undo what THIS purchase's match wrote onto the hat. Returns the fields cleared.
+
+    Driven by `purchase.match_writes` — the fields the match ACTUALLY set, and
+    the values it set them to — not by the purchase's own values. Comparing a
+    hat against the receipt cleared anything that merely agreed with it: an
+    owner who typed $89 before the match (which then wrote nothing, because
+    the match fills only empty fields) lost the $89 on unmatch, along with the
+    date and colorway. Agreement is not authorship, and price agreement is
+    precisely what the matcher rewards, so it was the common case.
+
+    Each recorded field is cleared only if it still holds the value the match
+    wrote. Anything edited since belongs to whoever edited it, and a reversal
+    that overwrote a hand-typed price would be a worse bug than the mis-match
+    it was undoing — the same class of silent clobber that made an automatic
+    feed erase manual resale prices.
+
+    A link with no record (`match_writes` NULL — made before the column
+    existed) clears nothing: there is no way left to tell what that match
+    wrote, and guessing from agreement is the bug above. The link still
+    breaks; the values stay for the owner to judge, which is the direction
+    this module always errs in.
     """
+    if not purchase.match_writes:
+        return []
+    written = json.loads(purchase.match_writes)
     cleared = []
-    if purchase.price is not None and hat.purchase_price == purchase.price:
-        hat.purchase_price = None
-        cleared.append("purchase_price")
-    if purchase.order_date is not None and hat.purchased_at == purchase.order_date:
-        hat.purchased_at = None
-        cleared.append("purchased_at")
-    if purchase.colorway and hat.colorway == purchase.colorway:
-        hat.colorway = None
-        cleared.append("colorway")
+    for field in _MATCH_FIELDS:
+        if field not in written:
+            continue
+        value = written[field]
+        if field == "purchased_at":
+            value = datetime.fromisoformat(value)
+        if getattr(hat, field) == value:
+            setattr(hat, field, None)
+            cleared.append(field)
     return cleared
 
 
@@ -1312,10 +1381,14 @@ async def unmatch_purchase(db: AsyncSession, purchase_id: int) -> dict:
     only ever considers purchases with a NULL `hat_id` — so a wrong link was
     permanent and invisible, since the hat still ended up with *a* cost basis
     and *a* colorway.
+
+    A missing purchase is `errors.NotFound`; the route layer decides that is a
+    404. This raised `HTTPException` itself once — a web reply from a function
+    that is not an endpoint.
     """
     purchase = await db.get(Purchase, purchase_id)
     if purchase is None:
-        raise HTTPException(status_code=404, detail="Purchase not found")
+        raise errors.NotFound("Purchase not found")
     if purchase.hat_id is None:
         return {"unmatched": 0, "hat_id": None, "cleared": []}
 
@@ -1323,9 +1396,10 @@ async def unmatch_purchase(db: AsyncSession, purchase_id: int) -> dict:
     cleared = _revert_hat_fields(purchase, hat) if hat else []
     hat_id = purchase.hat_id
     purchase.hat_id = None
+    purchase.match_writes = None
     await db.commit()
 
-    await log_and_commit(
+    await activity_service.log_and_commit(
         db, kind="purchase.unmatched", entity_type="purchase", entity_id=purchase_id,
         summary=f"Purchase #{purchase_id} unlinked from hat #{hat_id}",
         details={"hat_id": hat_id, "cleared": cleared},
@@ -1357,9 +1431,10 @@ async def unmatch_all_purchases(db: AsyncSession) -> dict:
         if hat is not None:
             cleared_total += len(_revert_hat_fields(purchase, hat))
         purchase.hat_id = None
+        purchase.match_writes = None
     await db.commit()
 
-    await log_and_commit(
+    await activity_service.log_and_commit(
         db, kind="purchase.unmatched_all", entity_type="purchase",
         summary=f"Unlinked {len(linked)} purchase(s) from their hats",
         details={"unmatched": len(linked), "fields_cleared": cleared_total},
@@ -1471,20 +1546,20 @@ async def is_real_product(db: AsyncSession, model_name: str | None, colorway: st
     if not model_name or not colorway:
         return False
 
-    want_model = set(_model_tokens(model_name))
-    want_colorway = set(_model_tokens(colorway))
+    want_model = set(naming.token_set(model_name))
+    want_colorway = set(naming.token_set(colorway))
     if not want_model or not want_colorway:
         return False
 
-    # Narrowed in SQL first — the same per-token `ILIKE` pre-filter
-    # `catalog_options` uses, a strict superset of the token test below — so
-    # this no longer pulls the whole catalog (568+ rows) into Python for every
-    # analyzed hat. The decision itself is still made in Python, on tokens.
+    # Narrowed in SQL first — the same pre-filter `catalog_options` uses, a
+    # superset of the token test below — so this no longer pulls the whole
+    # catalog (568+ rows) into Python for every analyzed hat. The decision
+    # itself is still made in Python, on tokens.
     rows = (
         await db.execute(
             select(ColorwayEntry.model_name, ColorwayEntry.colorway).where(
                 ColorwayEntry.colorway.is_not(None),
-                *[ColorwayEntry.model_name.ilike(f"%{token}%") for token in want_model],
+                _model_prefilter(want_model),
             )
         )
     ).all()
@@ -1493,8 +1568,8 @@ async def is_real_product(db: AsyncSession, model_name: str | None, colorway: st
         # sub-line); the colorway must match it EXACTLY. Containment in either
         # direction on this half admits a colorway naming no product — see the
         # docstring, both directions have now been wrong once.
-        if want_model <= set(_model_tokens(cat_model)) and (
-            set(_model_tokens(cat_colorway)) == want_colorway
+        if want_model <= set(naming.token_set(cat_model)) and (
+            set(naming.token_set(cat_colorway)) == want_colorway
         ):
             return True
     return False

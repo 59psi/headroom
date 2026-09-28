@@ -48,7 +48,7 @@ def stub_claude(monkeypatch):
         "headroom.services.settings_service.get_anthropic_key", _fake_get_key
     )
     monkeypatch.setattr(
-        "headroom.services.hat_analysis_pipeline.analyze_hat_image", _fake_analyze
+        "headroom.services.claude_analysis.analyze_hat_image", _fake_analyze
     )
 
 
@@ -114,8 +114,10 @@ async def test_a_crashing_hat_is_marked_errored_and_the_worker_survives(
     client, worker, stub_claude, monkeypatch
 ):
     """One bad photo must not strand itself OR kill the queue behind it."""
+    from headroom.services import hat_analysis_pipeline
+
     calls = {"n": 0}
-    real = analysis_queue.finalize_hat_photo
+    real = hat_analysis_pipeline.finalize_hat_photo
 
     async def _boom_once(db, hat, path, **_kw):
         calls["n"] += 1
@@ -123,7 +125,10 @@ async def test_a_crashing_hat_is_marked_errored_and_the_worker_survives(
             raise RuntimeError("rembg exploded")
         return await real(db, hat, path)
 
-    monkeypatch.setattr(analysis_queue, "finalize_hat_photo", _boom_once)
+    # Patched at the SOURCE module — the seam — not on the consumer. The
+    # worker used to hold its own by-name copy, which is why this test once
+    # had to patch `analysis_queue.finalize_hat_photo` instead.
+    monkeypatch.setattr(hat_analysis_pipeline, "finalize_hat_photo", _boom_once)
 
     first = await _hat_with_photo(client)
     await _drain()
@@ -183,8 +188,9 @@ async def test_inline_failure_marks_the_hat_instead_of_stranding_it(
     async def _boom(*_a, **_k):
         raise RuntimeError("pipeline exploded")
 
+    # The source module — the seam the route now calls through.
     monkeypatch.setattr(
-        "headroom.routes.hats.finalize_hat_photo", _boom
+        "headroom.services.hat_analysis_pipeline.finalize_hat_photo", _boom
     )
 
     created = await client.post(
@@ -228,7 +234,9 @@ async def test_an_inline_reanalyze_failure_marks_the_hat_instead_of_stranding_it
     async def _boom(*_a, **_k):
         raise RuntimeError("reanalysis exploded")
 
-    monkeypatch.setattr("headroom.routes.hats.reanalyze_existing_photo", _boom)
+    monkeypatch.setattr(
+        "headroom.services.hat_analysis_pipeline.reanalyze_existing_photo", _boom
+    )
 
     resp = await client.post(f"/api/hats/{hat_id}/reanalyze")
 
@@ -236,3 +244,79 @@ async def test_an_inline_reanalyze_failure_marks_the_hat_instead_of_stranding_it
     body = resp.json()
     assert body["analysis_status"] == "error", "never left on pending"
     assert "reanalysis exploded" in (body["analysis_error"] or "")
+
+
+@pytest.fixture
+def real_cutouts(monkeypatch):
+    """rembg that actually writes a PNG, so uploads keep an original to re-cut."""
+    async def _remove(_input, output_path):
+        out = output_path.with_suffix(".png")
+        Image.new("RGBA", (40, 40), (200, 30, 90, 255)).save(out, "PNG")
+        return out
+
+    monkeypatch.setattr("headroom.services.background_removal.remove_background", _remove)
+
+
+async def test_a_failed_queued_recut_goes_back_to_the_cutout_it_had(
+    client, worker, real_cutouts, monkeypatch, db_session
+):
+    """The worker's failure bookkeeping only ever handled `pending` hats, and a
+    re-cut never sets that — so a re-cut that raised left the uncut original
+    as the hat's photo and `analysis_stage='cutout'` in the column, which the
+    page reports (the photo IS the original) and polls on for ever."""
+    from sqlalchemy import select
+
+    from headroom.models.hat import Hat
+    from headroom.services import hat_analysis_pipeline
+
+    uploaded = await _hat_with_photo(client)
+    await _drain()
+    cut = (await client.get(f"/api/hats/{uploaded['id']}")).json()
+    assert cut["original_path"] and cut["photo_path"] != cut["original_path"]
+
+    async def _boom(*_a, **_k):
+        raise RuntimeError("rembg exploded")
+
+    monkeypatch.setattr(hat_analysis_pipeline, "finalize_hat_photo", _boom)
+    await client.post(f"/api/hats/{uploaded['id']}/recut")
+    await _drain()
+
+    after = (await client.get(f"/api/hats/{uploaded['id']}")).json()
+    assert after["photo_path"] == cut["photo_path"], "back on the cutout it had"
+    assert after["analysis_stage"] is None
+    stage = (await db_session.execute(
+        select(Hat.analysis_stage).where(Hat.id == uploaded["id"])
+    )).scalar_one()
+    assert stage is None, "the column, not just the masked read"
+
+
+async def test_a_run_whose_photo_was_replaced_meanwhile_is_thrown_away(
+    client, worker, stub_claude, monkeypatch
+):
+    """The worker's session is open for minutes. If the photo is replaced
+    while it runs, committing would write this run's stale photo and analysis
+    over the new one — so the run must be rolled back, not committed."""
+    from headroom.models.hat import Hat
+    from headroom.services import hat_analysis_pipeline
+    from tests.conftest import test_session_factory
+
+    real = hat_analysis_pipeline.finalize_hat_photo
+
+    async def _replaced_midway(db, hat, path, **kw):
+        await real(db, hat, path, **kw)
+        # What the upload route does while this run is still in flight.
+        async with test_session_factory() as other:
+            row = await other.get(Hat, hat.id)
+            row.photo_path = "hats/replaced-meanwhile.jpg"
+            await other.commit()
+        return hat
+
+    monkeypatch.setattr(hat_analysis_pipeline, "finalize_hat_photo", _replaced_midway)
+
+    uploaded = await _hat_with_photo(client)
+    await _drain()
+
+    after = (await client.get(f"/api/hats/{uploaded['id']}")).json()
+    assert after["photo_path"] == "hats/replaced-meanwhile.jpg"
+    assert after["brand"] is None, "the stale run's analysis was committed"
+    assert after["analysis_status"] == "pending"

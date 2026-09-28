@@ -26,6 +26,27 @@ export function placementOf(hat: Pick<Placed, 'case_display_id' | 'room_id'>): P
   return 'none';
 }
 
+/**
+ * What to call a hat in a list, a link or a toast.
+ *
+ * Its shelf id when it has one. A hat outside a case has none — `display_id`
+ * is derived from case + position — so it goes by its model name, then by the
+ * label the analysis queue computes, and only then by its row id, as
+ * "Hat #5". Five screens each wrote their own fallback, and the same loose hat
+ * was "#5", "Hat #5" or "Odysea Hydro" depending on where you met it. Takes
+ * either `id` or `hat_id`, since the report rows name the hat by the latter.
+ */
+export type HatNameable = {
+  display_id: string | null;
+  model_name?: string | null;
+  label?: string | null;
+} & ({ id: number } | { hat_id: number });
+
+export function hatName(h: HatNameable): string {
+  const id = 'id' in h ? h.id : h.hat_id;
+  return h.display_id || h.model_name || h.label || `Hat #${id}`;
+}
+
 /** The caption for where a hat is — "A-042", "Living room (no case)" or "Unassigned". */
 export function placementLabel(hat: Placed): string {
   switch (placementOf(hat)) {

@@ -21,31 +21,34 @@ import asyncio
 import logging
 import time
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
-from sqlalchemy import update
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from headroom.config import settings
 from headroom.models.hat import Hat, ResaleScope
-from headroom.models.hat_color import HatColor
-from headroom.schemas.hat import KNOWN_CONSTRUCTIONS, strip_constructions
-from headroom.services import retail_pricing, settings_service
-from headroom.services import naming
-from headroom.services.background_removal import remove_background
-from headroom.services.claude_analysis import (
-    ClaudeAnalysisError,
-    HatAnalysis,
-    analyze_hat_image,
-)
-from headroom.services.color_extraction import extract_hat_colors, normalize_hex_name
-from headroom.services.ebay_service import EbayError, find_comps
-from headroom.services.google_vision import GoogleVisionError, detect_brand_logo
-from headroom.services.melin_recap import (
-    MelinRecapError,
-    build_resale_pointer,
-    fetch_resale_stats,
-    is_melin,
+from headroom.schemas.hat import KNOWN_CONSTRUCTIONS, AnalysisStatus, strip_constructions
+
+# Every collaborator is imported as a MODULE and called through it at run time
+# (`claude_analysis.analyze_hat_image(...)`). Those calls are the seams the
+# tests patch, and a `from … import` of the function froze this module's own
+# copy: a test had to patch the pipeline's name AND the owner's, and
+# `conftest` stubbed rembg in both places for exactly that reason.
+from headroom.services import (
+    activity_service,
+    background_removal,
+    catalog_service,
+    claude_analysis,
+    color_extraction,
+    ebay_service,
+    google_vision,
+    hat_service,
+    melin_recap,
+    naming,
+    retail_pricing,
+    settings_service,
+    vocabulary,
 )
 from headroom.utils.photo import (
     THUMBS_DIR,
@@ -53,10 +56,6 @@ from headroom.utils.photo import (
     make_export_image_async,
     make_thumbnail_async,
 )
-from headroom.services import vocabulary
-from headroom.services import catalog_service
-from sqlalchemy import select
-from headroom.services import activity_service
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +129,109 @@ async def finalize_hat_photo(
     2.79 — a Claude call per press, and the owner's own `model_name` and
     `design_notes` overwritten by the analyzer's — while the docs said it
     spent no call.
+
+    A re-cut's stage is cleared in a `finally`, whatever happens. `HatRead`
+    reports the stage for as long as the photo is the uncut original, so a
+    cut that raised used to leave `analysis_stage='cutout'` behind and the
+    page polling a "Cutting out…" that nothing was doing. A re-cut that
+    produced no cutout goes back to the one it had (`abandon_recut`) instead
+    of promoting the original JPEG, background and all, to the hat's photo
+    and overwriting the old cutout's thumbnail with it.
+    """
+    if not cutout_only:
+        canonical_path, t_rembg = await _cut_and_derive(db, hat, processed_jpeg_path)
+        await _analyze(db, hat, canonical_path, t_rembg=t_rembg)
+        return hat
+    try:
+        cut = await _cut_and_derive(db, hat, processed_jpeg_path, recut=True)
+    finally:
+        await _publish_stage(db, hat.id, None)
+    if cut is None:
+        abandon_recut(hat)
+        logger.warning(
+            "hat=%s re-cut produced no cutout; kept the one it had", hat.id
+        )
+        return hat
+    logger.info("hat=%s re-cut · rembg=%.2fs (analysis untouched)", hat.id, cut[1])
+    return hat
+
+
+def _recut_target(original_rel: str) -> str:
+    """Where a cut of the retained original lands: `hats/<stem>.png`.
+
+    `finalize_hat_photo` cuts to `<dir>/<stem>` and `background_removal`
+    appends `.png`, so the cutout always sits beside its original under the
+    same stem — which is what lets a failed re-cut find the previous one.
+    """
+    return str(PurePosixPath(original_rel).with_suffix(".png"))
+
+
+def abandon_recut(hat: Hat) -> bool:
+    """Put a hat whose re-cut did not finish back on the cutout it had.
+
+    A re-cut points `photo_path` at the retained original and commits that
+    before the cut starts (the route does, so the page can show it running),
+    so every way it can fail — rembg producing nothing, a derivative raising,
+    the worker crashing — used to leave the uncut JPEG as the hat's photo
+    and the stage reading "cutout" forever. `photo_path == original_path` is
+    the re-cut-in-progress state `HatRead` keys on, and only that state is
+    touched: the photo goes back to the cutout beside the original when it
+    is still on disk (a cut that wrote it and then failed on a thumbnail
+    leaves the NEW one there, which is just as good), and the stage clears.
+    The analysis record is left alone, as a re-cut always leaves it.
+
+    Returns True when the hat was mid-re-cut. Mutates `hat`; caller commits.
+    """
+    if not hat.original_path or hat.photo_path != hat.original_path:
+        return False
+    previous = _recut_target(hat.original_path)
+    if (settings.upload_dir / previous).is_file():
+        hat.photo_path = previous
+    hat.analysis_stage = None
+    hat.analysis_stage_at = None
+    return True
+
+
+async def abandon_interrupted_recuts(db: AsyncSession) -> int:
+    """At boot, put every hat a restart caught mid-re-cut back on its cutout.
+
+    Nothing runs before boot, so a hat still in the re-cut-in-progress state
+    `HatRead` keys on (stage `cutout`, `photo_path == original_path`) is one
+    whose cut died with the process — the queue that held it is in memory, and
+    an inline cut dies with its request. Nothing else would ever finish or
+    undo it: the boot sweep re-queues only `pending` hats, and a re-cut never
+    sets that. `HatRead` reports the state as a cut in progress, so such a hat
+    showed its uncut original under a spinner, and the page polled it every
+    two seconds, forever. Pending hats are left to that boot sweep, which runs
+    them in full. Every boot, whichever way analysis runs. Returns the count.
+    """
+    stranded = (
+        await db.execute(
+            select(Hat).where(
+                Hat.analysis_stage == STAGE_CUTOUT,
+                Hat.original_path.is_not(None),
+                Hat.photo_path == Hat.original_path,
+                or_(
+                    Hat.analysis_status.is_(None),
+                    Hat.analysis_status != AnalysisStatus.pending.value,
+                ),
+            )
+        )
+    ).scalars().all()
+    restored = sum(1 for hat in stranded if abandon_recut(hat))
+    if restored:
+        await db.commit()
+    return restored
+
+
+async def _cut_and_derive(
+    db: AsyncSession, hat: Hat, processed_jpeg_path: Path, *, recut: bool = False
+) -> tuple[Path, float] | None:
+    """Cutout, then the canonical photo's derivatives. `(canonical, rembg seconds)`.
+
+    None only for a `recut` that produced no cutout: an upload whose rembg
+    fails keeps its JPEG as the photo (the documented degrade), but a re-cut
+    already HAS a cutout, and the JPEG must not replace it.
     """
     photo_dir = processed_jpeg_path.parent
 
@@ -150,8 +252,12 @@ async def finalize_hat_photo(
         await _publish_stage(db, hat.id, STAGE_CUTOUT)
         t_rembg0 = time.monotonic()
         cutout_target = photo_dir / processed_jpeg_path.stem
-        transparent_path = await remove_background(processed_jpeg_path, cutout_target)
+        transparent_path = await background_removal.remove_background(
+            processed_jpeg_path, cutout_target
+        )
         t_rembg = time.monotonic() - t_rembg0
+        if recut and (transparent_path is None or not transparent_path.exists()):
+            return None
         if transparent_path is not None and transparent_path.exists():
             # Keep the JPEG rather than deleting it. It is the ONLY thing a
             # re-cut can work from: the cutout can't be re-segmented (that path
@@ -191,54 +297,84 @@ async def finalize_hat_photo(
     await make_export_image_async(
         canonical_path, export_derivative_path(settings.upload_dir, hat.photo_path)
     )
+    return canonical_path, t_rembg
 
-    if cutout_only:
-        await _publish_stage(db, hat.id, None)
-        logger.info("hat=%s re-cut · rembg=%.2fs (analysis untouched)", hat.id, t_rembg)
-        return hat
 
-    # Everything below interleaves DB reads (API key, model, eBay creds) with
-    # slow network calls. With autoflush on, the FIRST of those reads flushes
-    # the `photo_path` write above — which opens a SQLite write transaction, and
-    # SQLite holds that lock until commit. The lock would therefore stay held
-    # across the entire Claude + eBay + Melin sequence: minutes, worst case.
-    # Every other writer in the process then waits out `busy_timeout` and fails
-    # with "database is locked" — so adding a second hat while the first is
-    # analyzing would error out. Deferring the flush shrinks the lock window to
-    # the caller's commit. Safe because nothing in here re-queries the hat row;
-    # the pending change only has to be visible at commit time.
+async def reanalyze_existing_photo(
+    db: AsyncSession, hat: Hat, photo_path: Path
+) -> bool:
+    """Re-run analysis against an already-processed cutout — no bg removal.
+
+    Mutates `hat`; caller commits. Returns False only when there is no Claude
+    key AND the fallback produced nothing (caller → HTTP 400). The analysis
+    itself is `_analyze`, the same code `finalize_hat_photo` runs.
+    """
+    return await _analyze(db, hat, photo_path, t_rembg=0.0)
+
+
+#: The reason recorded when there is no Claude key to call with. One constant,
+#: because `fallback_message` used to recognize this case by searching the
+#: reason for marker substrings — and the pipeline's own wording contained
+#: none of them, so a keyless install was never once told to add a key.
+NO_ANTHROPIC_KEY = "No Anthropic API key configured"
+
+
+async def _analyze(db: AsyncSession, hat: Hat, photo_path: Path, *, t_rembg: float) -> bool:
+    """Key check → Claude → apply → eBay → resale, with the fallback. Mutates `hat`.
+
+    The one copy of the analysis sequence. `finalize_hat_photo` and
+    `reanalyze_existing_photo` each carried their own, and a docstring claimed
+    they shared one while the two drifted: the re-analysis copy stamped
+    nothing on its no-key path and logged no timing line. The entry points
+    now differ only in what they do BEFORE this — the cutout — and in what
+    they return.
+
+    Returns False only when there is no Claude key AND the fallback produced
+    nothing; True whenever the hat now carries a result, including an `error`
+    status (that is a result the owner can see and act on).
+    """
+    # Everything below interleaves DB reads (API key, model, eBay creds, the
+    # Vision key) with slow network calls. With autoflush on, the FIRST of
+    # those reads flushes the pending hat writes — `photo_path` on the upload
+    # path, `_apply_analysis`'s fields on either — which opens a SQLite write
+    # transaction that SQLite holds until commit. The lock would therefore
+    # stay held across the entire Claude + eBay + Melin sequence: minutes,
+    # worst case. Every other writer in the process then waits out
+    # `busy_timeout` and fails with "database is locked" — adding a second hat
+    # while the first analyzes, or tapping "wearing this today" during a
+    # re-analysis, would error out. Deferring the flush shrinks the lock
+    # window to the caller's commit. Safe because nothing in here re-queries
+    # the hat row; the pending change only has to be visible at commit time.
     with db.no_autoflush:
-        # 2. Claude analysis
         api_key, _source = await settings_service.get_anthropic_key(db)
         if not api_key:
             hat.analysis_status = "skipped"
-            hat.analysis_error = "No Anthropic API key configured."
+            hat.analysis_error = f"{NO_ANTHROPIC_KEY}."
             hat.analyzed_at = datetime.now(timezone.utc)
-            await run_fallback_analysis(
-                db, hat, canonical_path, reason="No Anthropic API key configured"
+            applied = await run_fallback_analysis(
+                db, hat, photo_path, reason=NO_ANTHROPIC_KEY, missing_key=True
             )
             # The timing line, on this path too. A 24 s rembg run (minutes on
             # a Pi) used to leave no log line at all when no key was set —
-            # the per-hat stage timing CLAUDE.md promises held only when
-            # Claude ran.
+            # the per-hat stage timing line appeared only when Claude ran.
             logger.info(
                 "hat=%s analyzed · rembg=%.2fs claude=skipped (no key) status=%s",
                 hat.id, t_rembg, hat.analysis_status,
             )
-            return hat
+            return applied
 
         model_id, _model_source = await settings_service.get_anthropic_model(db)
 
         await _publish_stage(db, hat.id, STAGE_IDENTIFYING)
         t_claude0 = time.monotonic()
         try:
-            analysis: HatAnalysis = await analyze_hat_image(
-                canonical_path, api_key,
+            analysis: claude_analysis.HatAnalysis = await claude_analysis.analyze_hat_image(
+                photo_path, api_key,
                 model=model_id, selected_style=hat.style,
                 selected_construction=hat.construction,
                 known_series=await _known_series(db),
             )
-        except ClaudeAnalysisError as exc:
+        except claude_analysis.ClaudeAnalysisError as exc:
             logger.warning(
                 "Hat analysis failed for hat=%s (rembg=%.2fs claude=%.2fs): %s",
                 hat.id, t_rembg, time.monotonic() - t_claude0, exc,
@@ -247,9 +383,9 @@ async def finalize_hat_photo(
             hat.analysis_error = str(exc)
             hat.analyzed_at = datetime.now(timezone.utc)
             await run_fallback_analysis(
-                db, hat, canonical_path, reason=f"Claude analysis failed: {exc}"
+                db, hat, photo_path, reason=f"Claude analysis failed: {exc}"
             )
-            return hat
+            return True
         t_claude = time.monotonic() - t_claude0
 
         leaked = _apply_analysis(hat, analysis)
@@ -264,70 +400,29 @@ async def finalize_hat_photo(
         "hat=%s analyzed · rembg=%.2fs claude=%.2fs ebay+resale=%.2fs status=%s",
         hat.id, t_rembg, t_claude, time.monotonic() - t_ebay0, hat.analysis_status,
     )
-    return hat
+    return True
 
 
 async def _refresh_ebay_comps(db: AsyncSession, hat: Hat) -> None:
-    """Best-effort eBay comparable-listings refresh — never fails the caller."""
+    """Best-effort eBay comparable-listings refresh — never fails the caller.
+
+    Gated on brand AND model: without a model the search falls back to the
+    style ("Melin a game hat"), which prices the whole line, not this hat.
+    `find_comps` raises nothing but `EbayError`, so catching that one type is
+    the whole degrade path.
+
+    Written through `hat_service.apply_ebay_comps`, the one writer of those
+    columns — the admin refresh already used it, and this path had its own
+    `setattr` over whatever keys the service returned.
+    """
     if hat.brand and hat.model_name:
         try:
-            comps = await find_comps(db, brand=hat.brand, model=hat.model_name, style=hat.style)
-            for k, v in comps.items():
-                setattr(hat, k, v)
-        except EbayError as exc:
+            comps = await ebay_service.find_comps(
+                db, brand=hat.brand, model=hat.model_name, style=hat.style
+            )
+            hat_service.apply_ebay_comps(hat, comps)
+        except ebay_service.EbayError as exc:
             logger.info("eBay comp refresh skipped for hat=%s: %s", hat.id, exc)
-
-
-async def reanalyze_existing_photo(
-    db: AsyncSession, hat: Hat, photo_path: Path
-) -> bool:
-    """Re-run analysis against an already-processed cutout — no bg removal.
-
-    Shares the key-check → Claude → apply → eBay → resale choreography (with
-    graceful fallback) with finalize_hat_photo, instead of the route hand-rolling
-    its own drifting copy. Mutates `hat`; caller commits. Returns False only when
-    there is no Claude key AND the fallback produced nothing (caller → HTTP 400).
-    """
-    # Same SQLite write-lock hazard `finalize_hat_photo` guards against, and for
-    # the same reason: once `_apply_analysis` dirties the hat, the next DB read
-    # (eBay creds, or the Google Vision key on the fallback path) autoflushes,
-    # which opens a write transaction SQLite holds until commit — across the
-    # eBay OAuth + Browse calls and two 30s Melin requests. Every other writer
-    # then waits out `busy_timeout` and fails with "database is locked", so
-    # tapping "wearing this today" during a reanalysis would 500.
-    with db.no_autoflush:
-        api_key, _source = await settings_service.get_anthropic_key(db)
-        if not api_key:
-            return await run_fallback_analysis(
-                db, hat, photo_path, reason="No Anthropic API key configured"
-            )
-
-        model_id, _msrc = await settings_service.get_anthropic_model(db)
-        await _publish_stage(db, hat.id, STAGE_IDENTIFYING)
-        try:
-            analysis = await analyze_hat_image(
-                photo_path, api_key, model=model_id, selected_style=hat.style,
-                selected_construction=hat.construction,
-                known_series=await _known_series(db),
-            )
-        except ClaudeAnalysisError as exc:
-            logger.warning("Reanalysis failed for hat=%s: %s", hat.id, exc)
-            hat.analysis_status = "error"
-            hat.analysis_error = str(exc)
-            hat.analyzed_at = datetime.now(timezone.utc)
-            await run_fallback_analysis(
-                db, hat, photo_path, reason=f"Claude analysis failed: {exc}"
-            )
-            return True
-
-        leaked = _apply_analysis(hat, analysis)
-        await _canonicalize_analysis_text(db, hat)
-        await _apply_analyzed_colorway(db, hat, analysis, leaked)
-        await _publish_stage(db, hat.id, STAGE_PRICING)
-        await _refresh_ebay_comps(db, hat)
-        await _publish_stage(db, hat.id, STAGE_RESALE)
-        await refresh_melin_resale(hat)
-        return True
 
 
 # For the resale source label. The stored values are snake_case enum names;
@@ -357,7 +452,18 @@ async def refresh_melin_resale(hat: Hat) -> str:
     behavior). Returns one of `RESALE_PRICED`, `RESALE_SKIPPED` (not a melin
     hat, a manual price, or no listings) or `RESALE_UNREACHABLE`.
     """
-    if not is_melin(hat.brand):
+    if not melin_recap.is_melin(hat.brand):
+        return RESALE_SKIPPED
+    # A person's own number outranks a scraped median, and a re-analysis must
+    # not quietly overwrite it -- reanalyze runs on a schedule and on demand,
+    # so anything it clobbers is gone without a prompt.
+    #
+    # Checked BEFORE the fetch. It used to sit after it, so every hand-priced
+    # Melin hat still walked its whole category on the marketplace (five page
+    # requests, measured) for a number that was then thrown away -- against
+    # somebody else's public API, on a path `repricing` promises costs a
+    # protected hat no API call at all.
+    if hat.resale_price_scope == ResaleScope.MANUAL:
         return RESALE_SKIPPED
     try:
         # Condition and size are the hat's own, so the median comes back from
@@ -366,19 +472,14 @@ async def refresh_melin_resale(hat: Hat) -> str:
         # `colorway` is what turns a line into a product: melin names its
         # goods `<Model> - <Colorway>`, so the two columns together identify
         # the exact item on the marketplace instead of the family it is in.
-        stats = await fetch_resale_stats(
+        stats = await melin_recap.fetch_resale_stats(
             hat.style, hat.model_name, condition=hat.condition, size=hat.size,
             colorway=hat.colorway, construction=hat.construction,
         )
-    except MelinRecapError as exc:
+    except melin_recap.MelinRecapError as exc:
         logger.info("Melin Recap stats skipped for hat=%s: %s", hat.id, exc)
         return RESALE_UNREACHABLE
     if not stats:
-        return RESALE_SKIPPED
-    # A person's own number outranks a scraped median, and a re-analysis must
-    # not quietly overwrite it -- reanalyze runs on a schedule and on demand,
-    # so anything it clobbers is gone without a prompt.
-    if hat.resale_price_scope == ResaleScope.MANUAL:
         return RESALE_SKIPPED
     hat.resale_price = stats["median"]
     scope = ResaleScope.MODEL if stats["sample"] == "model" else ResaleScope.CATEGORY
@@ -405,13 +506,7 @@ async def refresh_melin_resale(hat: Hat) -> str:
     return RESALE_PRICED
 
 
-#: Reasons that genuinely mean "there is no key to call with". Anything else
-#: — a billing failure, a network error, a model rejecting the request — means
-#: the key exists and something else went wrong.
-_MISSING_KEY_MARKERS = ("not configured", "no api key", "no anthropic key")
-
-
-def fallback_message(reason: str, provided: list[str]) -> str:
+def fallback_message(reason: str, provided: list[str], *, missing_key: bool = False) -> str:
     """The `analysis_error` text for a hat that fell back to basic ID.
 
     A pure function so the ADVICE can be tested without a photo, a cutout or a
@@ -423,8 +518,17 @@ def fallback_message(reason: str, provided: list[str]) -> str:
     add the key they already had. A 235-hat collection sat like that for three
     days, because the banner was the only thing on screen and the true reason
     lived in a field the fallback branch never rendered.
+
+    The fix for that then went wrong the other way: it recognized "no key" by
+    searching the reason for marker substrings, and the pipeline's own reason
+    (`NO_ANTHROPIC_KEY`) contained none of them, so the add-a-key advice
+    never appeared at all. `missing_key` is now stated by the one caller that
+    knows it — the branch that found no key — rather than inferred from
+    prose. Defaulted to False because that is the harmless direction: telling
+    an owner to resolve a stated cause is never wrong, telling them to add a
+    key they have is the incident above.
     """
-    if any(m in reason.lower() for m in _MISSING_KEY_MARKERS):
+    if missing_key:
         advice = "Add a Claude API key in Settings and Reanalyze for full identification."
     else:
         advice = "Reanalyze once the cause above is resolved for full identification."
@@ -432,7 +536,7 @@ def fallback_message(reason: str, provided: list[str]) -> str:
 
 
 async def run_fallback_analysis(
-    db: AsyncSession, hat: Hat, photo_path: Path, *, reason: str
+    db: AsyncSession, hat: Hat, photo_path: Path, *, reason: str, missing_key: bool = False
 ) -> bool:
     """Best-effort analysis without Claude: mask colors + Google logo brand.
 
@@ -440,43 +544,57 @@ async def run_fallback_analysis(
     by construction); a PNG suffix is the marker that a cutout exists. Brand
     comes from Google Vision logo detection when that key is configured.
 
+    **Colors and a brand, nothing else** — the fallback design's scope. No
+    model name, no design notes and NO PRICE: a Melin brand gets the resale
+    deep link (`_apply_resale_link`), never a marketplace median. It used to
+    call `refresh_melin_resale` here, so a hat identified by nothing but its
+    logo was priced at the median of its whole style category — the
+    line-level shared price 2.71/2.72 worked to remove — and, having no
+    retail estimate, was valued at exactly that.
+
     Mutates `hat` and sets `analysis_status='fallback'` only if at least one
     piece of data was obtained; otherwise leaves the hat untouched (caller's
     skipped/error state stands) and returns False. Never raises.
+
+    `missing_key` says the reason is that no Claude key exists; it selects
+    the advice (see `fallback_message`).
+
+    Colors the OWNER set are not colors obtained: they are kept
+    (`hat_service.replace_analysis_colors` refuses to overwrite them), so they
+    neither count toward "the fallback produced something" nor get announced
+    as "colors from photo cutout" — the message would otherwise claim a write
+    that did not happen.
     """
     colors = []
     if photo_path.suffix.lower() == ".png":
         try:
-            colors = await asyncio.to_thread(extract_hat_colors, photo_path)
+            colors = await asyncio.to_thread(color_extraction.extract_hat_colors, photo_path)
         except Exception as exc:  # noqa: BLE001 — fallback must never break uploads
             logger.warning("Fallback color extraction failed for hat=%s: %s", hat.id, exc)
+    # `general_color` is the palette name itself: `extract_hat_colors` names
+    # each color by its nearest palette entry, and the default color search
+    # reads this column. Stated rather than left for `hat_service` to derive
+    # from the hex — the derivation reaches the same entry today, and the
+    # name the swatch shows and the name search matches should not depend on
+    # two lookups continuing to agree.
+    tags = [
+        tag for tag in (
+            hat_service.analysis_color(color.name, color.hex, color.tier, general=color.name)
+            for color in colors
+        ) if tag is not None
+    ]
 
-    brand: str | None = None
-    google_key, _gsrc = await settings_service.get_google_vision_key(db)
-    if google_key:
-        try:
-            logo = await detect_brand_logo(photo_path, google_key)
-            if logo:
-                brand = logo[0]
-        except GoogleVisionError as exc:
-            logger.info("Fallback logo detection skipped for hat=%s: %s", hat.id, exc)
+    brand = await _fallback_brand(db, hat, photo_path)
 
-    if not colors and not brand:
+    # Decided before anything is written, so a fallback that obtained nothing
+    # leaves the hat exactly as it was.
+    colors_written = bool(tags) and hat.colors_source != hat_service.COLORS_OWNER_SOURCE
+    if not colors_written and not brand:
         return False
 
     provided = []
-    if colors:
-        hat.colors.clear()
-        for rank, color in enumerate(colors, start=1):
-            hat.colors.append(
-                HatColor(
-                    color_name=color.name,
-                    general_color=color.name,
-                    hex_value=color.hex,
-                    dominance_rank=rank,
-                    tier=color.tier,
-                )
-            )
+    if colors_written:
+        hat_service.replace_analysis_colors(hat, tags)
         provided.append("colors from photo cutout")
     if brand:
         hat.brand = brand
@@ -485,22 +603,65 @@ async def run_fallback_analysis(
         # records. Naming the source keeps it honest about who found it.
         hat.logo_detected = f"{brand} — logo detected by Google Vision"
         provided.append("brand via Google logo detection")
-        _apply_resale_pointer(hat)
-        await refresh_melin_resale(hat)
+        _apply_resale_link(hat)
 
     hat.analysis_status = "fallback"
-    hat.analysis_error = fallback_message(reason, provided)
+    hat.analysis_error = fallback_message(reason, provided, missing_key=missing_key)
     hat.analyzed_at = datetime.now(timezone.utc)
     return True
+
+
+async def _fallback_brand(db: AsyncSession, hat: Hat, photo_path: Path) -> str | None:
+    """The logo-detected brand, or None — whatever Google Vision does.
+
+    `detect_brand_logo` raises only `GoogleVisionError` for every failure the
+    module can name (transport, status, a body that is not JSON, a reply of
+    the wrong shape, a key no header can carry); that is the expected
+    degrade, logged at INFO. The second handler is the backstop the "never
+    raises" contract above rests on, for a failure nobody has named yet: an
+    escape here throws away mask colors already extracted and, in a bulk
+    import, deletes the hat. It logs the traceback, because an unnamed
+    failure is a bug to be read, not a condition to be quiet about.
+    """
+    google_key, _gsrc = await settings_service.get_google_vision_key(db)
+    if not google_key:
+        return None
+    try:
+        logo = await google_vision.detect_brand_logo(photo_path, google_key)
+    except google_vision.GoogleVisionError as exc:
+        logger.info("Fallback logo detection skipped for hat=%s: %s", hat.id, exc)
+        return None
+    except Exception:  # the backstop described above — logged with its traceback
+        logger.exception("Fallback logo detection failed unexpectedly for hat=%s", hat.id)
+        return None
+    return logo[0] if logo else None
+
+
+def _apply_resale_link(hat: Hat) -> None:
+    """Attach the resale deep link when the brand qualifies — and no price.
+
+    The fallback's share of `_apply_resale_pointer`. It knows a brand from a
+    logo and nothing more, so it writes no price and erases none either: a
+    price already on the hat (typed, or left by an earlier full analysis)
+    stays exactly as it was. Only a hat with no price at all gets the
+    pointer's source label, which names the link ("Browse Melin Recap").
+    """
+    pointer = melin_recap.build_resale_pointer(hat.brand, hat.style)
+    if not pointer:
+        return
+    hat.resale_price_url = pointer["resale_price_url"]
+    if hat.resale_price is None:
+        hat.resale_price_source = pointer["resale_price_source"]
 
 
 def _apply_resale_pointer(hat: Hat) -> None:
     """Attach the resale deep link + pointer price when the brand qualifies.
 
-    Shared by the Claude path and the logo-detection fallback — both learn the
-    brand and then need exactly this.
+    The Claude path's, run just before `refresh_melin_resale` fills the price.
+    The logo-detection fallback used to share it and then price the hat too;
+    it now takes the link alone (`_apply_resale_link`).
     """
-    pointer = build_resale_pointer(hat.brand, hat.style)
+    pointer = melin_recap.build_resale_pointer(hat.brand, hat.style)
     if not pointer:
         return
     # The deep link is always safe to refresh. The PRICE is not: the pointer's
@@ -544,8 +705,10 @@ def _apply_construction(hat: Hat, construction: str | None) -> None:
       absent from the filtered view rather than merely wrong in a detail pane.
 
     An empty construction is an honest "nobody has looked yet". A guessed one
-    is indistinguishable from a fact the owner entered, and there is no column
-    recording which it was. So: blank stays blank until a person fills it in.
+    reads exactly like a fact the owner entered — `Hat.construction_source`
+    now records which a value is, but only for values written since it
+    existed, and every screen shows the value, not its source. So: blank stays
+    blank until a person fills it in.
 
     Kept as a function rather than deleting the call, so the one place this
     decision lives is greppable and the reasoning travels with it.
@@ -634,12 +797,11 @@ async def _known_series(db) -> list[str]:
     embroidery style — so an analyzer recalling them unaided misses most of
     them. Sending the ones already on record turns recall into recognition.
     """
-
     return await vocabulary.distinct_values(db, Hat.artist_series)
 
 
 async def _apply_analyzed_colorway(
-    db, hat: Hat, analysis: HatAnalysis, leaked: str | None = None
+    db, hat: Hat, analysis: claude_analysis.HatAnalysis, leaked: str | None = None
 ) -> None:
     """Fill a blank colorway from the analyzer, but only if it names a REAL product.
 
@@ -660,8 +822,6 @@ async def _apply_analyzed_colorway(
       else's product, which is strictly worse than the blank it replaced —
       the same reasoning that keeps color-inferred colorways out entirely.
     """
-
-
     # `leaked` is the colorway half of a model name Claude wrote the old way,
     # split out by `_apply_analysis`. Claude's own field wins when it has one.
     candidate = analysis.colorway or leaked
@@ -672,24 +832,6 @@ async def _apply_analyzed_colorway(
         # analysis-written free-text field — see `_canonicalize_analysis_text`,
         # which does the same for artist_series and construction.
         hat.colorway = await vocabulary.canonicalize(db, Hat.colorway, candidate)
-
-
-def _split_model_and_colorway(model_name: str | None) -> tuple[str | None, str | None]:
-    """Split "Trenches Hydro — Hawaii 808" into its two halves.
-
-    Defensive, and it repairs the shape at the source. The tool schema now
-    forbids a separator in `model_name`, but 35 of 235 stored names carried
-    one, and a model that agrees with no real product is the single most
-    expensive thing this pipeline can write — every downstream gate is token
-    containment on it.
-
-    Only splits on an explicit separator. A name like "Trenches Icon Camo"
-    carries a colorway word with nothing marking it, and guessing where the
-    model ends is how a correct name gets truncated.
-    """
-    if not model_name:
-        return model_name, None
-    return naming.split_model_colorway(model_name)
 
 
 async def _canonicalize_analysis_text(db, hat: Hat) -> None:
@@ -709,7 +851,6 @@ async def _canonicalize_analysis_text(db, hat: Hat) -> None:
     if a stored value needs its spelling snapped; `artist_series` and
     `colorway` are the fields this exists for.
     """
-
     if hat.artist_series:
         hat.artist_series = await vocabulary.canonicalize(
             db, Hat.artist_series, hat.artist_series
@@ -719,17 +860,31 @@ async def _canonicalize_analysis_text(db, hat: Hat) -> None:
             db, Hat.construction, hat.construction, known=KNOWN_CONSTRUCTIONS
         )
         # Through the setter: `construction` owns the hydro/hydrolite flags,
-        # and assigning the column directly is what lets them drift.
+        # and assigning the column directly is what lets them drift. With the
+        # source it already has, stated: this is a respelling, not a new
+        # answer. The setter keeps provenance on its own only across a change
+        # of case, and the vocabulary also folds punctuation and accents — so
+        # an owner's `brushed-cotton` snapping to `Brushed Cotton` came out as
+        # nobody's, which the construction audit then treats as a guess.
         if canonical != hat.construction:
-            hat.set_construction(canonical)
+            hat.set_construction(canonical, source=hat.construction_source)
 
 
-def _apply_analysis(hat: Hat, analysis: HatAnalysis) -> str | None:
+def _apply_analysis(hat: Hat, analysis: claude_analysis.HatAnalysis) -> str | None:
     hat.brand = _keep_on_null(analysis.brand, hat.brand)
     hat.logo_detected = analysis.logo_detected
     hat.artist_series = _keep_on_null(analysis.artist_series, hat.artist_series)
     _apply_construction(hat, analysis.construction)
-    model_name, leaked = _split_model_and_colorway(analysis.model_name)
+    # Split "Trenches Hydro — Hawaii 808" into its two halves. Defensive, and
+    # it repairs the shape at the source: the tool schema now forbids a
+    # separator in `model_name`, but 35 of 235 stored names carried one, and
+    # a model that agrees with no real product is the single most expensive
+    # thing this pipeline can write — every downstream gate is token
+    # containment on it. `naming` splits only on an explicit separator: a name
+    # like "Trenches Icon Camo" carries a colorway word with nothing marking
+    # it, and guessing where the model ends is how a correct name gets
+    # truncated.
+    model_name, leaked = naming.split_model_colorway(analysis.model_name)
     hat.model_name = _strip_contradicting_construction(
         _keep_on_null(model_name, hat.model_name), hat.construction
     )
@@ -751,20 +906,20 @@ def _apply_analysis(hat: Hat, analysis: HatAnalysis) -> str | None:
     hat.analysis_error = None
     hat.analyzed_at = datetime.now(timezone.utc)
 
-    # Replace colors. color_name keeps Claude's phrasing ("heather slate");
-    # general_color snaps to the curated palette via the hex so the color
-    # filter chips match consistently regardless of naming whims.
-    hat.colors.clear()
-    for rank, color in enumerate(analysis.colors, start=1):
-        hat.colors.append(
-            HatColor(
-                color_name=color.name,
-                general_color=normalize_hex_name(color.hex, color.name),
-                hex_value=color.hex,
-                dominance_rank=rank,
-                tier=color.tier,
-            )
-        )
+    # Replace colors — unless the owner set them (`replace_analysis_colors`
+    # keeps a person's palette through any re-analysis). color_name keeps
+    # Claude's phrasing ("heather slate"); general_color is left to derive
+    # from the hex, which snaps it to the curated palette so the color filter
+    # chips match consistently regardless of naming whims. An answer with no
+    # usable color says nothing about the palette, so it replaces nothing.
+    tags = [
+        tag for tag in (
+            hat_service.analysis_color(color.name, color.hex, color.tier)
+            for color in analysis.colors
+        ) if tag is not None
+    ]
+    if tags:
+        hat_service.replace_analysis_colors(hat, tags)
 
     # Resale pointer (Melin only, by current rules)
     _apply_resale_pointer(hat)
@@ -816,15 +971,13 @@ async def backfill_split_model_names(db) -> int:
     "the log IS the undo" is only true for ninety days, and a backup taken
     before the upgrade is the durable copy.
     """
-
-
     hats = (
         await db.execute(select(Hat).where(Hat.model_name.is_not(None)))
     ).scalars().all()
 
     repaired: list[dict] = []
     for hat in hats:
-        model, dropped = _split_model_and_colorway(hat.model_name)
+        model, dropped = naming.split_model_colorway(hat.model_name)
         if dropped and model and model != hat.model_name:
             # `dropped`, not `colorway_dropped`. The suffix is usually a leaked
             # colorway, which is what this repair is for — but the splitter also

@@ -269,3 +269,31 @@ async def test_a_chunked_oversize_body_gets_a_413_not_a_500(
     assert await unhandled_rows() == before, (
         "an oversize body wrote an unhandled-error audit row"
     )
+
+
+async def test_an_oversize_chunked_body_never_reaches_the_handler(client, monkeypatch):
+    """A 413 must mean nothing happened.
+
+    The count used to end the body early with a clean final chunk, so the
+    route saw a complete, SHORT body and ran on it. A chunked
+    `{"name": "ChunkedRoom"}` followed by megabytes of JSON whitespace is
+    still valid JSON when cut anywhere in the whitespace: the room was created
+    and committed, and the client was told its request had been refused — so
+    a client that retried with a smaller body got a duplicate. The refusal now
+    happens at the read, before FastAPI hands the body to anything.
+    """
+    monkeypatch.setenv("HEADROOM_MAX_BODY_BYTES", "1024")
+
+    async def chunks():
+        yield b'{"name": "ChunkedRoom"}'
+        for _ in range(8):
+            yield b" " * 512
+
+    resp = await client.post(
+        "/api/rooms", content=chunks(), headers={"content-type": "application/json"}
+    )
+
+    assert resp.status_code == 413, resp.text
+    assert resp.json() == {"detail": "Request body too large"}
+    names = [room["name"] for room in (await client.get("/api/rooms")).json()]
+    assert "ChunkedRoom" not in names, "the refused request's write was committed anyway"

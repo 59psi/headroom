@@ -19,12 +19,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.models.hat import Hat
 from headroom.models.user import ShareLink
+from headroom.schemas.hat import STYLE_LABELS
+from headroom.schemas.share import SharedColor, SharedHat
+from headroom.services import activity_service
 from headroom.services.hat_service import hat_loads
-from headroom.services.activity_service import log_and_commit
 
 # 32 bytes -> 256 bits of entropy, url-safe. The token IS the credential for
 # the public endpoints, so it has to be unguessable rather than merely unique.
-from headroom.schemas.share import SharedColor, SharedHat
 _TOKEN_BYTES = 32
 
 
@@ -58,7 +59,7 @@ async def create_link(
     db.add(link)
     await db.commit()
     await db.refresh(link)
-    await log_and_commit(
+    await activity_service.log_and_commit(
         db, kind="share.created", entity_type="share_link", entity_id=link.id,
         summary=f"Share link '{link.label}' created (exposes the full active collection)",
     )
@@ -72,7 +73,7 @@ async def revoke_link(db: AsyncSession, link_id: int) -> ShareLink | None:
         return None
     link.revoked_at = datetime.now(timezone.utc)
     await db.commit()
-    await log_and_commit(
+    await activity_service.log_and_commit(
         db, kind="share.revoked", entity_type="share_link", entity_id=link.id,
         summary=f"Share link '{link.label}' revoked",
     )
@@ -82,21 +83,15 @@ async def revoke_link(db: AsyncSession, link_id: int) -> ShareLink | None:
 async def resolve_token(db: AsyncSession, token: str) -> ShareLink:
     """The link a token refers to, if it is still usable. Raises otherwise.
 
-    Naive `expires_at` values are read as UTC: SQLite has no timezone type, so
-    a datetime written as aware comes back naive, and comparing it to an aware
-    `now()` raises rather than expiring the link. Treating it as UTC matches
-    what was stored.
+    `expires_at` is a `UtcDateTime` column: it loads zone-aware even though
+    SQLite stores no zone, so it compares with an aware `now()` directly.
     """
     result = await db.execute(select(ShareLink).where(ShareLink.token == token))
     link = result.scalar_one_or_none()
     if link is None or link.revoked_at is not None:
         raise ShareLinkInvalid
-    if link.expires_at is not None:
-        expires = link.expires_at
-        if expires.tzinfo is None:
-            expires = expires.replace(tzinfo=timezone.utc)
-        if expires < datetime.now(timezone.utc):
-            raise ShareLinkInvalid
+    if link.expires_at is not None and link.expires_at < datetime.now(timezone.utc):
+        raise ShareLinkInvalid
     return link
 
 
@@ -173,6 +168,7 @@ def to_shared_hat(hat: Hat, photo_url: str | None, thumb_url: str | None = None)
         brand=hat.brand,
         model_name=hat.model_name,
         style=hat.style,
+        style_label=STYLE_LABELS.get(hat.style, hat.style),
         photo_url=photo_url,
         thumb_url=thumb_url,
         colors=[

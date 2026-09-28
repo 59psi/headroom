@@ -12,17 +12,18 @@ construction, including after a restart mid-run.
 
 from __future__ import annotations
 
+import asyncio
 import re
-
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from headroom.config import settings as config_settings
 from headroom.models.analysis_job import AnalysisJob
 from headroom.models.hat import Hat
-from headroom.services import hat_service
+from headroom.services import hat_analysis_pipeline, hat_service, settings_service
 from headroom.services.analysis_queue import PENDING
 
 RUNNING = "running"
@@ -89,6 +90,95 @@ def _reason_key(error: str) -> str:
     return cleaned[:_REASON_KEY_CHARS]
 
 
+#: Why a failed hat cannot be retried RIGHT NOW. A retry of one of these can
+#: only fail the same way again, so it is not offered — and the card says
+#: which, because the two need opposite things from the owner.
+#:
+#: No photo: the row names no photo, or names a file that is gone from disk.
+#: Nothing fixes that but a new photo.
+NO_PHOTO = "no_photo"
+#: No Claude key: the hat failed for want of one and there still is none.
+#: Retryable again the moment a key is added — so this is decided against the
+#: key as configured NOW, not against the failure text alone.
+NO_API_KEY = "no_api_key"
+
+
+def _missing_photos(paths: dict[int, str | None]) -> set[int]:
+    """Ids whose photo is absent — no path, or a path to nothing. Filesystem
+    stats, so the caller runs this off the event loop."""
+    root = config_settings.upload_dir
+    return {hat_id for hat_id, path in paths.items() if not path or not (root / path).is_file()}
+
+
+async def _unretryable(
+    db: AsyncSession, rows: list[tuple[int, str | None, str | None]]
+) -> dict[int, str]:
+    """`{hat_id: NO_PHOTO | NO_API_KEY}` for the failing rows `(id, error, photo_path)`
+    that a retry cannot help. Every other row is worth retrying.
+
+    The retry used to be offered for anything with a `photo_path`, which is a
+    question about the ROW: a hat whose file had been moved off disk read
+    "Retry 1 hat", and the retry 404'd on the same missing file; a keyless
+    install was offered a retry of every hat, each of which could only fall
+    back again.
+    """
+    missing = await asyncio.to_thread(_missing_photos, {h: p for h, _e, p in rows})
+    key, _source = await settings_service.get_anthropic_key(db)
+    out: dict[int, str] = {}
+    for hat_id, error, _path in rows:
+        if hat_id in missing:
+            out[hat_id] = NO_PHOTO
+        elif not key and (error or "").startswith(hat_analysis_pipeline.NO_ANTHROPIC_KEY):
+            out[hat_id] = NO_API_KEY
+    return out
+
+
+async def expected_failure_prefix(db: AsyncSession) -> str | None:
+    """The failure text that is not an alarm on this install RIGHT NOW.
+
+    With no Claude key configured, `NO_ANTHROPIC_KEY` on a hat is the expected
+    result of Basic ID, not a failure to flag: the nav badge and the error
+    list leave it out (`hat_service._alarming_failure_filters`), while the
+    failures card keeps it as one `NO_API_KEY` group — the "Add a key" nudge.
+    Judged against the key as configured now, like `_unretryable`: add a key
+    and the same hats count again, because a retry can now help them.
+    """
+    key, _source = await settings_service.get_anthropic_key(db)
+    return None if key else hat_analysis_pipeline.NO_ANTHROPIC_KEY
+
+
+async def _failing_rows(db: AsyncSession) -> list[tuple[int, str | None, str | None]]:
+    """`(id, error, photo_path)` for every reanalyzable hat carrying a failure —
+    the set a retry draws from, before `_unretryable` narrows it."""
+    return [
+        (hat_id, error, path)
+        for hat_id, error, path in (
+            await db.execute(
+                select(Hat.id, Hat.analysis_error, Hat.photo_path).where(
+                    *hat_service.reanalyzable_filters(),
+                    *hat_service.failed_analysis_filters(),
+                )
+            )
+        ).all()
+    ]
+
+
+async def retryable_failure_ids(db: AsyncSession, reason: str | None = None) -> list[int]:
+    """Ids a retry should queue: failing hats a retry can actually help.
+
+    The ONE definition, used by the failures card for its counts and by the
+    retry itself for what it queues — so "Retry 21" queues 21 by
+    construction. `reason` narrows to one failure group (see
+    `ids_for_failure_reason`); None is every retryable failure.
+    """
+    rows = await _failing_rows(db)
+    if reason is not None:
+        key = _reason_key(reason)
+        rows = [r for r in rows if _reason_key(r[1] or "") == key]
+    blocked = await _unretryable(db, rows)
+    return sorted(hat_id for hat_id, _e, _p in rows if hat_id not in blocked)
+
+
 async def recent_failures(db: AsyncSession, limit: int = 10) -> list[dict]:
     """Distinct analysis failures across active hats, worst first.
 
@@ -100,28 +190,35 @@ async def recent_failures(db: AsyncSession, limit: int = 10) -> list[dict]:
     """
     rows = (
         await db.execute(
-            select(Hat.id, Hat.analysis_error, Hat.analyzed_at)
+            select(Hat.id, Hat.analysis_error, Hat.analyzed_at, Hat.photo_path)
             .where(Hat.disposed_at.is_(None), *hat_service.failed_analysis_filters())
             .order_by(Hat.analyzed_at.desc())
         )
     ).all()
 
-    # What a retry could actually queue, taken from the very function the retry
-    # route calls rather than re-derived here. The two numbers differ for a real
-    # reason: "Photo missing before analysis could run." is a failure worth
-    # SEEING and impossible to retry, so filtering those rows out of this view
-    # would hide the one message that explains why a hat is stuck. Deriving the
-    # count instead of restating the rule means a button labeled "Retry 21"
-    # queues 21 — by construction, not by two filters agreeing today.
-    retryable = set(await hat_service.ids_for_reanalysis(db, failed_only=True))
+    # What a retry could actually queue, from the very function the retry
+    # calls rather than re-derived here. The two numbers differ for real
+    # reasons — a photo that is gone, a key that is still missing — and those
+    # failures are worth SEEING even though a retry cannot help: filtering them
+    # out of this view would hide the one message that explains why a hat is
+    # stuck. Deriving the count instead of restating the rule means a button
+    # labeled "Retry 21" queues 21 — by construction, not by two filters
+    # agreeing today.
+    retryable = set(await retryable_failure_ids(db))
+    # Why the rest cannot be retried, for the card to say. Computed over every
+    # row shown, including ones with no photo at all (which `_failing_rows`
+    # never considers, since there is nothing to re-analyze).
+    blocked = await _unretryable(db, [(h, e, p) for h, e, _at, p in rows])
 
     groups: dict[str, dict] = {}
-    for hat_id, error, analyzed_at in rows:
+    why_not: dict[str, set[str]] = {}
+    for hat_id, error, analyzed_at, _path in rows:
         key = _reason_key(error or "")
         g = groups.setdefault(key, {
             "reason": key,
             "hat_count": 0,
             "retryable_count": 0,
+            "unretryable_reason": None,
             "sample_hat_ids": [],
             "last_seen": None,
             "is_billing": any(m in key.lower() for m in _BILLING_MARKERS),
@@ -129,10 +226,17 @@ async def recent_failures(db: AsyncSession, limit: int = 10) -> list[dict]:
         g["hat_count"] += 1
         if hat_id in retryable:
             g["retryable_count"] += 1
+        elif hat_id in blocked:
+            why_not.setdefault(key, set()).add(blocked[hat_id])
         if len(g["sample_hat_ids"]) < 5:
             g["sample_hat_ids"].append(hat_id)
         if analyzed_at and (g["last_seen"] is None or analyzed_at > g["last_seen"]):
             g["last_seen"] = analyzed_at
+
+    for key, reasons in why_not.items():
+        # A missing key outranks a missing photo when one group has both: it
+        # is the one the owner can fix from Settings in a minute.
+        groups[key]["unretryable_reason"] = NO_API_KEY if NO_API_KEY in reasons else NO_PHOTO
 
     ordered = sorted(groups.values(), key=lambda g: -g["hat_count"])
     return ordered[:limit]
@@ -156,18 +260,11 @@ async def ids_for_failure_reason(db: AsyncSession, reason: str) -> list[int]:
     sends back what this module produced), and `_reason_key` is idempotent, so
     this costs nothing and means a hand-made API call can pass raw error text
     and still hit the right group.
-    """
-    rows = (
-        await db.execute(
-            select(Hat.id, Hat.analysis_error).where(
-                *hat_service.reanalyzable_filters(),
-                *hat_service.failed_analysis_filters(),
-            )
-        )
-    ).all()
 
-    key = _reason_key(reason)
-    return sorted(hat_id for hat_id, error in rows if _reason_key(error or "") == key)
+    Only the hats a retry can help: the group's count on the card and this
+    list come from the same `retryable_failure_ids`.
+    """
+    return await retryable_failure_ids(db, reason)
 
 
 async def _counts(db: AsyncSession, job_id: int) -> tuple[int, int, int]:

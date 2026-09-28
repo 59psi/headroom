@@ -72,6 +72,15 @@ async def test_every_env_knob_the_code_reads_is_forwarded_or_excused():
     assert stale == [], f"excused but no longer read anywhere: {stale}"
 
 
+async def test_the_host_time_zone_reaches_the_container():
+    """`hat_service.owner_today` — the day a date-less wear lands on — is the
+    SERVER's calendar day, and a container has no zone unless `TZ` is handed
+    to it. Not a `HEADROOM_*` name, so the enumeration above cannot see it:
+    without the forward a `.env` `TZ=` did nothing and every such tap after
+    5 pm in California landed on tomorrow."""
+    assert "TZ" in _compose_env_keys()
+
+
 async def test_an_empty_flag_means_unset_not_false(monkeypatch):
     """`${VAR:-}` arrives as "". The old reader tested `"" in ("1","true","yes")`
     and got False — which would have switched off mDNS, backups and both

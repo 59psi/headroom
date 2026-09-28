@@ -1,10 +1,10 @@
 /**
  * Every form control has an accessible name.
  *
- * CLAUDE.md states the rule for query controls ("must carry `aria-label` — the
- * visible `<label>` elements have no `htmlFor`, so nothing else associates
- * them") and calls it an accessibility requirement first. The 2026-08 review
- * fixed eleven; twenty-six more were unlabeled at 2.77.3, including Login's
+ * The rule for query controls, an accessibility requirement first: each
+ * "must carry `aria-label` — the visible `<label>` elements have no
+ * `htmlFor`, so nothing else associates them". This scan is what enforces it.
+ * The 2026-08 review fixed eleven; twenty-six more were unlabeled at 2.77.3, including Login's
  * username and password, every API-key box, and the whole Edit-hat form. A
  * screen reader read each as "edit text".
  *
@@ -57,7 +57,7 @@ function controls(text: string): Array<{ tag: string; attrs: string; inner: stri
     const attrs = code.slice(m.index! + m[0].length, i);
     // For a button, the text between the tags is its name — capture up to the
     // matching close so an icon-only control (`×`, one glyph) can be told
-    // from a labelled one (`Save`).
+    // from a labeled one (`Save`).
     let inner = '';
     if (m[1] === 'button') {
       const close = code.indexOf('</button>', i);

@@ -62,7 +62,7 @@ def stub_claude(monkeypatch):
     )
     # Single seam: both upload and reanalyze route through the pipeline module.
     monkeypatch.setattr(
-        "headroom.services.hat_analysis_pipeline.analyze_hat_image", _fake_analyze
+        "headroom.services.claude_analysis.analyze_hat_image", _fake_analyze
     )
 
 
@@ -157,7 +157,7 @@ async def test_claude_error_marks_hat_status_error(client, monkeypatch):
         "headroom.services.settings_service.get_anthropic_key", _fake_get_key
     )
     monkeypatch.setattr(
-        "headroom.services.hat_analysis_pipeline.analyze_hat_image", _boom
+        "headroom.services.claude_analysis.analyze_hat_image", _boom
     )
 
     create = await client.post(
@@ -368,7 +368,7 @@ async def test_the_owner_stated_construction_is_sent_to_claude(client, monkeypat
         "headroom.services.settings_service.get_anthropic_key", _fake_get_key
     )
     monkeypatch.setattr(
-        "headroom.services.hat_analysis_pipeline.analyze_hat_image", _capture
+        "headroom.services.claude_analysis.analyze_hat_image", _capture
     )
 
     created = await client.post("/api/hats", json={

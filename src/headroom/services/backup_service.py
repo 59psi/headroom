@@ -13,20 +13,34 @@ import io
 import json
 import logging
 import os
-import shutil
 import re
 import shlex
+import shutil
+import sqlite3
 import stat
 import tarfile
 import tempfile
+import threading
 import time
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from headroom.config import env_flag, env_float, env_int, settings
-from headroom.services import ca_vault
+# Top-level, all three. `database` and `settings_service` were imported inside
+# the functions that use them under a "cycle" noqa, and neither is one:
+# `database` imports nothing from `services`, `settings_service` imports only
+# the config and its model, and hoisting both leaves `import headroom.app`
+# working. A noqa naming a reason that is not true is worse than none — it is
+# the sentence that tells the next person the import may not move. Called as
+# module attributes (`database.async_session()`), so tests that patch them
+# still reach every caller.
+from sqlalchemy.exc import DBAPIError
+
+from headroom import database
+from headroom.config import env_flag, env_float, env_int, env_str, settings
+from headroom.services import ca_vault, collection_fingerprint, settings_service
 from headroom.utils import disk
 
 logger = logging.getLogger(__name__)
@@ -40,6 +54,7 @@ class UploadConfigError(Exception):
     stopped validating produced a silent skip every cycle while the off-site
     card went on showing the previous success.
     """
+
 
 BACKUP_DIR_NAME = "backups"
 BACKUP_PREFIX = "headroom-backup-"
@@ -209,8 +224,6 @@ def _snapshot_db_sync(db: Path, dest_dir: Path) -> Path:
     Falls back to the raw file set (main + `-wal` + `-shm`) if the snapshot
     fails for any reason — a restorable-with-effort backup beats no backup.
     """
-    import sqlite3  # noqa: PLC0415 — stdlib, only needed on the backup path
-
     dest = dest_dir / db.name
     conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     try:
@@ -287,13 +300,21 @@ def _add_ca_to_tar(tar: tarfile.TarFile) -> None:
         logger.warning("Could not add Caddy CA to backup", exc_info=True)
 
 
-def _build_tarball_sync(target_path: Path, include_uploads: bool = True) -> None:
-    """Build a tar.gz of the DB (and optionally uploads) at `target_path`. Always gzipped.
+def _build_tarball_sync(target_path: Path, full: bool = True) -> None:
+    """Build a tar.gz at `target_path`. Always gzipped.
 
-    `include_uploads=False` produces a DB-only snapshot — useful when the
-    photo tree gets large and you only want the metadata captured. Photos
-    are JPEG/PNG (already compressed), so gzipping them gains little; if
-    you keep originals elsewhere you might never want them in the backup.
+    `full=True` is everything a restore needs: the database, the uploads tree
+    and — when this deployment has one and `HEADROOM_BACKUP_INCLUDE_CA` is on —
+    Caddy's local certificate authority, private keys included.
+
+    `full=False` is the DATABASE ALONE, which is what the Settings card has
+    always called it ("Database only = just headroom.db") and what someone
+    reaching for the small download expects to be holding. It used to carry
+    the CA as well, because `_add_ca_to_tar` ran whatever the flag said — so a
+    "database only" archive shared for debugging handed over a root key that
+    can sign for any host every device here trusts. The flag now decides both,
+    and it is named for the choice it actually makes rather than for one of
+    its two consequences.
 
     A path is REQUIRED. This used to accept `None` and return the archive as
     `bytes` through a `BytesIO` — a branch no caller used, and the one
@@ -321,12 +342,16 @@ def _build_tarball_sync(target_path: Path, include_uploads: bool = True) -> None
             # CPU on a Pi. JPEGs barely compress regardless, the DB
             # compresses well.
             with tarfile.open(fileobj=sink, mode="w:gz", compresslevel=6) as tar:
-                with tempfile.TemporaryDirectory(prefix="headroom-snap-") as tmp:
+                # The `VACUUM INTO` snapshot is a whole copy of the database,
+                # so it is staged on the data volume like the stream spool —
+                # see `_spool` for why never under /tmp.
+                with _spool("headroom-snap-") as tmp:
                     if db is not None and db.exists():
-                        _add_db_to_tar(tar, db, Path(tmp))
-                    if include_uploads and uploads.exists():
-                        tar.add(uploads, arcname="data/uploads")
-                    _add_ca_to_tar(tar)
+                        _add_db_to_tar(tar, db, tmp)
+                    if full:
+                        if uploads.exists():
+                            tar.add(uploads, arcname="data/uploads")
+                        _add_ca_to_tar(tar)
             sink.flush()
             os.fsync(sink.fileno())
         os.replace(partial, target_path)
@@ -359,11 +384,127 @@ def _sweep_partials_sync() -> int:
     return removed
 
 
+# --- Staging space ----------------------------------------------------------
+#
+# Every byte a backup stages — the on-demand archive while it streams, the
+# `VACUUM INTO` copy of the database while it is tarred — lives on the DATA
+# VOLUME, under `backups/.spool/`, and never in `tempfile.gettempdir()`.
+#
+# That is not a preference. The shipped compose file runs the app with a
+# read-only root and `tmpfs: - /tmp`, and a tmpfs is RAM: every byte in it is
+# charged to the container's memory cgroup, the same 1 GB `mem_limit` that
+# already holds a ~179 MB rembg model. `stream_backup`'s whole reason for
+# spooling was to cap memory at one chunk; under that compose file it spooled
+# the entire archive into memory instead, so the documented pre-upgrade
+# download of a multi-hundred-megabyte collection could OOM-kill the app it
+# was protecting. The data volume is where the space actually is.
+#
+# The cost of disk over tmpfs is that a crash no longer cleans up after
+# itself: tmpfs empties on restart, a volume does not. So every staging
+# directory is registered while it is in use, and anything under `.spool/`
+# that is NOT registered belongs to a process that died — it is removed the
+# next time anything is staged, and at scheduler start. Registration and
+# creation happen under one lock, so a sweep can never see a directory that
+# exists but is not yet claimed. Process-local by design, like every other
+# counter in this single-process app.
+
+SPOOL_DIR_NAME = ".spool"
+
+_spool_lock = threading.Lock()
+_live_spools: set[Path] = set()
+
+
+def _spool_root() -> Path:
+    root = _backup_dir() / SPOOL_DIR_NAME
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _sweep_dead_spools_locked(root: Path) -> int:
+    """Remove staging left by a dead process. Caller holds `_spool_lock`.
+
+    Never raises: a leftover that cannot be deleted is logged and left, so it
+    costs neither the download staging behind it nor the scheduler at boot.
+    """
+    removed = 0
+    try:
+        entries = list(root.iterdir())
+    except OSError as exc:
+        logger.warning("Could not sweep backup staging: %s", exc)
+        return 0
+    for entry in entries:
+        if entry in _live_spools:
+            continue
+        if entry.is_dir() and not entry.is_symlink():
+            shutil.rmtree(entry, ignore_errors=True)
+        else:
+            try:
+                entry.unlink(missing_ok=True)
+            except OSError as exc:
+                logger.warning("Could not remove backup staging leftover %s: %s", entry, exc)
+                continue
+        removed += 1
+    if removed:
+        logger.warning("Removed %d backup staging leftover(s) from an earlier process", removed)
+    return removed
+
+
+def _sweep_dead_spools_sync() -> int:
+    """Reclaim staging a previous process never cleaned up. Returns the count.
+
+    Never raises, like `_sweep_partials_sync` beside it — and for the same
+    caller. `scheduled_backup_loop` runs both at boot, BEFORE its per-pass
+    `try`, and creating `backups/.spool/` on a data volume that is read-only
+    or not mounted yet used to raise straight out of the task: backups dead
+    for the life of the process, the failure that loop was rewritten to
+    survive. Housekeeping that fails costs the housekeeping, not the task.
+    """
+    try:
+        root = _spool_root()
+    except OSError as exc:
+        logger.warning("Could not sweep backup staging: %s", exc)
+        return 0
+    with _spool_lock:
+        return _sweep_dead_spools_locked(root)
+
+
+def _open_spool_sync(prefix: str) -> Path:
+    """A fresh, registered staging directory on the data volume."""
+    root = _spool_root()
+    with _spool_lock:
+        _sweep_dead_spools_locked(root)
+        path = Path(tempfile.mkdtemp(prefix=prefix, dir=root))
+        _live_spools.add(path)
+    return path
+
+
+def _release_spool(path: Path) -> None:
+    """Unclaim a staging directory. No I/O, so it is safe on the event loop
+    and cannot be skipped by a cancellation landing on an await."""
+    with _spool_lock:
+        _live_spools.discard(path)
+
+
+def _close_spool_sync(path: Path) -> None:
+    _release_spool(path)
+    shutil.rmtree(path, ignore_errors=True)
+
+
+@contextmanager
+def _spool(prefix: str) -> Iterator[Path]:
+    """Synchronous staging for code already running off the event loop."""
+    path = _open_spool_sync(prefix)
+    try:
+        yield path
+    finally:
+        _close_spool_sync(path)
+
+
 _STREAM_CHUNK = 1024 * 1024
 
 
 async def stream_backup(include_uploads: bool = True) -> AsyncGenerator[bytes, None]:
-    """Build the tarball to a temp FILE, then stream it back in chunks.
+    """Build the tarball to a staging FILE, then stream it back in chunks.
 
     It previously built into an in-memory `BytesIO` and yielded the whole thing
     as one chunk, on the reasoning that "a few hundred MB at most" is fine on a
@@ -372,12 +513,17 @@ async def stream_backup(include_uploads: bool = True) -> AsyncGenerator[bytes, N
     is now over the container's memory limit — so the one operation whose
     purpose is protecting the data could kill the process.
 
-    Spooling to disk trades RAM for temp space, which a Pi has far more of, and
-    caps memory at one chunk. `StreamingResponse` was already the caller; only
-    now is it streaming anything.
+    Spooling to DISK trades RAM for space, which a Pi has far more of, and caps
+    memory at one chunk — provided the spool really is on disk, which is why it
+    is staged on the data volume rather than in /tmp (a RAM tmpfs under the
+    shipped compose file; see `_spool`). `StreamingResponse` was already the
+    caller; only now is it streaming anything.
+
+    `include_uploads=False` is the database-only archive: no photos, and no
+    certificate authority either (see `_build_tarball_sync`).
     """
-    tmp_dir = tempfile.mkdtemp(prefix="headroom-stream-")
-    tmp_path = Path(tmp_dir) / "backup.tar.gz"
+    spool = await asyncio.to_thread(_open_spool_sync, "headroom-stream-")
+    tmp_path = spool / "backup.tar.gz"
     try:
         await asyncio.to_thread(_build_tarball_sync, tmp_path, include_uploads)
         with tmp_path.open("rb") as fh:
@@ -391,8 +537,18 @@ async def stream_backup(include_uploads: bool = True) -> AsyncGenerator[bytes, N
     finally:
         # Runs even if the client disconnects mid-download, which closes the
         # generator — without this, an abandoned download leaks a full copy of
-        # the collection into temp space until reboot.
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+        # the collection onto the volume.
+        #
+        # Unclaimed first, synchronously: it is pure bookkeeping, and doing it
+        # before any await means that even if the deletion below never runs,
+        # the next sweep reclaims the directory. The deletion itself is a
+        # multi-hundred-megabyte `rmtree`, which on the loop would stall every
+        # other request for as long as the SD card takes — so it runs in a
+        # thread, SHIELDED: a disconnect arrives as cancellation, and an
+        # unshielded await here would be canceled along with the response,
+        # abandoning the cleanup it exists to perform.
+        _release_spool(spool)
+        await asyncio.shield(asyncio.to_thread(shutil.rmtree, spool, ignore_errors=True))
 
 
 def _timestamped_name(suffix: str = "") -> str:
@@ -454,29 +610,53 @@ def _fingerprint_path() -> Path:
     return _backup_dir() / ".last-fingerprint"
 
 
+def _db_file_parts(db: Path) -> list[str]:
+    """Size and mtime of the database and its WAL — the gate's fallback.
+
+    Both files, because in WAL mode a commit lands in the sidecar and may not
+    touch the main file at all.
+    """
+    parts: list[str] = []
+    for path in (db, db.with_name(f"{db.name}-wal")):
+        try:
+            st = path.stat()
+            parts.append(f"{path.name}:{st.st_size}:{st.st_mtime_ns}")
+        except OSError:
+            parts.append(f"{path.name}:-")
+    return parts
+
+
 def _data_fingerprint_sync() -> str:
     """A cheap signature of everything a backup would capture.
 
-    Size and mtime rather than content: hashing a gigabyte of photos to decide
-    whether to copy a gigabyte of photos is worse than the problem. The failure
-    mode of a metadata fingerprint is an edit that changes neither size nor
-    mtime, which on this data means someone rewriting a file in place with
-    identical bytes — and that is not an edit.
+    **The database by its ROWS** (`collection_fingerprint.digest`), not by the
+    file. The file's size and mtime move on writes that change nothing anyone
+    would restore — the nightly re-pricing sweep stamping `resale_checked_at`
+    on every hat it consults, the WAL checkpoint at every clean shutdown, the
+    daily retention prune, every login — so with re-pricing on (the default)
+    every daily cycle wrote a full tarball, and KEEP=5 covered five DAYS
+    rather than five changes. If the digest cannot read the database, the
+    gate falls back to the file's size and mtime (and says so): an extra
+    backup is the safe failure, a skipped one is not.
 
-    Both the database file AND its `-wal` sidecar are measured. In WAL mode a
-    commit lands in the sidecar and may not touch the main file at all, so
-    watching `headroom.db` alone would call a day of edits "no changes".
+    Uploads by size and mtime rather than content: hashing a gigabyte of
+    photos to decide whether to copy a gigabyte of photos is worse than the
+    problem. The failure mode of a metadata fingerprint is an edit that
+    changes neither size nor mtime, which on this data means someone
+    rewriting a file in place with identical bytes — and that is not an edit.
     """
     parts: list[str] = []
 
     db = _db_path()
     if db is not None:
-        for path in (db, db.with_name(f"{db.name}-wal")):
-            try:
-                st = path.stat()
-                parts.append(f"{path.name}:{st.st_size}:{st.st_mtime_ns}")
-            except OSError:
-                parts.append(f"{path.name}:-")
+        try:
+            parts.append(f"collection:{collection_fingerprint.digest(db)}")
+        except DBAPIError as exc:
+            logger.warning(
+                "Backup gate could not read the collection (%s); judging change "
+                "by the database file's size and mtime instead", exc,
+            )
+            parts.extend(_db_file_parts(db))
 
     count = total = 0
     newest = 0.0
@@ -677,17 +857,16 @@ async def newest_backup_at() -> datetime | None:
 #: The session factory the scheduler's upload hook resolves its argv with. Set
 #: by `scheduled_backup_loop(session_factory=)` — the lifespan passes
 #: `app.state`'s — and resolved at call time so a module-level default is only
-#: ever read when nothing was injected. Imported lazily: `database` imports
-#: nothing from here, but the reverse edge was a cycle once and the local
-#: import is what the previous code did.
+#: ever read when nothing was injected. Read as `database.async_session` at
+#: call time, not bound at import, so a test that patches the module attribute
+#: reaches this fallback too.
 _session_factory = None
 
 
 def _sessions():
     if _session_factory is not None:
         return _session_factory()
-    from headroom.database import async_session  # noqa: PLC0415 — cycle
-    return async_session()
+    return database.async_session()
 
 
 async def run_upload(path: Path, argv: list[str] | None = None) -> None:
@@ -818,18 +997,22 @@ async def scheduled_backup_loop(
     """
     global _session_factory
     _session_factory = session_factory
-    interval_s = max(60.0, interval_hours * 3600.0)
+    # The same floor `backup_interval_hours` reports, so the log line and the
+    # admin config both say the cadence this loop really runs at.
+    interval_s = _effective_interval_hours(interval_hours) * 3600.0
     logger.info(
-        "Backup scheduler started: check every %.1f hours, keep newest %d, "
+        "Backup scheduler started: check every %.3g hours, keep newest %d, "
         "write only when the data has changed, dir=%s",
-        interval_hours, keep, settings.upload_dir.parent / BACKUP_DIR_NAME,
+        interval_s / 3600.0, keep, settings.upload_dir.parent / BACKUP_DIR_NAME,
     )
     first_pass = True
     try:
         # Archives a previous process died in the middle of. Under their
         # `.partial` name nothing lists or trusts them; this just reclaims
-        # the space.
+        # the space. Staging a dead process left on the volume goes too — at
+        # boot nothing is in flight, so everything under `.spool/` is dead.
         await asyncio.to_thread(_sweep_partials_sync)
+        await asyncio.to_thread(_sweep_dead_spools_sync)
         while True:
             try:
                 if first_pass:
@@ -936,8 +1119,24 @@ def backup_enabled() -> bool:
     return env_flag("HEADROOM_BACKUP_ENABLED")
 
 
+#: The scheduler never checks more often than once a minute, whatever it is
+#: told — a tight loop re-walking the uploads tree is not a backup policy.
+_MIN_INTERVAL_HOURS = 60 / 3600
+
+
+def _effective_interval_hours(hours: float) -> float:
+    return max(_MIN_INTERVAL_HOURS, hours)
+
+
 def backup_interval_hours() -> float:
-    return env_float("HEADROOM_BACKUP_INTERVAL_HOURS", 24.0)
+    """The cadence the scheduler actually runs at — floor applied.
+
+    The floor used to live only inside `scheduled_backup_loop`, so
+    `HEADROOM_BACKUP_INTERVAL_HOURS=0.001` ran every minute while
+    `GET /api/admin/config` (which reads this) reported 0.001 h — a
+    3.6-second cadence nothing was running. One rule, read by both.
+    """
+    return _effective_interval_hours(env_float("HEADROOM_BACKUP_INTERVAL_HOURS", 24.0))
 
 
 def backup_keep() -> int:
@@ -964,6 +1163,38 @@ def backup_keep() -> int:
 #: asking for them either fails outright or fills the log with warnings about
 #: an identity the destination was never going to honor.
 _RSYNC_ARGV = ("rsync", "-a", "--no-owner", "--no-group", "{path}", "{dest}")
+
+
+def _as_directory(dest: str) -> str:
+    """`dest` spelled so rsync reads it as a DIRECTORY to copy into.
+
+    rsync copying ONE file treats a destination whose last element is not an
+    existing directory and has no trailing slash as the NEW FILENAME (rsync(1),
+    "COPYING TO A DIFFERENT NAME"). Every example this app gives —
+    `pi@nas.local:/volume1/backups/headroom`, `backup@nas.local::backups/headroom`
+    — names a folder that does not exist yet, so each night's archive was
+    written to one regular file called `headroom`, replacing the night before,
+    with rc=0 every time. The off-site card showed green over a remote holding
+    exactly one archive with no `.tar.gz` name and no history.
+
+    With the trailing slash rsync treats it as a directory and creates the LAST
+    component if it is missing — not the whole path, deliberately: a typo in a
+    parent directory should fail loudly, not quietly build a tree nobody will
+    look in.
+
+    The slash is added here, at argv time, rather than stored, so a destination
+    saved before this existed is fixed on its next upload without anyone
+    re-entering it. An EMPTY path is left alone: `user@host:` is the remote
+    home directory already, and appending a slash would turn it into `:/`, the
+    remote's ROOT.
+    """
+    if dest.endswith("/"):
+        return dest
+    # Both transports end `:<path>` — `host:path` over SSH, `host::module/path`
+    # for the daemon — so the text after the last colon is the path either way.
+    if not dest.rsplit(":", 1)[-1]:
+        return dest
+    return dest + "/"
 
 
 @dataclass(frozen=True)
@@ -1003,6 +1234,12 @@ class UploadProvider:
     #: "configured" and "working" are different states and the gap between
     #: them is always host-side setup.
     setup: tuple[str, ...]
+    #: Whether `{dest}` must be spelled as a directory before it reaches argv
+    #: (see `_as_directory`). rsync reads a slash-less destination as a file
+    #: NAME when copying one file; `rclone copy` always copies INTO the
+    #: destination, so it needs nothing. Required, with no default: a new
+    #: transport has to answer the question rather than inherit an answer.
+    dest_is_directory: bool
 
 
 UPLOAD_PROVIDERS: dict[str, UploadProvider] = {
@@ -1026,17 +1263,35 @@ UPLOAD_PROVIDERS: dict[str, UploadProvider] = {
         example="box:Headroom-Backups",
         binary="rclone",
         secret_env=None,
+        # The config is a DIRECTORY the container can write, not a file it can
+        # read. rclone rewrites its config every time an OAuth token refreshes,
+        # and Box hands out single-use refresh tokens — so the old read-only
+        # mount (inside a read-only root) let the first nightly upload refresh
+        # and then lose the new token, and every upload after that presented a
+        # spent one. The old `chmod 644` step also left live tokens
+        # world-readable on the host.
         setup=(
-            "On the Pi, run `rclone config` and create a remote "
-            "(Box, S3, Backblaze B2, Google Drive, Dropbox…).",
-            "Headless? Run `rclone authorize \"box\"` on a laptop and paste the "
-            "token back.",
-            "`chmod 644 ~/.config/rclone/rclone.conf` so the container user can "
-            "read it.",
+            "On the Pi, make a directory just for the container's rclone "
+            "config: `mkdir -p ~/.config/headroom-rclone`.",
+            "Create the remote INTO it: `rclone config --config "
+            "~/.config/headroom-rclone/rclone.conf` (Box, S3, Backblaze B2, "
+            "Google Drive, Dropbox…). Headless? Run `rclone authorize \"box\"` "
+            "on a laptop and paste the token back.",
+            "Give the container its OWN authorization — do not copy a config "
+            "your host rclone also uses. Box refresh tokens are single-use, so "
+            "whichever side refreshes first logs the other one out.",
+            "The container runs as uid 1000 and rewrites the config whenever a "
+            "token refreshes, so it needs to own that directory: `chmod 700 "
+            "~/.config/headroom-rclone && sudo chown -R 1000:1000 "
+            "~/.config/headroom-rclone` — in that order, since once uid 1000 owns "
+            "it only uid 1000 or root can chmod it (the default Pi user is uid "
+            "1000 already). Never `chmod 644` it — the file holds live tokens.",
             "Bring the stack up with the rclone overlay: "
-            "`-f docker-compose.backup-rclone.yml`.",
+            "`-f docker-compose.backup-rclone.yml` (set "
+            "`HEADROOM_RCLONE_CONFIG_DIR` if you used a different directory).",
             "Enter the remote name and path as the destination, then press Test now.",
         ),
+        dest_is_directory=False,
     ),
     "rsync": UploadProvider(
         name="rsync",
@@ -1059,8 +1314,11 @@ UPLOAD_PROVIDERS: dict[str, UploadProvider] = {
             "Bring the stack up with the rsync overlay: "
             "`-f docker-compose.backup-rsync.yml` (it mounts the key and "
             "known_hosts read-only).",
-            "Enter it as the destination, then press Test now.",
+            "Enter the destination FOLDER, then press Test now. Each backup "
+            "lands inside it under its own name; the last folder is created if "
+            "it is missing, but its parent has to exist.",
         ),
+        dest_is_directory=True,
     ),
     "synology": UploadProvider(
         name="synology",
@@ -1072,10 +1330,12 @@ UPLOAD_PROVIDERS: dict[str, UploadProvider] = {
         destination_hint="user@host::module/path",
         example="backup@synology.local::backups/headroom",
         binary="rsync",
-
-        # password. The value is read from the host at upload time and is
-        # deliberately never stored, logged, or returned by the API.
-        secret_env="HEADROOM_BACKUP_RSYNC_PASSWORD",  # noqa: S106
+        # The daemon authenticates with an rsync ACCOUNT's password, which rsync
+        # takes non-interactively from `RSYNC_PASSWORD` (see `upload_env`). The
+        # value is read from the host at upload time and is deliberately never
+        # stored, logged, or returned by the API. The noqa is for the NAME of
+        # the variable, which S106 reads as a hardcoded password.
+        secret_env="HEADROOM_BACKUP_RSYNC_PASSWORD",  # noqa: S106 — an env var NAME, not a secret
         setup=(
             "**Find your module name first — do not assume it.** Run "
             "`rsync rsync://HOST/` (GNU rsync, e.g. from inside this "
@@ -1104,13 +1364,20 @@ UPLOAD_PROVIDERS: dict[str, UploadProvider] = {
             "That is what makes rsync talk to the DAEMON on port 873 instead "
             "of tunneling over SSH, and it makes the first segment a MODULE "
             "name rather than a directory. It has nothing to do with the "
-            "network backup service checkbox.",
+            "network backup service checkbox. Anything after the module is a "
+            "FOLDER inside it: each backup lands there under its own name.",
         ),
+        dest_is_directory=True,
     ),
 }
 
 UPLOAD_PROVIDER_KEY = "backup_upload_provider"
 UPLOAD_DESTINATION_KEY = "backup_upload_destination"
+
+#: Seconds `list_rsync_modules` allows past rsync's own `--contimeout` before
+#: giving up on the child — the connect timeout covers the TCP handshake, not
+#: a daemon that accepts and then says nothing.
+_RSYNC_LIST_GRACE_S = 5.0
 
 
 async def list_rsync_modules(destination: str, timeout: float = 10.0) -> list[str]:
@@ -1135,10 +1402,31 @@ async def list_rsync_modules(destination: str, timeout: float = 10.0) -> list[st
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout + 5)
     except Exception as exc:  # noqa: BLE001 — decoration only
         logger.info("Could not list rsync modules on %s: %s", host, exc)
         return []
+    try:
+        out, _ = await asyncio.wait_for(
+            proc.communicate(), timeout=timeout + _RSYNC_LIST_GRACE_S
+        )
+    except TimeoutError:
+        # Killed AND reaped, as `_run_upload_hook` does. `wait_for` only stops
+        # waiting; the child keeps running. Returning here used to leave an
+        # rsync hanging on a dead daemon for as long as its own connect logic
+        # cared to — one per press of "Test now" on an unreachable NAS.
+        proc.kill()
+        await proc.wait()
+        logger.info("Listing rsync modules on %s timed out", host)
+        return []
+    except Exception as exc:  # noqa: BLE001 — decoration only
+        logger.info("Could not list rsync modules on %s: %s", host, exc)
+        return []
+    finally:
+        # Any other way out — a cancellation above all — must not leave the
+        # child behind either. Signal only: awaiting here could itself be
+        # canceled, and the loop's child watcher reaps a killed process.
+        if proc.returncode is None:
+            proc.kill()
     # `name<TAB>comment` per line; the name is all we need.
     return [
         line.split("\t", 1)[0].strip()
@@ -1212,8 +1500,6 @@ async def resolve_upload_argv(db, path: Path) -> list[str] | None:
             for tok in shlex.split(raw)
         ]
 
-    from headroom.services import settings_service  # noqa: PLC0415 — cycle
-
     provider = await settings_service.get_setting(db, UPLOAD_PROVIDER_KEY)
     dest = await settings_service.get_setting(db, UPLOAD_DESTINATION_KEY)
     spec = UPLOAD_PROVIDERS.get(provider or "")
@@ -1238,7 +1524,27 @@ async def resolve_upload_argv(db, path: Path) -> list[str] | None:
         # wrong answer to "the destination you configured no longer works".
         logger.error("Stored backup destination is invalid, upload skipped: %s", exc)
         raise UploadConfigError(str(exc)) from exc
+    if spec.dest_is_directory:
+        dest = _as_directory(dest)
     return [tok.replace("{path}", str(path)).replace("{dest}", dest) for tok in spec.argv]
+
+
+async def upload_configured(db) -> bool:
+    """Whether an off-box upload is configured at all — working or not.
+
+    True for a host command (`HEADROOM_BACKUP_UPLOAD_CMD`), or for a stored
+    provider AND destination whether or not they still validate: a stored
+    destination that no longer validates IS configured, and broken, and
+    reporting it as absent would hide the one thing worth seeing. The admin
+    config route used to answer this by building a real argv for a made-up
+    path and catching `UploadConfigError` — asking a different question and
+    reading the answer off its failure mode.
+    """
+    if backup_upload_cmd():
+        return True
+    provider = await settings_service.get_setting(db, UPLOAD_PROVIDER_KEY)
+    dest = await settings_service.get_setting(db, UPLOAD_DESTINATION_KEY)
+    return bool(provider) and bool(dest)
 
 
 def upload_env() -> dict[str, str] | None:
@@ -1253,9 +1559,12 @@ def upload_env() -> dict[str, str] | None:
     inert to every other binary here, and threading the provider name through
     the hook to gate an ignored variable would buy nothing.
     """
-    password = os.environ.get("HEADROOM_BACKUP_RSYNC_PASSWORD", "").strip()
+    password = env_str("HEADROOM_BACKUP_RSYNC_PASSWORD")
     if not password:
         return None
+    # The subprocess inherits the whole environment, plus rsync's own name
+    # for the secret — that one read of `os.environ` is the child's, not a
+    # config lookup.
     return {**os.environ, "RSYNC_PASSWORD": password}
 
 
@@ -1267,7 +1576,7 @@ def backup_upload_cmd() -> str:
     Settings, so a misset value degrades the upload to a no-op instead of
     crashing the app.
     """
-    return os.environ.get("HEADROOM_BACKUP_UPLOAD_CMD", "").strip()
+    return env_str("HEADROOM_BACKUP_UPLOAD_CMD")
 
 
 def backup_upload_timeout() -> float:

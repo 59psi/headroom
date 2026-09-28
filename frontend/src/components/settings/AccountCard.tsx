@@ -3,9 +3,11 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   changePassword, deletePasskey, getMe, listPasskeys, logout,
   passkeyRegisterOptions, passkeyRegisterVerify, revealApiToken, rotateApiToken,
-  type PasskeyInfo,
 } from '../../api/auth';
+import { plural } from '../../lib/format';
+import { qk } from '../../lib/queryKeys';
 import { createPasskey, passkeysSupported } from '../../lib/webauthn';
+import type { PasskeyRead } from '../../types';
 import { ErrorNote } from '../common/ErrorNote';
 import { useConfirm, usePrompt } from '../ui/Dialogs';
 import { Panel } from '../ui/Panel';
@@ -15,7 +17,7 @@ import { Skeleton } from '../ui/Skeleton';
 import { StatusPill } from '../ui/StatusPill';
 import { useToast } from '../ui/Toast';
 
-const PASSKEYS_KEY = ['auth', 'passkeys'] as const;
+const PASSKEYS_KEY = qk.auth.passkeys();
 
 /**
  * Who you are, and every way of proving it: password, passkeys, and the API
@@ -32,7 +34,7 @@ export function AccountCard() {
   const confirm = useConfirm();
   const prompt = usePrompt();
   const uid = useId();
-  const me = useQuery({ queryKey: ['auth', 'me'], queryFn: getMe });
+  const me = useQuery({ queryKey: qk.auth.me(), queryFn: getMe });
   const passkeys = useQuery({ queryKey: PASSKEYS_KEY, queryFn: listPasskeys });
   // The token is no longer part of the profile: `/me` ran on every Settings
   // load, and the value it carried survives logout and session revocation, so
@@ -53,7 +55,7 @@ export function AccountCard() {
       setToken(res.api_token);
       setTokenPrompt(null);
       setTokenPw('');
-      qc.invalidateQueries({ queryKey: ['auth', 'me'] });
+      qc.invalidateQueries({ queryKey: qk.auth.me() });
       if (mode === 'rotate') toast.success('API token rotated — update the iOS Shortcut');
     },
   });
@@ -79,7 +81,7 @@ export function AccountCard() {
       // a token revealed above is now dead. Showing it on would invite
       // pasting a value that no longer works into the Shortcut.
       setToken(null);
-      qc.invalidateQueries({ queryKey: ['auth', 'me'] });
+      qc.invalidateQueries({ queryKey: qk.auth.me() });
       toast.success('Password changed — other devices signed out');
     },
   });
@@ -92,11 +94,11 @@ export function AccountCard() {
   // failure was an unhandled rejection and the passkey simply stayed in the
   // list with nothing said — the ErrorNote below is what answers that now.)
   const removePasskeyMut = useMutation({
-    mutationFn: (p: PasskeyInfo) => deletePasskey(p.id),
+    mutationFn: (p: PasskeyRead) => deletePasskey(p.id),
     onMutate: async p => {
       await qc.cancelQueries({ queryKey: PASSKEYS_KEY });
-      const prev = qc.getQueryData<PasskeyInfo[]>(PASSKEYS_KEY);
-      qc.setQueryData<PasskeyInfo[]>(PASSKEYS_KEY, list => list?.filter(x => x.id !== p.id));
+      const prev = qc.getQueryData<PasskeyRead[]>(PASSKEYS_KEY);
+      qc.setQueryData<PasskeyRead[]>(PASSKEYS_KEY, list => list?.filter(x => x.id !== p.id));
       return { prev };
     },
     onError: (_e, _p, ctx) => {
@@ -110,7 +112,7 @@ export function AccountCard() {
     onSettled: () => { void qc.invalidateQueries({ queryKey: PASSKEYS_KEY }); },
   });
 
-  async function removePasskey(p: PasskeyInfo) {
+  async function removePasskey(p: PasskeyRead) {
     const ok = await confirm({
       title: `Remove passkey “${p.name}”?`,
       body: 'That device will no longer sign you in with Face ID / Touch ID. Your password keeps working.',
@@ -167,8 +169,23 @@ export function AccountCard() {
       title="Account"
       status={keyCount === undefined ? null : keyCount === 0
         ? <StatusPill tone="off" title="No passkeys registered">Password only</StatusPill>
-        : <StatusPill tone="ok">{keyCount} passkey{keyCount === 1 ? '' : 's'}</StatusPill>}
+        : <StatusPill tone="ok">{plural(keyCount, 'passkey')}</StatusPill>}
       description="Your sign-in: password, Face ID passkeys, and the API token the iOS Shortcut uses."
+      help={(
+        <>
+          <p>
+            Changing the password signs out every other device and rotates the
+            API token, so a password change is also how you cut off a device
+            you have lost. Passkeys are per device and keep working after it.
+          </p>
+          <p>
+            Showing or rotating the API token asks for your password each time,
+            because the token outlives sign-out. Too many wrong passwords in a
+            short while pause those checks — and sign-in — for a few minutes;
+            the message here says when.
+          </p>
+        </>
+      )}
     >
       <div className="hr-acct-id">
         <span className="hr-acct-avatar" aria-hidden="true">

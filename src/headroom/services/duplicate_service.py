@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.models.hat import Hat
 from headroom.services.hat_service import hat_loads
-from headroom.services.vocabulary import fold
+from headroom.services.naming import name_key
 
 # A group whose members agree on every identity field we have. Reported first.
 EXACT = "exact"
@@ -44,8 +44,12 @@ class DuplicateGroup:
 
 
 def _norm(value: str | None) -> str:
-    """Fold a field for comparison. Empty for anything not stated."""
-    return fold(value) if value else ""
+    """A field as `naming.name_key` reads it — the same "same name" rule the
+    purchase matcher uses, so `A-Game` and `A Game` are one model here too.
+    This borrowed the vocabulary's fold, which kept punctuation, so the
+    matcher called them one model and this report called them two hats.
+    Empty for anything not stated."""
+    return name_key(value) if value else ""
 
 
 def _identity(hat: Hat) -> tuple[str, str, str, str, str]:

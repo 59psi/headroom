@@ -7,15 +7,18 @@ from a photo, so which ones are wrong is a judgment only the owner can make.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.database import get_db
+from headroom.routes._api import DomainErrorRoute
 from headroom.schemas.admin import ConstructionAuditRow, ConstructionClearResult
-from headroom.services import construction_audit
-from headroom.services.activity_service import log_activity
+from headroom.schemas.common import Construction, clean_text
+from headroom.services import activity_service, construction_audit
 
-router = APIRouter()
+router = APIRouter(route_class=DomainErrorRoute)
 
 
 @router.get("/constructions/audit", response_model=list[ConstructionAuditRow])
@@ -34,8 +37,12 @@ async def audit_constructions(db: AsyncSession = Depends(get_db)):
 
 @router.post("/constructions/clear", response_model=ConstructionClearResult)
 async def clear_construction(
-    value: str,
-    to: str | None = None,
+    # The same field type `PUT /api/hats/{id}` applies to this column. `to` is
+    # WRITTEN onto every matching hat, and as a bare `str` it took a 306-char
+    # value with a bidi override and a NUL that the hat edit form would have
+    # refused — the bulk path bypassing the rule the single path enforces.
+    value: Annotated[clean_text(80, required=True), Query()],
+    to: Annotated[Construction, Query()] = None,
     dry_run: bool = True,
     skip_owner_set: bool = True,
     db: AsyncSession = Depends(get_db),
@@ -59,7 +66,7 @@ async def clear_construction(
     )
 
     if not dry_run and report.hats_cleared:
-        await log_activity(
+        await activity_service.log_activity(
             db,
             kind="construction.cleared",
             entity_type="system",
@@ -68,12 +75,14 @@ async def clear_construction(
                 f"Construction {value!r} → {report.to or 'cleared'} "
                 f"on {report.hats_cleared} hat(s)"
             ),
-            details=(
-                f"model names corrected: {report.model_names_corrected}; "
-                f"table prices recomputed: {report.prices_cleared}; "
-                f"manual prices kept: {report.manual_prices_kept}; "
-                f"owner-set skipped: {report.owner_set_skipped}"
-            ),
+            # A dict, as `log_activity` takes: a sentence passed here was
+            # JSON-encoded into a quoted string nothing could query.
+            details={
+                "model_names_corrected": report.model_names_corrected,
+                "table_prices_recomputed": report.prices_cleared,
+                "manual_prices_kept": report.manual_prices_kept,
+                "owner_set_skipped": report.owner_set_skipped,
+            },
         )
         await db.commit()
 

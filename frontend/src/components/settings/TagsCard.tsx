@@ -1,13 +1,15 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { caseLabelsUrl, clearTagBase, getTagBase, hatLabelsUrl, setTagBase } from '../../api/settings';
+import { qk } from '../../lib/queryKeys';
 import { ErrorNote } from '../common/ErrorNote';
 import { Panel } from '../ui/Panel';
 import { StatusPill } from '../ui/StatusPill';
 import { Skeleton } from '../ui/Skeleton';
 import { useToast } from '../ui/Toast';
 
-const QUERY_KEY = ['settings', 'tags'] as const;
+// Shared with every hat and case page's `TagUrlRow`.
+const QUERY_KEY = qk.settings.tags();
 
 /**
  * QR stickers and NFC tags for the physical objects.

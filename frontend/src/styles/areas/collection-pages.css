@@ -33,9 +33,12 @@
   color: var(--text-muted);
 }
 
-/* An error with its retry button beside it, rather than "reload to try
-   again" — the retry is a refetch in place. */
-.hr-cp-error {
+/* `common/LoadError`: a page's data did not load — the sentence, the
+   server's reason, and a retry button beside it rather than "reload to try
+   again" (the retry is a refetch in place). Every page that owns its data
+   renders it, the case and room pages included, so the class carries no
+   area prefix. */
+.hr-load-error {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -43,7 +46,11 @@
   flex-wrap: wrap;
 }
 
-.hr-cp-error > .btn { flex: none; }
+.hr-load-error > .btn { flex: none; }
+
+/* The reason is the server's words — quieter than the sentence naming what
+   failed, which is what the eye should land on. */
+.hr-load-error-why { opacity: 0.85; }
 
 /* ----- Toolbar and filter chips -------------------------------------- */
 /* The placement chips and the list/gallery toggle in the toolbar are
@@ -111,9 +118,9 @@
 
 .hr-cp-chip.is-active {
   color: var(--text);
-  background: rgba(255, 46, 182, 0.12);
-  border-color: rgba(255, 46, 182, 0.5);
-  box-shadow: 0 0 12px rgba(255, 46, 182, 0.14);
+  background: rgb(var(--neon-pink-rgb) / 0.12);
+  border-color: rgb(var(--neon-pink-rgb) / 0.5);
+  box-shadow: 0 0 12px rgb(var(--neon-pink-rgb) / 0.14);
 }
 
 /* A removable chip: the × is the affordance, the whole chip the target. */
@@ -133,7 +140,7 @@
 }
 
 @media (hover: hover) {
-  .hr-cp-chip.is-removable:hover .hr-cp-chip-x { color: var(--text); background: rgba(255, 56, 96, 0.35); }
+  .hr-cp-chip.is-removable:hover .hr-cp-chip-x { color: var(--text); background: rgb(var(--neon-red-rgb) / 0.35); }
 }
 
 /* "Clear filters" / "Clear all": a text button, secondary ink. It used to be
@@ -191,8 +198,8 @@
    button beside the page's primary action. */
 .btn.hr-cp-filter-toggle.is-active {
   color: var(--text);
-  background: rgba(255, 46, 182, 0.1);
-  border-color: rgba(255, 46, 182, 0.5);
+  background: rgb(var(--neon-pink-rgb) / 0.1);
+  border-color: rgb(var(--neon-pink-rgb) / 0.5);
 }
 
 .hr-cp-count-badge {
@@ -207,7 +214,7 @@
   font-weight: 700;
   color: var(--text-on-neon);
   background: var(--neon-pink);
-  box-shadow: 0 0 8px rgba(255, 46, 182, 0.5);
+  box-shadow: 0 0 8px rgb(var(--neon-pink-rgb) / 0.5);
 }
 
 /* ----- Empty states --------------------------------------------------- */
@@ -258,8 +265,8 @@
   border-radius: 50%;
   font-size: 1.15rem;
   color: var(--neon-green);
-  background: rgba(57, 255, 20, 0.08);
-  box-shadow: inset 0 0 0 1px rgba(57, 255, 20, 0.35), 0 0 16px rgba(57, 255, 20, 0.15);
+  background: rgb(var(--neon-green-rgb) / 0.08);
+  box-shadow: inset 0 0 0 1px rgb(var(--neon-green-rgb) / 0.35), 0 0 16px rgb(var(--neon-green-rgb) / 0.15);
 }
 
 /* ----- Skeleton shapes ------------------------------------------------ */
@@ -361,6 +368,40 @@
   .hr-hero.hr-cp-hero p { font-size: 1rem; }
 }
 
+/* The carousel's Pause / Play: in the top corner, clear of the prev / next
+   arrows at mid-height and of the caption along the bottom, in the arrows'
+   own look and at their 44px — it is the control WCAG 2.2.2 asks for, so it
+   is as easy to hit as the others. */
+.hr-carousel-pause {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  cursor: pointer;
+  transition: background var(--dur-fast) ease, border-color var(--dur-fast) ease;
+}
+
+.hr-carousel-pause svg { width: 14px; height: 14px; }
+
+@media (hover: hover) {
+  .hr-carousel-pause:hover { background: var(--neon-pink); border-color: var(--neon-pink); }
+}
+
+.hr-carousel-pause:focus-visible {
+  outline: 2px solid var(--neon-cyan);
+  outline-offset: 2px;
+}
+
 /* The carousel caption's id — it was an <h6>, styled by `.carousel-caption
    h6`; now a span, so the same look is stated here. */
 .hr-cp-caption-id {
@@ -440,8 +481,6 @@
 }
 
 .hr-cp-row-thumb { flex: none; }
-
-.hr-cp-thumb-72 { width: 72px; height: 72px; }
 
 /* No photo yet: an empty frame the size of the thumbnail. */
 .hr-cp-thumb-empty {
@@ -570,7 +609,7 @@
 
 .hr-cp-swatch[aria-pressed="true"] {
   border-color: var(--text);
-  box-shadow: 0 0 0 2px var(--bg-deep), 0 0 0 4px var(--neon-cyan), 0 0 14px rgba(0, 240, 255, 0.5);
+  box-shadow: 0 0 0 2px var(--bg-deep), 0 0 0 4px var(--neon-cyan), 0 0 14px rgb(var(--neon-cyan-rgb) / 0.5);
 }
 
 .hr-cp-swatch:focus-visible {
@@ -628,9 +667,14 @@
   color: var(--text-secondary);
 }
 
+/* "— showing the first 50, refine your search": the list stopped at the
+   server's cap. Warm, because it is the one line saying the answer is
+   partial. */
+.hr-cp-refine { color: var(--neon-orange); }
+
 .hr-cp-updating {
   font-size: var(--fs-xs);
-  color: #d9a8ff;
+  color: var(--tint-purple);
 }
 
 .hr-cp-updating::before {

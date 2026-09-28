@@ -8,12 +8,12 @@
  * Order is shuffled on purpose (`shuffleArray`), so nothing here asserts WHICH
  * hats appear — only how many, and that they are distinct.
  */
-import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
+import { act, fireEvent, waitFor } from '@testing-library/react';
 import { renderWithProviders } from '../test/utils';
 import { setViewportWidth } from '../test/matchMedia';
 import { hatFixture } from '../test/fixtures';
-import { HomePage } from './HomePage';
+import { CAROUSEL_STEP_MS, HomePage } from './HomePage';
 import * as hatsApi from '../api/hats';
 import * as casesApi from '../api/cases';
 import * as roomsApi from '../api/rooms';
@@ -147,5 +147,101 @@ describe('home carousel', () => {
     const { container } = renderWithProviders(<HomePage />);
 
     await waitFor(() => expect(container.querySelector('.hr-carousel')).toBeNull());
+  });
+});
+
+/**
+ * WCAG 2.2.2 (Pause, Stop, Hide): content that moves on its own must be
+ * pausable, and "reduce motion" is the visitor saying so in advance. The
+ * carousel advanced every five seconds with neither.
+ */
+describe('home carousel — moving on its own', () => {
+  const original = window.matchMedia;
+
+  function reduceMotion() {
+    window.matchMedia = ((q: string) => {
+      const mql = original(q);
+      return q.includes('prefers-reduced-motion')
+        ? { ...mql, matches: true, media: q }
+        : mql;
+    }) as typeof window.matchMedia;
+  }
+
+  afterEach(() => {
+    window.matchMedia = original;
+    vi.useRealTimers();
+  });
+
+  async function renderCarousel() {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+    setViewportWidth(PHONE);
+    vi.mocked(hatsApi).listAllHats.mockResolvedValue(withPhotos(4));
+    const view = renderWithProviders(<HomePage />);
+    await vi.waitFor(() => expect(slides(view.container)).toHaveLength(1));
+    return view;
+  }
+
+  const caption = (c: HTMLElement) => c.querySelector('.hr-cp-caption-id')?.textContent;
+
+  async function waitAStep() {
+    await act(async () => { await vi.advanceTimersByTimeAsync(CAROUSEL_STEP_MS + 100); });
+  }
+
+  it('advances by itself when motion is allowed', async () => {
+    const { container } = await renderCarousel();
+    const first = caption(container);
+    await waitAStep();
+    expect(caption(container)).not.toBe(first);
+  });
+
+  it('stays put when the browser asks for reduced motion, and offers Play', async () => {
+    reduceMotion();
+    const { container, getByRole } = await renderCarousel();
+    const first = caption(container);
+    await waitAStep();
+    await waitAStep();
+    expect(caption(container)).toBe(first);
+    expect(getByRole('button', { name: 'Play slideshow' })).toBeInTheDocument();
+  });
+
+  it('stops when Pause is pressed', async () => {
+    const { container, getByRole } = await renderCarousel();
+    fireEvent.click(getByRole('button', { name: 'Pause slideshow' }));
+    const first = caption(container);
+    await waitAStep();
+    expect(caption(container)).toBe(first);
+    expect(getByRole('button', { name: 'Play slideshow' })).toBeInTheDocument();
+  });
+
+  it('holds still while the pointer is over it', async () => {
+    const { container } = await renderCarousel();
+    fireEvent.mouseEnter(container.querySelector('.hr-carousel')!);
+    const first = caption(container);
+    await waitAStep();
+    expect(caption(container)).toBe(first);
+  });
+
+  it('holds still while focus is inside it', async () => {
+    const { container, getByRole } = await renderCarousel();
+    act(() => { getByRole('button', { name: 'Next' }).focus(); });
+    const first = caption(container);
+    await waitAStep();
+    expect(caption(container)).toBe(first);
+  });
+
+  it('moves once Play is pressed, though the pointer and focus are on the button', async () => {
+    // Pressing Play puts both "holds" on the carousel; the button must not
+    // turn to "Pause" over a slideshow that is still standing still.
+    reduceMotion();
+    const { container, getByRole } = await renderCarousel();
+    const play = getByRole('button', { name: 'Play slideshow' });
+    fireEvent.mouseEnter(container.querySelector('.hr-carousel')!);
+    act(() => { play.focus(); });
+    fireEvent.click(play);
+
+    const first = caption(container);
+    await waitAStep();
+    expect(caption(container)).not.toBe(first);
+    expect(getByRole('button', { name: 'Pause slideshow' })).toBeInTheDocument();
   });
 });

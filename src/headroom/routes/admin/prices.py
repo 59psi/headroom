@@ -9,20 +9,20 @@ owner can make. Same shape, and the same reason, as the construction audit.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.database import get_db
+from headroom.routes._api import DomainErrorRoute
 from headroom.schemas.admin import (
     FrozenPriceRow,
     PriceReleaseResult,
     SharedPriceGroup,
     SharedPriceHat,
 )
-from headroom.services import price_audit, shared_price_audit
-from headroom.services.activity_service import log_activity
+from headroom.services import activity_service, price_audit, shared_price_audit
 
-router = APIRouter()
+router = APIRouter(route_class=DomainErrorRoute)
 
 
 def _row(entry: price_audit.FrozenPrice) -> FrozenPriceRow:
@@ -71,15 +71,20 @@ async def audit_shared_prices(db: AsyncSession = Depends(get_db)):
 
 @router.post("/prices/release", response_model=PriceReleaseResult)
 async def release_frozen_prices(
-    hat_ids: list[int] | None = None,
+    # `Query`, explicitly. A bare `list[int]` parameter is a request BODY in
+    # FastAPI, so the `?hat_ids=` the card sends was never read: the list
+    # arrived as None, which means "every frozen hat", and releasing one
+    # ticked row released them all — every hand-typed price lost its
+    # protection from the next analysis.
+    hat_ids: list[int] | None = Query(None),
     market_priced_only: bool = False,
     dry_run: bool = True,
     db: AsyncSession = Depends(get_db),
 ):
     """Hand the named hats back to the live market feed.
 
-    `dry_run` defaults to True and `hat_ids=None` means every frozen hat, so
-    the destructive reading of a bare call is the one that changes nothing.
+    `dry_run` defaults to True and omitting `hat_ids` means every frozen hat,
+    so the destructive reading of a bare call is the one that changes nothing.
     The price VALUE is kept — only the scope and source label are cleared, so
     the number stays visible until something better replaces it.
     """
@@ -87,7 +92,7 @@ async def release_frozen_prices(
         db, hat_ids, market_priced_only=market_priced_only, dry_run=dry_run
     )
     if not dry_run and released:
-        await log_activity(
+        await activity_service.log_activity(
             db, kind="prices.released", entity_type="system", entity_id=None,
             summary=f"{len(released)} hat price(s) released back to the market feed",
             details={"hat_ids": [r.hat_id for r in released]},

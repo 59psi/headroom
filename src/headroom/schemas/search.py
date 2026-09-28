@@ -1,6 +1,28 @@
+from enum import StrEnum
+
 from pydantic import BaseModel, ConfigDict
 
 from headroom.schemas.hat import ColorTag
+
+
+class ColorScope(StrEnum):
+    """Which swatches a color term may match.
+
+    A query parameter on two routes; typed so a typo answers 422 instead of
+    quietly searching the default scope — `?color_scope=acent` used to return
+    the major-color matches under a request that asked for accents.
+    """
+
+    major = "major"    # the hat's own colors (the default)
+    accent = "accent"  # logos, piping, underbrims
+    all = "all"
+
+
+#: Longest search string either search route accepts. Terms are AND-ed into
+#: one SQL expression per term, and a thousand of them outgrew SQLite's
+#: expression-depth limit — a 500 and an `error.unhandled` row from a query
+#: string. Two hundred characters is far past any real search.
+MAX_QUERY_LENGTH = 200
 
 
 class SearchResult(BaseModel):
@@ -9,8 +31,8 @@ class SearchResult(BaseModel):
     `from_attributes=True`, like `HatRead`: every field here is a column or a
     `@property` on `Hat` (`display_id`, `case_display_id`, `room_id`,
     `room_name`), and `ColorTag` already validates from the ORM row. The route
-    used to hand-copy fifteen attributes into a dict — the one thing CLAUDE.md
-    says this codebase deliberately has none of.
+    used to hand-copy fifteen attributes into a dict — a response shape
+    nothing declares, which `tests/test_api_contract.py` now refuses.
     """
 
     id: int
@@ -29,11 +51,15 @@ class SearchResult(BaseModel):
     # filter reads but the projection omits shows a working control that
     # silently matches nothing.
     construction: str | None = None
+    #: A text search matches the colorway, so a row can be listed for it —
+    #: and the Search page renders the Hats tab's own row, which shows it.
+    #: Without it here a hat matched on "Coronado" listed no word of why.
+    colorway: str | None = None
     colors: list[ColorTag]
     room_id: int | None
     room_name: str | None
 
-    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ColorSearchResult(SearchResult):

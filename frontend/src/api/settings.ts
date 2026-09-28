@@ -1,16 +1,13 @@
 import { apiFetch } from './client';
 import type {
   ActivityRow, AnalysisQueueStatus, ApiKeyStatus, ApiKeyTestResult,
-  BackupHealth, BackupInfo, BackupUploadStatus, EbayCredsStatus, ImportJob, MdnsStatus, ModelStatus,
-  TlsStatus, FrozenPriceRow, PriceReleaseResult, AnalysisFailureGroup,
+  BackupHealthRead, BackupInfo, BackupUploadStatus, BackupUploadTestResult, CatalogRefreshStarted,
+  CountRead, EbayCredsStatus, EbayTestResult, GuestViewStatus, ImportJobCreated, ImportJobRead,
+  MdnsStatus, ModelStatus, TlsStatusRead, FrozenPriceRow, PriceReleaseResult, AnalysisFailureGroup,
   RecentError, TagBaseStatus, ConstructionAuditRow, ConstructionClearResult, RepricingStatus,
-  ReanalyzeResult, AnalysisJobDetail, CatalogStatus, SharedPriceGroup,
-  UnclaimedFromPurchases, RepricingSweepStarted, RetentionStatus, LogoStatus,
+  ReanalyzeAllResult, AnalysisJobDetail, CatalogStatus, SharedPriceGroup,
+  UnclaimedFromPurchases, RepricingRunResult, RepricingSweepStarted, RetentionStatus, LogoStatus,
 } from '../types';
-
-// Re-exported so existing imports from this module keep working; the
-// definitions themselves live in ../types with every other API shape.
-export type { AnalysisJobRead, AnalysisQueueStatus, BackupHealth } from '../types';
 
 export function getLogo() {
   return apiFetch<LogoStatus>('/api/settings/logo');
@@ -74,7 +71,7 @@ export function getMdnsStatus() {
 }
 
 export function getTlsStatus() {
-  return apiFetch<TlsStatus>('/api/settings/tls');
+  return apiFetch<TlsStatusRead>('/api/settings/tls');
 }
 
 export function setModel(model_id: string) {
@@ -93,7 +90,7 @@ export function getRecentErrors(limit = 20) {
 }
 
 export function getRecentErrorsCount() {
-  return apiFetch<{ count: number }>('/api/admin/recent-errors/count');
+  return apiFetch<CountRead>('/api/admin/recent-errors/count');
 }
 
 export function listBackups() {
@@ -180,33 +177,34 @@ export function deleteEbayCreds() {
 }
 
 export function testEbayCreds() {
-  return apiFetch<{ ok: boolean; stage: string; detail: string }>(
-    '/api/admin/ebay/test', { method: 'POST' },
-  );
+  return apiFetch<EbayTestResult>('/api/admin/ebay/test', { method: 'POST' });
 }
 
 // ---- Bulk import ---- //
 
-export function createImportJob(files: File[], defaults: { case_id?: number | null; condition?: string; size?: string; style?: string }): Promise<{ id: number; total: number; status: string }> {
+export function createImportJob(
+  files: File[],
+  defaults: { case_id?: number | null; condition?: string; size?: string; style?: string },
+) {
   const form = new FormData();
   for (const f of files) form.append('photos', f);
   if (defaults.case_id != null) form.append('case_id', String(defaults.case_id));
   if (defaults.condition) form.append('condition', defaults.condition);
   if (defaults.size) form.append('size', defaults.size);
   if (defaults.style) form.append('style', defaults.style);
-  return apiFetch('/api/hats/import', { method: 'POST', body: form });
+  return apiFetch<ImportJobCreated>('/api/hats/import', { method: 'POST', body: form });
 }
 
 export function getImportJob(id: number) {
-  return apiFetch<ImportJob>(`/api/hats/import/${id}`);
+  return apiFetch<ImportJobRead>(`/api/hats/import/${id}`);
 }
 
 export function listImportJobs(limit = 20) {
-  return apiFetch<ImportJob[]>(`/api/hats/import?limit=${limit}`);
+  return apiFetch<ImportJobRead[]>(`/api/hats/import?limit=${limit}`);
 }
 
 export function cancelImportJob(id: number) {
-  return apiFetch<ImportJob>(`/api/hats/import/${id}`, { method: 'DELETE' });
+  return apiFetch<ImportJobRead>(`/api/hats/import/${id}`, { method: 'DELETE' });
 }
 
 export function getAnalysisQueue() {
@@ -216,7 +214,7 @@ export function getAnalysisQueue() {
 /** Re-analyze every hat with a photo. Manual prices are protected server-side,
  *  so there is nothing to opt out of. */
 export function reanalyzeAll() {
-  return apiFetch<ReanalyzeResult>('/api/admin/analysis/reanalyze-all', { method: 'POST' });
+  return apiFetch<ReanalyzeAllResult>('/api/admin/analysis/reanalyze-all', { method: 'POST' });
 }
 
 /**
@@ -229,7 +227,7 @@ export function reanalyzeAll() {
  */
 export function retryFailedAnalysis(reason?: string) {
   const qs = reason ? `?reason=${encodeURIComponent(reason)}` : '';
-  return apiFetch<ReanalyzeResult>(`/api/admin/analysis/retry-failed${qs}`, {
+  return apiFetch<ReanalyzeAllResult>(`/api/admin/analysis/retry-failed${qs}`, {
     method: 'POST',
   });
 }
@@ -245,14 +243,12 @@ export function getColorwayStatus() {
 
 /** Kick off the colorway harvest. 202 — the work continues in the background. */
 export function refreshColorwayCatalog() {
-  return apiFetch<{ started: boolean; already_running: boolean; detail: string }>(
-    '/api/admin/colorways/refresh', { method: 'POST' },
-  );
+  return apiFetch<CatalogRefreshStarted>('/api/admin/colorways/refresh', { method: 'POST' });
 }
 
 /** Whether scheduled backups are actually running — the file list can't say. */
 export function getBackupHealth() {
-  return apiFetch<BackupHealth>('/api/admin/backups/health');
+  return apiFetch<BackupHealthRead>('/api/admin/backups/health');
 }
 
 export function getBackupUpload() {
@@ -272,9 +268,7 @@ export function clearBackupUpload() {
 }
 
 export function testBackupUpload() {
-  return apiFetch<{ ok: boolean; detail: string }>(
-    '/api/admin/backups/upload/test', { method: 'POST' },
-  );
+  return apiFetch<BackupUploadTestResult>('/api/admin/backups/upload/test', { method: 'POST' });
 }
 
 // ---------------------------- Physical tags -------------------------- #
@@ -320,12 +314,12 @@ export function clearConstruction(value: string, dryRun: boolean, to?: string | 
 // ---------------------------- Guest browsing ------------------------- #
 
 export function getGuestView() {
-  return apiFetch<{ enabled: boolean }>('/api/settings/guest-view');
+  return apiFetch<GuestViewStatus>('/api/settings/guest-view');
 }
 
 /** Turn unauthenticated read-only browsing on or off. Audited server-side. */
 export function setGuestView(enabled: boolean) {
-  return apiFetch<{ enabled: boolean }>('/api/settings/guest-view', {
+  return apiFetch<GuestViewStatus>('/api/settings/guest-view', {
     method: 'PUT',
     body: JSON.stringify({ enabled }),
   });
@@ -402,9 +396,7 @@ export function getRepricing() {
 /** Sweep now. Available even when the scheduler is off — turning the
  *  background task off shouldn't remove the ability to refresh on purpose. */
 export function runRepricing() {
-  return apiFetch<{ repriced: number; considered: number; remaining: number }>(
-    '/api/admin/repricing/run', { method: 'POST' },
-  );
+  return apiFetch<RepricingRunResult>('/api/admin/repricing/run', { method: 'POST' });
 }
 
 /**

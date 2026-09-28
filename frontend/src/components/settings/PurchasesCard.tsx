@@ -1,4 +1,3 @@
-import { copyText } from '../../lib/clipboard';
 import { useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -6,16 +5,19 @@ import {
   importPurchases, listPurchases, previewImport, rematchPurchases, unmatchAllPurchases,
   unmatchPurchase,
 } from '../../api/purchases';
-import type { ImportPreview, PurchaseRow } from '../../types';
+import type { ImportPreview, PurchaseRead } from '../../types';
+import { plural } from '../../lib/format';
 import { invalidateHatViews, invalidatePurchaseDerived } from '../../lib/invalidate';
+import { qk } from '../../lib/queryKeys';
 import { ErrorNote } from '../common/ErrorNote';
+import { CopyButton } from '../ui/CopyButton';
 import { Panel } from '../ui/Panel';
 import { StatusPill } from '../ui/StatusPill';
 import { Skeleton } from '../ui/Skeleton';
 import { useToast } from '../ui/Toast';
 import { useConfirm } from '../ui/Dialogs';
 
-const KEY = ['admin', 'purchases'] as const;
+const KEY = qk.admin.purchases();
 
 /** How many purchase rows to list inline; the rest are counted, not hidden. */
 const ROW_LIMIT = 8;
@@ -67,21 +69,10 @@ Rules:
 - Output only the JSON.`;
 
 /** Copyable prompt, collapsed by default — it is long, and most visits to this
- *  card are not the one time you set up the import. */
+ *  card are not the one time you set up the import. The prompt is on screen
+ *  and selectable either way, so a refused clipboard costs the convenience,
+ *  not the feature — and `CopyButton` says so rather than doing nothing. */
 function EmailPromptDisclosure() {
-  const [copied, setCopied] = useState(false);
-
-  async function copy() {
-    // `copyText` carries the plain-HTTP fallback; the prompt is on screen and
-    // selectable either way, so a refusal costs the convenience, not the feature.
-    if (await copyText(EMAIL_IMPORT_PROMPT)) {
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2000);
-    } else {
-      setCopied(false);
-    }
-  }
-
   return (
     <details className="hr-prompt-details hr-sd-disclosure">
       <summary className="text-secondary small">
@@ -92,13 +83,7 @@ function EmailPromptDisclosure() {
           Paste this into Claude or ChatGPT with access to your mail. It reads your
           melin receipts and returns the JSON this card imports.
         </p>
-        <button
-          type="button"
-          className="btn btn-outline-secondary btn-sm mb-2"
-          onClick={copy}
-        >
-          {copied ? 'Copied' : 'Copy prompt'}
-        </button>
+        <CopyButton text={EMAIL_IMPORT_PROMPT} what="import prompt" className="mb-2" />
         <pre className="hr-prompt-text font-mono">{EMAIL_IMPORT_PROMPT}</pre>
       </div>
     </details>
@@ -140,13 +125,14 @@ export function PurchasesCard() {
   // Outcomes are toasts; the tiles above are the lasting record. Each of these
   // used to leave a "✓ imported 12, matched 9" line behind that sat on the
   // card, beside tiles that already said the same thing, until a reload.
+  // `invalidatePurchaseDerived` covers this card's own list as well as the
+  // keys matching feeds on other cards; the hats it wrote onto are the rest.
   const importMut = useMutation({
     mutationFn: importPurchases,
     onSuccess: result => {
       toast.success(`Imported ${result.imported}, matched ${result.matched} to hats`);
-      qc.invalidateQueries({ queryKey: KEY });
       invalidatePurchaseDerived(qc);
-      invalidateHatViews(qc);
+      void invalidateHatViews(qc);
       reset();
     },
   });
@@ -155,19 +141,19 @@ export function PurchasesCard() {
     mutationFn: rematchPurchases,
     onSuccess: result => {
       toast.success(`Matched ${result.matched}, ${result.unmatched} still unmatched`);
-      qc.invalidateQueries({ queryKey: KEY });
       invalidatePurchaseDerived(qc);
-      invalidateHatViews(qc);
+      void invalidateHatViews(qc);
     },
   });
 
   const unmatchMut = useMutation({
     mutationFn: unmatchAllPurchases,
     onSuccess: result => {
-      toast.success(`Unlinked ${result.unmatched}, cleared ${result.fields_cleared} fields`);
-      qc.invalidateQueries({ queryKey: KEY });
+      toast.success(
+        `Unlinked ${result.unmatched}, cleared ${plural(result.fields_cleared, 'field')}`,
+      );
       invalidatePurchaseDerived(qc);
-      invalidateHatViews(qc);
+      void invalidateHatViews(qc);
     },
   });
 
@@ -183,9 +169,9 @@ export function PurchasesCard() {
     mutationFn: unmatchPurchase,
     onMutate: async (purchaseId: number) => {
       await qc.cancelQueries({ queryKey: KEY });
-      const previous = qc.getQueryData<PurchaseRow[]>(KEY);
+      const previous = qc.getQueryData<PurchaseRead[]>(KEY);
       const hatId = previous?.find(r => r.id === purchaseId)?.hat_id ?? undefined;
-      qc.setQueryData<PurchaseRow[]>(KEY, list =>
+      qc.setQueryData<PurchaseRead[]>(KEY, list =>
         list?.map(r => (r.id === purchaseId ? { ...r, hat_id: null } : r)));
       return { previous, hatId };
     },
@@ -194,11 +180,12 @@ export function PurchasesCard() {
     },
     onSuccess: (result, _id, ctx) => {
       toast.success('Purchase unlinked');
-      invalidatePurchaseDerived(qc);
-      invalidateHatViews(qc, result.hat_id ?? ctx?.hatId);
+      void invalidateHatViews(qc, result.hat_id ?? ctx?.hatId);
     },
+    // The list refetch on failure too — the rollback restored a snapshot —
+    // and with it everything else matching feeds.
     onSettled: () => {
-      qc.invalidateQueries({ queryKey: KEY });
+      invalidatePurchaseDerived(qc);
     },
   });
 
@@ -348,8 +335,10 @@ export function PurchasesCard() {
           <div className="text-secondary small mb-1 font-mono hr-sd-filename">{staged.name}</div>
           {preview.would_import === 0 ? (
             <p className="small mb-2">
-              Nothing new to import — all {preview.duplicates} line
-              {preview.duplicates === 1 ? '' : 's'} are already on record.
+              Nothing new to import —{' '}
+              {preview.duplicates === 1
+                ? 'its one line is already on record.'
+                : `all ${plural(preview.duplicates, 'line')} are already on record.`}
             </p>
           ) : (
             <p className="small mb-2">
@@ -379,12 +368,12 @@ export function PurchasesCard() {
           */}
           {preview.would_match_backlog > 0 && (
             <p className="small mb-2 hr-sd-warn-text">
-              <strong>Also matches {preview.would_match_backlog} purchase
-              {preview.would_match_backlog === 1 ? '' : 's'} already on record.</strong>{' '}
+              <strong>
+                Also matches {plural(preview.would_match_backlog, 'purchase')} already on record.
+              </strong>{' '}
               Importing re-runs matching over everything unmatched, so this writes a
-              colorway and cost basis onto {preview.would_match_total} hat
-              {preview.would_match_total === 1 ? '' : 's'} in total. Unlink all is the
-              only undo.
+              colorway and cost basis onto {plural(preview.would_match_total, 'hat')} in
+              total. Unlink all is the only undo.
             </p>
           )}
           <div className="d-flex gap-2 flex-wrap">

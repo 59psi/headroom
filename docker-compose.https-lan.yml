@@ -18,9 +18,16 @@ services:
     environment:
       # Advertise the HTTPS front door, not the bare uvicorn port.
       HEADROOM_MDNS_PORT: "443"
+      # `.local` is appended to HEADROOM_MDNS_HOSTNAME here and in Caddy's
+      # site address, so it must be a BARE label — `hats`, never `hats.local`
+      # (which would make every name below `hats.local.local`). Compose cannot
+      # strip a suffix, so the app refuses such a value at startup and says so
+      # on Settings → LAN discovery, rather than advertising a name that this
+      # overlay's certificate and passkeys do not match.
       HEADROOM_RP_ID: "${HEADROOM_MDNS_HOSTNAME:-headroom}.local"
       HEADROOM_ORIGIN: "https://${HEADROOM_MDNS_HOSTNAME:-headroom}.local"
-      HEADROOM_CORS_ORIGINS: '["https://${HEADROOM_MDNS_HOSTNAME:-headroom}.local"]'
+      # No HEADROOM_CORS_ORIGINS: the SPA is served from this same origin, and
+      # a CORS grant to the app's own origin grants nothing.
       # Caddy reaches uvicorn over loopback on the shared host stack; :8000
       # stays LAN-reachable here, so trust forwarded headers from loopback
       # ONLY (a LAN client hitting :8000 directly must not spoof its IP).
@@ -42,11 +49,13 @@ services:
       - caddy-ca:/caddy-ca:ro
 
   # Deliberately self-contained rather than layered on docker-compose.https.yml
-  # (keeps the run command to two -f flags). The two caddy blocks are no longer
-  # interchangeable and should not be re-synced: that one gets its certificates
-  # from Let's Encrypt, which sets its own 90-day lifetime and renews over the
-  # public internet, so the CLI form is fine there. Only the INTERNAL CA below
-  # has a lifetime this repo chooses, and choosing it needs a Caddyfile.
+  # (keeps the run command to two -f flags). Both overlays run a Caddyfile, but
+  # the two caddy blocks are not interchangeable and should not be re-synced:
+  # they differ in ISSUER and extras. That one gets Let's Encrypt certificates,
+  # which set their own lifetime and renew over the public internet, and adds
+  # HSTS (./Caddyfile.https). This one runs Caddy's INTERNAL CA — the only
+  # lifetime this repo chooses (820 days, ./Caddyfile) — and exports the CA for
+  # devices to trust and for backups, through the sidecar below.
   caddy:
     image: caddy:2-alpine
     container_name: headroom-caddy

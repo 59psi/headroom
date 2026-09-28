@@ -61,7 +61,7 @@
 .hr-case-tile-media {
   position: relative;
   background:
-    radial-gradient(ellipse 70% 60% at 50% 62%, rgba(177, 78, 255, 0.14), transparent 72%),
+    radial-gradient(ellipse 70% 60% at 50% 62%, rgb(var(--neon-purple-rgb) / 0.14), transparent 72%),
     var(--surface-inset);
   border-bottom: 1px solid var(--border-soft);
 }
@@ -70,8 +70,8 @@
 
 /* Full / Overfull, pinned to the collage corner so it is read with the
    picture of what is inside. Overfull stays warm rather than red — a fourth
-   hat in a three-hat case is a thing people do on purpose (see app.css,
-   `.hr-fill-tag`). */
+   hat in a three-hat case is a thing people do on purpose (the picker's
+   `.hr-case-overfull` in app.css says so in the same orange). */
 .hr-case-flag {
   position: absolute;
   top: 0.45rem;
@@ -80,7 +80,7 @@
   padding: 0.12rem 0.5rem;
   border-radius: var(--radius-pill);
   border: 1px solid var(--border);
-  background: rgba(6, 0, 17, 0.78);
+  background: rgb(var(--bg-deep-rgb) / 0.78);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   font-size: var(--fs-2xs);
@@ -89,8 +89,8 @@
   color: var(--text-secondary);
 }
 
-.hr-case-flag.is-full { color: #7ff6ff; border-color: rgba(0, 240, 255, 0.4); }
-.hr-case-flag.is-overfull { color: var(--neon-orange); border-color: rgba(255, 140, 66, 0.55); }
+.hr-case-flag.is-full { color: var(--tint-cyan); border-color: rgb(var(--neon-cyan-rgb) / 0.4); }
+.hr-case-flag.is-overfull { color: var(--neon-orange); border-color: rgb(var(--neon-orange-rgb) / 0.55); }
 
 .hr-case-tile-body {
   position: relative;
@@ -149,15 +149,15 @@ a.hr-case-tile:hover .hr-case-tile-id { color: var(--neon-cyan); }
   height: 100%;
   border-radius: inherit;
   background: var(--gradient-pink-cyan);
-  box-shadow: 0 0 8px rgba(255, 46, 182, 0.5);
+  box-shadow: 0 0 8px rgb(var(--neon-pink-rgb) / 0.5);
   transition: width var(--dur) var(--ease-out);
 }
 
-.hr-case-meter.is-full > span { box-shadow: 0 0 10px rgba(0, 240, 255, 0.55); }
+.hr-case-meter.is-full > span { box-shadow: 0 0 10px rgb(var(--neon-cyan-rgb) / 0.55); }
 
 .hr-case-meter.is-overfull > span {
   background: var(--neon-orange);
-  box-shadow: 0 0 8px rgba(255, 140, 66, 0.6);
+  box-shadow: 0 0 8px rgb(var(--neon-orange-rgb) / 0.6);
 }
 
 /* ----- Collage pieces ----------------------------------------------- */
@@ -233,7 +233,7 @@ a.hr-case-tile:hover .hr-case-tile-id { color: var(--neon-cyan); }
 .hr-case-hero-media {
   padding: 0.75rem;
   background:
-    radial-gradient(ellipse 70% 60% at 50% 60%, rgba(177, 78, 255, 0.16), transparent 72%),
+    radial-gradient(ellipse 70% 60% at 50% 60%, rgb(var(--neon-purple-rgb) / 0.16), transparent 72%),
     var(--surface-inset);
   border-bottom: 1px solid var(--border-soft);
 }
@@ -276,7 +276,7 @@ a.hr-case-tile:hover .hr-case-tile-id { color: var(--neon-cyan); }
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  filter: drop-shadow(0 0 10px rgba(255, 46, 182, 0.35));
+  filter: drop-shadow(0 0 10px rgb(var(--neon-pink-rgb) / 0.35));
 }
 
 .hr-case-fill-label {
@@ -288,6 +288,23 @@ a.hr-case-tile:hover .hr-case-tile-id { color: var(--neon-cyan); }
 .hr-case-fill-empty {
   font-size: var(--fs-md);
   color: var(--text-secondary);
+}
+
+/* The room name in the case's header summary is a link, and at the summary's
+   type size it was an 88×17 target under a fingertip. It sits in a line of
+   text, so the hit area grows around it invisibly rather than pushing the
+   line apart. */
+@media (pointer: coarse) {
+  .hr-case-room-link { position: relative; }
+  .hr-case-room-link::after {
+    content: '';
+    position: absolute;
+    left: -6px;
+    right: -6px;
+    top: 50%;
+    height: 44px;
+    transform: translateY(-50%);
+  }
 }
 
 .hr-case-move .form-label { margin-bottom: 0.35rem; }
@@ -384,11 +401,11 @@ a.hr-case-tile:hover .hr-case-tile-id { color: var(--neon-cyan); }
 
 /* The destructive block at the foot of a page: a red accent bar and a red
    edge, so it is recognizably not one more settings card. */
-.hr-cr-danger.card { border-color: rgba(255, 56, 96, 0.3); }
+.hr-cr-danger.card { border-color: rgb(var(--neon-red-rgb) / 0.3); }
 
 .hr-cr-danger .card-title::before {
   background: var(--neon-red);
-  box-shadow: 0 0 8px rgba(255, 56, 96, 0.55);
+  box-shadow: 0 0 8px rgb(var(--neon-red-rgb) / 0.55);
 }
 
 /* ----- Case forms --------------------------------------------------- */
@@ -533,7 +550,7 @@ a.hr-case-tile:hover .hr-case-tile-id { color: var(--neon-cyan); }
   height: 1em;
   border-radius: 2px;
   background: var(--gradient-pink-cyan);
-  box-shadow: 0 0 8px rgba(255, 46, 182, 0.55);
+  box-shadow: 0 0 8px rgb(var(--neon-pink-rgb) / 0.55);
 }
 
 .hr-cr-section-count {

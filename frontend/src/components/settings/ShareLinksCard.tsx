@@ -1,15 +1,19 @@
 import { copyText } from '../../lib/clipboard';
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { createShareLink, listShareLinks, revokeShareLink, type ShareLinkInfo } from '../../api/auth';
+import { createShareLink, listShareLinks, revokeShareLink } from '../../api/shareLinks';
+import { plural } from '../../lib/format';
+import { qk } from '../../lib/queryKeys';
+import type { ShareLinkRead } from '../../types';
 import { ErrorNote } from '../common/ErrorNote';
+import { CopyButton } from '../ui/CopyButton';
 import { Panel } from '../ui/Panel';
 import { StatusPill } from '../ui/StatusPill';
 import { Skeleton } from '../ui/Skeleton';
 import { useConfirm } from '../ui/Dialogs';
 import { useToast } from '../ui/Toast';
 
-const QUERY_KEY = ['share-links'] as const;
+const QUERY_KEY = qk.shareLinks();
 
 /** `''` is the sentinel for "never" — a `<select>` value must be a string. */
 const EXPIRY_CHOICES: ReadonlyArray<{ value: string; label: string }> = [
@@ -35,7 +39,7 @@ function expiryNote(expiresAt: string | null | undefined): string {
   if (!expiresAt) return 'never expires';
   const days = Math.ceil((new Date(expiresAt).getTime() - Date.now()) / 86_400_000);
   if (days <= 0) return 'expired';
-  return `expires in ${days} day${days === 1 ? '' : 's'}`;
+  return `expires in ${plural(days, 'day')}`;
 }
 
 function linkUrl(urlPath: string): string {
@@ -58,11 +62,14 @@ export function ShareLinksCard() {
     return () => window.clearTimeout(t);
   }, [fresh]);
 
-  async function copy(urlPath: string) {
-    // Through `copyText`: a bare `navigator.clipboard.writeText` threw on the
-    // plain-HTTP overlay and the button did nothing.
+  // The "Copy link" ACTION on the create toast. A toast action has nowhere to
+  // show "Copied" but another toast, so its feedback is one; the rows' own
+  // buttons are `CopyButton`s and acknowledge on themselves. Through
+  // `copyText`: a bare `navigator.clipboard.writeText` threw on the
+  // plain-HTTP overlay and the button did nothing.
+  async function copyNew(urlPath: string) {
     if (await copyText(linkUrl(urlPath))) toast.success('Link copied');
-    else toast.error('Couldn’t copy the link — this browser refused clipboard access.');
+    else toast.error('Couldn’t copy the link — use its Copy button in the list.');
   }
 
   const createMut = useMutation({
@@ -77,7 +84,7 @@ export function ShareLinksCard() {
       // confirmation carries the copy action rather than sending the person
       // hunting for the new row's button.
       toast.success('Link created', {
-        action: { label: 'Copy link', onClick: () => { void copy(created.url_path); } },
+        action: { label: 'Copy link', onClick: () => { void copyNew(created.url_path); } },
       });
       qc.invalidateQueries({ queryKey: QUERY_KEY });
     },
@@ -105,14 +112,14 @@ export function ShareLinksCard() {
     mutationFn: (id: number) => revokeShareLink(id),
     onMutate: async (id: number) => {
       await qc.cancelQueries({ queryKey: QUERY_KEY });
-      const before = qc.getQueryData<ShareLinkInfo[]>(QUERY_KEY)?.find(l => l.id === id);
+      const before = qc.getQueryData<ShareLinkRead[]>(QUERY_KEY)?.find(l => l.id === id);
       const now = new Date().toISOString();
-      qc.setQueryData<ShareLinkInfo[]>(QUERY_KEY, list =>
+      qc.setQueryData<ShareLinkRead[]>(QUERY_KEY, list =>
         list?.map(l => (l.id === id ? { ...l, revoked_at: now } : l)));
       return { revokedAt: before?.revoked_at ?? null };
     },
     onError: (_err, id, ctx) => {
-      qc.setQueryData<ShareLinkInfo[]>(QUERY_KEY, list =>
+      qc.setQueryData<ShareLinkRead[]>(QUERY_KEY, list =>
         list?.map(l => (l.id === id ? { ...l, revoked_at: ctx?.revokedAt ?? null } : l)));
     },
     onSuccess: () => toast.success('Link revoked'),
@@ -122,7 +129,7 @@ export function ShareLinksCard() {
     onSettled: () => { void qc.invalidateQueries({ queryKey: QUERY_KEY }); },
   });
 
-  async function revoke(link: ShareLinkInfo) {
+  async function revoke(link: ShareLinkRead) {
     const ok = await confirm({
       title: `Revoke “${link.label}”?`,
       body: 'Anyone holding it loses access.',
@@ -210,12 +217,7 @@ export function ShareLinksCard() {
                   >{note}</span>
                 </div>
                 <div className="hr-share-actions">
-                  <button
-                    type="button"
-                    className="btn btn-outline-secondary btn-sm"
-                    aria-label={`Copy link: ${l.label}`}
-                    onClick={() => { void copy(l.url_path); }}
-                  >Copy link</button>
+                  <CopyButton text={linkUrl(l.url_path)} what={`link “${l.label}”`} />
                   <button
                     type="button"
                     className="btn btn-outline-danger btn-sm"

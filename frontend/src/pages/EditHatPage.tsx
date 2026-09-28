@@ -1,5 +1,5 @@
 import { isNotFound } from '../api/client';
-import { ErrorNote } from '../components/common/ErrorNote';
+import { ErrorNote, describeError } from '../components/common/ErrorNote';
 import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate, Link } from 'react-router';
@@ -18,8 +18,51 @@ import {
 } from '../components/hats/HatFormFields';
 import type { ColorTag } from '../types';
 import { invalidateHatViews, invalidateHatVocabulary } from '../lib/invalidate';
+import { COLOR_TIERS, asTier, tierForRank } from '../lib/colorTiers';
+import { uploadUrl } from '../lib/photo';
+import { hatName } from '../lib/placement';
+import { qk } from '../lib/queryKeys';
 
 type ColorRow = ColorTag & { rowKey: number };
+
+/**
+ * A color row with a key of its own. Keyed by index, deleting color 2 of 3
+ * handed color 3's data to color 2's inputs — correct on screen, but the
+ * focused field and its native color picker stayed on the row that had just
+ * changed meaning. Only uniqueness matters, so one counter for the module
+ * does; outside the component, it is not a dependency of anything.
+ */
+let nextRowKey = 0;
+function withKey(c: ColorTag): ColorRow {
+  return { ...c, rowKey: nextRowKey++ };
+}
+
+/** The palette as the server would store it — for "did the form change it?". */
+function paletteKey(colors: readonly ColorTag[]): string {
+  return JSON.stringify(colors.map(c => [
+    c.color_name.trim(), c.general_color.trim(), c.hex_value.toLowerCase(), c.tier,
+  ]));
+}
+
+/**
+ * A save that failed part-way: some writes landed, one did not, the rest
+ * were not attempted.
+ *
+ * The form saves in up to four requests, and "Not saved" after the first one
+ * had committed was false — the brand WAS saved, the hat page and the lists
+ * just did not know yet, because nothing was invalidated on a failure. This
+ * names what did land, so the retry is understood as finishing the save
+ * rather than redoing it.
+ */
+class PartialSaveError extends Error {
+  constructor(saved: string[], failed: string, cause: unknown) {
+    const done = saved.length > 1
+      ? `${saved.slice(0, -1).join(', ')} and ${saved[saved.length - 1]}`
+      : saved[0];
+    super(`${done.charAt(0).toUpperCase()}${done.slice(1)} saved; ${failed} not saved: ${describeError(cause)}`);
+    this.name = 'PartialSaveError';
+  }
+}
 
 export function EditHatPage() {
   const { hatId } = useParams<{ hatId: string }>();
@@ -28,7 +71,7 @@ export function EditHatPage() {
   const toast = useToast();
   const id = Number(hatId);
 
-  const hat = useQuery({ queryKey: ['hat', id], queryFn: () => getHat(id), enabled: !isNaN(id) });
+  const hat = useQuery({ queryKey: qk.hat(id), queryFn: () => getHat(id), enabled: !isNaN(id) });
   const options = useHatFormOptions();
 
   const [basics, setBasics] = useState<HatBasics>({
@@ -43,24 +86,20 @@ export function EditHatPage() {
   const [resalePrice, setResalePrice] = useState('');
   const [designNotes, setDesignNotes] = useState('');
   const { photo, photoPreview, setPhotoPreview, onCapture } = useHatPhoto();
-  // Each row carries a local key that survives removal of the row above it.
-  // Keyed by index, deleting color 2 of 3 handed color 3's data to color 2's
-  // inputs — correct on screen, but the focused field and its native color
-  // picker stayed on the row that had just changed meaning.
+  // Each row carries a local key that survives removal of the row above it
+  // (`withKey`).
   const [colors, setColors] = useState<ColorRow[]>([]);
-  const nextRowKey = useRef(0);
-  const withKey = (c: ColorTag): ColorRow => ({ ...c, rowKey: nextRowKey.current++ });
   const [showNewCase, setShowNewCase] = useState(false);
 
   const modelOptions = useQuery({
-    queryKey: ['meta', 'colorways', 'models'],
+    queryKey: qk.meta.colorwayModels(),
     queryFn: () => getColorwayOptions(),
   });
   // Scoped to the model, so it has to follow the model box — but only once
   // the typing has stopped, not on every keystroke (see `useDebouncedValue`).
   const settledModel = useDebouncedValue(modelName.trim());
   const colorwayOptions = useQuery({
-    queryKey: ['meta', 'colorways', settledModel],
+    queryKey: qk.meta.colorwaysFor(settledModel),
     queryFn: () => getColorwayOptions(settledModel),
     enabled: settledModel.length > 1,
   });
@@ -89,6 +128,18 @@ export function EditHatPage() {
   const seededPrices = useRef<{ estimated: number | null; resale: number | null }>({
     estimated: null, resale: null,
   });
+  // The palette as seeded, by the same reasoning. Saving colors is itself a
+  // decision now: `PUT /colors` marks the palette as the OWNER's, and a
+  // re-analysis leaves an owner palette alone. Sending the seeded rows back
+  // on every save claimed the analyzer's colors as yours the first time you
+  // corrected a brand — and, when an analysis landed mid-edit, wrote the
+  // stale seed over the fresh colors. Only a palette you changed is sent.
+  const seededPalette = useRef('');
+  // The last-worn date as seeded, for the same "did you change it?" test. A
+  // wear is logged from the hat page, a tag or the Shortcut — any of which can
+  // land while this form is open — and sending the seeded date back on every
+  // save wrote over the wear that had just been logged.
+  const seededLastWorn = useRef('');
   const estimatedRef = useRef<HTMLInputElement>(null);
   const resaleRef = useRef<HTMLInputElement>(null);
 
@@ -124,11 +175,13 @@ export function EditHatPage() {
       };
       setDesignNotes(hat.data.design_notes || '');
       if (hat.data.photo_path) {
-        setPhotoPreview(`/uploads/${hat.data.photo_path}`);
+        setPhotoPreview(uploadUrl(hat.data.photo_path));
       }
       setColors(hat.data.colors.map(withKey));
+      seededPalette.current = paletteKey(hat.data.colors);
+      seededLastWorn.current = hat.data.date_last_worn || '';
     }
-  }, [hat.data]);
+  }, [hat.data, setPhotoPreview]);
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -138,7 +191,15 @@ export function EditHatPage() {
         // value rather than storing an empty string that reads as an answer.
         construction: basics.construction.trim() || null,
       };
-      if (basics.dateLastWorn) data.date_last_worn = basics.dateLastWorn;
+      // Sent only when the box differs from the date it was seeded with — and
+      // then as null when it was emptied. The update applies only the keys it
+      // is given, so leaving the key OUT means "keep it": clearing the date
+      // used to be silently not saved, because an empty box sent no key; and
+      // sending the untouched seed on every save overwrote a wear logged
+      // elsewhere while the form was open (`seededLastWorn`).
+      if (basics.dateLastWorn !== seededLastWorn.current) {
+        data.date_last_worn = basics.dateLastWorn || null;
+      }
       data.brand = brand || null;
       data.model_name = modelName || null;
       data.artist_series = basics.artistSeries.trim() || null;
@@ -178,8 +239,6 @@ export function EditHatPage() {
       if (resale.send) data.resale_price = resale.value;
       data.limited_edition = basics.limitedEdition;
 
-      await updateHat(id, data);
-
       // Placement goes through `assign`, not the PUT: it is the one path that
       // validates capacity and keeps case and room mutually exclusive.
       const newCaseId = basics.caseId ? Number(basics.caseId) : null;
@@ -187,35 +246,69 @@ export function EditHatPage() {
       // than as a precedence-dependent double negative.
       const inACase = Boolean(basics.caseId);
       const newRoomId = !inACase && basics.roomId ? Number(basics.roomId) : null;
+      // Against the LIVE row, unlike the prices: a retry after a partial save
+      // must see the placement that already landed and skip it.
       const oldCaseId = hat.data?.case_id ?? null;
       const oldRoomId = hat.data?.direct_room_id ?? null;
+      const palette = colors.map(({ rowKey: _key, ...c }) => c);
+
+      // In this order on purpose. The PUT and the placement are the edits
+      // this form is mostly for; the palette is sent only when changed; the
+      // photo goes LAST because it is the one write whose repeat is not free
+      // — each upload replaces the cutout and queues a new analysis — so it
+      // runs only once everything before it has landed, and a retry after
+      // ITS failure repeats only writes that are safe to repeat.
+      const steps: Array<{ name: string; run: () => Promise<unknown> }> = [
+        { name: 'details', run: () => updateHat(id, data) },
+      ];
       if (newCaseId !== oldCaseId || newRoomId !== oldRoomId) {
-        await assignHat(id, newCaseId, newRoomId);
+        steps.push({ name: 'placement', run: () => assignHat(id, newCaseId, newRoomId) });
       }
-
+      if (paletteKey(palette) !== seededPalette.current) {
+        steps.push({ name: 'colors', run: () => updateHatColors(id, palette) });
+      }
       if (photo) {
-        await uploadHatPhoto(id, photo);
+        steps.push({ name: 'photo', run: () => uploadHatPhoto(id, photo) });
       }
 
-      await updateHatColors(id, colors.map(({ rowKey: _key, ...c }) => c));
+      const saved: string[] = [];
+      for (const step of steps) {
+        try {
+          await step.run();
+        } catch (err) {
+          if (saved.length === 0) throw err;
+          throw new PartialSaveError(saved, step.name, err);
+        }
+        saved.push(step.name);
+      }
     },
     onSuccess: () => {
-      invalidateHatViews(qc, id);
-      // A resale price typed here stamps the hat `manual`, which removes it
-      // from the shared-price report, and a colorway flips `missing_colorway`
-      // — so that report is stale the moment this saves. A SIBLING key, not
-      // covered by anything above (CLAUDE.md, `shared_price_audit`).
-      qc.invalidateQueries({ queryKey: ['admin', 'shared-prices'] });
-      invalidateHatVocabulary(qc);
       // The toast lives at the app root, so it is still up on the hat page
-      // this lands on — the acknowledgement arrives where the eye goes next.
+      // this lands on — the acknowledgment arrives where the eye goes next.
       toast.success('Changes saved');
       navigate(`/hats/${id}`);
+    },
+    // Settled, not success: a save that failed part-way still changed the
+    // hat, and the hat page and the lists must show what DID land.
+    onSettled: () => {
+      void invalidateHatViews(qc, id);
+      // A resale price typed here stamps the hat `manual`, which takes it out
+      // of the shared-price report, and a colorway flips its
+      // `missing_colorway` — so that report (`shared_price_audit`) is stale
+      // the moment this saves. `['admin', 'shared-prices']` is a sibling key
+      // that nothing above covers; TanStack matches by prefix, and it
+      // prefixes none of them.
+      void qc.invalidateQueries({ queryKey: qk.admin.sharedPrices() });
+      invalidateHatVocabulary(qc);
     },
   });
 
   function setBasic<K extends keyof HatBasics>(key: K, value: HatBasics[K]) {
     setBasics(prev => ({ ...prev, [key]: value }));
+  }
+
+  function setColor(i: number, change: Partial<ColorTag>) {
+    setColors(prev => prev.map((c, j) => (j === i ? { ...c, ...change } : c)));
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -229,7 +322,7 @@ export function EditHatPage() {
   // the title down just as the form replaced its skeleton.
   const backToHat = Number.isNaN(id) ? undefined : {
     to: `/hats/${id}`,
-    label: hat.data ? (hat.data.display_id || `Hat #${hat.data.id}`) : 'Hat',
+    label: hat.data ? hatName(hat.data) : 'Hat',
     title: 'Back to this hat without saving',
   };
 
@@ -244,7 +337,15 @@ export function EditHatPage() {
     );
   }
   if (hat.error && !isNotFound(hat.error)) {
-    return <div className="py-4"><ErrorNote of={{ isError: true, error: hat.error }} what="Could not load this hat" /></div>;
+    return (
+      <>
+        <PageHeader back={backToHat} title="Edit hat" />
+        <div className="py-4">
+          <ErrorNote of={hat} what="Could not load this hat" />
+          <Link to={`/hats/${id}`} className="btn btn-outline-secondary mt-3">← Back to the hat</Link>
+        </div>
+      </>
+    );
   }
   if (!hat.data) {
     return (
@@ -351,13 +452,21 @@ export function EditHatPage() {
 
         <Panel
           title="Colors"
+          description="Your edits stick — re-analysis keeps a palette you changed. Remove every color to hand them back to analysis."
           footer={(
             <button
               type="button"
               className="btn btn-outline-secondary btn-sm"
               onClick={() => setColors([
                 ...colors,
-                withKey({ color_name: '', general_color: '', hex_value: '#000000', dominance_rank: colors.length + 1, tier: 'primary' }),
+                // A blank name is sent blank: the server names it after the
+                // palette color of its hex, a real name rather than a
+                // stand-in. The tier starts where its place in the list puts
+                // it, and the picker on the row can change it.
+                withKey({
+                  color_name: '', general_color: '', hex_value: '#000000',
+                  dominance_rank: colors.length + 1, tier: tierForRank(colors.length + 1),
+                }),
               ])}
             >+ Add color</button>
           )}
@@ -365,7 +474,7 @@ export function EditHatPage() {
           {colors.length === 0 ? (
             <p className="text-muted small mb-0">No colors. Add one below, or reanalyze the hat to rebuild the palette.</p>
           ) : colors.map((color, i) => (
-            // Swatch, name and remove on one line; the general color under
+            // Swatch, name, tier and remove; the general color and tier under
             // the name on a phone and beside it where there is room — the old
             // flex-wrap put each input wherever it happened to fall.
             <div key={color.rowKey} className="hr-color-edit-row">
@@ -374,36 +483,34 @@ export function EditHatPage() {
                 aria-label={`Color ${i + 1} swatch`}
                 className="form-control form-control-color hr-color-edit-swatch"
                 value={color.hex_value}
-                onChange={e => {
-                  const updated = [...colors];
-                  updated[i] = { ...updated[i], hex_value: e.target.value };
-                  setColors(updated);
-                }}
+                onChange={e => setColor(i, { hex_value: e.target.value })}
               />
               <input
                 type="text"
                 className="form-control hr-color-edit-name"
                 placeholder="Color name"
                 aria-label={`Color ${i + 1} name`}
+                maxLength={50}
                 value={color.color_name}
-                onChange={e => {
-                  const updated = [...colors];
-                  updated[i] = { ...updated[i], color_name: e.target.value };
-                  setColors(updated);
-                }}
+                onChange={e => setColor(i, { color_name: e.target.value })}
               />
               <input
                 type="text"
                 className="form-control hr-color-edit-general"
                 placeholder="General"
                 aria-label={`Color ${i + 1} general color`}
+                maxLength={30}
                 value={color.general_color}
-                onChange={e => {
-                  const updated = [...colors];
-                  updated[i] = { ...updated[i], general_color: e.target.value };
-                  setColors(updated);
-                }}
+                onChange={e => setColor(i, { general_color: e.target.value })}
               />
+              <select
+                className="form-select hr-color-edit-tier"
+                aria-label={`Color ${i + 1} tier`}
+                value={color.tier ?? 'primary'}
+                onChange={e => setColor(i, { tier: asTier(e.target.value) })}
+              >
+                {COLOR_TIERS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+              </select>
               <button
                 type="button"
                 className="btn btn-outline-danger btn-sm hr-color-edit-remove"
@@ -418,7 +525,15 @@ export function EditHatPage() {
           ))}
         </Panel>
 
-        <HatFormActions error={<ErrorNote of={mutation} what="Not saved" className="mb-2" />}>
+        <HatFormActions
+          error={
+            <ErrorNote
+              of={mutation}
+              what={mutation.error instanceof PartialSaveError ? 'Partly saved' : 'Not saved'}
+              className="mb-2"
+            />
+          }
+        >
           <Link to={`/hats/${id}`} className="btn btn-outline-secondary">Cancel</Link>
           <button
             type="submit"

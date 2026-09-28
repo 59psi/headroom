@@ -1,7 +1,6 @@
-"""Regression tests for the production-hardening fixes (code-archaeology pass).
+"""Regression tests for the production-hardening fixes.
 
-Each test locks in a specific finding's fix; the diagnosis flagged all of these
-paths as previously untested.
+Each test locks in one fix to a path that had no test before it.
 """
 
 import os
@@ -19,7 +18,7 @@ async def _make_hat(client, **extra):
     return resp.json()
 
 
-# --- R4: undispose must reassign position, not collide ------------------- #
+# --- undispose must reassign position, not collide ----------------------- #
 
 
 async def test_undispose_reassigns_position_no_collision(client):
@@ -46,7 +45,7 @@ async def test_undispose_reassigns_position_no_collision(client):
     assert len(positions) == len(set(positions)), positions
 
 
-# --- R12: PUT /colors must normalize general_color ---------------------- #
+# --- PUT /colors must normalize general_color --------------------------- #
 
 
 async def test_put_colors_derives_general_color_from_hex_when_left_blank(client):
@@ -141,7 +140,7 @@ async def test_put_colors_with_empty_list_clears_the_palette(client):
     assert resp.json()["colors"] == []
 
 
-# --- wear log idempotency (Doppler) ------------------------------------- #
+# --- wear log idempotency ------------------------------------------------ #
 
 
 async def test_wear_idempotent_same_day(client):
@@ -152,14 +151,14 @@ async def test_wear_idempotent_same_day(client):
     assert second["wear_count"] == 1  # second same-day tap is a no-op
 
 
-# --- S3: password change rotates the API token -------------------------- #
+# --- password change rotates the API token ------------------------------ #
 
 
 async def test_password_change_rotates_api_token(client):
     """Reads the token through the password-gated route, not `/me`.
 
-    `/me` no longer carries it (AUDIT-HISTORY S3): a session alone must not yield a
-    credential that outlives every form of session revocation this app has.
+    `/me` no longer carries it: a session alone must not yield a credential
+    that outlives every form of session revocation this app has.
     """
     reveal = "/api/auth/token/reveal"
     before = (await client.post(
@@ -178,7 +177,7 @@ async def test_password_change_rotates_api_token(client):
     assert after != before
 
 
-# --- S4: failed login is audited ---------------------------------------- #
+# --- failed login is audited -------------------------------------------- #
 
 
 async def test_failed_login_writes_audit_row(client):
@@ -190,7 +189,7 @@ async def test_failed_login_writes_audit_row(client):
     assert any(row["kind"] == "auth.login_failed" for row in rows), rows
 
 
-# --- S2/R9 (docs/AUDIT-HISTORY.md): /health/ready redacts for anonymous - #
+# --- /health/ready redacts for anonymous callers ------------------------ #
 
 
 async def test_health_ready_redacts_for_anonymous(anon_client):
@@ -227,7 +226,7 @@ async def test_public_branding_logo_404_when_absent(anon_client):
     assert resp.status_code == 404
 
 
-# --- S5: first-run setup blocks a second owner -------------------------- #
+# --- first-run setup blocks a second owner ------------------------------ #
 
 
 async def test_setup_blocks_second_owner(anon_client):
@@ -241,7 +240,7 @@ async def test_setup_blocks_second_owner(anon_client):
     assert again.status_code == 403
 
 
-# --- R2: backup retention keeps the newest N (a COUNT since 2.40) --------- #
+# --- backup retention keeps the newest N (a COUNT since 2.40) ------------ #
 
 
 def _make_backup(name_ts: str, age_days: float):
@@ -294,14 +293,13 @@ async def test_backup_startup_skip_signal():
     assert age is not None and age < 3600  # a recent backup exists → skip startup one
 
 
-# --- R5: import boot-sweep heals crash-stranded state ------------------- #
+# --- import boot-sweep heals crash-stranded state ----------------------- #
 
 
 async def test_import_boot_sweep_recovers_processing_and_closes_terminal(monkeypatch):
-    from tests.conftest import test_session_factory
-
     from headroom.models.import_job import ImportJob, ImportJobItem
     from headroom.services import import_service
+    from tests.conftest import test_session_factory
 
     # The worker uses the production session factory; point it at the test DB.
     monkeypatch.setattr(

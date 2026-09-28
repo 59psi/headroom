@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getStyles, getSizes, getConditions, getConstructions, getCollections } from '../../api/hats';
 import { listCases } from '../../api/cases';
 import { getRoomOptions } from '../../api/rooms';
+import { qk } from '../../lib/queryKeys';
 import { PhotoCapture } from '../photos/PhotoCapture';
 import { ErrorNote } from '../common/ErrorNote';
 import { Combobox } from '../common/Combobox';
@@ -10,6 +11,7 @@ import { Panel } from '../ui/Panel';
 import { Skeleton } from '../ui/Skeleton';
 import { Switch } from '../ui/Switch';
 import { CasePicker } from './CasePicker';
+import { OptionSelect } from './OptionSelect';
 
 /** The fields the Add and Edit hat forms share verbatim. */
 export interface HatBasics {
@@ -72,14 +74,14 @@ export const DEFAULT_HAT_BASICS: {
 
 /** The dropdown sources both hat forms need, plus a single loading flag. */
 export function useHatFormOptions() {
-  const styles = useQuery({ queryKey: ['meta', 'styles'], queryFn: getStyles });
-  const sizes = useQuery({ queryKey: ['meta', 'sizes'], queryFn: getSizes });
-  const conditions = useQuery({ queryKey: ['meta', 'conditions'], queryFn: getConditions });
-  const constructions = useQuery({ queryKey: ['meta', 'constructions'], queryFn: getConstructions });
-  const collections = useQuery({ queryKey: ['meta', 'collections'], queryFn: getCollections });
-  const cases = useQuery({ queryKey: ['cases'], queryFn: listCases });
+  const styles = useQuery({ queryKey: qk.meta.styles(), queryFn: getStyles });
+  const sizes = useQuery({ queryKey: qk.meta.sizes(), queryFn: getSizes });
+  const conditions = useQuery({ queryKey: qk.meta.conditions(), queryFn: getConditions });
+  const constructions = useQuery({ queryKey: qk.meta.constructions(), queryFn: getConstructions });
+  const collections = useQuery({ queryKey: qk.meta.collections(), queryFn: getCollections });
+  const cases = useQuery({ queryKey: qk.cases(), queryFn: listCases });
   // For a hat kept with no case. Same key the filter bar uses.
-  const rooms = useQuery({ queryKey: ['meta', 'rooms'], queryFn: getRoomOptions });
+  const rooms = useQuery({ queryKey: qk.meta.rooms(), queryFn: getRoomOptions });
 
   return {
     styles, sizes, conditions, constructions, collections, cases, rooms,
@@ -197,34 +199,31 @@ export function HatBasicsCard({
 
       {/* The three short picks side by side where there is room: Style on
           its own line on a phone (its labels are the long ones —
-          "Beanie (unspecified)"), Size and Condition two-up beneath it. */}
+          "Beanie (unspecified)"), Size and Condition two-up beneath it. The
+          same control bulk import's defaults use (`OptionSelect`). */}
       <div className="hr-form-grid mb-3">
-        <div className="hr-form-grid-wide">
-          <label className="form-label" htmlFor="hat-style">Style</label>
-          <select id="hat-style" className="form-select" value={values.style} onChange={e => onChange('style', e.target.value)}>
-            {options.styles.data?.map(s => (
-              <option key={s.value} value={s.value}>{s.label}</option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label className="form-label" htmlFor="hat-size">Size</label>
-          <select id="hat-size" className="form-select" value={values.size} onChange={e => onChange('size', e.target.value)}>
-            {options.sizes.data?.map(s => (
-              <option key={s.value} value={s.value}>{s.label}</option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label className="form-label" htmlFor="hat-condition">Condition</label>
-          <select id="hat-condition" className="form-select" value={values.condition} onChange={e => onChange('condition', e.target.value)}>
-            {options.conditions.data?.map(c => (
-              <option key={c.value} value={c.value}>{c.label}</option>
-            ))}
-          </select>
-        </div>
+        <OptionSelect
+          id="hat-style"
+          label="Style"
+          className="hr-form-grid-wide"
+          value={values.style}
+          onChange={v => onChange('style', v)}
+          options={options.styles.data}
+        />
+        <OptionSelect
+          id="hat-size"
+          label="Size"
+          value={values.size}
+          onChange={v => onChange('size', v)}
+          options={options.sizes.data}
+        />
+        <OptionSelect
+          id="hat-condition"
+          label="Condition"
+          value={values.condition}
+          onChange={v => onChange('condition', v)}
+          options={options.conditions.data}
+        />
       </div>
 
       {/* Beside Style rather than inside it: these are constructions melin

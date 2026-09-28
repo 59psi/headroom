@@ -34,7 +34,11 @@ from headroom.config import env_flag
 from headroom.config import settings as config_settings
 from headroom.database import async_session
 from headroom.models.hat import Hat
-from headroom.services.hat_analysis_pipeline import finalize_hat_photo
+
+# The MODULE, called through at run time: `finalize_hat_photo` is the seam
+# tests patch, and a `from … import` of the function kept this module holding
+# the original after the pipeline's attribute was replaced.
+from headroom.services import hat_analysis_pipeline
 
 #: The session factory this worker opens sessions with. Set by
 #: `start_worker(session_factory=)` — the lifespan passes `app.state`'s — and
@@ -58,7 +62,9 @@ logger = logging.getLogger(__name__)
 # sweep re-queues.
 PENDING = "pending"
 
-_queue: asyncio.Queue[int] | None = None  # holds hat IDs
+#: `(hat_id, cutout_only)` pairs — a redo-the-cutout request rides the same
+#: queue as a full analysis, so the mode travels with the id.
+_queue: asyncio.Queue[tuple[int, bool]] | None = None
 _worker_task: asyncio.Task | None = None
 
 
@@ -114,7 +120,9 @@ async def _process_hat(hat_id: int, cutout_only: bool = False) -> None:
             return
 
         photo_at_start = hat.photo_path
-        await finalize_hat_photo(db, hat, photo_path, cutout_only=cutout_only)
+        await hat_analysis_pipeline.finalize_hat_photo(
+            db, hat, photo_path, cutout_only=cutout_only
+        )
 
         # This session has been open for minutes. If the owner replaced the
         # photo meanwhile, the upload route has already stored the new path,
@@ -151,28 +159,59 @@ async def _photo_replaced_since(hat_id: int, photo_path: str | None) -> bool:
 def stamp_failure(hat: Hat, exc: Exception) -> None:
     """Set the terminal error fields on a hat already loaded in a session.
 
-    One definition of "this analysis failed", two callers: the worker (which
-    owns a session of its own, below) and the routes' inline fallback (which
-    already has the request's session and should not open a second connection
-    just to write one row).
+    One definition of "this analysis failed", used by `record_failure`.
     """
     hat.analysis_status = "error"
     hat.analysis_error = str(exc)[:1000]
     hat.analyzed_at = datetime.now(timezone.utc)
 
 
-async def mark_failed(hat_id: int, exc: Exception) -> None:
+def record_failure(hat: Hat, exc: Exception, *, cutout_only: bool = False) -> bool:
+    """Leave a hat whose pipeline run raised in a state nothing will spin on.
+
+    One definition, two callers: the worker (`mark_failed`, in a session of
+    its own) and the routes' inline fallback (which already has the request's
+    session and should not open a second connection just to write one row).
+    They used to disagree about a re-cut: the inline path stamped the
+    analysis as failed, while the worker skipped it — its guard is
+    `status == pending`, and a re-cut never sets that — leaving the uncut
+    original as the hat's photo and `analysis_stage='cutout'` reported for
+    ever.
+
+    * **A re-cut** (`cutout_only`) goes back to the cutout it had
+      (`hat_analysis_pipeline.abandon_recut`). The analysis record is left
+      alone, as a re-cut always leaves it: stamping it `error` put a hat whose
+      analysis was fine on the failed-analyses badge, where "Retry" would
+      spend a Claude call on something that was never the problem.
+    * **An analysis** still `pending` gets the terminal error. Anything else
+      has already been settled by someone, and is left as it is.
+
+    Returns whether anything changed; mutates `hat`, the caller commits.
+    """
+    if cutout_only:
+        return hat_analysis_pipeline.abandon_recut(hat)
+    if hat.analysis_status != PENDING:
+        return False
+    stamp_failure(hat, exc)
+    # Nothing is running any more. `HatRead` masks a stage on any non-pending
+    # hat, but the column is what the next run reads until its first step.
+    hat.analysis_stage = None
+    hat.analysis_stage_at = None
+    return True
+
+
+async def mark_failed(hat_id: int, exc: Exception, *, cutout_only: bool = False) -> None:
     """Record a pipeline crash on the hat, in a session of our own.
 
     Without this a hat that blew up mid-analysis keeps `analysis_status`
     'pending' forever, and the UI spins on it indefinitely — the exact symptom
-    the queue was meant to remove.
+    the queue was meant to remove. See `record_failure` for what "recorded"
+    means for each kind of run.
     """
     try:
         async with _sessions() as db:
             hat = (await db.execute(select(Hat).where(Hat.id == hat_id))).scalar_one_or_none()
-            if hat is not None and hat.analysis_status == PENDING:
-                stamp_failure(hat, exc)
+            if hat is not None and record_failure(hat, exc, cutout_only=cutout_only):
                 await db.commit()
     except Exception as inner:  # noqa: BLE001 — bookkeeping must not raise
         logger.warning("Analysis error-bookkeeping failed for hat=%s: %s", hat_id, inner)
@@ -190,7 +229,7 @@ async def _worker_loop() -> None:
             except Exception as exc:  # one bad hat must NOT kill
                 # the worker, or every later upload hangs on 'pending' forever.
                 logger.exception("Analysis worker: unhandled error on hat=%s: %s", hat_id, exc)
-                await mark_failed(hat_id, exc)
+                await mark_failed(hat_id, exc, cutout_only=cutout_only)
             finally:
                 _queue.task_done()
     except asyncio.CancelledError:
@@ -252,6 +291,7 @@ __all__ = [
     "worker_alive",
     "worker_expected",
     "mark_failed",
+    "record_failure",
     "stamp_failure",
     "queue_depth",
 ]

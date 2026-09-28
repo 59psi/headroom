@@ -47,10 +47,19 @@ describe('HatHeadingId', () => {
 
   it('offers no link for a hat that is not in a case', () => {
     renderWithProviders(
-      <HatHeadingId hat={hat({ case_display_id: null, display_id: null })} />,
+      <HatHeadingId hat={hat({ case_display_id: null, display_id: null, model_name: null })} />,
     );
     expect(screen.queryByRole('link')).toBeNull();
     expect(screen.getByText('Hat #12')).toBeInTheDocument();
+  });
+
+  it('calls a hat outside a case what every other screen calls it', () => {
+    // `hatName`: the model name before the row id — the Hats list, search
+    // and the carousel all say "Compass Hydro" for this hat.
+    renderWithProviders(
+      <HatHeadingId hat={hat({ case_display_id: null, display_id: null })} />,
+    );
+    expect(screen.getByText('Compass Hydro')).toBeInTheDocument();
   });
 
   it('does not dress a mismatched id up as navigation', () => {

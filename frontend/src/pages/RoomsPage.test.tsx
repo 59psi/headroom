@@ -264,14 +264,67 @@ describe('RoomsPage', () => {
     expect(screen.queryByText('Deleted “Study”')).not.toBeInTheDocument();
   });
 
-  it('a failed load says so, with no empty list and no add field', async () => {
+  it('a failed load says so, with no empty list and no add field — and retries in place', async () => {
+    const user = userEvent.setup();
     api.listRooms.mockRejectedValue(new Error('database is locked'));
     renderWithProviders(<RoomsPage />, { route: '/rooms' });
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Could not load rooms — database is locked');
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Couldn’t load your rooms.');
+    expect(alert).toHaveTextContent('database is locked');
     expect(screen.queryByRole('list')).not.toBeInTheDocument();
     expect(screen.queryByRole('textbox', { name: 'Add room' })).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Back' })).toHaveAttribute('href', '/');
+
+    // "Back" to the home page was the only way out; a retry is a refetch.
+    api.listRooms.mockImplementation(async () => server.map(r => ({ ...r })));
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByRole('link', { name: /Main/ })).toBeInTheDocument();
+  });
+
+  describe('every room change refreshes BOTH room lists', () => {
+    // The full list this page shows and the {value, label} options behind
+    // the room dropdowns are sibling keys; removing every options
+    // invalidation used to leave the whole suite green.
+    async function spyOn() {
+      const view = renderWithProviders(<RoomsPage />, { route: '/rooms' });
+      const invalidate = vi.spyOn(view.client, 'invalidateQueries');
+      await screen.findByRole('link', { name: /Study/ });
+      return invalidate;
+    }
+    const keys = (spy: { mock: { calls: unknown[][] } }) =>
+      spy.mock.calls.map(c => JSON.stringify((c[0] as { queryKey: unknown }).queryKey));
+
+    it('create', async () => {
+      const user = userEvent.setup();
+      const invalidate = await spyOn();
+      await user.type(screen.getByRole('textbox', { name: 'Add room' }), 'Attic{Enter}');
+      await waitFor(() => expect(keys(invalidate)).toEqual(expect.arrayContaining(['["meta","rooms"]', '["rooms"]'])));
+    });
+
+    it('rename', async () => {
+      const user = userEvent.setup();
+      const invalidate = await spyOn();
+      await user.click(screen.getByRole('button', { name: 'Rename Study' }));
+      const field = screen.getByRole('textbox', { name: 'New name for Study' });
+      await user.clear(field);
+      await user.type(field, 'Den{Enter}');
+      await waitFor(() => expect(keys(invalidate)).toEqual(expect.arrayContaining(['["meta","rooms"]', '["rooms"]', '["hats"]'])));
+    });
+
+    it('delete', async () => {
+      const user = userEvent.setup();
+      const invalidate = await spyOn();
+      await user.click(screen.getByRole('button', { name: 'Delete Study' }));
+      await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Delete room' }));
+      await waitFor(() => expect(keys(invalidate)).toEqual(expect.arrayContaining(['["meta","rooms"]', '["rooms"]', '["hats"]'])));
+    });
+
+    it('make default', async () => {
+      const user = userEvent.setup();
+      const invalidate = await spyOn();
+      await user.click(screen.getByRole('button', { name: 'Make default: Study' }));
+      await waitFor(() => expect(keys(invalidate)).toEqual(expect.arrayContaining(['["meta","rooms"]', '["rooms"]'])));
+    });
   });
 
   it('never offers to delete the default room', async () => {

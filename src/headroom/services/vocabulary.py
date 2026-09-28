@@ -15,12 +15,16 @@ Two layers stop it:
    EXISTING spelling. That is what makes the guarantee hold rather than merely
    making duplicates less likely.
 
-Folding covers case, whitespace AND accents, so "Piña", "Pina" and "PINA" are
-one collection. Accents were initially left alone on the theory that two names
-differing only by a diacritic might genuinely be different — in this collection
-they aren't, they are the same drop typed with and without a long-press on a
-phone keyboard, and three entries that never find each other in search is the
-concrete harm.
+Two spellings are the same when `naming.name_key` says so — the ONE "same
+name" rule, shared with the purchase matcher and duplicate detection. It folds
+case, width, whitespace, punctuation AND accents, so "Piña", "Pina" and "PINA"
+are one collection, as are "A-Game" and "A Game". Accents were initially left
+alone on the theory that two names differing only by a diacritic might
+genuinely be different — in this collection they aren't, they are the same
+drop typed with and without a long-press on a phone keyboard, and three
+entries that never find each other in search is the concrete harm. This
+module used to carry its own fold, which the matcher did not share: a
+colorway canonicalized here as one value was two products there.
 
 When variants disagree, the ACCENTED spelling wins (see `_preferred`): an
 accent is a deliberate act, while dropping one is what happens when you're
@@ -31,21 +35,18 @@ from __future__ import annotations
 
 import unicodedata
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import InstrumentedAttribute
 
+from headroom.services.naming import name_key
 
-def fold(value: str) -> str:
-    """Case-, whitespace- and accent-insensitive key for `value`.
 
-    NFKD splits an accented character into its base letter plus a combining
-    mark; dropping the marks leaves the base letters, so "Piña" and "Pina"
-    produce the same key.
-    """
-    collapsed = " ".join(value.split())
-    decomposed = unicodedata.normalize("NFKD", collapsed)
-    return "".join(c for c in decomposed if not unicodedata.combining(c)).casefold()
+def _key(value: str) -> str:
+    """`name_key`, or the collapsed value itself when it has no letters or
+    digits — so two different punctuation-only values stay two, rather than
+    both keying to "" and merging."""
+    return name_key(value) or " ".join(value.split())
 
 
 def _accent_count(value: str) -> int:
@@ -64,9 +65,9 @@ def _preferred(variants: list[str], known: tuple[str, ...] = ()) -> str:
     so a single early typo doesn't rename what everything else uses; then
     alphabetical, purely so the result never depends on row order.
     """
-    key = fold(variants[0])
+    key = _key(variants[0])
     for candidate in known:
-        if fold(candidate) == key:
+        if _key(candidate) == key:
             return candidate
 
     counts: dict[str, int] = {}
@@ -93,24 +94,42 @@ def _shouting(value: str) -> int:
 
 
 async def distinct_values(
-    db: AsyncSession, column: InstrumentedAttribute, limit: int = 500
+    db: AsyncSession,
+    column: InstrumentedAttribute,
+    limit: int = 500,
+    known: tuple[str, ...] = (),
 ) -> list[str]:
-    """Every non-empty value in use for `column`, alphabetical, de-duplicated.
+    """Every value in use for `column`, one spelling per name, alphabetical.
 
-    Case-insensitive de-dupe keeping the FIRST spelling seen in alphabetical
-    order — deterministic, so the suggestion list doesn't reshuffle between
-    requests. Bounded because this backs a picker, not a report.
+    The spelling offered is `_preferred`'s — the one a write would store, with
+    the same curated `known` list a write would be given. This used to keep
+    whichever variant sorted first, so with `NEON` on one hat and `Neon` on
+    three the picker suggested `NEON` while typing either stored `Neon`; and
+    `_known_series` hands this list to Claude as the spelling to use EXACTLY,
+    so the analysis path learned the minority spelling too.
+
+    Counted per spelling, because `_preferred` breaks ties by how common a
+    spelling is. Bounded because this backs a picker, not a report.
     """
     rows = (
         await db.execute(
-            select(column).where(column.is_not(None)).distinct().limit(limit)
+            select(column, func.count())
+            .where(column.is_not(None))
+            .group_by(column)
         )
-    ).scalars().all()
+    ).all()
 
-    seen: dict[str, str] = {}
-    for raw in sorted((r.strip() for r in rows if r and r.strip()), key=str.casefold):
-        seen.setdefault(fold(raw), raw)
-    return list(seen.values())
+    groups: dict[str, list[str]] = {}
+    for raw, count in rows:
+        if not raw or not raw.strip():
+            continue
+        cleaned = " ".join(raw.split())
+        groups.setdefault(_key(cleaned), []).extend([cleaned] * count)
+
+    chosen = sorted(
+        (_preferred(variants, known) for variants in groups.values()), key=str.casefold
+    )
+    return chosen[:limit]
 
 
 async def canonicalize(
@@ -143,9 +162,9 @@ async def canonicalize(
     if not cleaned:
         return None
 
-    key = fold(cleaned)
+    key = _key(cleaned)
     for candidate in known:
-        if fold(candidate) == key:
+        if _key(candidate) == key:
             return candidate
 
     # ALL rows, not `DISTINCT`: `_preferred` decides ties by how common a
@@ -156,12 +175,12 @@ async def canonicalize(
     # write path was the one deciding on a fiction.
     # `no_autoflush`: the analysis path assigns the value to the hat BEFORE
     # canonicalizing it, and an autoflush would push that dirty spelling into
-    # the rows being counted — the value under judgement voting for itself.
+    # the rows being counted — the value under judgment voting for itself.
     with db.no_autoflush:
         rows = (
             await db.execute(select(column).where(column.is_not(None)))
         ).scalars().all()
-    matches = [" ".join(r.split()) for r in rows if r and r.strip() and fold(r) == key]
+    matches = [" ".join(r.split()) for r in rows if r and r.strip() and _key(r) == key]
     if not matches:
         return cleaned
 
@@ -180,7 +199,7 @@ async def canonicalize(
 async def merge_case_variants(
     db: AsyncSession, column: InstrumentedAttribute, known: tuple[str, ...] = ()
 ) -> int:
-    """Collapse existing case/whitespace/accent variants onto one spelling.
+    """Collapse existing spelling variants (`name_key`) onto one spelling.
 
     Returns the number of rows changed.
 
@@ -190,9 +209,9 @@ async def merge_case_variants(
     spelling wins, so the merge and the write path cannot disagree.
 
     Rows are matched by their exact stored value rather than by a SQL
-    expression, because the fold is accent-aware and SQLite's `lower()` is
-    ASCII-only — a `WHERE lower(col) = key` would silently skip every accented
-    row, which is precisely the group this exists to merge.
+    expression, because the key folds accents and punctuation and SQLite's
+    `lower()` is ASCII-only — a `WHERE lower(col) = key` would silently skip
+    every accented row, which is precisely the group this exists to merge.
 
     Idempotent — running it again after it has converged changes nothing.
     """
@@ -204,7 +223,7 @@ async def merge_case_variants(
     for raw in rows:
         if not raw or not raw.strip():
             continue
-        groups.setdefault(fold(raw), []).append(raw)
+        groups.setdefault(_key(raw), []).append(raw)
 
     changed = 0
     for variants in groups.values():

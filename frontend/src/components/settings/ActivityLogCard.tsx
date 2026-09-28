@@ -4,7 +4,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ErrorNote } from '../common/ErrorNote';
 import { getActivityLog, getRetentionStatus } from '../../api/settings';
 import type { ActivityRow, RetentionStatus } from '../../types';
-import { timeAgo } from '../../lib/format';
+import { plural, timeAgo } from '../../lib/format';
+import { qk } from '../../lib/queryKeys';
 import { Panel } from '../ui/Panel';
 import { StatusPill } from '../ui/StatusPill';
 import { Skeleton } from '../ui/Skeleton';
@@ -16,7 +17,9 @@ const ROWS_SHOWN = 25;
  *
  * Decoration on top of the kind, which is printed beside it — never the only
  * carrier. Suffix-matched against the server's `noun.verb` kinds, so a kind
- * added later falls through to the neutral dot rather than to a wrong color.
+ * added later falls through to the neutral dot rather than to a wrong color —
+ * and the password re-checks (`auth.reauth_failed`, `auth.reauth_blocked`)
+ * read as failures by the same rule that colors a failed sign-in.
  */
 function kindTone(kind: string): 'bad' | 'gone' | 'new' | 'neutral' {
   if (/^error\.|_failed$|_blocked$/.test(kind)) return 'bad';
@@ -95,7 +98,7 @@ function RetentionNote({ r }: { r: RetentionStatus }) {
   if (h.consecutive_failures > 0) {
     return (
       <p className="hr-upkeep-alert">
-        Retention prune failing ({h.consecutive_failures} in a row)
+        Retention prune failing ({plural(h.consecutive_failures, 'time')} in a row)
         {h.last_error ? `: ${h.last_error}` : ''}. Both this log and expired
         sessions are growing unbounded.
       </p>
@@ -104,7 +107,7 @@ function RetentionNote({ r }: { r: RetentionStatus }) {
   if (h.last_success_at) {
     return (
       <p className="hr-upkeep-note">
-        Pruned {h.last_result} row{h.last_result === 1 ? '' : 's'} older than{' '}
+        Pruned {plural(h.last_result ?? 0, 'row')} older than{' '}
         {r.retention_days} days,{' '}
         <time dateTime={h.last_success_at} title={new Date(h.last_success_at).toLocaleString()}>
           {timeAgo(h.last_success_at)}
@@ -121,17 +124,18 @@ function RetentionNote({ r }: { r: RetentionStatus }) {
 export function ActivityLogCard() {
   const qc = useQueryClient();
   // Fetches exactly what it shows — it asked for 50 and sliced to 25.
-  const activity = useQuery({ queryKey: ['admin', 'activity'], queryFn: () => getActivityLog(ROWS_SHOWN) });
+  const activity = useQuery({ queryKey: qk.admin.activity(), queryFn: () => getActivityLog(ROWS_SHOWN) });
   // The daily prune is the only thing bounding this table and `auth_sessions`,
   // and it had no health record of any kind — a persistent failure was one
   // WARNING per day into a container log while an SD card filled. The row
   // count below cannot stand in for it: a table nobody is writing to and a
   // prune that died three weeks ago look identical from a count.
   const retention = useQuery({
-    queryKey: ['admin', 'retention'], queryFn: getRetentionStatus,
+    queryKey: qk.admin.retention(), queryFn: getRetentionStatus,
   });
   // Above any early exit (there is none today — keep it that way): a hook
-  // after a conditional return is the Rules-of-Hooks bug CLAUDE.md warns of.
+  // after a conditional return breaks the Rules of Hooks (`npm run lint`
+  // refuses it).
   const groups = useMemo(() => groupByDay(activity.data ?? []), [activity.data]);
   const refreshing = activity.isFetching || retention.isFetching;
 
@@ -145,10 +149,11 @@ export function ActivityLogCard() {
           type="button"
           className="btn btn-outline-secondary btn-sm"
           onClick={() => {
-            qc.invalidateQueries({ queryKey: ['admin', 'activity'] });
+            qc.invalidateQueries({ queryKey: qk.admin.activity() });
             // A SIBLING key: the retention sentence rendered below reads it,
-            // and "activity" is not a prefix of "retention" (CLAUDE.md).
-            qc.invalidateQueries({ queryKey: ['admin', 'retention'] });
+            // and "activity" is not a prefix of "retention" — invalidation
+            // matches key PREFIXES, so a sibling is never reached by its twin.
+            qc.invalidateQueries({ queryKey: qk.admin.retention() });
           }}
           disabled={refreshing}
           aria-busy={refreshing || undefined}

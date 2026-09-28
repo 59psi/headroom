@@ -16,13 +16,11 @@ module the sweep imports it from.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 import asyncio
 import contextlib
+from datetime import datetime, timezone
 
 import pytest
-
 from sqlalchemy import select
 
 from headroom.models.hat import Hat
@@ -297,9 +295,32 @@ async def test_status_reports_the_last_sweep(client, db_session, monkeypatch):
     assert after["consecutive_failures"] == 0
 
 
-async def test_the_scheduler_does_not_start_when_disabled(monkeypatch):
+async def test_the_scheduler_does_not_start_when_disabled(monkeypatch, db_session):
     monkeypatch.setenv("HEADROOM_REPRICING_ENABLED", "false")
-    assert await repricing.start_repricing() is None
+    assert await repricing.start_repricing(_factory(db_session)) is None
+
+
+async def test_the_sweep_lock_is_per_event_loop():
+    """This test's loop, then a second one, each contending the sweep lock.
+
+    The lock was a module-level `asyncio.Lock()`, which binds itself to the
+    first loop that makes it wait and raises "bound to a different event loop"
+    in the next. `services/locks.loop_lock` is the house mechanism for exactly
+    this, and the sweep lock now comes from it.
+    """
+
+    async def contend() -> None:
+        lock = repricing._sweep_lock()
+        async with lock:
+            waiter = asyncio.create_task(lock.acquire())
+            await asyncio.sleep(0)  # the waiter parks on the lock → binds it
+        await waiter
+        lock.release()
+
+    await contend()
+    # A second loop, on a worker thread so it cannot disturb this one. With a
+    # module-level lock this raised RuntimeError.
+    await asyncio.to_thread(asyncio.run, contend())
 
 
 async def test_repricing_is_independent_of_analysis(db_session):
@@ -371,7 +392,7 @@ async def test_a_failing_manual_run_is_recorded_not_swallowed(
     monkeypatch.setattr(repricing, "reprice_once", boom)
 
     # The handler records and then RE-RAISES, so the traceback still reaches
-    # the container log (CLAUDE.md: "Starlette re-raises"). Under
+    # the container log (Starlette re-raises after the handler). Under
     # ASGITransport that surfaces here rather than as a 500 — the contract
     # being pinned is "recorded, then raised", not the status code.
     with pytest.raises(RuntimeError, match="marketplace down"):
@@ -640,10 +661,11 @@ async def test_the_scheduled_sweep_holds_the_slot_the_buttons_check(
     exists to prevent. Both routes asserted a property the code did not have.
 
     `reprice_once` is stubbed rather than run: what changed is the loop's claim
-    around it, and calling the real one would reach for the module-level
-    `async_session` — the wrong database, the mistake `error_handler` documents.
+    around it, not the sweep inside it.
     """
     import contextlib
+
+    from tests.conftest import test_session_factory
 
     entered = asyncio.Event()
     gate = asyncio.Event()
@@ -655,7 +677,7 @@ async def test_the_scheduled_sweep_holds_the_slot_the_buttons_check(
 
     monkeypatch.setattr(repricing, "reprice_once", held_sweep)
 
-    loop_task = asyncio.create_task(repricing._loop())
+    loop_task = asyncio.create_task(repricing._loop(test_session_factory))
     try:
         await asyncio.wait_for(entered.wait(), timeout=2)
         assert repricing.full_sweep_in_flight(), "the scheduled sweep did not claim"
@@ -764,5 +786,40 @@ async def test_a_manual_full_sweep_does_not_clear_a_standing_failure(
     status = (await client.get("/api/admin/repricing")).json()
     assert status["last_error"] == "nightly sweep has been dead for weeks"
     assert status["consecutive_failures"] == 1
+
+
+async def test_a_sweep_reads_each_marketplace_category_once(db_session, monkeypatch):
+    """Three hats in one category asked the marketplace for that category
+    three times: the sweep never opened a `shared_client()` block, so the
+    per-block cache that exists for exactly this had nothing to live in."""
+    import headroom.services.melin_recap as mr
+
+    calls: list[dict] = []
+    listings = [
+        {"id": str(i), "type": "listing",
+         "attributes": {"title": "A-Game Hydro - Red",
+                        "price": {"amount": 8000 + i, "currency": "USD"},
+                        "publicData": {"condition": "new_with_tags", "size": "C"}}}
+        for i in range(4)
+    ]
+
+    async def _one_page(params):
+        calls.append(dict(params))
+        return listings if int(params.get("page", 1)) == 1 else []
+
+    monkeypatch.setattr(mr, "query_listings", _one_page)
+
+    # What ONE hat costs, outside any sweep.
+    await mr.fetch_resale_stats("a_game", "A-Game Hydro")
+    per_hat = len(calls)
+    calls.clear()
+
+    for _ in range(3):
+        db_session.add(_hat(model_name="A-Game Hydro", style="a_game"))
+    await db_session.commit()
+    await repricing.reprice_once(_factory(db_session))
+
+    assert per_hat > 0
+    assert len(calls) == per_hat, f"{len(calls)} reads for 3 hats; one hat costs {per_hat}"
 
 

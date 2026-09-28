@@ -369,11 +369,14 @@ async def test_hat_detail_carries_no_more_than_the_listing(client, anon_client):
     body = (await anon_client.get(f"/api/public/guest/hat/{hat['id']}")).json()
 
     # `thumb_url` joined in 2.79: the same photo at grid size on the same
-    # public route, nothing an outsider could not already fetch.
+    # public route, nothing an outsider could not already fetch. `style_label`
+    # is `style` in the words every screen uses ("A-Game") — the same fact,
+    # spelled for reading, since a guest cannot fetch `/api/meta`.
     assert set(body) == {
-        "id", "display_id", "brand", "model_name", "style",
+        "id", "display_id", "brand", "model_name", "style", "style_label",
         "photo_url", "thumb_url", "colors", "case", "room",
     }
+    assert body["style_label"] == "A-Game"
     for leak in ("purchase_price", "owner_notes", "secret", "89"):
         assert leak not in (await anon_client.get(
             f"/api/public/guest/hat/{hat['id']}"

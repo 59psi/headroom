@@ -1,5 +1,6 @@
 import { apiFetch, apiFetchWithHeaders } from './client';
-import type { StyleOption, ColorTag, HatRead, MetaOption, TextOption } from '../types';
+import { localToday } from '../lib/dates';
+import type { StyleOption, ColorTagWrite, EbayComps, HatRead, MetaOption, TextOption } from '../types';
 
 /**
  * Matches the `le=` ceiling on `GET /api/hats`.
@@ -120,10 +121,12 @@ export function undisposeHat(id: number) {
 }
 
 export function refreshEbayForHat(id: number) {
-  return apiFetch<unknown>(`/api/admin/ebay/refresh/${id}`, { method: 'POST' });
+  return apiFetch<EbayComps>(`/api/admin/ebay/refresh/${id}`, { method: 'POST' });
 }
 
-export function updateHatColors(id: number, colors: ColorTag[]) {
+/** The palette, in order — position is the rank. An empty list hands the
+ *  colors back to analysis; any other list marks them as the owner's. */
+export function updateHatColors(id: number, colors: ColorTagWrite[]) {
   return apiFetch<HatRead>(`/api/hats/${id}/colors`, {
     method: 'PUT',
     body: JSON.stringify({ colors }),
@@ -189,15 +192,26 @@ export function getColorwayOptions(model?: string) {
   return apiFetch<TextOption[]>(path);
 }
 
-/** Log a wear for today. Idempotent server-side (one row per hat per day). */
-export function logWear(id: number) {
-  return apiFetch<unknown>(`/api/hats/${id}/wear`, {
+/** Log a wear for the wearer's own today. Idempotent server-side (one row per
+ *  hat per day). Answers with the hat as it now stands.
+ *
+ *  The day is SENT, as `worn_at`, and it is this device's day (`localToday`).
+ *  This used to post `{}`, which leaves the day to the server — and the
+ *  server's day is its host zone's, UTC unless someone set `TZ`, so every tap
+ *  after 5 pm in California landed on TOMORROW: the wear count split the
+ *  owner's evening from their morning, and the tag page, which judges "worn
+ *  today" by the device's day, disagreed with what had been stored. Built
+ *  here, the one place the request is built, so no caller can forget it; the
+ *  server's own day stays the fallback for clients that send none (the iOS
+ *  Shortcut, a script). */
+export function logWear(id: number, wornAt: string = localToday()) {
+  return apiFetch<HatRead>(`/api/hats/${id}/wear`, {
     method: 'POST',
-    body: JSON.stringify({}),
+    body: JSON.stringify({ worn_at: wornAt }),
   });
 }
 
-/** Undo the most recent wear entry. */
+/** Undo the most recent wear entry, restoring the last-worn date it replaced. */
 export function undoLatestWear(id: number) {
-  return apiFetch<unknown>(`/api/hats/${id}/wear/latest`, { method: 'DELETE' });
+  return apiFetch<HatRead>(`/api/hats/${id}/wear/latest`, { method: 'DELETE' });
 }

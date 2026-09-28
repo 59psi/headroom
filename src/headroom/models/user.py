@@ -21,11 +21,19 @@ class User(Base):
     api_token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, server_default=func.now())
 
+    # `lazy="raise"` on both. Nothing reads a user's sessions or passkeys
+    # through these attributes — the routes query `AuthSession` and
+    # `PasskeyCredential` by `user_id` — and the default, `lazy="select"`, is
+    # not a working fallback under AsyncSession: it raises `MissingGreenlet`
+    # at the access. "raise" fails at the same place with a message naming the
+    # relationship. The delete-orphan cascade is unaffected: a flush that
+    # deletes a user loads both collections itself ("raise" governs attribute
+    # access, not the unit of work).
     sessions: Mapped[list["AuthSession"]] = relationship(
-        back_populates="user", cascade="all, delete-orphan"
+        back_populates="user", cascade="all, delete-orphan", lazy="raise"
     )
     passkeys: Mapped[list["PasskeyCredential"]] = relationship(
-        back_populates="user", cascade="all, delete-orphan"
+        back_populates="user", cascade="all, delete-orphan", lazy="raise"
     )
 
 

@@ -2,9 +2,12 @@
 
 Everything data-bearing — /api/* and /uploads/* — requires either a valid
 session cookie or a bearer API token (for cookie-less clients like the iOS
-Shortcut). The SPA shell, its hashed assets, PWA manifest/icons, health
-probes, the auth endpoints themselves, and /api/public/* (share links) stay
-open: they contain no collection data.
+Shortcut). The SPA shell, its hashed assets, PWA manifest/icons and health
+probes stay open because they contain no collection data. The auth endpoints
+stay open to the gate because each one guards itself (`require_user` on the
+account routes). /api/public/* stays open because each handler gates itself:
+share links on their token, the guest view on the owner's setting (404 while
+off); the branding logo and the LAN CA certificate are public by nature.
 
 The middleware resolves users through `request.app.state.session_factory`
 so tests can point it at their own database.
@@ -54,11 +57,15 @@ def client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-# Prefixes that never require auth.
+# Carve-outs from `_PROTECTED_PREFIXES` below: paths under a protected prefix
+# that stay open anyway. Every entry must sit INSIDE the protected set — an
+# exemption for a path the gate never covered exempts nothing, and in the one
+# tuple that defines what is open, a do-nothing entry reads as policy. `/health`
+# used to be listed here; it is open because no protected prefix matches it,
+# and it stays open for exactly that reason. `test_gate_policy` pins both.
 _OPEN_PREFIXES = (
     "/api/auth/",
     "/api/public/",
-    "/health",
 )
 
 # Prefixes that carry collection data and therefore require auth.
@@ -72,6 +79,11 @@ _OPEN_PREFIXES = (
 # the rest of this module: `/health/ready` goes to deliberate trouble to redact
 # filesystem paths and key sources from anonymous callers, while `/openapi.json`
 # next door gave away the shape of everything.
+#
+# `/docs` and `/redoc` are no longer served at all (`create_app` turns them
+# off: their CDN bundles are blocked by the CSP below, so they were blank
+# pages). They stay in the protected set so that re-enabling either is gated
+# from its first request.
 _PROTECTED_PREFIXES = (
     "/api/", "/uploads/", "/openapi.json", "/docs", "/redoc",
 )
@@ -105,9 +117,20 @@ async def require_user(request: Request) -> User:
     return user
 
 
-# Back-compat alias: routes formerly guarded by the admin token now simply
-# require a logged-in user (the middleware already enforces this; keeping
-# the dependency is defense in depth).
+# Back-compat alias: routes formerly guarded by the retired admin token now
+# simply require a logged-in user. Every authenticated principal is the owner
+# (single-owner model), so there is no second tier for it to check.
+#
+# Two layers over every protected API route. `AuthGateMiddleware` below keeps
+# an anonymous caller out of every protected PATH (the route-table enumeration
+# in `tests/test_security.py` pins what it lets through), and
+# `routes/__init__.py` attaches `require_user` to every protected ROUTER as it
+# is included — so a route that lands outside the gate's prefixes still
+# answers 401 (`tests/test_route_layer.py` removes the gate to prove it).
+#
+# The gate ALONE covers what is not a route: the `/uploads` StaticFiles mount
+# and `/openapi.json` take no dependencies, so for those two the gate's
+# prefix list is the whole policy — keep them in `_PROTECTED_PREFIXES`.
 require_admin = require_user
 
 

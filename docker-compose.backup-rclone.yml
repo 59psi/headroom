@@ -6,18 +6,39 @@
 #
 #   docker compose -f docker-compose.yml -f docker-compose.backup-rclone.yml up -d --build
 #
-# One-time host setup (rclone remote, config permissions, the three exports
-# below) and how to verify the first upload landed:
-# docs/OPERATIONS.md § "Off-site / remote backups".
+# One-time host setup (a config directory the container owns, the remote, and
+# how to verify the first upload landed): docs/OPERATIONS.md § "Off-site /
+# remote backups", and the same steps on Settings → Upkeep → Off-site backup.
 services:
   headroom:
     environment:
       # After each scheduled backup, copy the new tarball to the remote. {path}
       # expands to the just-written file. `copy` keeps the filename and only
       # transfers files not already there.
-      HEADROOM_BACKUP_UPLOAD_CMD: "rclone --config /rclone.conf copy {path} ${HEADROOM_BACKUP_REMOTE:-box:Headroom-Backups}"
+      HEADROOM_BACKUP_UPLOAD_CMD: "rclone copy {path} ${HEADROOM_BACKUP_REMOTE:-box:Headroom-Backups}"
+      # Where rclone reads — and REWRITES — its config. Set as an environment
+      # variable rather than a `--config` flag so the provider chosen in the
+      # Settings UI (whose argv this app owns and never lets a browser extend)
+      # finds the same file as the command above.
+      RCLONE_CONFIG: /home/headroom/.config/rclone/rclone.conf
       # Give a big first upload room to finish (seconds).
       HEADROOM_BACKUP_UPLOAD_TIMEOUT: "1800"
     volumes:
       - "${RCLONE_BIN:-/usr/bin/rclone}:/usr/local/bin/rclone:ro"
-      - "${RCLONE_CONF:-/root/.config/rclone/rclone.conf}:/rclone.conf:ro"
+      # A DIRECTORY, mounted read-write, owned by uid 1000 on the host.
+      #
+      # It used to be the config FILE, read-only, inside a read-only root
+      # filesystem. rclone rewrites its config every time an OAuth token
+      # refreshes — atomically, via a temp file in the same directory, which
+      # is why the directory and not just the file must be writable — and Box
+      # hands out SINGLE-USE refresh tokens. So the first nightly upload
+      # refreshed, could not save the new token, and every upload after it
+      # presented a spent one and failed. The setup step that went with it,
+      # `chmod 644`, also left live tokens world-readable on the host.
+      #
+      # Outside the checkout by default, so a file of live tokens can never be
+      # committed or sent in a Docker build context. Give the container its
+      # OWN authorization here: a config your host rclone also uses shares a
+      # single-use refresh token, and whichever side refreshes first logs the
+      # other out.
+      - "${HEADROOM_RCLONE_CONFIG_DIR:-${HOME}/.config/headroom-rclone}:/home/headroom/.config/rclone"

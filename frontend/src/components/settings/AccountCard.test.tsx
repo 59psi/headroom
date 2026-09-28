@@ -4,8 +4,10 @@ import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../../test/utils';
 import { AccountCard } from './AccountCard';
 import * as api from '../../api/auth';
+import { ApiError } from '../../api/client';
 import * as webauthn from '../../lib/webauthn';
 import * as clipboard from '../../lib/clipboard';
+import type { PasskeyRead } from '../../types';
 
 vi.mock('../../api/auth', async (importOriginal) => {
   const { stubAll } = await import('../../test/stubModule');
@@ -31,8 +33,55 @@ const mocked = vi.mocked(api);
 const wa = vi.mocked(webauthn);
 const copyText = vi.mocked(clipboard.copyText);
 
-const IPHONE: api.PasskeyInfo = { id: 1, name: 'iPhone', created_at: '2026-08-01T12:00:00Z' };
-const MAC: api.PasskeyInfo = { id: 2, name: 'MacBook', created_at: '2026-08-02T12:00:00Z' };
+/** A registration ceremony's options and its result, as the real shapes. */
+function ceremony(stateId: string) {
+  return {
+    state_id: stateId,
+    options: {
+      challenge: 'AQID', rp: { name: 'Headroom' },
+      user: { id: 'AQ', name: 'owner', displayName: 'owner' }, pubKeyCredParams: [],
+    },
+  };
+}
+function credential(id: string) {
+  return {
+    id, rawId: id, type: 'public-key',
+    response: { clientDataJSON: 'AQ', attestationObject: 'Ag' },
+    clientExtensionResults: {},
+  };
+}
+
+const IPHONE: PasskeyRead = { id: 1, name: 'iPhone', created_at: '2026-08-01T12:00:00Z' };
+const MAC: PasskeyRead = { id: 2, name: 'MacBook', created_at: '2026-08-02T12:00:00Z' };
+
+describe('AccountCard — too many wrong passwords', () => {
+  const LOCKED = 'Too many wrong passwords — try again in a few minutes.';
+
+  it("shows the server's lockout sentence on the token prompt, not a generic wrong-password", async () => {
+    const user = userEvent.setup();
+    mocked.revealApiToken.mockRejectedValue(new ApiError(LOCKED, 429));
+    renderWithProviders(<AccountCard />);
+
+    await user.click(await screen.findByRole('button', { name: 'Show' }));
+    await user.type(screen.getByLabelText('Current password to reveal the API token'), 'right-password');
+    await user.click(screen.getByRole('button', { name: 'Reveal token' }));
+
+    expect(await screen.findByText(LOCKED)).toBeInTheDocument();
+    expect(screen.queryByText(/incorrect/)).not.toBeInTheDocument();
+  });
+
+  it('shows it on the password change too', async () => {
+    const user = userEvent.setup();
+    mocked.changePassword.mockRejectedValue(new ApiError(LOCKED, 429));
+    renderWithProviders(<AccountCard />);
+
+    await user.type(await screen.findByLabelText('Current password'), 'right-password');
+    await user.type(screen.getByLabelText('New password'), 'a-new-password');
+    await user.click(screen.getByRole('button', { name: 'Change password' }));
+
+    expect(await screen.findByText(LOCKED)).toBeInTheDocument();
+  });
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -292,8 +341,8 @@ describe('AccountCard — passkeys', () => {
   it('names a new passkey in the in-app dialog', async () => {
     const user = userEvent.setup();
     wa.passkeysSupported.mockReturnValue(true);
-    mocked.passkeyRegisterOptions.mockResolvedValue({ state_id: 's-1', options: {} });
-    wa.createPasskey.mockResolvedValue({ id: 'cred-1' });
+    mocked.passkeyRegisterOptions.mockResolvedValue(ceremony('s-1'));
+    wa.createPasskey.mockResolvedValue(credential('cred-1'));
     mocked.passkeyRegisterVerify.mockResolvedValue({ ok: true });
 
     renderWithProviders(<AccountCard />);
@@ -306,7 +355,7 @@ describe('AccountCard — passkeys', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Save' }));
 
     await waitFor(() =>
-      expect(mocked.passkeyRegisterVerify).toHaveBeenCalledWith('s-1', { id: 'cred-1' }, 'iPad'));
+      expect(mocked.passkeyRegisterVerify).toHaveBeenCalledWith('s-1', credential('cred-1'), 'iPad'));
     expect(await screen.findByText('Passkey “iPad” added')).toBeInTheDocument();
   });
 
@@ -315,8 +364,8 @@ describe('AccountCard — passkeys', () => {
     // dropping it on Cancel would leave a passkey the server never accepts.
     const user = userEvent.setup();
     wa.passkeysSupported.mockReturnValue(true);
-    mocked.passkeyRegisterOptions.mockResolvedValue({ state_id: 's-2', options: {} });
-    wa.createPasskey.mockResolvedValue({ id: 'cred-2' });
+    mocked.passkeyRegisterOptions.mockResolvedValue(ceremony('s-2'));
+    wa.createPasskey.mockResolvedValue(credential('cred-2'));
     mocked.passkeyRegisterVerify.mockResolvedValue({ ok: true });
 
     renderWithProviders(<AccountCard />);
@@ -325,13 +374,13 @@ describe('AccountCard — passkeys', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
 
     await waitFor(() =>
-      expect(mocked.passkeyRegisterVerify).toHaveBeenCalledWith('s-2', { id: 'cred-2' }, 'Passkey'));
+      expect(mocked.passkeyRegisterVerify).toHaveBeenCalledWith('s-2', credential('cred-2'), 'Passkey'));
   });
 
   it('reports a canceled Face ID sheet in place', async () => {
     const user = userEvent.setup();
     wa.passkeysSupported.mockReturnValue(true);
-    mocked.passkeyRegisterOptions.mockResolvedValue({ state_id: 's-3', options: {} });
+    mocked.passkeyRegisterOptions.mockResolvedValue(ceremony('s-3'));
     wa.createPasskey.mockRejectedValue(new Error('Passkey creation was canceled'));
 
     renderWithProviders(<AccountCard />);
@@ -348,7 +397,7 @@ describe('AccountCard — passkeys', () => {
     const user = userEvent.setup();
     wa.passkeysSupported.mockReturnValue(true);
     mocked.listPasskeys.mockResolvedValue([IPHONE]);
-    mocked.passkeyRegisterOptions.mockResolvedValue({ state_id: 's-4', options: {} });
+    mocked.passkeyRegisterOptions.mockResolvedValue(ceremony('s-4'));
     wa.createPasskey.mockRejectedValue(new Error('Passkey creation was canceled'));
     mocked.deletePasskey.mockRejectedValue(new Error('Passkey not found'));
 

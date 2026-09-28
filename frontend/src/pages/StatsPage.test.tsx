@@ -8,7 +8,7 @@
  * Search page reads a color search from.
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../test/utils';
 import { caseFixture, hatFixture } from '../test/fixtures';
@@ -54,9 +54,27 @@ describe('StatsPage', () => {
     hats.listDisposedHats.mockReturnValue(new Promise(() => {}));
     renderWithProviders(<StatsPage />);
 
-    expect(await screen.findByRole('heading', { name: 'The collection' })).toBeInTheDocument();
+    // Once the hats and the cases HAVE arrived — asserting straight away
+    // passed with no disposed-hats guard at all, because nothing had loaded.
+    await waitFor(() => expect(hats.listAllHats).toHaveBeenCalled());
+    await new Promise(r => setTimeout(r, 50));
+    expect(screen.getByRole('heading', { name: 'The collection' })).toBeInTheDocument();
     expect(screen.getAllByRole('status')[0]).toHaveTextContent(/loading stats/i);
     expect(screen.queryByText('Realized')).toBeNull();
+  });
+
+  it('names styles and sizes as the rest of the app does, and links by the stored value', async () => {
+    hats.getStyles.mockResolvedValue([{ value: 'a_game', label: 'A-Game', is_beanie: false }]);
+    hats.getSizes.mockResolvedValue([{ value: 'x_large', label: 'XL' }]);
+    hats.listAllHats.mockResolvedValue([hatFixture({ id: 1, style: 'a_game', size: 'x_large' })]);
+    renderWithProviders(<StatsPage />);
+
+    const byStyle = await screen.findByRole('region', { name: 'By style' });
+    const bar = await within(byStyle).findByRole('link', { name: /A-Game/ });
+    expect(bar).toHaveAttribute('href', '/hats?style=a_game');
+    expect(within(byStyle).queryByText(/a game/)).toBeNull();
+    const bySize = screen.getByRole('region', { name: 'By size' });
+    expect(await within(bySize).findByText('XL')).toBeInTheDocument();
   });
 
   it('groups the cards under section headings', async () => {

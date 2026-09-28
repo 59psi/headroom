@@ -190,3 +190,61 @@ async def test_a_zero_capacity_case_accepts_nothing():
 async def test_the_api_refuses_a_zero_capacity(client):
     resp = await client.post("/api/cases", json={"case_type": "archive", "capacity": 0})
     assert resp.status_code == 422
+
+
+# --------------- the other direction of each rule --------------------- #
+#
+# Every exclusivity test above puts a BEANIE into a REGULAR case, and every
+# stated-capacity test uses regular hats. So dropping `not has_beanies` from
+# `accepts_regular`, giving beanies an allowance on a stated capacity, or
+# unclamping `free_beanie` each survived the whole suite.
+
+
+@pytest.mark.anyio
+async def test_a_regular_hat_is_refused_by_a_case_holding_beanies(client):
+    case = await _create_case(client)
+    assert (await _create_hat(client, case_id=case["id"], style="beanie")).status_code == 201
+
+    read = (await client.get(f"/api/cases/{case['display_id']}")).json()
+    assert read["accepts_regular"] is False, "the picker must not offer it"
+
+    resp = await _create_hat(client, case_id=case["id"], style="a_game")
+    assert resp.status_code == 409
+    assert "cannot mix types" in resp.json()["detail"]
+
+    loose = (await _create_hat(client, style="a_game")).json()
+    resp = await client.patch(f"/api/hats/{loose['id']}/assign", json={"case_id": case["id"]})
+    assert resp.status_code == 409
+    assert "cannot mix types" in resp.json()["detail"]
+
+
+@pytest.mark.anyio
+async def test_a_stated_capacity_is_exact_for_beanies_too(client):
+    """`capacity=2` holds two beanies, not three — the same "a stated number
+    is the number" rule the regular test above pins."""
+    case = (await client.post(
+        "/api/cases", json={"case_type": "archive", "capacity": 2}
+    )).json()
+    for _ in range(2):
+        assert (await _create_hat(client, case_id=case["id"], style="beanie")).status_code == 201
+
+    read = (await client.get(f"/api/cases/{case['display_id']}")).json()
+    assert read["accepts_beanie"] is False, "stated means stated"
+
+    refused = await _create_hat(client, case_id=case["id"], style="beanie")
+    assert refused.status_code == 409
+    assert "(2)" in refused.json()["detail"]
+
+
+@pytest.mark.anyio
+async def test_free_slots_never_go_negative():
+    """A stated capacity lowered below what a case already holds leaves it
+    over its number — "0 free" and overfull, never "-2 free"."""
+    over_beanies = capacity.evaluate(capacity=2, beanie_count=4, regular_count=0)
+    assert over_beanies.free_beanie == 0
+    assert over_beanies.overfull_beanie is True
+    assert over_beanies.accepts_beanie is False
+
+    over_regular = capacity.evaluate(capacity=1, beanie_count=0, regular_count=3)
+    assert over_regular.free_regular == 0
+    assert over_regular.overfull_regular is True

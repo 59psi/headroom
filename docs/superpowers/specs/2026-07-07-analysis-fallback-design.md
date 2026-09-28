@@ -2,6 +2,15 @@
 
 **Date:** 2026-07-07 · **Status:** approved (design discussed in-session)
 
+> **A historical record, kept as approved.** The decisions below still hold
+> (colors only from the cutout's mask, brand only from a logo, never a model
+> name or a price), but names and details have moved since: key handling is
+> `settings_service.KeyProvider` rather than per-key helpers, the status pill
+> is `frontend/src/components/hats/AnalysisStatus.tsx`, a malformed Vision
+> reply degrades to "no brand" like an HTTP error does, and a Melin logo
+> attaches only the Melin Recap link. For current behavior see the README's
+> *No Claude key? The fallback* section.
+
 ## Problem
 
 Without an Anthropic API key, uploaded hats get `analysis_status="skipped"` and
@@ -74,6 +83,6 @@ reanalyze-without-key. Settings route tests mirror the Anthropic key tests.
 ## Docs
 
 README (fallback subsection + env-var row + Google key how-to), docker-compose
-commented env line, CLAUDE.md (services, statuses, query keys), CHANGELOG
+commented env line, the local contributor notes (services, statuses, query keys), CHANGELOG
 0.7.0, version bump both manifests. No setup-script change: httpx and Pillow
 are already dependencies.

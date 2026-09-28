@@ -36,9 +36,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      # Exact tag on purpose: setup-uv only publishes floating major tags up
-      # to v7, so `@v9` does not resolve. Dependabot's github-actions ecosystem
-      # keeps this current.
+      # Pinned to a commit SHA, like every action here, with the release it
+      # corresponds to in the comment. Dependabot's github-actions ecosystem
+      # moves the SHA and the comment together.
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           enable-cache: true
@@ -88,6 +88,15 @@ jobs:
       - name: Pin npm to the version the image builds with
         run: npm install -g npm@12.1.0
       - run: npm ci
+      # The Rules of Hooks, enforced rather than written down. A hook after an
+      # early `return` passes the typecheck and every unit test below — it
+      # throws only on a real loading -> loaded transition — so without this
+      # step the convention had no gate at all. The rules are in
+      # frontend/.oxlintrc.json; `npm run lint` (frontend/package.json) adds
+      # --deny-warnings and --report-unused-disable-directives, so a
+      # suppression comment that no longer suppresses anything fails too.
+      - name: Rules of Hooks (lint)
+        run: npm run lint
       - name: Typecheck
         run: npx tsc -b --noEmit
       - name: Unit tests
@@ -120,6 +129,22 @@ jobs:
       # scarce resource is a home internet connection rather than a runner.
       - name: Build image
         run: docker build -t headroom:ci .
+      # What the Dockerfile's comments promise, checked in the BUILT image
+      # rather than in its text: the process is not root, and nothing it
+      # executes — venv, source, SPA, the rembg model — is writable by it. A
+      # `USER root`, a `--chown`, or a recursive chown reaching the model all
+      # passed CI before this, because nothing here ever asked the image.
+      - name: Runs as non-root and cannot rewrite its own code
+        run: |
+          uid="$(docker run --rm headroom:ci id -u)"
+          [ "$uid" != "0" ] || { echo "the image runs as root"; exit 1; }
+          docker run --rm headroom:ci sh -c '
+            for p in /opt/venv /opt/u2net /app /app/src /app/frontend/dist; do
+              [ -e "$p" ] || { echo "missing: $p"; exit 1; }
+              hit="$(find "$p" -writable -print -quit)"
+              [ -z "$hit" ] || { echo "writable by $(id -un): $hit"; exit 1; }
+            done
+            echo "uid $(id -u): code, model and SPA are read-only to the app"'
       - name: Container serves /health/ready
         run: |
           docker run -d --name ci -p 8000:8000 headroom:ci

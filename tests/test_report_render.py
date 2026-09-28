@@ -58,6 +58,20 @@ async def test_every_active_hat_appears(client):
     assert "Odysea" in html
 
 
+async def test_style_size_and_condition_read_as_every_screen_names_them(client):
+    """The server's own labels — `/api/meta`'s — not the stored values with
+    their underscores swapped for spaces ("a game", "x large")."""
+    await _hat(client, style="a_game", size="x_large", condition="new_with_tags")
+
+    html = await _render()
+
+    assert "A-Game" in html
+    assert "X Large" in html
+    assert "New With Tags" in html
+    assert "a game" not in html
+    assert "x large" not in html
+
+
 async def test_disposed_hats_are_excluded_by_default(client):
     hat_id = await _hat(client, model_name="SoldHat")
     resp = await client.post(f"/api/hats/{hat_id}/dispose", json={"via": "sold"})
@@ -182,3 +196,23 @@ async def test_an_empty_collection_still_renders(client):
     html = await _render()
 
     assert "</html>" in html
+
+
+async def test_the_version_label_degrades_only_on_a_missing_package(monkeypatch):
+    """A source checkout with no installed package is the one expected way to
+    have no version; the catch was `Exception`, with a reason copied from a
+    function about photos, so a real bug there read as a missing version."""
+    from importlib.metadata import PackageNotFoundError
+
+    def _missing(_name):
+        raise PackageNotFoundError("headroom")
+
+    monkeypatch.setattr(report_service, "version", _missing)
+    assert report_service._version_label() == "Headroom"
+
+    def _bug(_name):
+        raise RuntimeError("not a missing package")
+
+    monkeypatch.setattr(report_service, "version", _bug)
+    with pytest.raises(RuntimeError):
+        report_service._version_label()

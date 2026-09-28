@@ -13,13 +13,23 @@ from its case and position (`AH-01-02`), so it changes the moment the hat moves
 case — and it is `None` for an unassigned hat, which is exactly the state a hat
 is in while you are standing there tagging it. A sticker printed with a display
 id is wrong as soon as you reshuffle a shelf, and silently so: it still scans,
-it just opens a different hat. `hat.id` never changes. This is the same reason
-`utils/photo.export_derivative_path` names its files by id.
+it just opens a different hat. `hat.id` never changes — and is never reused:
+`hats` is AUTOINCREMENT (`models/hat.py`, with a one-time rebuild for existing
+installs), so a deleted hat's sticker opens nothing rather than the next hat
+created. This is the same reason `utils/photo.export_derivative_path` names
+its files by id.
 
 A **case** tag keys on `display_id`, because that is the opposite case: the
-display id is *painted on the physical case*, it is a unique column rather than
-a derived one, and it does not change. Keying a case on its database id would
-make the printed label and the URL disagree for no benefit.
+display id is *painted on the physical case* and it is a unique column rather
+than a derived one. Keying a case on its database id would make the printed
+label and the URL disagree for no benefit.
+
+It is not immutable, though, and this docstring used to say it was. Retyping
+a case (archive ↔ daily wear) gives it a new display id, so its old label
+stops resolving — the Edit Case page warns about exactly that. What keeps a
+stale label from doing something WORSE than stop is that a sequence number is
+never issued twice (`case_service.get_next_sequence`): a label for a retyped
+or deleted case must 404, never open whichever case was numbered next.
 
 **Tags point at `/t/...`, not at the real page.** One level of indirection that
 costs nothing today and cannot be added later. `/cases/AH-01` is a routing

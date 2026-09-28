@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 import shutil
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -12,32 +12,35 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from headroom.config import env_flag, settings
-from headroom.database import async_session, checkpoint_wal, engine, init_db
+from headroom import database
+from headroom.auth import AuthGateMiddleware, SecurityHeadersMiddleware
+from headroom.config import env_choice, env_flag, settings
+from headroom.error_handler import log_unhandled, validation_error
+from headroom.limits import BodySizeLimitMiddleware
+from headroom.models.hat import Hat
 from headroom.routes import api_router
-from headroom.utils import branding
-from headroom.utils.paths import safe_join
-from headroom.utils.redaction import redact_share_tokens
+from headroom.schemas.hat import KNOWN_CONSTRUCTIONS
 from headroom.services import (
     activity_service,
     analysis_queue,
+    auth_service,
     backup_service,
     ca_vault,
+    hat_analysis_pipeline,
+    hat_service,
     import_service,
     mdns_service,
     repricing,
+    retail_pricing,
+    settings_service,
     tls_health,
+    vocabulary,
 )
-from headroom.services import auth_service, hat_service, settings_service
-from headroom.models.hat import Hat
-from headroom.schemas.hat import KNOWN_CONSTRUCTIONS
-from headroom.services import vocabulary
-from headroom.services import retail_pricing
-from headroom.services import hat_analysis_pipeline
-from headroom.auth import AuthGateMiddleware, SecurityHeadersMiddleware
-from headroom.error_handler import log_unhandled, validation_error
-from headroom.limits import BodySizeLimitMiddleware
+from headroom.utils import branding
+from headroom.utils.paths import safe_join
+from headroom.utils.redaction import redact_share_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -90,15 +93,13 @@ def _configure_logging() -> None:
 
     if logging.getLogger().handlers:
         return
-    level = (os.environ.get("HEADROOM_LOG_LEVEL") or "INFO").strip().upper()
-    if not isinstance(logging.getLevelNamesMapping().get(level), int):
-        # `basicConfig(level="BOGUS")` raises and the process never starts; a
-        # misspelled log level is not worth an outage. Empty (the compose
-        # passthrough's default) means INFO.
-        logging.getLogger(__name__).warning(
-            "Unknown HEADROOM_LOG_LEVEL=%r; using INFO", level
-        )
-        level = "INFO"
+    # Through `config`, the one reader of the environment: a closed set, so a
+    # misspelled level is INFO plus a warning — `basicConfig(level="BOGUS")`
+    # raises and the process never starts, and a typo is not worth an outage.
+    # Empty (the compose passthrough's default) means INFO.
+    level = env_choice(
+        "HEADROOM_LOG_LEVEL", ("CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"), "INFO"
+    )
     logging.basicConfig(
         level=level,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -133,8 +134,7 @@ def _warn_if_multiprocess() -> None:
     and mDNS singleton are all in-memory and process-local. A second worker
     silently breaks passkey login (~50%), halves rate limiting, and can
     double-process imports into duplicate hats. Nothing shared backs them, so
-    this is a hard constraint, not a tuning knob
-    (R8 — see docs/AUDIT-HISTORY.md).
+    this is a hard constraint, not a tuning knob.
     """
     for var in ("WEB_CONCURRENCY", "UVICORN_WORKERS", "GUNICORN_WORKERS"):
         raw = os.environ.get(var)
@@ -148,6 +148,53 @@ def _warn_if_multiprocess() -> None:
                 )
         except ValueError:
             pass
+
+
+async def _merge_vocabulary_v1(db: AsyncSession) -> int:
+    merged = await vocabulary.merge_case_variants(
+        db, Hat.construction, known=KNOWN_CONSTRUCTIONS
+    )
+    return merged + await vocabulary.merge_case_variants(db, Hat.artist_series)
+
+
+async def _merge_vocabulary_v2(db: AsyncSession) -> int:
+    """v1's merge again, now that the key also folds punctuation — plus colorway.
+
+    `vocabulary`'s key used to fold case and whitespace only, so an install
+    that already ran v1 still holds `A-Game` beside `A Game` (and the colorway
+    field, canonicalized on write since, was never merged at all). Idempotent,
+    so a database v1 already fully merged changes nothing.
+    """
+    merged = await _merge_vocabulary_v1(db)
+    return merged + await vocabulary.merge_case_variants(db, Hat.colorway)
+
+
+#: The one-time data repairs, in the order they run: (flag, repair, log line).
+#: Each runs once per database and is marked done in `app_settings`, so a
+#: restart never repeats one — the difference between repairing a collection
+#: and re-pricing or renaming it daily. One loop, where there were four
+#: hand-copied `if get_setting(...) is None: ...; set_setting(...)` blocks,
+#: each free to forget its own flag. The repairs are looked up on their
+#: modules at CALL time (the lambdas), so a test that patches one reaches it.
+_ONE_TIME_REPAIRS: tuple[tuple[str, Callable[[AsyncSession], Awaitable[int]], str], ...] = (
+    # Collapse case/whitespace variants of the free-text vocabulary fields
+    # ("Neon"/"NEON"/"neon" -> one collection). Canonicalization only covers
+    # writes, so values that predate it, or arrived by import, need this once.
+    ("vocabulary_merged_v1", lambda db: _merge_vocabulary_v1(db),
+     "Merged %d case-variant vocabulary value(s)"),
+    ("retail_prices_v2", lambda db: retail_pricing.backfill_retail_prices(db),
+     "Re-priced %d hat(s) from the melin retail table "
+     "(the old prompt anchors were years stale)"),
+    ("model_names_split_v1", lambda db: hat_analysis_pipeline.backfill_split_model_names(db),
+     "Split a leaked colorway out of %d model name(s) — the tool schema had no "
+     "colorway field, so Claude appended it to the one field every match gates on"),
+    # Normalize general_color onto the curated palette so the color filter
+    # chips behave consistently.
+    ("color_names_normalized_v1", lambda db: hat_service.normalize_existing_colors(db),
+     "Normalized general_color on %d existing hat colors"),
+    ("vocabulary_merged_v2", lambda db: _merge_vocabulary_v2(db),
+     "Merged %d spelling-variant vocabulary value(s) (punctuation and colorway)"),
+)
 
 
 @asynccontextmanager
@@ -173,55 +220,45 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # suite never executed. `create_app` seeds both defaults; tests override.
     factory = app.state.session_factory
     bind = app.state.engine
-    await init_db(bind=bind, session_factory=factory)
-
-    # One-time data fix: normalize general_color onto the curated palette so
-    # color filter chips behave consistently (guarded by a settings flag).
+    await database.init_db(bind=bind, session_factory=factory)
 
     async with factory() as db:
-        # One-time: collapse case/whitespace variants of the free-text
-        # vocabulary fields ("Neon"/"NEON"/"neon" -> one collection).
-        # Canonicalization only covers writes, so values that predate it, or
-        # arrived by import, need this once.
-        if await settings_service.get_setting(db, "vocabulary_merged_v1") is None:
-
-            merged = await vocabulary.merge_case_variants(
-                db, Hat.construction, known=KNOWN_CONSTRUCTIONS
-            )
-            merged += await vocabulary.merge_case_variants(db, Hat.artist_series)
-            await settings_service.set_setting(db, "vocabulary_merged_v1", "done")
-            if merged:
-                logger.info("Merged %d case-variant vocabulary value(s)", merged)
-        if await settings_service.get_setting(db, "retail_prices_v2") is None:
-
-            repriced = await retail_pricing.backfill_retail_prices(db)
-            await settings_service.set_setting(db, "retail_prices_v2", "done")
-            if repriced:
-                logger.info(
-                    "Re-priced %d hat(s) from the melin retail table "
-                    "(the old prompt anchors were years stale)", repriced,
-                )
-        if await settings_service.get_setting(db, "model_names_split_v1") is None:
-
-            split = await hat_analysis_pipeline.backfill_split_model_names(db)
-            await settings_service.set_setting(db, "model_names_split_v1", "done")
-            if split:
-                logger.info(
-                    "Split a leaked colorway out of %d model name(s) — the tool "
-                    "schema had no colorway field, so Claude appended it to the "
-                    "one field every match gates on", split,
-                )
-        if await settings_service.get_setting(db, "color_names_normalized_v1") is None:
-            changed = await hat_service.normalize_existing_colors(db)
-            await settings_service.set_setting(db, "color_names_normalized_v1", "done")
+        for flag, repair, done_message in _ONE_TIME_REPAIRS:
+            if await settings_service.get_setting(db, flag) is not None:
+                continue
+            changed = await repair(db)
+            await settings_service.set_setting(db, flag, "done")
             if changed:
-                logger.info("Normalized general_color on %d existing hat colors", changed)
+                logger.info(done_message, changed)
         if await auth_service.user_count(db) == 0:
             logger.warning(
                 "No user accounts exist yet — open the app to create the "
                 "owner account (first-run setup). All data routes require "
                 "login until then."
             )
+        # Every boot, not once: a re-cut the last shutdown cut short is left
+        # showing its uncut original as "cutting out" forever, and only boot
+        # can tell — nothing is running yet. Before the workers start, so a
+        # re-cut queued after boot is never mistaken for a stranded one.
+        abandoned = await hat_analysis_pipeline.abandon_interrupted_recuts(db)
+        if abandoned:
+            logger.info(
+                "Put %d hat(s) back on their cutout — a re-cut was interrupted "
+                "by the last shutdown", abandoned,
+            )
+
+    # The login verifies an unknown username against a placeholder argon2
+    # hash, so a wrong name costs what a wrong password does (see
+    # `auth_service.placeholder_password_hash`). That hash is computed once
+    # and cached — and "once" used to mean the first failed login for an
+    # unknown name, synchronously, ON the event loop: 64 MiB and up to a
+    # second on a Pi with every in-flight request frozen behind it, the
+    # health check included. That one attempt also paid for two argon2
+    # operations where a known name pays one. Computed here instead, in a
+    # worker thread under the argon2 bound, before the first request can
+    # arrive, so the login only ever reads it from the cache.
+    await auth_service.warm_placeholder_hash()
+
     logger.info("Headroom started · default-model=%s · uploads=%s",
                 settings.anthropic_model, settings.upload_dir)
 
@@ -326,7 +363,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 activity_service.retention_health.record_success(removed)
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001 — recorded, and the loop must outlive any pass
                 activity_service.retention_health.record_failure(exc)
                 logger.warning("retention prune loop error: %s", exc)
             try:
@@ -354,6 +391,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         makes the first sighting happen when the CA is whatever the last
         working deployment left, not whenever somebody happens to click.
 
+        "Is the CA still ours" has two halves, and `check_root` answers only
+        the first: the root this install HANDS OUT. Whether the chain Caddy
+        SERVES leads to it is `chain_matches_ca`, and it outranks expiry here
+        as it does on the card — after a CA restore Caddy can go on serving a
+        leaf from the authority it minted in between, valid and covering the
+        name, and every device refuses it while the root file looks perfect.
+
         Logs and does not enforce, for the reason `tls_health` documents: the
         certificate belongs to Caddy, so failing readiness here would
         restart-loop the app without fixing anything.
@@ -369,6 +413,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                         logger.error(
                             "TLS: could not read the certificate served for %s: %s",
                             status.host, status.error,
+                        )
+                    elif status.chain_matches_ca is False:
+                        logger.error(
+                            "TLS: the certificate served for %s was not issued by the "
+                            "certificate authority this server hands out — every "
+                            "device that trusts that authority refuses it. Clear "
+                            "Caddy's issued certificates so it reissues them "
+                            "(Settings → Trust this device has the command)",
+                            status.host,
                         )
                     elif status.expired:
                         logger.error(
@@ -427,7 +480,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     await task
                 except asyncio.CancelledError:
                     pass
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:  # noqa: BLE001 — a dead task must not abort shutdown
                     # A task that already died holds its exception, and `await`
                     # re-raises it here. Only CancelledError used to be caught,
                     # so one dead loop (e.g. the backup loop's `_backup_dir()`
@@ -451,11 +504,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             # booted against one database does not checkpoint another. The
             # order is pinned by a test that boots the real lifespan and
             # records the calls, not by one that parses this tuple's source.
-            lambda: checkpoint_wal(bind),
+            lambda: database.checkpoint_wal(bind),
         ):
             try:
                 await stop()
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001 — each stop is independent cleanup
                 logger.warning("Shutdown step %s failed: %s", stop.__qualname__, exc)
 
 
@@ -478,13 +531,19 @@ _NOT_SPA_PREFIXES = frozenset({"api", "health", "uploads", "openapi.json", "docs
 
 
 def create_app() -> FastAPI:
-
-    app = FastAPI(title="Headroom", lifespan=lifespan)
+    # No `/docs` or `/redoc`. FastAPI's pages load Swagger UI / ReDoc from
+    # cdn.jsdelivr.net, which the CSP (`script-src 'self'`, see `auth.py`)
+    # blocks by design — so behind the login they rendered a blank page, a
+    # feature that looked broken rather than absent. Self-hosting their
+    # bundles would mean vendoring a second front end for an operator-only
+    # convenience. `/openapi.json` stays, auth-gated, for any tool that wants
+    # the schema.
+    app = FastAPI(title="Headroom", lifespan=lifespan, docs_url=None, redoc_url=None)
 
     # The auth gate resolves users through this factory; tests swap it for
     # their own in-memory database.
-    app.state.session_factory = async_session
-    app.state.engine = engine
+    app.state.session_factory = database.async_session
+    app.state.engine = database.engine
 
     # ORDER IS LOAD-BEARING. `add_middleware` PREPENDS, so the last one added
     # is the outermost and the first to see a response on the way out.
@@ -503,13 +562,27 @@ def create_app() -> FastAPI:
     # still a 401 and the headers land on the compressed response.
     app.add_middleware(GZipMiddleware, minimum_size=1024)
     app.add_middleware(AuthGateMiddleware)
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=settings.cors_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    # Cross-origin access is opt-in: no `HEADROOM_CORS_ORIGINS`, no CORS
+    # middleware at all. The SPA is served by this app from its own origin,
+    # and in development Vite proxies `/api` and `/uploads`
+    # (`frontend/vite.config.ts`), so the dev SPA is same-origin as well —
+    # nothing this project ships makes a cross-origin read. A CORS policy is
+    # a grant of credentialed access to another origin's pages; an entry
+    # nobody needs is a grant nobody meant. An entry for the Vite dev server's
+    # `http://localhost:5173` shows how: on an install opened as
+    # `http://localhost:8000`, a page on :5173 is same-site, so the Lax session
+    # cookie rides along and the response is readable. And installed with an
+    # empty list, the middleware still answered every Origin-bearing request
+    # with `Access-Control-Allow-Credentials: true` — a header that means
+    # nothing without an origin and misleads anyone auditing the responses.
+    if settings.cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=settings.cors_origins,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
     app.add_middleware(SecurityHeadersMiddleware)
 
     # Outermost of all: an oversize body should be refused before anything
@@ -557,7 +630,14 @@ def create_app() -> FastAPI:
             # watchdog pointed at a misspelled path polled a healthy-looking
             # answer forever — and `GET /api/does-not-exist` returned the
             # app's HTML to a JSON client.
-            if full_path.split("/", 1)[0] in _NOT_SPA_PREFIXES:
+            #
+            # An EMPTY first segment is refused too: `//api/hats` matches no
+            # API route (Starlette does not collapse slashes) and no gate
+            # prefix, so it fell through to here and answered the SPA shell
+            # with a 200 — the same client getting HTML from what reads as the
+            # hats endpoint. No SPA route begins with a second slash.
+            first = full_path.split("/", 1)[0]
+            if (full_path and not first) or first in _NOT_SPA_PREFIXES:
                 raise HTTPException(status_code=404, detail="Not found")
             # Confine the lookup to the frontend bundle — see _safe_spa_path docstring.
             safe = _safe_spa_path(full_path)

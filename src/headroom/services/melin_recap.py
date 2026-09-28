@@ -23,15 +23,20 @@ import logging
 import time
 from contextlib import asynccontextmanager
 from statistics import median
-from urllib.parse import urlencode
-
 from typing import NamedTuple
+from urllib.parse import urlencode
 
 import httpx
 
 from headroom.config import settings
-from headroom.services import naming
 from headroom.schemas.hat import constructions_in
+
+# `catalog_service` imports this module too (the category map, the query
+# primitive), and that is fine at the top of both: each reads the other only
+# inside functions, never while loading, so either may be imported first —
+# checked in every order the app can load them. The listing sizes read its
+# `normalize_size` (see `_listing_facts`).
+from headroom.services import catalog_service, naming
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +49,7 @@ _MIN_MODEL_SAMPLE = 3
 
 class MelinRecapError(Exception):
     pass
+
 
 # Maps our internal style enum to melinrecap's pub_category values.
 # Verified against the marketplace's "By Shape" navigation.
@@ -121,10 +127,19 @@ async def _get_anon_token(client: httpx.AsyncClient, *, force: bool = False) -> 
             f"Sharetribe auth {resp.status_code} — client id may have rotated "
             "(override with HEADROOM_MELIN_CLIENT_ID)"
         )
-    _token = resp.json().get("access_token")
-    _token_fetched_at = time.monotonic()
-    if not _token:
+    # A 200 is not yet a token. A proxy's HTML page, a JSON list, or an
+    # object without the field all used to escape as a raw decode or
+    # attribute error — past every caller, which catches `MelinRecapError`
+    # and degrades to a link. The cache is only written once a real token is
+    # in hand, so a bad reply cannot poison the next call either.
+    try:
+        body = resp.json()
+    except ValueError as exc:
+        raise MelinRecapError("Sharetribe auth answered 200 with a body that is not JSON") from exc
+    token = body.get("access_token") if isinstance(body, dict) else None
+    if not isinstance(token, str) or not token:
         raise MelinRecapError("Sharetribe auth returned no access_token")
+    _token, _token_fetched_at = token, time.monotonic()
     return _token
 
 
@@ -139,21 +154,49 @@ _shared_client: contextvars.ContextVar[httpx.AsyncClient | None] = contextvars.C
 )
 
 
+#: Listings already fetched in this sweep, keyed on the query. Set only inside
+#: `shared_client()`; unset, every `query_all_listings` goes to the network.
+_listing_cache: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "melin_recap_listing_cache", default=None
+)
+
+
 @asynccontextmanager
 async def shared_client():
-    """Run a sweep's page fetches over ONE connection pool.
+    """Run a sweep's marketplace reads over ONE connection pool and ONE read
+    of each category.
 
     `query_all_listings` opens a new `httpx.AsyncClient` — a TCP + TLS
     handshake to the marketplace — per page: six per pricing call, and the
     harvest up to 450 per run. Inside this block every `query_listings` reuses
     the same pool; the block closes it.
+
+    It also remembers what it fetched. A re-pricing sweep prices hats one at a
+    time, and every hat in a category asked for the SAME category: three
+    Odyseas were fifteen page requests for five distinct pages, and a
+    234-hat shelf re-downloaded each category once per hat in it — against
+    somebody else's public API, which is the courtesy the sweep's spacing and
+    staleness gate exist to extend. Listings do not change in any way that
+    matters within one sweep, so each distinct query is read once per block.
+    Outside a block nothing is cached, so a single analysis always sees the
+    live market.
+
+    Re-entrant: opened inside another block, it joins that one instead of
+    replacing the outer pool and its cache for the duration — which is what
+    `query_all_listings`' own block used to do to any sweep that wrapped it.
     """
+    outer = _shared_client.get()
+    if outer is not None:
+        yield outer
+        return
     async with httpx.AsyncClient(timeout=settings.http_timeout) as client:
-        token = _shared_client.set(client)
+        client_token = _shared_client.set(client)
+        cache_token = _listing_cache.set({})
         try:
             yield client
         finally:
-            _shared_client.reset(token)
+            _listing_cache.reset(cache_token)
+            _shared_client.reset(client_token)
 
 
 async def _query_with(client: httpx.AsyncClient, params: dict) -> httpx.Response:
@@ -197,7 +240,22 @@ async def query_listings(params: dict) -> list[dict]:
             "Melin Recap query returned %s: %s", resp.status_code, resp.text[:200]
         )
         raise MelinRecapError(f"Melin Recap query {resp.status_code}: {resp.text[:200]}")
-    return resp.json().get("data", [])
+    # Decode and shape, inside the module's own error — the same bar
+    # `ebay_service.find_comps` sets. A 200 carrying a proxy's HTML page, or
+    # JSON that is not `{"data": [...]}`, used to raise a raw decode or
+    # attribute error that no caller catches: after a successful (paid)
+    # Claude analysis the upload ended `error` with brand, model and colors
+    # thrown away, and a bulk import deleted the hat outright.
+    try:
+        body = resp.json()
+    except ValueError as exc:
+        logger.error("Melin Recap query returned a body that is not JSON: %s", resp.text[:200])
+        raise MelinRecapError("Melin Recap answered 200 with a body that is not JSON") from exc
+    rows = body.get("data", []) if isinstance(body, dict) else None
+    if not isinstance(rows, list):
+        logger.error("Melin Recap query returned an unexpected shape: %s", resp.text[:200])
+        raise MelinRecapError("Melin Recap reply has no `data` list")
+    return rows
 
 
 #: The API's maximum page size. Its `meta` block reports `totalItems` and
@@ -208,18 +266,14 @@ PAGE_SIZE = 100
 #: category with room to spare; the largest (odysea) holds 436 listings.
 _MAX_PAGES = 6
 
-def model_tokens(name: str | None) -> list[str]:
-    """Lowercase word tokens, punctuation stripped — `naming.tokens`.
-
-    Splitting on whitespace alone left punctuation glued to the tokens. A hat
-    named ``Odysea Hydro "Have More Fun"`` then demanded the tokens ``"have``
-    and ``fun"``, which appear in no listing title that has ever existed — so
-    the model tier matched nothing and the hat fell through to a category
-    median. Applied to BOTH sides, or the normalization is one-sided and the
-    comparison is still between different alphabets. The catalog matcher
-    read names differently until 2.79; both now read them here.
-    """
-    return list(naming.tokens(name))
+# Names are read with `naming.tokens` / `naming.token_set` directly, on BOTH
+# sides of every comparison. Splitting on whitespace alone left punctuation
+# glued to the tokens: a hat named ``Odysea Hydro "Have More Fun"`` demanded
+# ``"have`` and ``fun"``, which appear in no listing title that has ever
+# existed, so the model tier matched nothing and the hat fell through to a
+# category median. A normalization applied to one side only is a comparison
+# between two alphabets. (This module had its own `model_tokens` wrapper for
+# that, which added nothing `naming` does not already do.)
 
 
 async def query_all_listings(params: dict, max_pages: int = _MAX_PAGES) -> list[dict]:
@@ -234,14 +288,24 @@ async def query_all_listings(params: dict, max_pages: int = _MAX_PAGES) -> list[
     Termination is a short page rather than `meta.totalPages`, so this keeps
     `query_listings` as the single seam tests already patch instead of adding
     a second one that only the real API populates.
+
+    Inside a sweep's `shared_client()` block, a query already answered in that
+    block is answered from memory — see `shared_client` for why. A failed read
+    is never remembered, so the next hat retries it.
     """
-    out: list[dict] = []
+    key = (tuple(sorted(params.items())), max_pages)
     async with shared_client():
+        cache = _listing_cache.get()
+        if cache is not None and key in cache:
+            return list(cache[key])
+        out: list[dict] = []
         for page in range(1, max_pages + 1):
             rows = await query_listings({**params, "perPage": PAGE_SIZE, "page": page})
             out.extend(rows)
             if len(rows) < PAGE_SIZE:
                 break
+        if cache is not None:
+            cache[key] = list(out)
     return out
 
 
@@ -265,14 +329,14 @@ _CONDITION_MAP: dict[str, str] = {
     "fair": "worn",
 }
 
-# Marketplace size vocabulary -> `Hat.size`. Both spellings appear in live
-# data. One-size entries map to nothing: they are visors and accessories,
-# not a size a fitted hat can be compared against.
-_SIZE_MAP: dict[str, str] = {
-    "c": "classic", "classic": "classic",
-    "s": "small", "small": "small",
-    "xl": "x_large", "x-large": "x_large", "xlarge": "x_large",
-}
+# Marketplace sizes are read with `catalog_service.normalize_size`, the same
+# vocabulary order lines go through. This module kept a second, smaller map of
+# its own, and the two disagreed: "sm", "standard" (the pre-2.0 name for
+# classic), "Extra Large" and "x_large" all sized a receipt but left a listing
+# unsized, so a listing spelled that way dropped out of every size-matched
+# comparison as if it had no size at all. One-size entries still map to
+# nothing: visors and accessories, not a size a fitted hat can be compared
+# against.
 
 
 class Listing(NamedTuple):
@@ -299,17 +363,33 @@ class Listing(NamedTuple):
     product: str | None
 
 
-def _listing_facts(li: dict) -> Listing | None:
-    """One listing reduced to `Listing`, or None if unusable."""
-    attrs = li.get("attributes") or {}
-    amount = (attrs.get("price") or {}).get("amount")
-    if not amount:
+def _text(value: object) -> str:
+    """A listing field as stripped text; anything that is not a string is ''."""
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _listing_facts(li: object) -> Listing | None:
+    """One listing reduced to `Listing`, or None if unusable.
+
+    "Unusable" covers a malformed row as well as a priceless one. Rows arrive
+    from somebody else's API, and one that is not an object, or carries a
+    price that is not a number, used to raise out of the pricing call as a
+    raw AttributeError or TypeError — the same escape `query_listings` closes
+    for the reply as a whole. A bad row is skipped; its neighbors still price.
+    """
+    attrs = li.get("attributes") if isinstance(li, dict) else None
+    if not isinstance(attrs, dict):
         return None
-    pub = attrs.get("publicData") or {}
-    raw_size = (pub.get("size") or "").strip().lower()
-    raw_condition = (pub.get("condition") or "").strip().lower()
+    price = attrs.get("price")
+    amount = price.get("amount") if isinstance(price, dict) else None
+    if isinstance(amount, bool) or not isinstance(amount, (int, float)) or amount <= 0:
+        return None
+    pub = attrs.get("publicData")
+    if not isinstance(pub, dict):
+        pub = {}
+    raw_condition = _text(pub.get("condition")).lower()
     return Listing(
-        attrs.get("title", ""),
+        _text(attrs.get("title")),
         amount / 100,
         # A condition that is STATED but unrecognized falls to "worn": the
         # marketplace's two "new" grades are the ones enumerated above, so a
@@ -317,8 +397,8 @@ def _listing_facts(li: dict) -> Listing | None:
         # way would let a vocabulary addition quietly inflate valuations.
         # A condition that is ABSENT stays None — unknown, not worn.
         _CONDITION_MAP.get(raw_condition, "worn" if raw_condition else None),
-        _SIZE_MAP.get(raw_size),
-        pub.get("shopifyProductName"),
+        catalog_service.normalize_size(_text(pub.get("size"))),
+        _text(pub.get("shopifyProductName")) or None,
     )
 
 
@@ -343,8 +423,7 @@ def _rival_construction(product: str, construction: str | None) -> bool:
     whole string made `Trenches Icon Hydro - Denim` look like a Denim product,
     so a HYDRO hat was vetoed from its OWN item and fell back to the line
     median — meaning a correctly recorded construction made pricing WORSE than
-    leaving it blank, the exact inversion of the point. CLAUDE.md documents
-    this trap with this very example.
+    leaving it blank, the exact inversion of the point.
 
     **It vetoes on CONTRADICTION, not on absence** — the same test
     `catalog_service._match_score` applies. A product whose model half names no
@@ -360,7 +439,7 @@ def _rival_construction(product: str, construction: str | None) -> bool:
         return False  # names no construction — contradicts nothing
     mine = constructions_in(construction)
     # HYDROLite contains "hydro" as a substring but tokenizes distinctly, so
-    # this stays exact — the confusion CLAUDE.md warns about repeatedly.
+    # this stays exact — a substring test would read every HYDROLite as HYDRO.
     return not (theirs & mine)
 
 
@@ -394,8 +473,8 @@ def _product_comp(
     # colorway is Camo, on the strength of finding "icon" in the model half.
     # melin's name is `<Model> - <Colorway>` precisely so the halves mean
     # different things, and this is the one place that has to respect that.
-    want_model = set(model_tokens(model_name))
-    want_colorway = set(model_tokens(colorway))
+    want_model = naming.token_set(model_name)
+    want_colorway = naming.token_set(colorway)
     if not want_model or not want_colorway:
         return None
 
@@ -414,8 +493,8 @@ def _product_comp(
         # three different products under one "its own item" label. The two
         # validators for "is this the hat's own product" now agree.
         return (
-            want_model <= set(model_tokens(model_half))
-            and want_colorway == set(model_tokens(colorway_half))
+            want_model <= naming.token_set(model_half)
+            and want_colorway == naming.token_set(colorway_half)
         )
 
     matched = [
@@ -509,7 +588,9 @@ async def fetch_resale_stats(
     if exact:
         return exact
 
-    tokens = model_tokens(model_name)
+    # Ordered, unlike the sets above: the ladder below surrenders the name one
+    # TRAILING token at a time.
+    tokens = naming.tokens(model_name)
 
     def narrow(prefix: tuple[str, ...], by_condition: bool, by_size: bool):
         rows = facts
@@ -520,7 +601,7 @@ async def fetch_resale_stats(
             # `"have` and `fun"` — strings that appear in no listing title ever
             # — and every such hat fell silently through to the category median.
             wanted = set(prefix)
-            rows = [f for f in rows if wanted <= set(model_tokens(f.title))]
+            rows = [f for f in rows if wanted <= naming.token_set(f.title)]
         if by_condition and condition:
             rows = [f for f in rows if f.condition == condition]
         if by_size and size:

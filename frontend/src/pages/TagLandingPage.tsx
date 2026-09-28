@@ -1,18 +1,16 @@
-import { useMemo } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { useParams, Link } from 'react-router';
-import { getHat, logWear, undoLatestWear } from '../api/hats';
-import { invalidateHatViews } from '../lib/invalidate';
+import { getHat } from '../api/hats';
+import { isNotFound } from '../api/client';
 import { ErrorNote } from '../components/common/ErrorNote';
-import { useToast } from '../components/ui/Toast';
-import type { HatRead } from '../types';
-
-/** The server records wears against the UTC date, so "today" must be UTC here
- *  too — a local-midnight comparison would show a hat as unworn for the last
- *  few hours of the day in western timezones, and offer to log a duplicate. */
-function utcToday(): string {
-  return new Date().toISOString().slice(0, 10);
-}
+import { LoadError } from '../components/common/LoadError';
+import { localToday } from '../lib/dates';
+import { plural } from '../lib/format';
+import { useHatLabels } from '../lib/labels';
+import { tileSrc } from '../lib/photo';
+import { hatName } from '../lib/placement';
+import { qk } from '../lib/queryKeys';
+import { useWearLog } from '../lib/useWearLog';
 
 /**
  * Where a hat's QR sticker or NFC tag lands.
@@ -29,81 +27,61 @@ function utcToday(): string {
 export function TagLandingPage() {
   const { hatId } = useParams();
   const id = Number(hatId);
-  const qc = useQueryClient();
-  const toast = useToast();
+  const labels = useHatLabels();
 
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['hat', id],
+  const hatQ = useQuery({
+    queryKey: qk.hat(id),
     queryFn: () => getHat(id),
     enabled: Number.isFinite(id),
   });
+  const data = hatQ.data;
 
-  // Optimistic: the tap flips the page to "Worn today" at once and the
-  // request catches up. The server's answer is predictable — today becomes
-  // the last-worn date and the count goes up by one (the button only exists
-  // when today is not already logged, and the server is idempotent per day
-  // regardless) — so the only way the guess can be wrong is a failed
-  // request, and then the page snaps back to the button with the reason
-  // under it. Waiting on the round trip instead left "Logging…" on screen
-  // for as long as the Pi took to answer, which on a phone at the closet
-  // door is exactly long enough to wonder whether the tap took.
-  const wearMut = useMutation({
-    mutationFn: () => logWear(id),
-    onMutate: async () => {
-      await qc.cancelQueries({ queryKey: ['hat', id] });
-      const prev = qc.getQueryData<HatRead>(['hat', id]);
-      if (prev) {
-        qc.setQueryData<HatRead>(['hat', id], {
-          ...prev,
-          date_last_worn: utcToday(),
-          wear_count: (prev.wear_count ?? 0) + 1,
-        });
-      }
-      return { prev };
-    },
-    onError: (_err, _vars, ctx) => {
-      if (ctx?.prev) qc.setQueryData(['hat', id], ctx.prev);
-    },
-    onSuccess: () => toast.success('Wear logged'),
-    // Deliberately NOT returned. A returned promise holds the mutation
-    // pending until the refetch lands, and that delays everything waiting on
-    // it: a failure's message (by a whole retry, when the server is what
-    // failed) and Undo, which only needs the wear itself to have landed.
-    onSettled: () => { void invalidateHatViews(qc, id); },
-  });
-  // Not optimistic: after an undo the last-worn date falls back to whichever
-  // wear came before, and only the server knows which that was. The
-  // invalidation is returned so "Undoing…" holds until the refetched hat —
-  // with the real date — is on screen.
-  const undoMut = useMutation({
-    mutationFn: () => undoLatestWear(id),
-    onSuccess: async () => {
-      await invalidateHatViews(qc, id);
-      toast.success('Wear undone');
-    },
-  });
+  // The same wear model as the hat page (`useWearLog`): optimistic — at the
+  // closet door a "Logging…" that lasts as long as the Pi takes to answer is
+  // exactly long enough to wonder whether the tap took — with a same-day
+  // second tap reported as the no-op the server makes it.
+  const { wearMut, undoMut } = useWearLog();
 
-  const wornToday = useMemo(
-    () => !!data && data.date_last_worn === utcToday(),
-    [data],
-  );
+  // "Today" is the day on this phone — the day the wear is logged against.
+  // The Greenwich date this used to compare with was already tomorrow from
+  // 5 pm on the US west coast, which offered a second wear of a hat worn
+  // that morning.
+  const wornToday = !!data && data.date_last_worn === localToday();
 
   if (!Number.isFinite(id)) return <NotFound detail="That tag doesn't name a hat." />;
-  if (isLoading) return <TagSkeleton />;
-  if (error || !data) {
+  if (hatQ.isLoading) return <TagSkeleton />;
+  // Only a 404 means the hat is gone. A locked database or a dropped
+  // connection used to read "no longer in the collection" — telling someone
+  // holding the hat that it had been deleted.
+  if (hatQ.error && !isNotFound(hatQ.error)) {
+    return (
+      <div className="hr-tag-landing">
+        <h1 className="hr-tag-name">Couldn&rsquo;t load this hat</h1>
+        <LoadError what="The tag is fine — the server didn't answer." queries={[hatQ]} />
+        <Link to="/hats" className="btn btn-outline-primary">Browse hats</Link>
+      </div>
+    );
+  }
+  if (!data) {
     return (
       <NotFound detail="This tag points at a hat that's no longer in the collection." />
     );
   }
 
-  const name = data.model_name || 'Unidentified hat';
-  const sub = [data.colorway, data.size, data.display_id].filter(Boolean).join(' · ');
-  const photo = data.thumb_path || data.photo_path;
+  // The model leads here — at the closet door it is what you recognize — and
+  // an unidentified hat goes by the name every other screen gives it
+  // (`hatName`: its shelf id, else "Hat #12"), not a label of its own.
+  const name = data.model_name || hatName(data);
+  const sub = [
+    data.colorway,
+    labels.size(data.size),
+    data.display_id !== name && data.display_id,
+  ].filter(Boolean).join(' · ');
 
   return (
     <div className="hr-tag-landing">
-      {photo ? (
-        <img className="hr-tag-photo" src={`/uploads/${photo}`} alt={name} />
+      {data.photo_path || data.thumb_path ? (
+        <img className="hr-tag-photo" src={tileSrc(data)} alt={name} />
       ) : (
         <div className="hr-tag-photo hr-tag-photo-empty">No photo</div>
       )}
@@ -126,7 +104,7 @@ export function TagLandingPage() {
           <button
             type="button"
             className="btn btn-outline-secondary hr-tag-undo"
-            onClick={() => undoMut.mutate()}
+            onClick={() => undoMut.mutate(id)}
             // Also while the wear itself is still in flight: an undo sent
             // before the log lands would delete the PREVIOUS wear instead.
             disabled={undoMut.isPending || wearMut.isPending}
@@ -138,7 +116,7 @@ export function TagLandingPage() {
         <button
           type="button"
           className="btn btn-primary hr-tag-action"
-          onClick={() => wearMut.mutate()}
+          onClick={() => wearMut.mutate(id)}
           disabled={wearMut.isPending}
         >
           {wearMut.isPending ? 'Logging…' : 'Wore it today'}
@@ -148,7 +126,7 @@ export function TagLandingPage() {
       <ErrorNote of={[wearMut, undoMut]} className="hr-tag-note" />
 
       <p className="hr-tag-meta">
-        Worn {data.wear_count ?? 0} time{(data.wear_count ?? 0) === 1 ? '' : 's'}
+        Worn {plural(data.wear_count ?? 0, 'time')}
         {data.date_last_worn && !wornToday && <> · last {data.date_last_worn}</>}
       </p>
 

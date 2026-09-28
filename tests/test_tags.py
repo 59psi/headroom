@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import pytest
 
-from headroom.app import FRONTEND_DIST
 from headroom.services import tag_service
 
 pytestmark = pytest.mark.anyio
@@ -26,10 +25,24 @@ async def test_tag_url_shape():
     )
 
 
-async def test_tag_base_defaults_to_the_requesting_host(client):
-    body = (await client.get("/api/settings/tags")).json()
+async def test_tag_base_defaults_to_the_requesting_host(app):
+    """The host the request ARRIVED on — not a fixed default. Asserting only
+    the path let `_tag_status` drop `request.base_url` for any constant with
+    the suite green."""
+    from httpx import ASGITransport, AsyncClient
+
+    from tests.conftest import _TEST_SESSION_ID, _seed_owner
+
+    await _seed_owner()
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://headroom.test"
+    ) as c:
+        c.cookies.set("headroom_session", _TEST_SESSION_ID)
+        body = (await c.get("/api/settings/tags")).json()
+
     assert body["source"] == "request"
-    assert body["example_url"].endswith("/t/h/1")
+    assert body["base_url"] == "http://headroom.test"
+    assert body["example_url"] == "http://headroom.test/t/h/1"
 
 
 async def test_a_configured_base_wins_over_the_request(client):
@@ -87,12 +100,15 @@ async def test_tag_landing_paths_are_not_auth_gated(anon_client):
     """The tag URL must serve the SPA shell so the app can boot and redirect.
 
     Gating it at the middleware would make a tap return bare JSON instead of a
-    page. 404 is the legitimate answer when the frontend isn't built (CI has no
-    `frontend/dist`, so the catch-all isn't mounted at all) — what must never
-    happen is 401.
+    page. This used to accept any non-401 unless `frontend/dist` happened to
+    exist — so CI, which never builds it, passed on a routing 404, and a
+    developer's machine ran a stricter test than CI did. The suite serves a
+    stub bundle everywhere now (`spa_bundle` in conftest), and the answer is
+    the shell or the test fails.
     """
+    from tests.conftest import SPA_SHELL_MARKER
+
     for path in ("/t/h/1", "/t/c/A-001"):
         resp = await anon_client.get(path)
-        assert resp.status_code != 401, f"{path} was auth-gated"
-        if FRONTEND_DIST.exists():
-            assert resp.status_code == 200
+        assert resp.status_code == 200, f"{path} -> {resp.status_code}"
+        assert SPA_SHELL_MARKER in resp.text, f"{path} is not the SPA shell"

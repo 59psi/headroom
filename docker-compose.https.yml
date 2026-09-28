@@ -14,7 +14,8 @@ services:
     environment:
       HEADROOM_RP_ID: "${HEADROOM_DOMAIN:?set HEADROOM_DOMAIN}"
       HEADROOM_ORIGIN: "https://${HEADROOM_DOMAIN}"
-      HEADROOM_CORS_ORIGINS: '["https://${HEADROOM_DOMAIN}"]'
+      # No HEADROOM_CORS_ORIGINS: the SPA is served from this same origin, and
+      # a CORS grant to the app's own origin grants nothing.
       # Trust X-Forwarded-* only from inside this compose network, whose
       # subnet is pinned below. This was `"*"`, justified by :8000 not being
       # published — true, but it made the guarantee depend on a `ports:` line
@@ -32,9 +33,12 @@ services:
       # SECURITY: still do not republish :8000 to the host/LAN here.
       FORWARDED_ALLOW_IPS: "172.31.71.0/24"
 
-  # NOT interchangeable with the caddy service in docker-compose.https-lan.yml:
-  # that one runs a Caddyfile (its own CA, 820-day leaves, a CA-export sidecar)
-  # while this one keeps the CLI form because Let's Encrypt sets the lifetime.
+  # NOT interchangeable with the caddy service in docker-compose.https-lan.yml,
+  # though both run a Caddyfile. They differ in ISSUER and extras: this one
+  # gets Let's Encrypt certificates (which set their own lifetime) and adds
+  # HSTS for the public internet (./Caddyfile.https); that one runs Caddy's
+  # internal CA with 820-day leaves, no HSTS, and a CA-export sidecar
+  # (./Caddyfile).
   caddy:
     image: caddy:2-alpine
     container_name: headroom-caddy

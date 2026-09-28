@@ -12,6 +12,7 @@ import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../test/utils';
 import { GuestPage } from './GuestPage';
+import { ApiError } from '../api/client';
 import * as guestApi from '../api/guest';
 
 vi.mock('../api/guest', async (importOriginal) => {
@@ -30,7 +31,8 @@ function collection(names: string[]) {
     hat_count: names.length,
     hats: names.map((model_name, i) => ({
       id: i + 1, display_id: null, brand: 'Melin', model_name,
-      style: 'a_game', photo_url: null, thumb_url: null, colors: [], case: null, room: null,
+      style: 'a_game', style_label: 'A-Game', photo_url: null, thumb_url: null, colors: [],
+      case: null, room: null,
     })),
   };
 }
@@ -117,9 +119,22 @@ describe('GuestPage', () => {
     expect(await screen.findByRole('link', { name: 'Sign in' })).toBeInTheDocument();
   });
 
+  it('does not call guest browsing unavailable when the server fails — and retries', async () => {
+    const user = userEvent.setup();
+    mocked.getGuestCollection.mockRejectedValue(new ApiError('database is locked', 500));
+    renderWithProviders(<GuestPage />);
+
+    expect(await screen.findByRole('heading', { name: 'Couldn’t load this right now' })).toBeInTheDocument();
+    expect(screen.queryByText(/isn't available/i)).toBeNull();
+
+    mocked.getGuestCollection.mockResolvedValue({ label: 'Guest', hat_count: 0, hats: [] });
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByRole('heading', { name: 'The collection' })).toBeInTheDocument();
+  });
+
   it('says so plainly when guest browsing is unavailable', async () => {
     // The server 404s when the owner has it switched off.
-    mocked.getGuestCollection.mockRejectedValue(new Error('Not found'));
+    mocked.getGuestCollection.mockRejectedValue(new ApiError('Not found', 404));
 
     renderWithProviders(<GuestPage />);
 

@@ -19,9 +19,11 @@ are nonetheless bounded by a semaphore, default ONE at a time.
 An earlier version held an `asyncio.Lock` here; it was removed on the grounds
 that serializing "defeats the entire reason to offload to a thread". That
 argument weighed throughput and omitted memory, and it also mis-stated the
-topology: there are exactly two producers in this app — `analysis_queue` and
-`import_service` — and each is a single-consumer worker, so dropping the lock
-bought a factor of at most TWO. What it cost was a doubling of peak memory, on
+topology: the callers are the two single-consumer workers (`analysis_queue`
+and `import_service`) plus the photo routes' inline fallback in
+`routes/hats.py`, which runs the same pipeline when no worker is draining the
+queue — so dropping the lock bought a few-fold throughput at most, on work
+nothing is waiting for. What it cost was a multiple of peak memory, on
 a Raspberry Pi, for the largest allocation the process makes (a ~179 MB model
 plus a full-resolution decode). Nothing waits on this work — it moved off the
 request path precisely so latency stopped mattering — so trading that
@@ -35,41 +37,51 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from pathlib import Path
 
 from PIL import Image
 
-from headroom.config import env_int
+from headroom.config import env_int, env_str
+from headroom.services import locks
 
 logger = logging.getLogger(__name__)
 
-_MODEL_NAME = os.environ.get("HEADROOM_REMBG_MODEL", "isnet-general-use")
+# Read at import: the model is baked into the image at build time (the
+# REMBG_MODEL build arg), so it cannot usefully change under a running process.
+_MODEL_NAME = env_str("HEADROOM_REMBG_MODEL", "isnet-general-use")
 _session = None
-# Single-shot lock used ONLY around lazy session creation, not around inference.
-# The session itself is reentrant once initialized.
-_init_lock = asyncio.Lock()
 
-# How many inferences may be in flight at once, across ALL callers. Created
-# lazily because a module-level Semaphore binds to whichever event loop happens
-# to be running at import time, which is not the app's loop under pytest.
-_inference_sem: asyncio.Semaphore | None = None
+
+def _init_lock() -> asyncio.Lock:
+    """Held ONLY around lazy session creation, not around inference.
+
+    The session itself is reentrant once initialized. Per event loop
+    (`locks.loop_lock`): this was a module-level `asyncio.Lock()`, which binds
+    to the first loop that makes it wait, so a second loop contending it — the
+    next test, or an `asyncio.run` on a worker thread — raised "bound to a
+    different event loop" instead of loading the model.
+    """
+    return locks.loop_lock("rembg-init")
 
 
 def _concurrency() -> int:
     """Bound on concurrent inferences.
 
-    Read ONCE, when `_get_inference_sem` first builds the semaphore — a test
-    that wants a different bound must reset `_inference_sem` to None first.
+    Read when the running loop's semaphore is first created (see
+    `_get_inference_sem`); every later caller on that loop must agree, which
+    in production — one loop, an environment that does not change — it does.
     """
     return max(1, env_int("HEADROOM_REMBG_CONCURRENCY", 1))
 
 
 def _get_inference_sem() -> asyncio.Semaphore:
-    global _inference_sem
-    if _inference_sem is None:
-        _inference_sem = asyncio.Semaphore(_concurrency())
-    return _inference_sem
+    """How many inferences may be in flight at once, across ALL callers.
+
+    From `locks.loop_semaphore`, one per event loop. A lazily created
+    module-level semaphore only moved the moment it bound to a loop — the
+    first one to contend it — and every other loop then raised on it.
+    """
+    return locks.loop_semaphore("rembg-inference", _concurrency())
 
 
 def _get_session():
@@ -114,7 +126,7 @@ def _harden_alpha(cut):
     if cut.mode != "RGBA":
         return cut
 
-    import numpy as np  # noqa: PLC0415 — already a rembg dependency
+    import numpy as np  # noqa: PLC0415 — heavy, and only this path needs it: kept off the boot path like rembg
 
     alpha = np.asarray(cut.getchannel("A"), dtype=np.float32)
     ramped = np.clip((alpha - _ALPHA_FLOOR) / (_ALPHA_CEIL - _ALPHA_FLOOR), 0.0, 1.0)
@@ -141,16 +153,16 @@ async def remove_background(input_path: Path, output_path: Path) -> Path | None:
     """Run rembg in a worker thread; return new path or None on failure.
 
     First call serializes briefly while the ONNX session loads (under
-    `_init_lock`). Inference then runs under `_get_inference_sem()`, which
+    `_init_lock()`). Inference then runs under `_get_inference_sem()`, which
     bounds how many of these can be resident at once across every caller —
-    both background workers reach this function, and nothing else stops them
-    arriving together.
+    both background workers and the routes' inline fallback reach this
+    function, and nothing else stops them arriving together.
     """
     try:
         # Init the session under a lock to avoid two concurrent first-callers
         # creating two sessions and racing on the model file.
         if _session is None:
-            async with _init_lock:
+            async with _init_lock():
                 if _session is None:
                     await asyncio.to_thread(_get_session)
         async with _get_inference_sem():

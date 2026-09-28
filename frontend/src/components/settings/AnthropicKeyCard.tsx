@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { getApiKeyStatus, setApiKey, deleteApiKey, testApiKey, getModel } from '../../api/settings';
+import { qk } from '../../lib/queryKeys';
 import { KeyCard, type KeyProviderSpec } from './KeyCard';
 
 const CONSOLE_LINK = (
@@ -10,7 +11,7 @@ const CONSOLE_LINK = (
 
 const ANTHROPIC: Omit<KeyProviderSpec, 'test'> = {
   title: 'Claude API key',
-  queryKey: ['settings', 'api-key'],
+  queryKey: qk.settings.apiKey(),
   getStatus: getApiKeyStatus,
   setKey: setApiKey,
   deleteKey: deleteApiKey,
@@ -52,6 +53,6 @@ export function AnthropicKeyCard() {
   // A test result is only meaningful for the model it ran against, so the
   // card drops it whenever the active model changes — including when the
   // Model card below changes it.
-  const model = useQuery({ queryKey: ['settings', 'model'], queryFn: getModel });
+  const model = useQuery({ queryKey: qk.settings.model(), queryFn: getModel });
   return <KeyCard provider={{ ...ANTHROPIC, test: { run: testApiKey, resetOn: model.data?.model_id } }} />;
 }

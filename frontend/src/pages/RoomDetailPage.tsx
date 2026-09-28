@@ -7,6 +7,8 @@ import { CaseGridSkeleton, CaseTile } from '../components/cases/CaseTile';
 import { HatRow } from '../components/hats/HatRow';
 import { PageHeader } from '../components/ui/PageHeader';
 import { StatusPill } from '../components/ui/StatusPill';
+import { plural } from '../lib/format';
+import { qk } from '../lib/queryKeys';
 
 /**
  * What is actually in a room.
@@ -28,16 +30,17 @@ import { StatusPill } from '../components/ui/StatusPill';
 export function RoomDetailPage() {
   const { roomId } = useParams();
   const id = Number(roomId);
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['room', id],
+  const roomQ = useQuery({
+    queryKey: qk.room(id),
     queryFn: () => getRoom(id),
     enabled: Number.isFinite(id),
   });
+  const { data, isLoading, error } = roomQ;
 
   if (error && !isNotFound(error)) {
     return (
       <div className="py-4">
-        <ErrorNote of={{ isError: true, error }} what="Could not load this room" />
+        <ErrorNote of={roomQ} what="Could not load this room" />
         <Link to="/rooms" className="btn btn-outline-secondary mt-3">← All rooms</Link>
       </div>
     );
@@ -64,8 +67,8 @@ export function RoomDetailPage() {
   const loose = data.loose_hats ?? [];
   const cases = data.cases ?? [];
   const summary = [
-    `${cases.length} case${cases.length === 1 ? '' : 's'}`,
-    loose.length > 0 && `${loose.length} loose hat${loose.length === 1 ? '' : 's'}`,
+    plural(cases.length, 'case'),
+    loose.length > 0 && plural(loose.length, 'loose hat'),
   ].filter(Boolean).join(' · ');
 
   return (
@@ -87,7 +90,7 @@ export function RoomDetailPage() {
           <div className="hr-cr-section-head">
             <h2 id="room-loose-title">Out in this room</h2>
             <span className="hr-cr-section-count">
-              {loose.length} hat{loose.length === 1 ? '' : 's'}, no case
+              {plural(loose.length, 'hat')}, no case
             </span>
           </div>
           {loose.map(h => <HatRow key={h.id} hat={h} showRoom={false} thumb={64} />)}
@@ -98,7 +101,7 @@ export function RoomDetailPage() {
         <div className="hr-cr-section-head">
           <h2 id="room-cases-title">Cases</h2>
           <span className="hr-cr-section-count">
-            {cases.length} case{cases.length === 1 ? '' : 's'}
+            {plural(cases.length, 'case')}
           </span>
         </div>
         {cases.length === 0 ? (

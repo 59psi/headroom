@@ -12,7 +12,6 @@ from __future__ import annotations
 import pytest
 
 from headroom.services import catalog_service, melin_recap, naming
-from headroom.services.hat_analysis_pipeline import _split_model_and_colorway
 
 pytestmark = pytest.mark.anyio
 
@@ -34,10 +33,30 @@ async def test_tokens_read_punctuation_dashes_and_fullwidth_as_separators(text, 
     assert naming.tokens(text) == expected
 
 
+async def test_one_rule_for_same_name_across_matcher_vocabulary_and_duplicates():
+    """Three normalizers disagreed: the tokens were accent-SENSITIVE, the
+    vocabulary's fold accent-blind but punctuation-sensitive, and duplicate
+    detection borrowed the vocabulary's. `Piña`/`Pina` was one colorway on
+    write and two products to the matcher; `A-Game`/`A Game` one model to the
+    matcher and two hats to the duplicate report."""
+    assert naming.token_set("Piña") == naming.token_set("PINA") == frozenset({"pina"})
+    assert naming.name_key("A-Game Hydro") == naming.name_key("a game  hydro") == "a game hydro"
+    assert naming.name_key("Ｐiña") == "pina"
+    # Ordered: a spelling is a sequence, not a bag of words.
+    assert naming.name_key("Grey Heather") != naming.name_key("Heather Grey")
+
+
 async def test_both_services_read_a_name_the_same_way():
-    name = 'Odysea Hydro "Have More Fun" — Ｂlack'
-    assert set(melin_recap.model_tokens(name)) == set(catalog_service._model_tokens(name))
-    assert catalog_service._model_tokens(name) == naming.token_set(name)
+    # Both services read names with `naming` directly — their wrappers
+    # (`catalog_service._model_tokens`, `melin_recap.model_tokens`) are gone —
+    # so this is checked by behavior: punctuation and a fullwidth letter in
+    # the product name must not stop the hat matching it.
+    listing = melin_recap.Listing(
+        title="", price=50.0, condition=None, size=None,
+        product='Odysea Hydro "Have More Fun" - Ｂlack',
+    )
+    comp = melin_recap._product_comp([listing], 'Odysea Hydro "Have More Fun"', "Black", None, None)
+    assert comp is not None, "the marketplace read the name differently from `naming`"
 
 
 @pytest.mark.parametrize(
@@ -60,7 +79,7 @@ async def test_the_splitter_takes_spaced_separators_only(text, expected):
 
 async def test_the_harvest_and_the_analyzer_repair_split_alike():
     for title in ("Trenches Hydro — Hawaii 808", "A-Game Hydro - Heather Grey", "Odysea Hydro"):
-        assert catalog_service.parse_listing_title(title) == _split_model_and_colorway(title)
+        assert catalog_service.parse_listing_title(title) == naming.split_model_colorway(title)
 
 
 async def test_a_title_naming_no_model_does_not_file_a_colorway_under_an_empty_model():

@@ -3,7 +3,10 @@ import { ErrorNote } from '../common/ErrorNote';
 import { Link } from 'react-router';
 import { auditSharedPrices, getUnclaimedFromPurchases } from '../../api/settings';
 import { rematchPurchases } from '../../api/purchases';
+import { plural } from '../../lib/format';
 import { invalidateHatViews, invalidatePurchaseDerived } from '../../lib/invalidate';
+import { hatName } from '../../lib/placement';
+import { qk } from '../../lib/queryKeys';
 import { Panel } from '../ui/Panel';
 import { StatusPill } from '../ui/StatusPill';
 import { Skeleton } from '../ui/Skeleton';
@@ -28,13 +31,11 @@ import { useToast } from '../ui/Toast';
  *  hats first, so a truncated sample is the actionable end of the group. */
 const SAMPLE_LIMIT = 8;
 
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
-
 export function SharedPricesCard() {
   const qc = useQueryClient();
   const toast = useToast();
   const audit = useQuery({
-    queryKey: ['admin', 'shared-prices'],
+    queryKey: qk.admin.sharedPrices(),
     queryFn: auditSharedPrices,
   });
   const { data, isLoading } = audit;
@@ -45,7 +46,7 @@ export function SharedPricesCard() {
   // colorways and 16 prices sitting in already-imported orders while this very
   // card told the owner a colorway was theirs alone to supply.
   const unclaimed = useQuery({
-    queryKey: ['admin', 'unclaimed-purchases'],
+    queryKey: qk.admin.unclaimedPurchases(),
     queryFn: getUnclaimedFromPurchases,
     // Answering this runs the whole matcher — a full bipartite assignment over
     // every unmatched purchase and every hat — so it is not a free read to
@@ -58,9 +59,10 @@ export function SharedPricesCard() {
     mutationFn: rematchPurchases,
     onSuccess: result => {
       toast.success(`Matched ${plural(result.matched, 'purchase')} from your order history`);
+      // The purchase list, the unclaimed offer this button sits in, and this
+      // report — all derived from matching — then every hat it wrote onto.
       invalidatePurchaseDerived(qc);
-      qc.invalidateQueries({ queryKey: ['admin', 'purchases'] });
-      invalidateHatViews(qc);
+      void invalidateHatViews(qc);
     },
   });
 
@@ -96,14 +98,12 @@ export function SharedPricesCard() {
         <div className="hr-sd-callout mb-3">
           <p className="small mb-2">
             <strong>
-              {unclaimed.data!.colorways} colorway
-              {unclaimed.data!.colorways === 1 ? '' : 's'} can be filled from
+              {plural(unclaimed.data!.colorways, 'colorway')} can be filled from
               your own order history
             </strong>{' '}
             — purchases already imported, never matched to a hat.
             {unclaimed.data!.prices > 0 && (
-              <> The same run sets {unclaimed.data!.prices} purchase
-                price{unclaimed.data!.prices === 1 ? '' : 's'}.</>
+              <> The same run sets {plural(unclaimed.data!.prices, 'purchase price')}.</>
             )}
             {unclaimed.data!.ambiguous > 0 && (
               <> {unclaimed.data!.ambiguous} of them were a tie between
@@ -167,9 +167,7 @@ export function SharedPricesCard() {
                   <span className="hr-sd-group-price font-mono">
                     ${g.resale_price.toFixed(2)}
                   </span>
-                  <span className="text-secondary small">
-                    {g.hat_count} hat{g.hat_count === 1 ? '' : 's'}
-                  </span>
+                  <span className="text-secondary small">{plural(g.hat_count, 'hat')}</span>
                 </div>
                 {g.source && (
                   <div className="hr-sd-legend">{g.source}</div>
@@ -184,7 +182,8 @@ export function SharedPricesCard() {
                   {/* Each hat carries its own label, so nothing is indexed
                       against a second array that can fall out of step. A hat
                       with no case has no display_id — normal for a
-                      room-stored one — and shows its id instead. */}
+                      room-stored one — and is named the way every other
+                      screen names it (`hatName`). */}
                   {g.hats.slice(0, SAMPLE_LIMIT).map((h, i) => (
                     <span key={h.hat_id}>
                       {i > 0 && ' · '}
@@ -196,7 +195,7 @@ export function SharedPricesCard() {
                           ? undefined
                           : 'No colorway recorded — add one to price this hat on its own product'}
                       >
-                        {h.display_id ?? `#${h.hat_id}`}
+                        {hatName(h)}
                         {!h.has_colorway && ' *'}
                       </Link>
                     </span>

@@ -1,5 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
-import { PhotoCropper } from './PhotoCropper';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+
+// The cropper (react-easy-crop and its canvas work) loads when a photo is
+// picked, not with the app: every page that can take a photo would otherwise
+// carry it in the one bundle a phone downloads before its first paint.
+const PhotoCropper = lazy(() => import('./PhotoCropper').then(m => ({ default: m.PhotoCropper })));
 
 interface Props {
   onCapture: (file: File) => void;
@@ -143,13 +147,15 @@ export function PhotoCapture({
       />
 
       {pending && (
-        <PhotoCropper
-          imageUrl={pending.url}
-          filename={pending.file.name}
-          onCancel={discard}
-          onUseOriginal={useOriginal}
-          onCropped={handleCropped}
-        />
+        <Suspense fallback={<p className="text-secondary small mt-2 mb-0" role="status">Opening the cropper…</p>}>
+          <PhotoCropper
+            imageUrl={pending.url}
+            filename={pending.file.name}
+            onCancel={discard}
+            onUseOriginal={useOriginal}
+            onCropped={handleCropped}
+          />
+        </Suspense>
       )}
     </div>
   );

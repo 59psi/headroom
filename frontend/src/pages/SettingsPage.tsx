@@ -115,7 +115,10 @@ export const SECTIONS: readonly Section[] = [
     cards: [
       { Card: GuestViewCard, name: 'Guest browsing', keywords: 'guest public read-only visitor' },
       { Card: ShareLinksCard, name: 'Share links', keywords: 'share link token public url' },
-      { Card: CollectionExportCard, name: 'Share the collection', keywords: 'export csv download collection' },
+      // The words on the card itself: it makes a .zip of HTML pages that open
+      // offline. It said "csv", which this card has never produced, and a
+      // search for the "zip" on its own button found nothing.
+      { Card: CollectionExportCard, name: 'Share the collection', keywords: 'export zip html offline download collection' },
       { Card: InventoryReportCard, name: 'Inventory report', keywords: 'report print pdf inventory insurance' },
       { Card: TagsCard, name: 'Tags & labels', keywords: 'nfc qr tag label sticker print' },
       { Card: ShareTargetCard, name: 'Share photos to Headroom', keywords: 'share sheet ios shortcut android import token' },
@@ -134,17 +137,24 @@ export const SECTIONS: readonly Section[] = [
     ],
   },
   {
-    id: 'maintenance',
+    // The id is the label, like the other four — a reader linking to the
+    // Upkeep tab writes `?tab=upkeep`, which used to land on Analysis without
+    // a word. `maintenance`, its old id, still opens it (`SECTION_ALIASES`).
+    id: 'upkeep',
     label: 'Upkeep',
     blurb: 'Making sure you still have all of this tomorrow.',
     icon: <svg {...ICON_PROPS}><path d="M12 3a9 9 0 1 0 9 9" /><path d="M21 3v6h-6" /><path d="M12 7v5l3 2" /></svg>,
     cards: [
       { Card: BackupsCard, name: 'Backups', keywords: 'backup restore download archive' },
       { Card: OffsiteBackupCard, name: 'Off-site backup', keywords: 'offsite rclone upload cloud backup' },
-      { Card: ActivityLogCard, name: 'Recent activity', keywords: 'activity log audit history' },
+      // "retention" and "prune": the card's header reports the daily prune.
+      { Card: ActivityLogCard, name: 'Recent activity', keywords: 'activity log audit history retention prune' },
     ],
   },
 ];
+
+/** Section ids that have been renamed, so a saved link still lands. */
+const SECTION_ALIASES: Record<string, string> = { maintenance: 'upkeep' };
 
 function matches(section: Section, card: CardEntry, terms: string[]): boolean {
   const haystack = `${card.name} ${card.keywords} ${section.label}`.toLowerCase();
@@ -158,7 +168,8 @@ export function SettingsPage() {
   // one press at a time to leave the page.
   const [params, setParams] = useSearchParams();
   const requested = params.get('tab');
-  const active = SECTIONS.find(s => s.id === requested) ?? SECTIONS[0];
+  const requestedId = requested ? SECTION_ALIASES[requested] ?? requested : null;
+  const active = SECTIONS.find(s => s.id === requestedId) ?? SECTIONS[0];
   const [query, setQuery] = useState('');
   const searchId = useId();
 
@@ -227,9 +238,18 @@ export function SettingsPage() {
 
           {/* One row of five on a phone, a labeled list on a wide screen. The
               section names are short (Data / Device / Upkeep) precisely so five
-              equal columns fit ~320px without ellipsis. */}
+              equal columns fit ~320px without ellipsis.
+
+              Navigation, not a tablist. The sections are pages of Settings —
+              each is in the URL and only the chosen one is mounted — and the
+              ARIA tabs contract did not hold: `aria-controls` pointed at four
+              panels that did not exist, every tab was a Tab stop with no
+              arrow keys, and while searching no tab was selected and no panel
+              shown. A nav of buttons, the current one `aria-current`, is what
+              this is (the same call `ui/Segmented` makes); while a search is
+              showing, no section is current, which is true. */}
           <nav className="hr-settings-nav" aria-label="Settings sections">
-          <div className="hr-settings-tabs" role="tablist" aria-label="Settings sections">
+          <div className="hr-settings-tabs">
             {SECTIONS.map(section => {
               const isActive = !searching && section.id === active.id;
               const count = section.id === 'analysis' ? errorCount : 0;
@@ -237,10 +257,7 @@ export function SettingsPage() {
                 <button
                   key={section.id}
                   type="button"
-                  role="tab"
-                  id={`settings-tab-${section.id}`}
-                  aria-selected={isActive}
-                  aria-controls={`settings-panel-${section.id}`}
+                  aria-current={isActive ? 'page' : undefined}
                   className={`hr-settings-tab${isActive ? ' is-active' : ''}`}
                   onClick={() => selectTab(section.id)}
                 >
@@ -292,14 +309,13 @@ export function SettingsPage() {
           ) : (
             <>
               <div className="hr-settings-heading">
-                <h2>{active.label}</h2>
+                <h2 id={`settings-heading-${active.id}`}>{active.label}</h2>
                 <p>{active.blurb}</p>
               </div>
               {/* Only the active section is mounted. Each card owns its own
                   query, so the flat page fired one request per card on open —
                   most for cards you were never going to look at. */}
-              <div
-                role="tabpanel"
+              <section
                 id={`settings-panel-${active.id}`}
                 className="hr-settings-panel"
                 // `labelledby` is the ARIA spelling and is NOT subject to the
@@ -307,15 +323,15 @@ export function SettingsPage() {
                 // prose. An unanchored `labelled -> labeled` sweep renamed it
                 // in 2.57.0; React passes unknown `aria-*` through verbatim, so
                 // the only signal was a console warning nobody read, and the
-                // tabpanel lost its name.
-                aria-labelledby={`settings-tab-${active.id}`}
+                // section lost its name.
+                aria-labelledby={`settings-heading-${active.id}`}
               >
                 {/* Keyed by the card's name: stable, unique within the table
                     (the census test checks), and immune to minification —
                     `Card.name` was the key once, and esbuild shortens function
                     names to a letter, so two cards could share one. */}
                 {active.cards.map(({ Card, name }) => <Card key={name} />)}
-              </div>
+              </section>
             </>
           )}
         </div>

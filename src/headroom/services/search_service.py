@@ -1,20 +1,22 @@
 from dataclasses import dataclass
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.models.case import Case
 from headroom.models.hat import Hat
-from headroom.schemas.hat import STYLE_LABELS
 from headroom.models.hat_color import HatColor
 from headroom.models.room import Room
-from headroom.services.hat_service import hat_loads
+from headroom.schemas.hat import SIZE_LABELS, STYLE_LABELS
+from headroom.schemas.search import ColorScope
+from headroom.services import naming
 from headroom.services.color_extraction import (
     families_of_lab,
     is_same_color,
     lab_distance,
     lab_of,
 )
+from headroom.services.hat_service import hat_loads
 
 
 def _escape_like(term: str) -> str:
@@ -26,6 +28,27 @@ def _styles_whose_label_matches(term: str) -> list[str]:
     """Enum values whose human label contains `term` (case-insensitive)."""
     needle = term.casefold()
     return [value for value, label in STYLE_LABELS.items() if needle in label.casefold()]
+
+
+def _compact(text: str) -> str:
+    """`text` with everything but letters and digits dropped, folded."""
+    return "".join(naming.tokens(text))
+
+
+def _sizes_whose_label_matches(term: str) -> list[str]:
+    """Size values whose printed label contains `term`, spelling aside.
+
+    `x_large` prints as "X Large", and people type it as "x-large", "xlarge"
+    or "X Large" — none of which the stored value contains, so only a search
+    for "x large" found one, and only because "x" and "large" each happened
+    to match something on their own. Compared with separators and case
+    folded away, so every spelling of the label is the label. A term with no
+    letters or digits (`-`) matches no size rather than every size.
+    """
+    needle = _compact(term)
+    if not needle:
+        return []
+    return [value for value, label in SIZE_LABELS.items() if needle in _compact(label)]
 
 
 def _in_room(room_id: int):
@@ -49,13 +72,13 @@ def _color_rank_clause(scope: str):
     Returns a tuple so the caller can splat it — `all` contributes nothing
     rather than a `True` literal SQLAlchemy would render into the SQL.
 
-    An unknown scope falls back to `major` rather than raising: this is reached
-    from a query string, and the safe reading of a typo is the default, not a
-    500 and not a silently wider search.
+    Both routes that reach this type the parameter as `ColorScope`, so a typo
+    in a query string is the caller's 422 before it gets here. Anything else
+    reads as `major`, the narrowest scope, rather than raising or widening.
     """
-    if scope == "all":
+    if scope == ColorScope.all:
         return ()
-    if scope == "accent":
+    if scope == ColorScope.accent:
         return (HatColor.dominance_rank > MAJOR_COLOR_RANK,)
     return (HatColor.dominance_rank <= MAJOR_COLOR_RANK,)
 
@@ -79,13 +102,15 @@ MAJOR_COLOR_RANK = 2
 #: `accent` is not merely the complement of the default — it is its own useful
 #: question. "Which of my hats has pink on it somewhere" is exactly how you
 #: look for a collab mark or a contrast underbrim, and asking it against the
-#: whole collection returns almost everything.
-COLOR_SCOPES = ("major", "accent", "all")
+#: whole collection returns almost everything. Derived from the wire type so
+#: the two cannot name different sets.
+COLOR_SCOPES = tuple(scope.value for scope in ColorScope)
 
 #: How many results a search returns. A backstop, not a page: the UI has no
-#: paging, so anything past this is simply unfindable.
+#: paging, so anything past this is unfindable except by refining the search —
+#: which is why the route reports the uncapped count (`count_search`) beside
+#: it, so a capped list can say so instead of passing for the whole answer.
 SEARCH_LIMIT = 50
-
 
 
 async def search_hats(
@@ -100,21 +125,76 @@ async def search_hats(
 ) -> list[Hat]:
     """Multi-term AND search across hat fields and color names.
 
-    Each term must match at least one field (style, condition, size,
-    a color name/general_color, or room name).
+    Each term must match at least one field: style (value or printed label),
+    brand, model_name, a color (general_color or color_name — see below), or
+    the room name (through the case or directly). Unless `public_fields_only`
+    (the guest and share views, which may only match what they show), also
+    condition, size, artist_series, colorway and construction, plus the
+    hydro/hydrolite flags derived from it.
 
     When exact_colors is False (default), color terms match against
     general_color — the curated palette name the hex was snapped to (e.g.
     "red", "dark gray"). When True, matches against the stored `color_name`,
     which is whatever the analyzer called it ("charcoal heather", "bone").
     """
+    stmt = _search_filter(
+        select(Hat).options(*hat_loads()), query,
+        exact_colors=exact_colors, room_id=room_id,
+        public_fields_only=public_fields_only, color_scope=color_scope,
+    )
+    if stmt is None:
+        return []
+    stmt = stmt.order_by(Hat.id)
+    # `None` means uncapped. The guest view passes it: its response reports
+    # `len()` as the match count, and a capped list makes that count a lie —
+    # the mistake this codebase has made three times over (colorway catalog,
+    # analysis `pending_count`, and the guest search itself, first at 50 and
+    # then at 500). The guest's BROWSE path already returns the whole active
+    # collection uncapped, so a search, which can only return a subset of it,
+    # gains nothing from a ceiling the browse does not have.
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def count_search(
+    db: AsyncSession,
+    query: str,
+    *,
+    exact_colors: bool = False,
+    room_id: int | None = None,
+    color_scope: str = "major",
+) -> int:
+    """How many hats `search_hats` would match without its cap.
+
+    A SQL COUNT over the same WHERE — `_search_filter` is the one definition —
+    so the number cannot describe a different set from the page. The owner
+    search stops at `SEARCH_LIMIT`, and a list that stops without saying so
+    reads as the whole answer: 55 matches rendered as "50 of 50".
+    """
+    stmt = _search_filter(
+        select(func.count(Hat.id)), query,
+        exact_colors=exact_colors, room_id=room_id, color_scope=color_scope,
+    )
+    if stmt is None:
+        return 0
+    return int((await db.execute(stmt)).scalar() or 0)
+
+
+def _search_filter(
+    stmt,
+    query: str,
+    *,
+    exact_colors: bool,
+    room_id: int | None,
+    color_scope: str,
+    public_fields_only: bool = False,
+):
+    """`stmt` narrowed to the hats a search matches, or None for no terms."""
     terms = query.strip().split()
     if not terms:
-        return []
-
-    stmt = select(Hat).options(
-        *hat_loads(),
-    )
+        return None
 
     # Disposed hats can't be "found" — they're not in any case anymore.
     stmt = stmt.where(Hat.disposed_at.is_(None))
@@ -166,7 +246,15 @@ async def search_hats(
             clauses += [
                 Hat.condition.ilike(pattern, escape="\\"),
                 Hat.size.ilike(pattern, escape="\\"),
+                # What the size prints as, as `style` does above: "x-large"
+                # and "xlarge" find an `x_large` hat.
+                Hat.size.in_(_sizes_whose_label_matches(term)),
                 Hat.artist_series.ilike(pattern, escape="\\"),
+                # The colorway is what a person types — "808", "watercolor" —
+                # and every hat card prints it, yet it matched nothing. Owner
+                # search only: `SharedHat` does not carry it, so a guest
+                # matching on it would be the oracle described above.
+                Hat.colorway.ilike(pattern, escape="\\"),
                 # Free-form since 2.11, so "canvas" finds a Waxed Canvas hat.
                 # The flag clauses below stay because they are not redundant
                 # with this: `hydro` must keep finding a hat recorded as
@@ -190,19 +278,7 @@ async def search_hats(
             elif "hydro" in low:
                 clauses.append(Hat.hydro.is_(True))
         stmt = stmt.where(or_(*clauses))
-
-    stmt = stmt.order_by(Hat.id)
-    # `None` means uncapped. The guest view passes it: its response reports
-    # `len()` as the match count, and a capped list makes that count a lie —
-    # the mistake this codebase has made three times over (colorway catalog,
-    # analysis `pending_count`, and the guest search itself, first at 50 and
-    # then at 500). The guest's BROWSE path already returns the whole active
-    # collection uncapped, so a search, which can only return a subset of it,
-    # gains nothing from a ceiling the browse does not have.
-    if limit is not None:
-        stmt = stmt.limit(limit)
-    result = await db.execute(stmt)
-    return list(result.scalars().all())
+    return stmt
 
 
 # How much worse a match counts for being on a less dominant swatch.
@@ -360,9 +436,10 @@ async def search_hats_by_color(
                     rank=rank,
                     score=score,
                 )
-        # Thresholded on the unrounded score: a match at 22.004 is not
-        # meaningfully different from one at 21.996, but rounding first would
-        # let the displayed number and the cutoff disagree at the boundary.
+        # Budget and ranking both use the UNROUNDED distance and score; only
+        # the `distance` shown to the client is rounded. Deciding on the
+        # rounded figure would let what is displayed and what was decided
+        # disagree at a budget's edge.
         if best is not None:
             ranked.append(best)
 

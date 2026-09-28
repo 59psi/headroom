@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from headroom.models.hat import Hat, ResaleScope
 from headroom.services import retail_pricing
 
+
 def value_cases(count: int) -> float:
     """What `count` cases are worth, at replacement cost.
 

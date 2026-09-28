@@ -61,7 +61,7 @@ def stub_claude(monkeypatch):
 
     monkeypatch.setattr("headroom.services.settings_service.get_anthropic_key", _key)
     monkeypatch.setattr(
-        "headroom.services.hat_analysis_pipeline.analyze_hat_image", _analyze
+        "headroom.services.claude_analysis.analyze_hat_image", _analyze
     )
 
 
@@ -103,6 +103,28 @@ async def _read_job(job_id):
         return await db.get(ImportJob, job_id)
 
 
+# ---- create_job preconditions ------------------------------------------ #
+
+
+async def test_create_job_refuses_a_broken_batch_in_domain_terms(
+    client, db_session, tmp_path
+):
+    """An empty or over-count batch is refused as `errors.Invalid`, not as an
+    `HTTPException` — the service is not an endpoint, and the route layer is
+    the one that decides what a refusal means on the wire."""
+    from headroom.services import errors
+
+    with pytest.raises(errors.Invalid):
+        await import_service.create_job(db_session, files=[])
+
+    too_many = [
+        (f"{i}.jpg", tmp_path / f"{i}.jpg")
+        for i in range(import_service.MAX_FILES_PER_JOB + 1)
+    ]
+    with pytest.raises(errors.Invalid):
+        await import_service.create_job(db_session, files=too_many)
+
+
 # ---- _process_item ---------------------------------------------------- #
 
 
@@ -135,6 +157,63 @@ async def test_a_processed_item_becomes_a_hat(client, stub_claude, isolated_uplo
     assert not staged.exists(), "the staged file was not cleaned up"
 
 
+def _loop_visible() -> bool:
+    try:
+        asyncio.get_running_loop()
+        return True
+    except RuntimeError:
+        return False
+
+
+async def test_staged_files_are_removed_off_the_event_loop(
+    client, stub_claude, isolated_upload_dir, monkeypatch
+):
+    """The worker shares the one event loop with every request, and a staged
+    file is a full-size photo on an SD card: cancel, success, failure and the
+    job-directory sweep all unlinked on the loop. Pinned by where each
+    removal runs — a `to_thread` worker sees no running loop."""
+    import shutil
+
+    from headroom.config import settings
+
+    on_loop: list[tuple[str, bool]] = []
+    real_unlink, real_rmtree = Path.unlink, shutil.rmtree
+    staging = settings.upload_dir / ".import-staging"
+
+    def spy_unlink(self, *a, **kw):
+        if staging in self.parents:
+            on_loop.append((self.name, _loop_visible()))
+        return real_unlink(self, *a, **kw)
+
+    def spy_rmtree(path, *a, **kw):
+        on_loop.append((Path(path).name, _loop_visible()))
+        return real_rmtree(path, *a, **kw)
+
+    monkeypatch.setattr(Path, "unlink", spy_unlink)
+    monkeypatch.setattr(import_service.shutil, "rmtree", spy_rmtree)
+
+    # Success, then the job directory sweep that follows it.
+    job_id = await _job()
+    ok = _jpeg(staging / f"job-{job_id}" / "ok.jpg")
+    await import_service._process_item(await _item(job_id, staged_path=ok))
+    # Failure.
+    bad_job = await _job()
+    bad = staging / f"job-{bad_job}" / "bad.jpg"
+    bad.parent.mkdir(parents=True, exist_ok=True)
+    bad.write_bytes(b"not an image")
+    await import_service._process_item(await _item(bad_job, staged_path=bad))
+    # Cancel.
+    cancel_job = await _job(total=1)
+    queued = _jpeg(staging / f"job-{cancel_job}" / "queued.jpg")
+    await _item(cancel_job, staged_path=queued)
+    async with session_factory() as db:
+        await import_service.cancel_job(db, cancel_job)
+
+    names = {name for name, _ in on_loop}
+    assert {"ok.jpg", "bad.jpg", "queued.jpg", f"job-{job_id}"} <= names, on_loop
+    assert [entry for entry in on_loop if entry[1]] == [], f"removed on the event loop: {on_loop}"
+
+
 async def test_a_file_that_is_not_an_image_leaves_no_hat_behind(client, isolated_upload_dir):
     """A failed import must not add a hat to the collection.
 
@@ -146,9 +225,10 @@ async def test_a_file_that_is_not_an_image_leaves_no_hat_behind(client, isolated
     the row exists, and a hat created by an attempt that fails afterwards is
     removed if it never received a photo.
     """
+    from sqlalchemy import func, select
+
     from headroom.config import settings
     from headroom.models.hat import Hat
-    from sqlalchemy import func, select
 
     async def _hat_count():
         async with session_factory() as db:
@@ -176,14 +256,17 @@ async def test_a_hat_created_by_an_attempt_that_then_fails_is_removed(
     pipeline blows up before the photo is committed. Reordering alone cannot
     cover this — the row already exists — so the error path deletes a hat it
     created that never received a photo."""
+    from sqlalchemy import func, select
+
     from headroom.config import settings
     from headroom.models.hat import Hat
-    from sqlalchemy import func, select
+    from headroom.services import hat_analysis_pipeline
 
     async def _boom(db, hat, path):
         raise RuntimeError("rembg exploded")
 
-    monkeypatch.setattr(import_service, "finalize_hat_photo", _boom)
+    # The seam is the pipeline module's attribute; the worker calls through it.
+    monkeypatch.setattr(hat_analysis_pipeline, "finalize_hat_photo", _boom)
 
     async def _hat_count():
         async with session_factory() as db:
@@ -362,11 +445,13 @@ async def test_a_crash_between_the_hat_row_and_its_photo_does_not_make_a_second_
     leaves exactly the state a dead process leaves: item `processing`, hat
     committed, no photo.
     """
-    from headroom.config import settings
-    from headroom.models.hat import Hat
     from sqlalchemy import select
 
-    real_finalize = import_service.finalize_hat_photo
+    from headroom.config import settings
+    from headroom.models.hat import Hat
+    from headroom.services import hat_analysis_pipeline
+
+    real_finalize = hat_analysis_pipeline.finalize_hat_photo
 
     class PowerCut(BaseException):
         pass
@@ -374,7 +459,7 @@ async def test_a_crash_between_the_hat_row_and_its_photo_does_not_make_a_second_
     async def _power_cut(db, hat, path):
         raise PowerCut()
 
-    monkeypatch.setattr(import_service, "finalize_hat_photo", _power_cut)
+    monkeypatch.setattr(hat_analysis_pipeline, "finalize_hat_photo", _power_cut)
     job_id = await _job()
     staged = _jpeg(settings.upload_dir / ".import-staging" / "c.jpg")
     item_id = await _item(job_id, staged_path=staged, filename="c.jpg")
@@ -387,7 +472,7 @@ async def test_a_crash_between_the_hat_row_and_its_photo_does_not_make_a_second_
     assert item.hat_id is not None, "the hat is recorded before the slow work"
 
     # "Reboot": the sweep re-queues the item, the worker runs it again.
-    monkeypatch.setattr(import_service, "finalize_hat_photo", real_finalize)
+    monkeypatch.setattr(hat_analysis_pipeline, "finalize_hat_photo", real_finalize)
     await import_service._recover_on_boot()
     assert (await _read_item(item_id)).status == "queued"
     await import_service._process_item(item_id)

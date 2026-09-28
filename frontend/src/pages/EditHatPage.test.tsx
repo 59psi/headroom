@@ -280,10 +280,14 @@ describe('EditHatPage — header', () => {
     expect(back.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it('names a hat with no display id by its number', async () => {
+  it('names a hat with no display id the way every screen does — model, then number', async () => {
     vi.mocked(hatsApi.getHat).mockResolvedValue({ ...HAT, display_id: null });
-    renderWithProviders(<EditHatPage />);
+    const { unmount } = renderWithProviders(<EditHatPage />);
+    expect(await screen.findByRole('link', { name: 'Coronado' })).toHaveAttribute('href', '/hats/7');
+    unmount();
 
+    vi.mocked(hatsApi.getHat).mockResolvedValue({ ...HAT, display_id: null, model_name: null });
+    renderWithProviders(<EditHatPage />);
     expect(await screen.findByRole('link', { name: 'Hat #7' })).toHaveAttribute('href', '/hats/7');
   });
 

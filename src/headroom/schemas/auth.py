@@ -1,10 +1,11 @@
 """I/O models for the auth routes.
 
-These were declared inline in `routes/auth.py`, which is the one convention
-this repo states outright ("no schema is declared inline in a route") and the
-one place it most matters: these are the request bodies on the unauthenticated
-surface, so their validation rules — the password floor especially — should be
-readable without opening the transport layer.
+These were declared inline in `routes/auth.py`. Every response the API returns
+has a declared model — `tests/test_api_contract.py` enforces that over the
+whole OpenAPI document — and this is the module where it matters most for the
+REQUEST side too: these are the bodies on the unauthenticated surface, so
+their validation rules — the password floor especially — should be readable
+without opening the transport layer.
 """
 
 from __future__ import annotations
@@ -12,7 +13,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_serializer
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer
+
+from headroom.schemas.common import label_text
 
 # Argon2id makes long passwords cheap to verify, so the ceiling exists only to
 # bound what gets hashed, not to constrain the user.
@@ -89,12 +92,45 @@ class PasskeyRegisterVerify(BaseModel):
     # Re-declaring its structure here would be a second, drifting copy of the
     # spec that the library already implements.
     credential: dict
-    name: str = "Passkey"
+    # Cleaned and sized to `passkey_credentials.name` HERE, where the route
+    # used to do `data.name[:80] or "Passkey"` at each of its two uses — and
+    # stored control characters and bidi overrides verbatim. Cut rather than
+    # refused: see `label_text`.
+    name: label_text(80, default="Passkey") = "Passkey"
+
+
+#: WebAuthn caps a credential id at 1023 bytes; unpadded base64url of that is
+#: 1364 characters. Nothing longer can be a credential any authenticator made.
+CREDENTIAL_ID_MAX_CHARS = 1364
 
 
 class PasskeyLoginVerify(BaseModel):
     state_id: str
+    #: Still the browser's object, handed to the passkey library verbatim, for
+    #: the reason `PasskeyRegisterVerify.credential` gives — with ONE field
+    #: checked here, because the login route reads that one field itself: it
+    #: looks up the stored credential by `credential["id"]` before the library
+    #: ever sees the assertion.
+    #:
+    #: Unchecked, that lookup took whatever JSON the anonymous caller sent. A
+    #: list or an object as the id reached SQLAlchemy as a bind parameter,
+    #: raised, and became a 500 — and every 500 writes a durable
+    #: `error.unhandled` activity row, so an unauthenticated loop could write
+    #: one row per request. A string of bounded length is what a credential id
+    #: IS; anything else is a malformed body, and a 422 is its answer.
     credential: dict
+
+    @field_validator("credential")
+    @classmethod
+    def _credential_id_is_a_bounded_string(cls, credential: dict) -> dict:
+        credential_id = credential.get("id")
+        if not isinstance(credential_id, str):
+            raise ValueError("credential.id must be a string")
+        if not 0 < len(credential_id) <= CREDENTIAL_ID_MAX_CHARS:
+            raise ValueError(
+                f"credential.id must be 1 to {CREDENTIAL_ID_MAX_CHARS} characters"
+            )
+        return credential
 
 
 class MeRead(BaseModel):

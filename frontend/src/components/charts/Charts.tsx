@@ -14,7 +14,6 @@
  */
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
-import { Panel } from '../ui/Panel';
 
 /** Series colors, in assignment order. Distinguishable on a dark canvas. */
 export const SERIES_COLORS = [
@@ -297,57 +296,9 @@ export function TimeSeries({
 }
 
 /* ===== Layout helpers ============================================ */
-
-/**
- * A titled block on the stats and valuation pages.
- *
- * Now a thin wrapper over `Panel`, the shell every titled card in the app
- * shares, so a chart card and a settings card put their title, caveat and
- * action in the same places. It used to hand-roll that header with its own
- * spacing and a heading that was a `<div>` — which meant a screen reader's
- * heading list skipped every chart on a twenty-card page. The prop names are
- * kept (`subtitle`, `action`) so call sites read as they always have.
- */
-export function ChartCard({
-  title,
-  subtitle,
-  action,
-  help,
-  helpLabel,
-  as,
-  className,
-  id,
-  children,
-}: {
-  title: ReactNode;
-  /** One line under the title: the caveat, the scope. */
-  subtitle?: ReactNode;
-  /** A small control at the right of the title (a link, a button). */
-  action?: ReactNode;
-  /** The long explanation, folded behind a disclosure. */
-  help?: ReactNode;
-  helpLabel?: string;
-  /** `h3` when the card sits under a section heading. */
-  as?: 'h2' | 'h3';
-  className?: string;
-  id?: string;
-  children: ReactNode;
-}) {
-  return (
-    <Panel
-      title={title}
-      description={subtitle}
-      actions={action}
-      help={help}
-      helpLabel={helpLabel}
-      as={as}
-      className={className}
-      id={id}
-    >
-      {children}
-    </Panel>
-  );
-}
+/* A chart's card is `ui/Panel`, used directly — the one shell every titled
+   card shares. A `ChartCard` wrapper used to sit here that only renamed
+   Panel's props (`subtitle` for `description`, `action` for `actions`). */
 
 export interface StatTile {
   label: string;

@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../../test/utils';
 import { AnalysisQueueCard } from './AnalysisQueueCard';
 import * as settingsApi from '../../api/settings';
-import type { AnalysisQueueStatus } from '../../api/settings';
+import type { AnalysisJobRead, AnalysisQueueStatus } from '../../types';
 
 vi.mock('../../api/settings', async (importOriginal) => {
   const { stubAll } = await import('../../test/stubModule');
@@ -98,7 +98,11 @@ describe('AnalysisQueueCard', () => {
     const dialog = screen.getByRole('dialog', { name: 'Re-analyze every hat?' });
     // The warning the inline confirm used to carry, now the dialog's body.
     expect(within(dialog).getByText(/costs an API call each/)).toBeInTheDocument();
-    expect(within(dialog).getByText(/Prices you entered by hand are kept/)).toBeInTheDocument();
+    // What survives the run, and what does not — both. The dialog used to
+    // promise only the prices, so an owner who had corrected colors had no
+    // way to know those were kept too (they are: `colors_source = 'owner'`).
+    expect(within(dialog).getByText(/Prices you entered by hand and colors you edited are kept/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Model names and design notes are rewritten/)).toBeInTheDocument();
     expect(settingsApi.reanalyzeAll).not.toHaveBeenCalled();
 
     await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
@@ -169,6 +173,7 @@ describe('AnalysisQueueCard — why analysis is failing', () => {
           'Your credit balance is too low to access the Anthropic API.',
         hat_count: 235,
         retryable_count: 235,
+        unretryable_reason: null,
         sample_hat_ids: [1, 2, 3],
         last_seen: '2026-08-23T22:26:44Z',
         is_billing: true,
@@ -196,6 +201,7 @@ describe('AnalysisQueueCard — retrying only what failed', () => {
       "{'type': 'error', 'error': {'type': 'overloaded_error'}}",
     hat_count: 21,
     retryable_count: 21,
+    unretryable_reason: null,
     sample_hat_ids: [224, 223, 222],
     last_seen: '2026-08-25T10:00:00Z',
     is_billing: false,
@@ -206,6 +212,7 @@ describe('AnalysisQueueCard — retrying only what failed', () => {
       "indices must be integers, not 'str'",
     hat_count: 1,
     retryable_count: 1,
+    unretryable_reason: null,
     sample_hat_ids: [63],
     last_seen: '2026-08-25T10:01:00Z',
     is_billing: false,
@@ -261,7 +268,7 @@ describe('AnalysisQueueCard — retrying only what failed', () => {
     // retry cannot fix. Labeling the button with `hat_count` would have it
     // promise work it cannot deliver.
     vi.mocked(settingsApi.getAnalysisFailures).mockResolvedValue([
-      { ...OVERLOAD, hat_count: 21, retryable_count: 18 },
+      { ...OVERLOAD, hat_count: 21, retryable_count: 18, unretryable_reason: 'no_photo' },
     ]);
 
     renderWithProviders(<AnalysisQueueCard />);
@@ -270,11 +277,60 @@ describe('AnalysisQueueCard — retrying only what failed', () => {
     expect(screen.getByText(/3 of these have no photo left/)).toBeInTheDocument();
   });
 
+  it('names a missing key as what stands in the way — not a missing photo', async () => {
+    // Keyless failures have their photos; telling the owner "no photo left"
+    // sent them looking for the wrong thing.
+    vi.mocked(settingsApi.getAnalysisFailures).mockResolvedValue([
+      {
+        reason: 'No Anthropic API key configured.',
+        hat_count: 4, retryable_count: 0, unretryable_reason: 'no_api_key', sample_hat_ids: [1, 2],
+        last_seen: '2026-08-25T10:00:00Z', is_billing: false,
+      },
+    ]);
+
+    renderWithProviders(<AnalysisQueueCard />);
+
+    expect(await screen.findByText(/Add a Claude API key .* then these can be retried/)).toBeInTheDocument();
+    expect(screen.queryByText(/no photo/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Retry/ })).not.toBeInTheDocument();
+  });
+
+  it('agrees in number when everything retryable is one hat', async () => {
+    vi.mocked(settingsApi.getAnalysisFailures).mockResolvedValue([
+      { ...OVERLOAD, hat_count: 1, retryable_count: 1 },
+      { ...UNPARSED, hat_count: 2, retryable_count: 0, unretryable_reason: 'no_photo' },
+    ]);
+
+    renderWithProviders(<AnalysisQueueCard />);
+
+    expect(await screen.findByRole('button', { name: 'Retry all 1 failed hat' })).toBeInTheDocument();
+  });
+
+  it('refreshes the badge, the recent-errors card and every hat view after a retry', async () => {
+    // It used to refresh its own three keys and `['hats']`, leaving the nav
+    // badge counting failures that were already queued, and open hat pages
+    // showing a stale status.
+    const user = userEvent.setup();
+    vi.mocked(settingsApi.getAnalysisFailures).mockResolvedValue([OVERLOAD]);
+
+    const { client } = renderWithProviders(<AnalysisQueueCard />);
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+    await user.click(await screen.findByRole('button', { name: 'Retry 21 hats' }));
+    await screen.findByText(/Queued 21 hats to retry/);
+
+    const keys = invalidate.mock.calls.map(([f]) => JSON.stringify(f?.queryKey));
+    for (const k of [
+      ['admin', 'recent-errors'], ['admin', 'recent-errors-count'], ['admin', 'analysis-queue'],
+      ['admin', 'analysis-failures'], ['admin', 'analysis-job'],
+      ['hats'], ['hat'], ['case'], ['room'], ['search'],
+    ]) expect(keys).toContain(JSON.stringify(k));
+  });
+
   it('explains a group that cannot be retried at all instead of a dead button', async () => {
     vi.mocked(settingsApi.getAnalysisFailures).mockResolvedValue([
       {
         reason: 'Photo missing before analysis could run.',
-        hat_count: 2, retryable_count: 0, sample_hat_ids: [7, 8],
+        hat_count: 2, retryable_count: 0, unretryable_reason: 'no_photo', sample_hat_ids: [7, 8],
         last_seen: '2026-08-25T10:00:00Z', is_billing: false,
       },
     ]);
@@ -342,7 +398,7 @@ describe('AnalysisQueueCard — retrying only what failed', () => {
 });
 
 describe('AnalysisQueueCard — a run opens into its own log', () => {
-  const RUN = {
+  const RUN: AnalysisJobRead = {
     id: 7, total: 235, done: 213, failed: 22, status: 'done',
     started_at: new Date(Date.now() - 90_000).toISOString(),
     finished_at: new Date(Date.now() - 30_000).toISOString(),

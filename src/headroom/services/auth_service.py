@@ -24,6 +24,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.models.user import AuthSession, User
+from headroom.services.locks import loop_semaphore
 
 logger = logging.getLogger(__name__)
 
@@ -196,16 +197,25 @@ def verify_password(password_hash: str, password: str) -> bool:
 # memory. Offload to a thread, bounded so concurrent attempts can't stack N×64
 # MiB. Bound of 2 keeps interactive logins snappy without a memory spike.
 _ARGON2_MAX_CONCURRENCY = 2
-_argon2_semaphore = asyncio.Semaphore(_ARGON2_MAX_CONCURRENCY)
+
+
+def _argon2_semaphore() -> asyncio.Semaphore:
+    """The argon2 bound for the running loop — see `locks.loop_semaphore`.
+
+    This was a module-level `asyncio.Semaphore`, which binds to the first loop
+    that makes it wait: a second loop contending it (the next test, a second
+    `asyncio.run`) raised "bound to a different event loop" on a LOGIN.
+    """
+    return loop_semaphore("argon2", _ARGON2_MAX_CONCURRENCY)
 
 
 async def verify_password_async(password_hash: str, password: str) -> bool:
-    async with _argon2_semaphore:
+    async with _argon2_semaphore():
         return await asyncio.to_thread(verify_password, password_hash, password)
 
 
 async def hash_password_async(password: str) -> str:
-    async with _argon2_semaphore:
+    async with _argon2_semaphore():
         return await asyncio.to_thread(hash_password, password)
 
 
@@ -222,8 +232,28 @@ def placeholder_password_hash() -> str:
     locks. The result of that verify is discarded; it exists to spend time.
     Cached because hashing is the expensive step, and the hash need only be
     well-formed with the same parameters as a stored one.
+
+    Computed ONCE, at boot: `app.lifespan` awaits `warm_placeholder_hash`,
+    which runs this on a worker thread (`asyncio.to_thread`) under the argon2
+    bound before the first request can arrive — so the login route only ever
+    reads the cache and never hashes on the event loop. Keep it synchronous
+    and zero-argument for that call. The cache is `functools.lru_cache`, and
+    `tests/test_lifespan_wiring.py::test_boot_computes_the_login_placeholder_
+    hash_off_the_event_loop` resets it with `cache_clear()`: change the
+    caching mechanism and that test changes with it.
     """
     return hash_password(secrets.token_urlsafe(32))
+
+
+async def warm_placeholder_hash() -> None:
+    """Fill `placeholder_password_hash`'s cache off the event loop, bounded.
+
+    Under `_argon2_semaphore` like every other argon2 call in this module, so
+    "at most N argon2 operations resident at once" has no exception — boot
+    included, where the thumbnail and export backfills are already running.
+    """
+    async with _argon2_semaphore():
+        await asyncio.to_thread(placeholder_password_hash)
 
 
 # ------------------------------- users -------------------------------- #
@@ -285,10 +315,9 @@ async def get_session_user(db: AsyncSession, session_id: str) -> User | None:
     session = result.scalar_one_or_none()
     if session is None:
         return None
-    expires = session.expires_at
-    if expires.tzinfo is None:  # SQLite returns naive datetimes
-        expires = expires.replace(tzinfo=timezone.utc)
-    if expires < datetime.now(timezone.utc):
+    # `expires_at` is a `UtcDateTime` column, so it loads zone-aware and
+    # compares with an aware `now` directly.
+    if session.expires_at < datetime.now(timezone.utc):
         await db.delete(session)
         await db.commit()
         return None
@@ -298,7 +327,6 @@ async def get_session_user(db: AsyncSession, session_id: str) -> User | None:
 async def destroy_session(db: AsyncSession, session_id: str) -> None:
     await db.execute(delete(AuthSession).where(AuthSession.id == session_id))
     await db.commit()
-
 
 
 async def destroy_other_sessions(db: AsyncSession, user_id: int, keep: str | None) -> None:

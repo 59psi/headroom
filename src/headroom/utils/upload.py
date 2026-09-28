@@ -9,29 +9,49 @@ One oversized photo is enough to reach the OOM killer, and the kernel kills the
 process without giving the app a chance to log why.
 
 Two functions, differing only in what they do when the cap is hit — 413 for a
-single named file, truncate for one item in a batch — and FOUR call sites:
-`routes/hats`, `routes/settings`, `routes/import_jobs`, `routes/share`.
+single named file, truncate for one item in a batch — over ONE read loop
+(`_chunks`), and ONE caller: `routes/_uploads.py`. Its `spooled_upload` spools
+a single file through `copy_upload_capped`, and its `spool_batch` spools a
+batch through `copy_upload_truncating`; the four upload routes (`hats`,
+`settings`, `import_jobs`, `share`) go through those two and never read an
+upload themselves.
 
-That sentence was wrong for a long time and is worth the warning. It read "one
-definition, used by all four" while `import_jobs` and `share` each carried a
-private copy of the same loop; every copy was individually correct, so nothing
-ever failed and only this docstring was false. 2.57.0 removed one of them and
-STILL left the claim — and left `share` unfound, so the count was wrong in the
-release that claimed to fix it. `tests/test_upload_caps.py` now asserts the
-call sites rather than trusting a sentence.
+A sentence here used to COUNT call sites, and was wrong for a long time: it
+read "one definition, used by all four" while `import_jobs` and `share` each
+carried a private copy of the same loop; every copy was individually correct,
+so nothing ever failed and only this docstring was false. It then survived
+the routes moving onto `_uploads.py`, still naming four callers that no
+longer called here. `tests/test_upload_caps.py` asserts the call path rather
+than trusting a sentence.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import BinaryIO
 
 from fastapi import HTTPException, UploadFile
 
 # Generous next to a phone photo (a 12MP HEIC is ~3-5 MB) and small enough that
-# the decode that follows stays bounded on a 1 GB Pi.
+# the decode that follows stays bounded on a 1 GB Pi. The ONE per-photo cap:
+# bulk import's per-file limit is this number, not a second 20 MB that could
+# drift from it, and `tests/test_documented_limits.py` pins it to USAGE.md.
 MAX_PHOTO_BYTES = 20 * 1024 * 1024
 
 _CHUNK = 1024 * 1024
+
+
+def _chunks(upload: UploadFile) -> Iterator[tuple[bytes, int]]:
+    """Each chunk of the upload with the running total INCLUDING it.
+
+    The one read loop. The two copiers below differ only in what they do when
+    the total passes the cap — and each used to carry its own copy of this
+    loop, in a module whose point is "one definition".
+    """
+    total = 0
+    while chunk := upload.file.read(_CHUNK):
+        total += len(chunk)
+        yield chunk, total
 
 
 def copy_upload_truncating(upload: UploadFile, dest: BinaryIO, cap: int) -> int:
@@ -48,14 +68,14 @@ def copy_upload_truncating(upload: UploadFile, dest: BinaryIO, cap: int) -> int:
     instead, which is strictly better (a batch upload never holds a photo in
     RAM) and left `read_capped` reachable only from its own tests. Promoted the
     copy, deleted the original; "one definition, used by all" is true again.
+
+    Writes the chunk that crosses `cap` before stopping, so the return value
+    (and the file) are strictly greater than `cap` — the signal the caller
+    reads.
     """
     written = 0
-    while True:
-        chunk = upload.file.read(_CHUNK)
-        if not chunk:
-            break
+    for chunk, written in _chunks(upload):
         dest.write(chunk)
-        written += len(chunk)
         if written > cap:
             break
     return written
@@ -82,11 +102,7 @@ def copy_upload_capped(
     """
     limit = MAX_PHOTO_BYTES if cap is None else cap
     written = 0
-    while True:
-        chunk = upload.file.read(_CHUNK)
-        if not chunk:
-            break
-        written += len(chunk)
+    for chunk, written in _chunks(upload):
         if written > limit:
             raise HTTPException(
                 status_code=413,

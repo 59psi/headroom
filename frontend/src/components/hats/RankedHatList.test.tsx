@@ -6,11 +6,17 @@
  * no numbering of its own, and an aria-hidden digit left "Most valuable" as
  * ten hats in no stated order.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { screen } from '@testing-library/react';
 import { renderWithProviders } from '../../test/utils';
 import { hatFixture } from '../../test/fixtures';
 import { RankedHatList } from './RankedHatList';
+
+vi.mock('../../api/hats', () => ({
+  getStyles: vi.fn(async () => [{ value: 'a_game', label: 'A-Game', is_beanie: false }]),
+  getSizes: vi.fn(async () => []),
+  getConditions: vi.fn(async () => []),
+}));
 
 const HATS = [
   hatFixture({ id: 1, display_id: 'A-001-01' }),
@@ -36,6 +42,20 @@ describe('RankedHatList', () => {
 
     expect(screen.getByRole('list').tagName).toBe('UL');
     expect(screen.getAllByRole('link')[0]).toHaveAccessibleName(/^A-001-01/);
+  });
+
+  it("names a brandless hat by its style's label, and a caseless one the shared way", async () => {
+    renderWithProviders(
+      <RankedHatList
+        hats={[hatFixture({ id: 9, display_id: null, brand: null, style: 'a_game', model_name: null })]}
+        valueFor={() => '$10'}
+      />,
+    );
+
+    // The server's label, not the stored value.
+    expect(await screen.findByText('A-Game')).toBeInTheDocument();
+    expect(screen.queryByText('a_game')).not.toBeInTheDocument();
+    expect(screen.getByText('Hat #9')).toBeInTheDocument();
   });
 
   it('renders the empty state instead of an empty list', () => {

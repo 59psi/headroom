@@ -16,12 +16,12 @@
   0%, 92%, 100% {
     opacity: 1;
     filter:
-      drop-shadow(0 0 8px rgba(255, 46, 182, 0.55))
-      drop-shadow(0 0 22px rgba(255, 46, 182, 0.30));
+      drop-shadow(0 0 8px rgb(var(--neon-pink-rgb) / 0.55))
+      drop-shadow(0 0 22px rgb(var(--neon-pink-rgb) / 0.30));
   }
   95% {
     opacity: 0.7;
-    filter: drop-shadow(0 0 3px rgba(255, 46, 182, 0.25));
+    filter: drop-shadow(0 0 3px rgb(var(--neon-pink-rgb) / 0.25));
   }
 }
 
@@ -38,6 +38,17 @@ main.container {
 
 @media (min-width: 768px) {
   main.container { padding-top: 28px; padding-bottom: 28px; }
+}
+
+/* The page starts below the status bar, not under it. Phone and iPad
+   portrait only: at lg the sticky top nav takes the inset instead
+   (areas/shell.css, `.navbar`). */
+@media (max-width: 991.98px) {
+  main.container { padding-top: calc(16px + var(--safe-top)); }
+}
+
+@media (min-width: 768px) and (max-width: 991.98px) {
+  main.container { padding-top: calc(28px + var(--safe-top)); }
 }
 
 /* ===== Typography ================================================ */
@@ -57,7 +68,7 @@ h1 .accent,
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  text-shadow: 0 0 30px rgba(255, 46, 182, 0.4);
+  text-shadow: 0 0 30px rgb(var(--neon-pink-rgb) / 0.4);
 }
 
 /* Everything below the page title is Inter. Orbitron is a display face — at
@@ -72,7 +83,6 @@ h2, h3, h4, h5, h6 {
 h2, .h2 { font-size: var(--fs-xl); }
 h3, .h3 { font-size: 1.15rem; }
 h5, h6 { font-size: var(--fs-lg); }
-.h6 { font-size: var(--fs-md); font-weight: 650; }
 
 @media (min-width: 768px) {
   h1, .h1 { font-size: 1.85rem; }
@@ -80,16 +90,11 @@ h5, h6 { font-size: var(--fs-lg); }
 
 .text-secondary { color: var(--text-secondary) !important; }
 .text-muted { color: var(--text-muted) !important; }
-.text-primary { color: var(--neon-pink) !important; }
 .text-warning { color: var(--neon-yellow) !important; }
 .text-danger { color: var(--neon-red) !important; }
-.text-body { color: var(--text) !important; }
-.text-success { color: var(--neon-green) !important; }
 
-.fw-bold { font-weight: 700 !important; }
 .fw-semibold { font-weight: 600 !important; }
 
-.font-display { font-family: var(--font-display) !important; letter-spacing: 0.05em !important; }
 .font-mono { font-family: var(--font-mono) !important; }
 
 /* ===== Container override (bootstrap) ============================ */
@@ -115,7 +120,7 @@ h5, h6 { font-size: var(--fs-lg); }
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  filter: drop-shadow(0 0 8px rgba(255, 46, 182, 0.3));
+  filter: drop-shadow(0 0 8px rgb(var(--neon-pink-rgb) / 0.3));
 }
 
 /* ===== Cards ===================================================== */
@@ -146,7 +151,7 @@ h5, h6 { font-size: var(--fs-lg); }
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background: linear-gradient(180deg, rgba(255, 46, 182, 0.05), transparent 35%);
+  background: linear-gradient(180deg, rgb(var(--neon-pink-rgb) / 0.05), transparent 35%);
   opacity: 0;
   transition: opacity 0.2s ease;
 }
@@ -162,7 +167,7 @@ button.card:hover,
 .card.hr-hoverable:hover {
   transform: translateY(-2px);
   border-color: var(--border-bright);
-  box-shadow: var(--shadow-hover), 0 0 24px rgba(255, 46, 182, 0.2);
+  box-shadow: var(--shadow-hover), 0 0 24px rgb(var(--neon-pink-rgb) / 0.2);
 }
 
 a.card:hover::before,
@@ -201,21 +206,12 @@ button.card:hover::before,
   height: 1em;
   border-radius: 2px;
   background: var(--gradient-pink-cyan);
-  box-shadow: 0 0 8px rgba(255, 46, 182, 0.55);
+  box-shadow: 0 0 8px rgb(var(--neon-pink-rgb) / 0.55);
 }
 
 .card.border-warning {
   border-color: var(--neon-yellow);
-  box-shadow: var(--shadow), 0 0 20px rgba(255, 225, 86, 0.18);
-}
-
-.card.border-primary {
-  border-color: var(--neon-pink);
-  box-shadow: var(--shadow), var(--glow-pink);
-}
-
-.card.border-danger {
-  border-color: var(--neon-red);
+  box-shadow: var(--shadow), 0 0 20px rgb(var(--neon-yellow-rgb) / 0.18);
 }
 
 /* Sunset stripe across the top of feature cards */
@@ -227,7 +223,7 @@ button.card:hover::before,
   right: 0;
   height: 2px;
   background: var(--gradient-sunset);
-  filter: drop-shadow(0 0 6px rgba(255, 46, 182, 0.5));
+  filter: drop-shadow(0 0 6px rgb(var(--neon-pink-rgb) / 0.5));
 }
 
 /* ===== Buttons =================================================== */
@@ -275,7 +271,7 @@ button.card:hover::before,
   background: var(--gradient-pink-cyan);
   color: var(--text-on-neon);
   border: none;
-  box-shadow: 0 2px 12px rgba(255, 46, 182, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  box-shadow: 0 2px 12px rgb(var(--neon-pink-rgb) / 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.3);
   font-weight: 650;
   letter-spacing: 0.01em;
 }
@@ -285,7 +281,7 @@ button.card:hover::before,
   background: var(--gradient-pink-cyan);
   color: var(--text-on-neon);
   transform: translateY(-1px);
-  box-shadow: 0 6px 26px rgba(255, 46, 182, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  box-shadow: 0 6px 26px rgb(var(--neon-pink-rgb) / 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.4);
 }
 
 .btn-primary:active { transform: translateY(0); }
@@ -302,17 +298,17 @@ button.card:hover::before,
    flooding the button solid neon — a full-pink fill under the cursor made a
    routine "Re-price now" look like the most important thing on the page. */
 .btn-outline-primary {
-  background: rgba(255, 46, 182, 0.06);
-  color: #ff6ccb;
-  border: 1px solid rgba(255, 46, 182, 0.45);
+  background: rgb(var(--neon-pink-rgb) / 0.06);
+  color: var(--tint-pink);
+  border: 1px solid rgb(var(--neon-pink-rgb) / 0.45);
 }
 
 .btn-outline-primary:hover,
 .btn-outline-primary.active {
-  background: rgba(255, 46, 182, 0.16);
-  color: #ffd3ef;
+  background: rgb(var(--neon-pink-rgb) / 0.16);
+  color: var(--tint-pink-light);
   border-color: var(--neon-pink);
-  box-shadow: 0 0 16px rgba(255, 46, 182, 0.3);
+  box-shadow: 0 0 16px rgb(var(--neon-pink-rgb) / 0.3);
 }
 
 /* Neutral: most buttons. A raised surface, not an outline. */
@@ -338,20 +334,20 @@ button.card:hover::before,
 .btn-outline-danger {
   background: transparent;
   color: var(--neon-red);
-  border: 1px solid rgba(255, 56, 96, 0.5);
+  border: 1px solid rgb(var(--neon-red-rgb) / 0.5);
 }
 
 .btn-outline-danger:hover {
-  background: rgba(255, 56, 96, 0.14);
-  color: #ffb1c1;
+  background: rgb(var(--neon-red-rgb) / 0.14);
+  color: var(--tint-red-light);
   border-color: var(--neon-red);
-  box-shadow: 0 0 16px rgba(255, 56, 96, 0.3);
+  box-shadow: 0 0 16px rgb(var(--neon-red-rgb) / 0.3);
 }
 
 .btn-outline-warning {
   background: transparent;
   color: var(--neon-yellow);
-  border: 1px solid rgba(255, 225, 86, 0.5);
+  border: 1px solid rgb(var(--neon-yellow-rgb) / 0.5);
 }
 
 .btn-outline-warning:hover {
@@ -366,15 +362,15 @@ button.card:hover::before,
   color: var(--text-on-neon);
   border: none;
   font-weight: 650;
-  box-shadow: 0 2px 12px rgba(255, 56, 96, 0.3);
+  box-shadow: 0 2px 12px rgb(var(--neon-red-rgb) / 0.3);
 }
 
 .btn-danger:hover {
-  background: #ff5c7a;
+  background: var(--neon-red-hover);
   /* Same dark ink as at rest — the hover used to flip it to --text, which
      undid the contrast fix above for exactly the moment you are aiming. */
   color: var(--text-on-neon);
-  box-shadow: 0 6px 22px rgba(255, 56, 96, 0.45);
+  box-shadow: 0 6px 22px rgb(var(--neon-red-rgb) / 0.45);
 }
 
 .btn-link {
@@ -387,15 +383,8 @@ button.card:hover::before,
 
 .btn-link:hover {
   color: var(--neon-pink);
-  text-shadow: 0 0 6px rgba(255, 46, 182, 0.4);
+  text-shadow: 0 0 6px rgb(var(--neon-pink-rgb) / 0.4);
 }
-
-.btn-group .btn {
-  border-radius: 0;
-}
-
-.btn-group .btn:first-child { border-top-left-radius: var(--radius-sm); border-bottom-left-radius: var(--radius-sm); }
-.btn-group .btn:last-child { border-top-right-radius: var(--radius-sm); border-bottom-right-radius: var(--radius-sm); }
 
 /* ===== Forms ===================================================== */
 .form-control,
@@ -419,7 +408,7 @@ button.card:hover::before,
   background: var(--bg-input);
   color: var(--text);
   border-color: var(--neon-cyan);
-  box-shadow: 0 0 0 3px rgba(0, 240, 255, 0.15);
+  box-shadow: 0 0 0 3px rgb(var(--neon-cyan-rgb) / 0.15);
   outline: none;
 }
 
@@ -630,35 +619,16 @@ kbd {
 
 .form-check-input:focus {
   border-color: var(--neon-cyan);
-  box-shadow: 0 0 0 3px rgba(0, 240, 255, 0.15);
+  box-shadow: 0 0 0 3px rgb(var(--neon-cyan-rgb) / 0.15);
 }
 
 .form-check-label { color: var(--text-secondary); }
 
-.input-group {
-  display: flex;
-  position: relative;
-}
-
-.input-group .form-control,
-.input-group .form-select {
-  border-top-right-radius: 0;
-  border-bottom-right-radius: 0;
-}
-
-.input-group .btn {
-  border-top-left-radius: 0;
-  border-bottom-left-radius: 0;
-  margin-left: -1px;
-}
-
 /* ===== Bootstrap layout passthroughs ============================ */
 .row { display: flex; flex-wrap: wrap; margin: -0.5rem; }
 .row > * { padding: 0.5rem; }
-.row.g-1 { margin: -0.125rem; } .row.g-1 > * { padding: 0.125rem; }
 .row.g-2 { margin: -0.25rem; } .row.g-2 > * { padding: 0.25rem; }
 .row.g-3 { margin: -0.5rem; } .row.g-3 > * { padding: 0.5rem; }
-.row.g-4 { margin: -0.75rem; } .row.g-4 > * { padding: 0.75rem; }
 
 /* ===== Badges =================================================== */
 .badge {
@@ -679,46 +649,20 @@ kbd {
 }
 
 .badge.bg-secondary {
-  background: rgba(177, 78, 255, 0.15);
+  background: rgb(var(--neon-purple-rgb) / 0.15);
   color: var(--neon-purple);
-  border-color: rgba(177, 78, 255, 0.4);
+  border-color: rgb(var(--neon-purple-rgb) / 0.4);
 }
 
 .badge.bg-info {
-  background: rgba(0, 240, 255, 0.12);
+  background: rgb(var(--neon-cyan-rgb) / 0.12);
   color: var(--neon-cyan);
-  border-color: rgba(0, 240, 255, 0.4);
+  border-color: rgb(var(--neon-cyan-rgb) / 0.4);
 }
 
-.badge.bg-light {
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--text);
-  border-color: var(--border);
-}
-
-.badge.bg-warning {
-  background: rgba(255, 225, 86, 0.18);
-  color: var(--neon-yellow);
-  border-color: rgba(255, 225, 86, 0.4);
-}
-
-.badge.bg-white {
-  background: var(--text);
-  color: var(--text-on-neon);
-}
-
-/* The severe variant. `DuplicatesPage` marks an EXACT duplicate with it and a
-   LIKELY one with `bg-warning`; without this rule the more serious of the two
-   fell through to the neutral base badge and read as the less serious. */
-.badge.bg-danger {
-  background: rgba(255, 71, 87, 0.18);
-  color: var(--neon-red);
-  border-color: rgba(255, 71, 87, 0.45);
-}
-
-.hr-badge-new { background: rgba(57, 255, 20, 0.15); color: var(--neon-green); border-color: rgba(57, 255, 20, 0.4); }
-.hr-badge-new_with_tags { background: rgba(0, 240, 255, 0.15); color: var(--neon-cyan); border-color: rgba(0, 240, 255, 0.4); }
-.hr-badge-worn { background: rgba(255, 140, 66, 0.15); color: var(--neon-orange); border-color: rgba(255, 140, 66, 0.4); }
+.hr-badge-new { background: rgb(var(--neon-green-rgb) / 0.15); color: var(--neon-green); border-color: rgb(var(--neon-green-rgb) / 0.4); }
+.hr-badge-new_with_tags { background: rgb(var(--neon-cyan-rgb) / 0.15); color: var(--neon-cyan); border-color: rgb(var(--neon-cyan-rgb) / 0.4); }
+.hr-badge-worn { background: rgb(var(--neon-orange-rgb) / 0.15); color: var(--neon-orange); border-color: rgb(var(--neon-orange-rgb) / 0.4); }
 
 /* ===== Alerts ==================================================== */
 .alert {
@@ -729,27 +673,27 @@ kbd {
 }
 
 .alert-danger {
-  background: rgba(255, 56, 96, 0.12);
-  color: #ffb1c1;
-  border-color: rgba(255, 56, 96, 0.4);
+  background: rgb(var(--neon-red-rgb) / 0.12);
+  color: var(--tint-red-light);
+  border-color: rgb(var(--neon-red-rgb) / 0.4);
 }
 
 .alert-success {
-  background: rgba(57, 255, 20, 0.12);
+  background: rgb(var(--neon-green-rgb) / 0.12);
   color: var(--neon-green);
-  border-color: rgba(57, 255, 20, 0.4);
+  border-color: rgb(var(--neon-green-rgb) / 0.4);
 }
 
 .alert-info {
-  background: rgba(0, 240, 255, 0.10);
+  background: rgb(var(--neon-cyan-rgb) / 0.10);
   color: var(--neon-cyan);
-  border-color: rgba(0, 240, 255, 0.35);
+  border-color: rgb(var(--neon-cyan-rgb) / 0.35);
 }
 
 .alert-warning {
-  background: rgba(255, 225, 86, 0.10);
+  background: rgb(var(--neon-yellow-rgb) / 0.10);
   color: var(--neon-yellow);
-  border-color: rgba(255, 225, 86, 0.35);
+  border-color: rgb(var(--neon-yellow-rgb) / 0.35);
 }
 
 /* ===== Color swatches =========================================== */
@@ -768,6 +712,12 @@ kbd {
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4), 0 0 12px currentColor;
 }
 
+/* The palette's color names under the dots. */
+.hr-swatch-names {
+  margin-top: 6px;
+  letter-spacing: 0.04em;
+}
+
 /* ===== Hat photos float on canvas ============================== */
 .hr-gallery-item,
 .hr-hat-photo {
@@ -775,7 +725,7 @@ kbd {
   width: 100%;
   object-fit: contain;
   background:
-    radial-gradient(ellipse at center, rgba(255, 46, 182, 0.08), transparent 60%),
+    radial-gradient(ellipse at center, rgb(var(--neon-pink-rgb) / 0.08), transparent 60%),
     rgba(0, 0, 0, 0.25);
   border-radius: var(--radius-sm) var(--radius-sm) 0 0;
   filter: drop-shadow(0 8px 16px rgba(0, 0, 0, 0.6));
@@ -796,7 +746,7 @@ kbd {
 
 .hr-thumb {
   background:
-    radial-gradient(ellipse at center, rgba(255, 46, 182, 0.12), transparent 70%),
+    radial-gradient(ellipse at center, rgb(var(--neon-pink-rgb) / 0.12), transparent 70%),
     rgba(0, 0, 0, 0.2);
   object-fit: contain;
   border-radius: var(--radius-sm);
@@ -807,7 +757,7 @@ kbd {
 .hr-hero {
   position: relative;
   background:
-    linear-gradient(135deg, rgba(255, 107, 53, 0.18), rgba(255, 46, 182, 0.18) 50%, rgba(177, 78, 255, 0.18)),
+    linear-gradient(135deg, rgba(255, 107, 53, 0.18), rgb(var(--neon-pink-rgb) / 0.18) 50%, rgb(var(--neon-purple-rgb) / 0.18)),
     var(--bg-card);
   border: 1px solid var(--border-bright);
   border-radius: var(--radius);
@@ -869,7 +819,7 @@ kbd {
 .hr-hero .hr-logo {
   max-height: 80px;
   margin-bottom: 0.75rem;
-  filter: drop-shadow(0 0 12px rgba(255, 46, 182, 0.4));
+  filter: drop-shadow(0 0 12px rgb(var(--neon-pink-rgb) / 0.4));
 }
 
 @media (min-width: 768px) {
@@ -1066,6 +1016,18 @@ kbd {
 
 @media (hover: hover) {
   .hr-barlist-row-link:hover { background: rgba(255, 255, 255, 0.04); }
+}
+
+/* A linked bar is a tap target on the stats page (nine of them, each a
+   filtered list) — 27px tall as drawn, so on a touchscreen it grows to the
+   documented 44px with its label and bar centered in the extra height. */
+@media (pointer: coarse) {
+  .hr-barlist-row-link {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-height: 44px;
+  }
 }
 
 .hr-barlist-head {
@@ -1324,49 +1286,58 @@ kbd {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='%23fff' stroke-width='2' d='M6 4l4 4-4 4'/%3E%3C/svg%3E");
 }
 
-/* ===== Lightbox ================================================ */
-.hr-lightbox-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-  background: rgba(0, 0, 0, 0.92);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1rem;
-  cursor: pointer;
-  backdrop-filter: blur(8px);
-}
-
-.hr-lightbox-close {
-  position: absolute;
-  top: 1rem;
-  right: 1.25rem;
-  background: var(--bg-card);
-  border: 1px solid var(--border-bright);
-  color: var(--text);
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  font-size: 1.4rem;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.15s, box-shadow 0.15s;
-}
-
-.hr-lightbox-close:hover {
-  background: var(--neon-pink);
-  box-shadow: var(--glow-pink);
-}
-
-.hr-lightbox-content {
-  max-width: 92vw;
-  max-height: 88vh;
-  object-fit: contain;
+/* ===== Render crash (ErrorBoundary) ============================= */
+/* The panel a render-time exception leaves in place of the page: what
+   crashed, the stack, and the two ways out. Red, but readable — someone is
+   going to copy this into a bug report. */
+.hr-crash {
+  max-width: 720px;
+  margin: 2rem auto;
+  padding: 1.5rem 1rem;
+  border: 1px solid rgb(var(--neon-red-rgb) / 0.5);
   border-radius: var(--radius);
-  cursor: default;
+  background: rgb(var(--neon-red-rgb) / 0.12);
+  color: var(--tint-red-light);
+}
+
+.hr-crash-title {
+  margin-top: 0;
+  font-family: var(--font-mono);
+  font-size: 1.1rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--neon-red);
+}
+
+.hr-crash-message {
+  color: var(--text);
+  white-space: pre-wrap;
+}
+
+.hr-crash-trace {
+  max-height: 240px;
+  margin: 0.5rem 0 0;
+  padding: 0.75rem;
+  overflow: auto;
+  border-radius: var(--radius-xs);
+  background: rgba(0, 0, 0, 0.4);
+  font-size: 0.75rem;
+}
+
+.hr-crash-details { margin-top: 1rem; }
+
+.hr-crash-details > summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  cursor: pointer;
+  color: var(--neon-cyan);
+}
+
+.hr-crash-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1rem;
 }
 
 /* ===== Modal =================================================== */
@@ -1443,19 +1414,8 @@ kbd {
 .btn-close::before { content: '×'; }
 .btn-close:hover { background: var(--bg-elevated); color: var(--text); }
 
-/* ===== Spinner ================================================= */
-.spinner-border {
-  display: inline-block;
-  width: 2.5rem;
-  height: 2.5rem;
-  border-radius: 50%;
-  border: 3px solid transparent;
-  border-top-color: var(--neon-pink);
-  border-right-color: var(--neon-cyan);
-  animation: spin 0.9s linear infinite;
-  filter: drop-shadow(0 0 8px rgba(255, 46, 182, 0.5));
-}
-
+/* ===== Spin ==================================================== */
+/* The one rotation every busy ring uses (in-button, the queue's row). */
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
@@ -1473,16 +1433,8 @@ kbd {
 }
 
 /* ===== Navbar (top) ============================================ */
-.navbar {
-  background: rgba(15, 5, 36, 0.85);
-  backdrop-filter: blur(16px);
-  border-bottom: 1px solid var(--border);
-  padding: 0.75rem 0;
-  position: sticky;
-  top: 0;
-  z-index: 50;
-}
-
+/* The bar itself and its links' look are in areas/shell.css; this is the
+   layout of what sits in it. */
 .navbar .container {
   display: flex;
   align-items: center;
@@ -1502,7 +1454,7 @@ kbd {
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  filter: drop-shadow(0 0 8px rgba(255, 46, 182, 0.4));
+  filter: drop-shadow(0 0 8px rgb(var(--neon-pink-rgb) / 0.4));
   text-decoration: none;
   line-height: 1;
 }
@@ -1511,7 +1463,7 @@ kbd {
   height: 52px;
   width: auto;
   object-fit: contain;
-  filter: drop-shadow(0 0 10px rgba(255, 46, 182, 0.55));
+  filter: drop-shadow(0 0 10px rgb(var(--neon-pink-rgb) / 0.55));
 }
 
 /* Mobile: tighten things up so the wordmark + logo never overflow */
@@ -1526,84 +1478,8 @@ kbd {
   align-items: center;
 }
 
-.navbar .nav-link {
-  font-family: var(--font-heading);
-  font-size: 0.78rem;
-  font-weight: 500;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-secondary);
-  padding: 0.55rem 0.95rem;
-  border-radius: var(--radius-sm);
-  transition: color 0.15s, background 0.15s, text-shadow 0.15s;
-  text-decoration: none;
-}
-
-.navbar .nav-link:hover {
-  color: var(--neon-cyan);
-  background: rgba(0, 240, 255, 0.08);
-  text-shadow: 0 0 8px rgba(0, 240, 255, 0.45);
-}
-
-.navbar .nav-link.active {
-  color: var(--neon-pink);
-  background: rgba(255, 46, 182, 0.1);
-  text-shadow: 0 0 8px rgba(255, 46, 182, 0.5);
-}
-
-/* ===== Footer ================================================== */
-.hr-footer {
-  text-align: center;
-  padding: 1.5rem 1rem;
-  color: var(--text-muted);
-  font-size: 0.78rem;
-  font-family: var(--font-mono);
-  letter-spacing: 0.08em;
-  border-top: 1px solid var(--border);
-  margin-top: 3rem;
-}
-
-.hr-footer a {
-  color: var(--text-muted);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-.hr-footer a:hover {
-  color: var(--neon-cyan);
-}
-
-@media (max-width: 991.98px) {
-  .hr-footer {
-    padding-bottom: calc(var(--nav-height) + var(--safe-bottom) + 1rem);
-  }
-}
-
-/* ===== Bottom nav polish ====================================== */
-@media (max-width: 991.98px) {
-  .navbar-bottom {
-    box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.5);
-  }
-}
-
 /* ===== Misc utility overrides ================================= */
 .rounded { border-radius: var(--radius-sm) !important; }
-
-.bg-light {
-  background: rgba(255, 255, 255, 0.06) !important;
-  color: var(--text) !important;
-}
-
-.text-bg-info {
-  background: rgba(0, 240, 255, 0.12);
-  color: var(--neon-cyan);
-}
-
-/* For raster photos that should NOT get the transparent-PNG canvas */
-.hr-photo-raster {
-  object-fit: cover !important;
-  background: transparent !important;
-}
 
 /* ===== Hat detail metric tiles ================================ */
 .hr-metric {
@@ -1640,36 +1516,8 @@ kbd {
    through `hr-metric`, which has two slots — so the state and the IPv4 were
    fused into one label ("Advertising → 10.0.111.4") and the IPv6, added later,
    was bolted underneath in a different size and color. Two addresses are the
-   same kind of fact and looked like two unrelated ones. */
-
-.hr-net-state {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-family: var(--font-body);
-  font-size: var(--fs-2xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--text-muted);
-  margin-bottom: 0.35rem;
-}
-
-.hr-net-dot {
-  width: 0.45rem;
-  height: 0.45rem;
-  border-radius: 50%;
-  background: var(--text-muted);
-  flex: none;
-}
-
-/* Live gets the glow. The color carries the state on its own, so the label
-   beside it is not the only thing distinguishing the two. */
-.hr-net-dot.is-live {
-  background: var(--neon-green);
-  box-shadow: 0 0 6px rgba(57, 255, 20, 0.8);
-}
-
+   same kind of fact and looked like two unrelated ones. The state is the
+   card's status pill now; these are the name and the addresses. */
 .hr-net-name {
   font-family: var(--font-mono);
   font-size: 1.05rem;
@@ -1706,8 +1554,7 @@ kbd {
   overflow-wrap: anywhere;
 }
 
-/* Missing IPv6 is a DIAGNOSIS, not a blank — without it every lookup of the
-   name stalls for the client's full resolver timeout. Muted so it reads as an
+/* An absent address family is shown, not hidden — muted so it reads as an
    absence rather than an address. */
 .hr-net-value.is-absent {
   color: var(--text-muted);
@@ -1727,7 +1574,7 @@ kbd {
 }
 
 .hr-prompt-details > summary:hover {
-  color: var(--color-accent);
+  color: var(--neon-cyan);
 }
 
 /* The prompt is ~30 lines of preformatted text on a card that must still fit a
@@ -1783,16 +1630,21 @@ kbd {
 .hr-color-row:last-child { border-bottom: none; }
 
 /* ===== Analysis pill =========================================== */
+/* In the pills' voice: sentence case at caption size. Tracked caps made
+   "2/4 · IDENTIFYING" the loudest words in the hat page's header. (The
+   sentence-case half used to be an override in hat-pages.css that won on
+   import order; one rule now.) */
 .hr-analysis-status {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
+  min-height: 26px;
   padding: 0.25rem 0.6rem;
   border-radius: var(--radius-pill);
-  font-size: 0.7rem;
   font-family: var(--font-body);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
 /* Pending is a step counter ("2/4"), so it gets tabular figures: the glyphs
@@ -1801,36 +1653,36 @@ kbd {
    `flex-shrink: 0`, squashed into an ellipse whenever the row ran out of
    room — it rendered as an egg, not a circle. */
 .hr-analysis-status.pending {
-  background: rgba(0, 240, 255, 0.12);
+  background: rgb(var(--neon-cyan-rgb) / 0.12);
   color: var(--neon-cyan);
-  border: 1px solid rgba(0, 240, 255, 0.4);
+  border: 1px solid rgb(var(--neon-cyan-rgb) / 0.4);
   font-variant-numeric: tabular-nums;
   font-feature-settings: 'tnum';
 }
 
 .hr-analysis-status.ok {
-  background: rgba(57, 255, 20, 0.12);
+  background: rgb(var(--neon-green-rgb) / 0.12);
   color: var(--neon-green);
-  border: 1px solid rgba(57, 255, 20, 0.4);
+  border: 1px solid rgb(var(--neon-green-rgb) / 0.4);
 }
 
 .hr-analysis-status.skipped {
-  background: rgba(177, 78, 255, 0.12);
+  background: rgb(var(--neon-purple-rgb) / 0.12);
   color: var(--neon-purple);
-  border: 1px solid rgba(177, 78, 255, 0.4);
+  border: 1px solid rgb(var(--neon-purple-rgb) / 0.4);
 }
 
 .hr-analysis-status.error {
-  background: rgba(255, 56, 96, 0.12);
+  background: rgb(var(--neon-red-rgb) / 0.12);
   color: var(--neon-red);
-  border: 1px solid rgba(255, 56, 96, 0.4);
+  border: 1px solid rgb(var(--neon-red-rgb) / 0.4);
 }
 
 /* Partial (no-Claude) analysis: colors from the cutout mask ± logo brand */
 .hr-analysis-status.fallback {
-  background: rgba(255, 140, 66, 0.12);
+  background: rgb(var(--neon-orange-rgb) / 0.12);
   color: var(--neon-orange);
-  border: 1px solid rgba(255, 140, 66, 0.4);
+  border: 1px solid rgb(var(--neon-orange-rgb) / 0.4);
 }
 
 .hr-analysis-status .dot {
@@ -1843,39 +1695,28 @@ kbd {
 
 /* ===== Bootstrap utilities passthrough fillers ================= */
 .d-flex { display: flex !important; }
-.d-block { display: block !important; }
-.d-inline-block { display: inline-block !important; }
-.d-inline-flex { display: inline-flex !important; }
 .d-none { display: none !important; }
 
 @media (min-width: 992px) {
   .d-lg-none { display: none !important; }
   .d-lg-block { display: block !important; }
-  .d-lg-flex { display: flex !important; }
 }
 
 /* Below lg, .d-lg-none must NOT impose a display value — let the element's
    own rules win (e.g. .bottom-nav needs its display:flex). */
 
-.flex-fill { flex: 1 1 auto !important; }
 .flex-grow-1 { flex-grow: 1 !important; }
-.flex-shrink-0 { flex-shrink: 0 !important; }
-.align-items-center { align-items: center !important; }
-.align-items-start { align-items: flex-start !important; }
 .align-items-baseline { align-items: baseline !important; }
 .hr-plain-list { list-style: none; padding-left: 0; margin-bottom: 0; }
 
 /* The case collage's static frame; the grid TEMPLATE depends on how many hats
    the case holds and stays inline in `CaseCollage.tsx`. */
 .hr-case-collage { display: grid; gap: 2px; aspect-ratio: 4 / 3; }
-.list-unstyled { list-style: none; padding-left: 0; }
 .text-truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.h6 { font-size: 0.95rem; font-weight: 600; letter-spacing: 0.02em; margin: 0; }
 
 /* ===== Tables ===================================================== */
 /* One table in the app (the construction audit). Designed rather than left at
    the browser default, which rendered a Windows-95 grid inside a neon card. */
-.table-responsive { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .table { width: 100%; border-collapse: collapse; color: var(--text); font-size: 0.9rem; }
 .table th, .table td { padding: 0.55rem 0.6rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
 .table thead th {
@@ -1884,48 +1725,13 @@ kbd {
   font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  border-bottom-color: rgba(0, 240, 255, 0.35);
+  border-bottom-color: rgb(var(--neon-cyan-rgb) / 0.35);
 }
 .table tbody tr:last-child td { border-bottom: 0; }
-.table-sm th, .table-sm td { padding: 0.35rem 0.5rem; }
-.align-middle { vertical-align: middle !important; }
-
-/* ===== Switch ===================================================== */
-/* `role="switch"` checkboxes. A checkbox styled as a checkbox is a lie about
-   what it does — this is a toggle that takes effect immediately, not a choice
-   confirmed by a Save button — so it looks like one. */
-.form-switch { display: flex; align-items: center; gap: 0.6rem; }
-.form-switch .form-check-input {
-  appearance: none;
-  -webkit-appearance: none;
-  width: 2.6em;
-  height: 1.4em;
-  margin: 0;
-  border-radius: 1em;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  position: relative;
-  cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
-}
-.form-switch .form-check-input::before {
-  content: '';
-  position: absolute;
-  top: 0.12em;
-  left: 0.12em;
-  width: 1.05em;
-  height: 1.05em;
-  border-radius: 50%;
-  background: var(--text-secondary);
-  transition: transform 0.15s ease, background 0.15s ease;
-}
-.form-switch .form-check-input:checked { background: rgba(255, 46, 182, 0.25); border-color: var(--neon-pink); }
-.form-switch .form-check-input:checked::before { transform: translateX(1.2em); background: var(--neon-pink); box-shadow: 0 0 8px rgba(255, 46, 182, 0.6); }
-.form-switch .form-check-input:disabled { opacity: 0.5; cursor: default; }
 
 /* ===== Inline row spinner ========================================== */
-/* The analysis queue marks the row being worked on. Same animation as the page
-   spinner, sized for a table row. */
+/* The analysis queue marks the row being worked on. The shared `spin`
+   rotation, sized for a list row. */
 .hr-analysis-spinner {
   display: inline-block;
   width: 0.85em;
@@ -1961,7 +1767,7 @@ kbd {
 .hr-run-row:hover,
 .hr-run-row:focus-visible { border-color: var(--border); color: var(--text); }
 
-.hr-run-caret { color: var(--color-accent); font-size: 0.7rem; }
+.hr-run-caret { color: var(--neon-cyan); font-size: 0.7rem; }
 
 /* The expanded log. Bounded and scrollable: a run covers the whole collection,
    and letting it grow unbounded would push every control below it off-screen. */
@@ -2002,143 +1808,46 @@ kbd {
   }
 }
 .justify-content-between { justify-content: space-between !important; }
-.justify-content-center { justify-content: center !important; }
-.justify-content-end { justify-content: flex-end !important; }
-.flex-column { flex-direction: column !important; }
 .flex-wrap { flex-wrap: wrap !important; }
 
-.gap-1 { gap: 0.25rem !important; }
 .gap-2 { gap: 0.5rem !important; }
-.gap-3 { gap: 1rem !important; }
-.gap-4 { gap: 1.5rem !important; }
 
 .mb-0 { margin-bottom: 0 !important; }
 .mb-1 { margin-bottom: 0.25rem !important; }
 .mb-2 { margin-bottom: 0.5rem !important; }
 .mb-3 { margin-bottom: 1rem !important; }
-.mb-4 { margin-bottom: 1.5rem !important; }
 .mt-1 { margin-top: 0.25rem !important; }
 .mt-2 { margin-top: 0.5rem !important; }
 .mt-3 { margin-top: 1rem !important; }
-.mt-4 { margin-top: 1.5rem !important; }
-.ms-1 { margin-left: 0.25rem !important; }
-.ms-2 { margin-left: 0.5rem !important; }
-.ms-auto { margin-left: auto !important; }
-.me-2 { margin-right: 0.5rem !important; }
-.my-3 { margin-top: 1rem !important; margin-bottom: 1rem !important; }
 
-.p-0 { padding: 0 !important; }
-.p-2 { padding: 0.5rem !important; }
-.p-3 { padding: 1rem !important; }
-.py-2 { padding-top: 0.5rem !important; padding-bottom: 0.5rem !important; }
-.py-3 { padding-top: 1rem !important; padding-bottom: 1rem !important; }
 .py-4 { padding-top: 1.5rem !important; padding-bottom: 1.5rem !important; }
 .py-5 { padding-top: 3rem !important; padding-bottom: 3rem !important; }
-.px-2 { padding-left: 0.5rem !important; padding-right: 0.5rem !important; }
-.px-3 { padding-left: 1rem !important; padding-right: 1rem !important; }
-.ps-3 { padding-left: 1rem !important; }
-.pt-1 { padding-top: 0.25rem !important; }
 
 .text-center { text-align: center !important; }
-.text-start { text-align: left !important; }
 .text-end { text-align: right !important; }
 .text-decoration-none { text-decoration: none !important; }
 
-.fs-2 { font-size: 1.6rem !important; }
-.fs-3 { font-size: 1.4rem !important; }
-.fs-4 { font-size: 1.2rem !important; }
-.fs-5 { font-size: 1.05rem !important; }
-.fs-6 { font-size: 0.95rem !important; }
 .small { font-size: 0.85rem !important; }
 
 .w-100 { width: 100% !important; }
 .h-100 { height: 100% !important; }
-.opacity-75 { opacity: 0.75 !important; }
-.position-relative { position: relative !important; }
-.overflow-hidden { overflow: hidden !important; }
-.img-fluid { max-width: 100%; height: auto; }
 .border { border: 1px solid var(--border) !important; }
 .border-warning { border-color: var(--neon-yellow) !important; }
-.border-primary { border-color: var(--neon-pink) !important; }
 
 /* Bootstrap col helpers */
 .col, [class^="col-"], [class*=" col-"] { padding: 0.5rem; box-sizing: border-box; }
 .col { flex: 1; min-width: 0; }
-.col-4 { flex: 0 0 33.333%; max-width: 33.333%; }
 .col-5 { flex: 0 0 41.6667%; max-width: 41.6667%; }
 .col-6 { flex: 0 0 50%; max-width: 50%; }
 .col-7 { flex: 0 0 58.3333%; max-width: 58.3333%; }
 .col-12 { flex: 0 0 100%; max-width: 100%; }
 
 @media (min-width: 768px) {
-  .col-md-2 { flex: 0 0 16.6667%; max-width: 16.6667%; }
-  .col-md-3 { flex: 0 0 25%; max-width: 25%; }
   .col-md-4 { flex: 0 0 33.333%; max-width: 33.333%; }
-  .col-md-6 { flex: 0 0 50%; max-width: 50%; }
-}
-
-.row-cols-1 > * { flex: 0 0 100%; max-width: 100%; }
-.row-cols-2 > * { flex: 0 0 50%; max-width: 50%; }
-
-@media (min-width: 768px) {
-  .row-cols-md-2 > * { flex: 0 0 50%; max-width: 50%; }
-  .row-cols-md-3 > * { flex: 0 0 33.333%; max-width: 33.333%; }
 }
 
 @media (min-width: 992px) {
   .col-lg-3 { flex: 0 0 25%; max-width: 25%; }
-  .row-cols-lg-3 > * { flex: 0 0 33.333%; max-width: 33.333%; }
-  .row-cols-lg-4 > * { flex: 0 0 25%; max-width: 25%; }
-}
-
-/* --- Combobox: a text field with a visible list of known values ------------
-   Replaces a native <datalist>, which on iOS renders as a thin strip above the
-   keyboard that is easy to miss entirely — a field with ten known values read
-   as a blank text box. These options are real tap targets. */
-.hr-combobox {
-  position: relative;
-}
-
-/* Position, size and max-height are set inline by `AnchoredList`, which
-   measures against the input — this list is portalled into <body> to escape
-   `.card { overflow: hidden }`, which was clipping it mid-row. */
-.hr-combobox-list {
-  z-index: 1100;
-  margin: 0;
-  padding: 0.25rem;
-  list-style: none;
-  max-height: 15rem;
-  overflow-y: auto;
-  background: var(--bg-elevated);
-  border: 1px solid rgba(0, 240, 255, 0.35);
-  border-radius: var(--radius-sm);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
-}
-
-.hr-combobox-option {
-  display: block;
-  width: 100%;
-  /* 44px tap target — the phone is the primary interface here. */
-  min-height: 44px;
-  padding: 0.6rem 0.75rem;
-  border: 0;
-  border-radius: var(--radius-sm, 8px);
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.hr-combobox-option:hover,
-.hr-combobox-option.is-active {
-  background: rgba(0, 240, 255, 0.14);
-  color: var(--neon-cyan);
-}
-
-.hr-combobox-option.is-selected {
-  color: var(--neon-cyan);
-  font-weight: 600;
 }
 
 /* The step counter inside the analysis badge. Tabular figures and a fixed
@@ -2149,8 +1858,6 @@ kbd {
   font-feature-settings: 'tnum';
   opacity: 0.85;
 }
-
-
 
 /* While a dropdown-style picker is open, take the bottom nav out of the
    layout. It is fixed at z-index 100 and, once the iOS keyboard opens, is
@@ -2216,104 +1923,14 @@ body.hr-keyboard-open .bottom-nav {
   color: var(--text-muted);
 }
 
-/* Full / overfull tag on a case card. Overfull is deliberately warm rather
-   than red: a fourth hat in a three-hat case is a thing people do on purpose,
-   not an error to be alarmed by. */
-.hr-fill-tag {
-  font-family: var(--font-body);
-  font-size: 0.55rem;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  color: var(--text-muted);
-  margin-top: 0.2rem;
-}
-
-.hr-fill-tag.is-overfull { color: var(--neon-orange); }
-
+/* "overfull" beside a case in the picker. Deliberately warm rather than red:
+   a fourth hat in a three-hat case is a thing people do on purpose, not an
+   error to be alarmed by. */
 .hr-case-overfull {
   color: var(--neon-orange);
   font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-}
-
-/* ------------------------------------------------------------------ *
- * Tag landing (/t/h/:id) — where a hat's QR sticker or NFC tag lands.
- *
- * Sized for one-handed use at the moment you're putting the hat on: the
- * action is a thumb-height target, centered, with nothing above it that
- * needs reading first. Everything else on the page is confirmation that
- * you scanned the right hat.
- * ------------------------------------------------------------------ */
-
-.hr-tag-landing {
-  max-width: 26rem;
-  margin: 0 auto;
-  padding: 1.5rem 1rem 2rem;
-  text-align: center;
-}
-
-.hr-tag-photo {
-  width: 190px;
-  height: 190px;
-  object-fit: contain;
-  margin: 0 auto 1rem;
-  display: block;
-  /* Cutouts are transparent PNGs and float on the canvas — no plate behind. */
-  filter: drop-shadow(0 8px 22px rgba(0, 0, 0, 0.55));
-}
-
-.hr-tag-photo-empty {
-  display: grid;
-  place-items: center;
-  border: 1px dashed var(--border);
-  border-radius: 12px;
-  color: var(--text-secondary);
-  font-size: 0.85rem;
-  filter: none;
-}
-
-.hr-tag-name {
-  font-size: 1.35rem;
-  margin: 0 0 0.15rem;
-  overflow-wrap: anywhere;
-}
-
-.hr-tag-sub {
-  color: var(--text-secondary);
-  font-size: 0.9rem;
-  margin: 0 0 1.5rem;
-}
-
-/* The whole reason the page exists. Deliberately oversized. */
-.hr-tag-action {
-  width: 100%;
-  min-height: 3.75rem;
-  font-size: 1.15rem;
-  letter-spacing: 0.02em;
-}
-
-.hr-tag-done {
-  font-family: var(--font-display, inherit);
-  font-size: 1.3rem;
-  color: var(--neon-cyan);
-  margin-bottom: 0.75rem;
-}
-
-.hr-tag-note {
-  font-size: 0.85rem;
-  color: var(--text-secondary);
-  margin: 0.75rem 0 0;
-}
-
-.hr-tag-meta {
-  font-size: 0.8rem;
-  color: var(--text-secondary);
-  margin: 1.25rem 0 0.5rem;
-}
-
-.hr-tag-more {
-  font-size: 0.85rem;
 }
 
 .hr-tag-url-row .form-control {
@@ -2329,35 +1946,9 @@ body.hr-keyboard-open .bottom-nav {
   padding-top: 0.75rem;
 }
 
-/* The analysis-failure count pinned to the Settings tab (AnalysisErrorBadge).
-   Position (top/right) comes from the nav that places it. */
-.hr-nav-error-badge {
-  position: absolute;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  background: var(--neon-red);
-  color: var(--text);
-  font-size: 0.55rem;
-  font-weight: 700;
-  box-shadow: 0 0 8px rgba(255, 56, 96, 0.6);
-}
-
 /* The lightbox thumbnail is a button (keyboard-reachable) that looks like the
-   bare image it replaced. */
-.hr-lightbox-trigger {
-  display: block;
-  width: 100%;
-  margin: 0 auto;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-}
+   bare image it replaced — its look is in areas/shell.css with the rest of
+   the lightbox. */
 .hr-lightbox-trigger:focus-visible {
   outline: 2px solid var(--neon-cyan);
   outline-offset: 4px;

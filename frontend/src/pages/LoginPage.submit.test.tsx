@@ -8,11 +8,13 @@
  * with an expired session therefore always ended on the home page, having
  * lost the one thing the tap carried.
  */
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../test/utils';
-import { LoginPage } from './LoginPage';
+import { LoginPage, PASSWORD_MIN } from './LoginPage';
 import * as authApi from '../api/auth';
 import * as webauthn from '../lib/webauthn';
 
@@ -86,14 +88,19 @@ describe('LoginPage submit', () => {
   it('sends a passkey sign-in on to ?next= as well', async () => {
     vi.mocked(webauthn.passkeysSupported).mockReturnValue(true);
     mocked.passkeyLoginOptions.mockResolvedValue({ state_id: 's1', options: {} } as never);
-    vi.mocked(webauthn.getPasskeyAssertion).mockResolvedValue({ id: 'cred' });
+    const credential = {
+      id: 'cred', rawId: 'cred', type: 'public-key',
+      response: { clientDataJSON: 'c', authenticatorData: 'a', signature: 's', userHandle: null },
+      clientExtensionResults: {},
+    };
+    vi.mocked(webauthn.getPasskeyAssertion).mockResolvedValue(credential);
     mocked.passkeyLoginVerify.mockResolvedValue(undefined as never);
     renderWithProviders(<LoginPage />, { route: '/login?next=%2Ft%2Fh%2F42' });
 
     fireEvent.click(await screen.findByRole('button', { name: 'Sign in with passkey' }));
 
     await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/t/h/42'));
-    expect(mocked.passkeyLoginVerify).toHaveBeenCalledWith('s1', { id: 'cred' });
+    expect(mocked.passkeyLoginVerify).toHaveBeenCalledWith('s1', credential);
   });
 });
 
@@ -183,6 +190,43 @@ describe('LoginPage polish', () => {
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('The user aborted a request.');
     expect(alert).not.toHaveTextContent(/passkey/i);
+  });
+
+  it('marks the confirm box invalid on a mismatch, and only then', async () => {
+    mocked.getAuthStatus.mockResolvedValue({
+      authenticated: false, needs_setup: true, guest_view_enabled: false,
+    } as never);
+    mocked.setupOwner.mockRejectedValue(new Error('Setup is closed'));
+    renderWithProviders(<LoginPage />, { route: '/login' });
+
+    fireEvent.change(await screen.findByLabelText('Username'), { target: { value: 'brandon' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'hunter2hunter2' } });
+    fireEvent.change(screen.getByLabelText('Confirm password'), { target: { value: 'hunter2hunter3' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create account' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Passwords do not match');
+    expect(screen.getByLabelText('Confirm password')).toHaveAttribute('aria-invalid', 'true');
+
+    // A different failure is not the confirm box's fault.
+    fireEvent.change(screen.getByLabelText('Confirm password'), { target: { value: 'hunter2hunter2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create account' }));
+    expect(await screen.findByText('Setup is closed')).toBeInTheDocument();
+    expect(screen.getByLabelText('Confirm password')).not.toHaveAttribute('aria-invalid');
+  });
+
+  it('states the password minimum the server enforces', async () => {
+    // One constant for the hint and the submit guard, held to the server's.
+    const schema = readFileSync(resolve(__dirname, '../../../src/headroom/schemas/auth.py'), 'utf8');
+    expect(Number(/^_PASSWORD_MIN = (\d+)$/m.exec(schema)?.[1])).toBe(PASSWORD_MIN);
+
+    mocked.getAuthStatus.mockResolvedValue({
+      authenticated: false, needs_setup: true, guest_view_enabled: false,
+    } as never);
+    renderWithProviders(<LoginPage />, { route: '/login' });
+    expect(await screen.findByText(`At least ${PASSWORD_MIN} characters`)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'brandon' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'x'.repeat(PASSWORD_MIN - 1) } });
+    expect(screen.getByRole('button', { name: 'Create account' })).toBeDisabled();
   });
 
   it('offers guest browsing only when the owner has switched it on', async () => {

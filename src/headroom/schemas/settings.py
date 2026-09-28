@@ -1,20 +1,25 @@
 from datetime import datetime
-
+from typing import Literal
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from headroom.schemas.common import api_key_text
 
 
 class ApiKeyStatus(BaseModel):
     """Public-facing view of an external API key (Anthropic, Google Vision) — never the raw value."""
 
     configured: bool
-    source: str | None = None  # "database" | "environment" | None
+    #: `settings_service.get_key`'s answer; None when no key is configured.
+    source: Literal["database", "environment"] | None = None
     masked: str | None = None  # e.g. "sk-a...xyz1"
 
 
 class ApiKeyUpdate(BaseModel):
-    api_key: str = Field(min_length=8, max_length=200)
+    # Trimmed, then refused unless it can travel as a header value — see
+    # `common.header_safe_key`.
+    api_key: api_key_text(8, 200)
 
 
 class ApiKeyTestResult(BaseModel):
@@ -25,11 +30,8 @@ class ApiKeyTestResult(BaseModel):
 class ModelStatus(BaseModel):
     """Active Claude model id + where it came from."""
 
-    # `model_` prefix is reserved by pydantic — opt out so the natural name works.
-    model_config = ConfigDict(protected_namespaces=())
-
     model_id: str
-    source: str  # "database" | "environment" | "default"
+    source: Literal["database", "environment", "default"]
     # The built-in default, so the picker can mark that option itself instead
     # of carrying "(default)" in a hand-typed label that a model bump left
     # pointing at a superseded id for a whole generation.
@@ -37,8 +39,6 @@ class ModelStatus(BaseModel):
 
 
 class ModelUpdate(BaseModel):
-    model_config = ConfigDict(protected_namespaces=())
-
     # It becomes the `model` parameter of every Claude call. Anthropic ids are
     # letters, digits, dots, dashes and colons; anything else (HTML, spaces)
     # is a typo at best and stored HTML at worst.
@@ -88,6 +88,11 @@ class TlsStatusRead(BaseModel):
     #: every root identically, so two installs yield two different roots with
     #: the same name — and only a fingerprint tells them apart.
     ca_sha256: str | None = None
+    #: Whether the chain actually SERVED leads up to that root. `ca_sha256` is
+    #: read from the exported file — what this install hands out — and after
+    #: an authority is restored Caddy can go on serving a cached leaf from a
+    #: different one. None when it cannot be told (see `tls_health.TlsStatus`).
+    chain_matches_ca: bool | None = None
     error: str | None = None
 
 
@@ -112,7 +117,7 @@ class TagBaseStatus(BaseModel):
     """The host burned into printed QR labels and NFC tags."""
 
     base_url: str
-    source: str  # "settings" | "request"
+    source: Literal["settings", "request"]
     #: A worked example at the current base, so the UI can show what will
     #: actually be written rather than asking the reader to assemble it.
     example_url: str
@@ -142,7 +147,20 @@ class TagBaseUpdate(BaseModel):
             raise ValueError("must name a host, e.g. http://headroom.local:8000")
         if parsed.username or parsed.password:
             raise ValueError("must not carry credentials")
-        return cleaned
+        # A host and nothing after it. The tag path is APPENDED to this, so a
+        # path, query or fragment ends up in the middle of every label:
+        # pasting the address bar from Settings stored `…/settings?tab=sharing`
+        # and every tag became `…/settings?tab=sharing/t/h/1` — a link that
+        # opens Settings. A trailing `/` alone is harmless and stripped.
+        if parsed.path not in ("", "/") or parsed.query or parsed.fragment or cleaned.endswith(("?", "#")):
+            raise ValueError(
+                "must be just the scheme, host and port, e.g. http://headroom.local:8000"
+            )
+        try:
+            _ = parsed.port  # urlsplit validates the port lazily, on access
+        except ValueError as exc:
+            raise ValueError("has an invalid port") from exc
+        return f"{parsed.scheme}://{parsed.netloc}"
 
 
 class GuestViewStatus(BaseModel):
@@ -159,7 +177,8 @@ class LogoStatus(BaseModel):
     """Where the site logo is served from, or null when none is set.
 
     Was a hand-built `{"logo_path": ...}` dict in three route handlers — the
-    shape CLAUDE.md's "no schema is declared inline in a route" exists to stop.
+    shape the no-inline-schemas rule exists to stop, enforced by
+    `tests/test_api_contract.py`.
     """
 
     logo_path: str | None

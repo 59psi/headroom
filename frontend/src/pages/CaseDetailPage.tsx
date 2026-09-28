@@ -6,8 +6,12 @@ import { listRooms } from '../api/rooms';
 import { hatLabelsUrl } from '../api/settings';
 import { tileSrc } from '../lib/photo';
 import { useHatLabels } from '../lib/labels';
+import { plural } from '../lib/format';
+import { caseTypeName } from '../lib/caseTypes';
+import { qk } from '../lib/queryKeys';
 import { CaseCollage } from '../components/cases/CaseCollage';
-import { CaseFillMeter, caseFillLabel, caseTypeLabel } from '../components/cases/CaseTile';
+import { CaseFillMeter, caseFillLabel, caseRoomName } from '../components/cases/CaseTile';
+import { roomChoices } from '../components/cases/CaseFields';
 import { invalidateHatViews } from '../lib/invalidate';
 import { TagUrlRow } from '../components/common/TagUrlRow';
 import { ErrorNote } from '../components/common/ErrorNote';
@@ -28,14 +32,15 @@ export function CaseDetailPage() {
   const toast = useToast();
   const labels = useHatLabels();
 
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['case', displayId],
+  const caseQ = useQuery({
+    queryKey: qk.case(displayId),
     queryFn: () => getCase(displayId!),
     enabled: !!displayId,
   });
+  const { data, isLoading, error } = caseQ;
   // For the in-place room picker. Same key and fetcher as both case forms, so
   // arriving here from one of them costs no request.
-  const roomsQ = useQuery({ queryKey: ['rooms'], queryFn: listRooms, enabled: !!data });
+  const roomsQ = useQuery({ queryKey: qk.rooms(), queryFn: listRooms, enabled: !!data });
 
   const removeMutation = useMutation({
     mutationFn: () => deleteCase(displayId!),
@@ -60,18 +65,18 @@ export function CaseDetailPage() {
   const moveMutation = useMutation({
     mutationFn: (roomId: number) => updateCase(displayId!, { room_id: roomId }),
     onMutate: async (roomId: number) => {
-      await qc.cancelQueries({ queryKey: ['case', displayId] });
-      const prev = qc.getQueryData<CaseDetail>(['case', displayId]);
+      await qc.cancelQueries({ queryKey: qk.case(displayId) });
+      const prev = qc.getQueryData<CaseDetail>(qk.case(displayId));
       const name = roomsQ.data?.find(r => r.id === roomId)?.name;
       if (prev) {
-        qc.setQueryData<CaseDetail>(['case', displayId], {
+        qc.setQueryData<CaseDetail>(qk.case(displayId), {
           ...prev, room_id: roomId, room_name: name ?? prev.room_name,
         });
       }
       return { prev };
     },
     onError: (_err, _roomId, ctx) => {
-      if (ctx?.prev) qc.setQueryData(['case', displayId], ctx.prev);
+      if (ctx?.prev) qc.setQueryData(qk.case(displayId), ctx.prev);
     },
     // The case moved between rooms: both rooms' counts and contents change,
     // and every hat inside now reports a new `room_name` — the same reach as
@@ -85,7 +90,7 @@ export function CaseDetailPage() {
   // which told the reader the opposite of the truth.
   if (error && !isNotFound(error)) return (
     <div className="py-4">
-      <ErrorNote of={{ isError: true, error }} what="Could not load this case" />
+      <ErrorNote of={caseQ} what="Could not load this case" />
       <Link to="/cases" className="btn btn-outline-secondary mt-3">Back to cases</Link>
     </div>
   );
@@ -135,22 +140,14 @@ export function CaseDetailPage() {
   const fill = caseFillLabel(data);
   const hatCount = data.hat_count;
   // "Its 1 hat stays" / "Its 2 hats stay".
-  const hatsStay = hatCount === 1 ? '1 hat stays' : `${hatCount} hats stay`;
-  // Until the room list arrives the picker still has to SHOW the case's room,
-  // so it starts with the one option it already knows. The same option stays
-  // when the list arrives WITHOUT that room — a case orphaned by an older
-  // version (`update_case` names this as the path that repairs one). With no
-  // option matching its value the select would display the first room while
-  // meaning none, and choosing that room fired no change: the one room the
-  // case could not be moved to was the one it appeared to be in.
-  const ownRoom = { id: data.room_id, name: data.room_name };
-  const roomOptions = !roomsQ.data
-    ? [ownRoom]
-    : roomsQ.data.some(r => r.id === data.room_id)
-      ? roomsQ.data
-      : [ownRoom, ...roomsQ.data];
+  const hatsStay = `${plural(hatCount, 'hat')} ${hatCount === 1 ? 'stays' : 'stay'}`;
+  // The case's own room stays an option before the list arrives and when the
+  // list lacks it — an orphaned case (`roomChoices`, shared with the Edit
+  // form, which had lost this).
+  const roomOptions = roomChoices(roomsQ.data, { id: data.room_id, name: caseRoomName(data) });
 
-  const { display_id: caseId, room_name: roomName } = data;
+  const caseId = data.display_id;
+  const roomName = caseRoomName(data);
   async function handleDelete() {
     const ok = await confirm({
       title: hatCount > 0 ? `Delete case ${caseId}?` : `Delete empty case ${caseId}?`,
@@ -174,7 +171,14 @@ export function CaseDetailPage() {
         title={data.display_id}
         summary={
           <>
-            <span>{caseTypeLabel(data)} · <Link to={`/rooms/${data.room_id}`}>{data.room_name}</Link></span>
+            {/* The room is a link only while it exists — an orphaned case's
+                room is gone, and its page would be "Room not found". */}
+            <span>
+              {caseTypeName(data.case_type)} ·{' '}
+              {data.room_name
+                ? <Link to={`/rooms/${data.room_id}`} className="hr-case-room-link">{data.room_name}</Link>
+                : caseRoomName(data)}
+            </span>
             {fill === 'overfull' && <StatusPill tone="warn">Overfull</StatusPill>}
             {fill === 'full' && <StatusPill tone="info">Full</StatusPill>}
           </>
@@ -275,7 +279,7 @@ export function CaseDetailPage() {
         title="Delete case"
         className="hr-cr-danger"
         description={hatCount > 0
-          ? `Removes the case. Its ${hatsStay} in ${data.room_name}, out of a case.`
+          ? `Removes the case. Its ${hatsStay} in ${roomName}, out of a case.`
           : 'Removes this empty case.'}
         footer={
           <button

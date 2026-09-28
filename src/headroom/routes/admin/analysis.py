@@ -16,6 +16,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.database import get_db
+from headroom.models.hat import Hat
+from headroom.routes._api import DomainErrorRoute
 from headroom.schemas.admin import (
     AnalysisFailureGroup,
     AnalysisJobDetail,
@@ -25,9 +27,15 @@ from headroom.schemas.admin import (
     PendingHat,
     ReanalyzeAllResult,
 )
-from headroom.services import analysis_job_service, hat_service, analysis_queue
+from headroom.services import analysis_job_service, analysis_queue, hat_service
 
-router = APIRouter()
+router = APIRouter(route_class=DomainErrorRoute)
+
+
+def _label(hat: Hat) -> str | None:
+    """"Brand Model", from whichever halves the hat has — the row title both
+    the queue view and a run's log print."""
+    return " ".join(p for p in (hat.brand, hat.model_name) if p) or None
 
 
 async def _queue_run(db: AsyncSession, hat_ids: list[int]) -> ReanalyzeAllResult:
@@ -104,7 +112,7 @@ async def analysis_queue_status(db: AsyncSession = Depends(get_db)):
             PendingHat(
                 id=h.id,
                 display_id=h.display_id,
-                label=" ".join(p for p in (h.brand, h.model_name) if p) or None,
+                label=_label(h),
                 photo_path=h.photo_path,
                 stage=h.analysis_stage,
             )
@@ -158,11 +166,17 @@ async def retry_failed_analysis(
     Nothing is queued twice: `create_job` moves the hats to `pending` and
     clears their failure text, so a second press finds a smaller set — or an
     empty one, reported honestly as `queued: 0`.
+
+    Both branches draw from `analysis_job_service.retryable_failure_ids`, the
+    set the card counts. The whole-card retry used to take every failing hat
+    instead — including ones with no photo on disk and, on a keyless install,
+    ones that could only fall back again — so "Retry" queued more than the
+    card said it would, and the extra work was all doomed.
     """
     hat_ids = (
         await analysis_job_service.ids_for_failure_reason(db, reason)
         if reason
-        else await hat_service.ids_for_reanalysis(db, failed_only=True)
+        else await analysis_job_service.retryable_failure_ids(db)
     )
     return await _queue_run(db, hat_ids)
 
@@ -199,7 +213,7 @@ async def analysis_job_detail(job_id: int, db: AsyncSession = Depends(get_db)):
             AnalysisJobHat(
                 id=h.id,
                 display_id=h.display_id,
-                label=" ".join(p for p in (h.brand, h.model_name) if p) or None,
+                label=_label(h),
                 photo_path=h.thumb_path or h.photo_path,
                 analysis_status=h.analysis_status,
                 analysis_error=h.analysis_error,

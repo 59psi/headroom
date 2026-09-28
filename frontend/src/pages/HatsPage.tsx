@@ -10,7 +10,9 @@ import {
 import type { HatRead } from '../types';
 import { tileSrc } from '../lib/photo';
 import { useHatLabels } from '../lib/labels';
-import { placementOf, type Placement } from '../lib/placement';
+import { hatName, placementOf, type Placement } from '../lib/placement';
+import { qk } from '../lib/queryKeys';
+import { LoadError } from '../components/common/LoadError';
 import { HatRow } from '../components/hats/HatRow';
 import { PageHeader } from '../components/ui/PageHeader';
 import { Segmented, type SegmentedOption } from '../components/ui/Segmented';
@@ -66,6 +68,11 @@ function readPlacement(v: string | null): 'all' | Placement {
 
 function GalleryItem({ hat }: { hat: HatRead }) {
   const labels = useHatLabels();
+  // What the list row calls it (`hatName`) — a loose hat by its model, where
+  // this tile said "#12" — and the model not repeated under it when it IS
+  // the headline.
+  const headline = hatName(hat);
+  const modelInSub = hat.model_name && hat.model_name !== headline;
   return (
     <Link to={`/hats/${hat.id}`} className="card hr-cp-tile">
       {hat.photo_path ? (
@@ -74,10 +81,10 @@ function GalleryItem({ hat }: { hat: HatRead }) {
         <div className="hr-gallery-placeholder">No photo</div>
       )}
       <div className="hr-cp-tile-body">
-        <div className="hr-cp-tile-id">{hat.display_id || `#${hat.id}`}</div>
+        <div className="hr-cp-tile-id">{headline}</div>
         {hat.brand && (
           <div className="hr-cp-tile-name">
-            {hat.brand}{hat.model_name ? ` · ${hat.model_name}` : ''}
+            {hat.brand}{modelInSub ? ` · ${hat.model_name}` : ''}
           </div>
         )}
         <div className="hr-cp-tile-meta">{labels.style(hat.style)}</div>
@@ -123,7 +130,8 @@ function HatsSkeleton({ view }: { view: View }) {
 }
 
 export function HatsPage() {
-  const { data, isLoading, error, refetch, isFetching } = useQuery({ queryKey: ['hats'], queryFn: listAllHats });
+  const hatsQ = useQuery({ queryKey: qk.hats(), queryFn: listAllHats });
+  const { data, isLoading, error } = hatsQ;
   const hatFilters = useHatFilters();
   const { filters, isOpen: filtersOpen, setIsOpen: setFiltersOpen } = hatFilters;
 
@@ -241,15 +249,7 @@ export function HatsPage() {
     return (
       <>
         {header}
-        <div className="alert alert-danger hr-cp-error" role="alert">
-          <span>Couldn&rsquo;t load your hats.</span>
-          <button
-            type="button"
-            className="btn btn-sm btn-outline-secondary"
-            onClick={() => { void refetch(); }}
-            disabled={isFetching}
-          >{isFetching ? 'Retrying…' : 'Try again'}</button>
-        </div>
+        <LoadError what="Couldn’t load your hats." queries={[hatsQ]} />
       </>
     );
   }
@@ -294,8 +294,11 @@ export function HatsPage() {
         >
           {availableBrands.length > 0 && (
             <div className="hr-cp-field">
-              <label className="form-label">Brand</label>
-              <select aria-label="Brand" className="form-select form-select-sm" value={filterBrand} onChange={e => setFilterBrand(e.target.value)}>
+              {/* Tied to its select by id, so tapping the word focuses the
+                  control and the select's name IS the visible label — not a
+                  separate `aria-label` restating it. */}
+              <label className="form-label" htmlFor="hats-filter-brand">Brand</label>
+              <select id="hats-filter-brand" className="form-select form-select-sm" value={filterBrand} onChange={e => setFilterBrand(e.target.value)}>
                 <option value="">All</option>
                 {availableBrands.map(b => (
                   <option key={b} value={b}>{b}</option>

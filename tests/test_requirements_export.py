@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -31,10 +32,22 @@ pytestmark = pytest.mark.anyio
 ROOT = Path(__file__).resolve().parent.parent
 REQUIREMENTS = ROOT / "requirements.txt"
 
-EXPORT_CMD = [
-    "uv", "export", "--frozen", "--no-dev", "--no-emit-project",
+EXPORT_ARGS = [
+    "export", "--frozen", "--no-dev", "--no-emit-project",
     "--format", "requirements-txt",
 ]
+EXPORT_CMD = ["uv", *EXPORT_ARGS]
+
+
+def _uv() -> str | None:
+    """The uv running this suite, else the one on PATH, else None.
+
+    `uv run` exports `UV` as the path of its own binary, so under the
+    documented `uv run pytest` (and in CI) the export uses the same uv — and
+    so reads the lockfile schema — that just synced the environment, even
+    where no `uv` is on PATH.
+    """
+    return os.environ.get("UV") or shutil.which("uv")
 
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -77,12 +90,22 @@ async def test_requirements_txt_matches_the_lockfile():
         f"Regenerate: {' '.join(EXPORT_CMD)} -o requirements.txt"
     )
 
+    # Skipped only when there is no uv to ask. A uv that is present and FAILS
+    # is a finding, not an environment quirk: it used to skip on any non-zero
+    # exit, so a lockfile uv could no longer read (an unsupported schema
+    # version, say) turned this — the one guard on the image's dependency
+    # set — into a quiet "skipped".
+    uv = _uv()
+    if uv is None:
+        pytest.skip("uv is not installed here")
     result = subprocess.run(  # fixed argv, no shell
-        EXPORT_CMD, cwd=ROOT, capture_output=True, text=True, check=False,
+        [uv, *EXPORT_ARGS], cwd=ROOT, capture_output=True, text=True, check=False,
         env={**os.environ, "NO_COLOR": "1"},
     )
-    if result.returncode != 0:
-        pytest.skip(f"uv export unavailable here: {result.stderr[:200]}")
+    assert result.returncode == 0, (
+        f"`{' '.join(EXPORT_CMD)}` failed (exit {result.returncode}), so the "
+        f"image's dependency set cannot be checked against uv.lock:\n{result.stderr[-2000:]}"
+    )
 
     assert _significant(result.stdout) == _significant(REQUIREMENTS.read_text()), (
         "requirements.txt is out of date with uv.lock. The image would install "
@@ -131,9 +154,10 @@ async def test_the_dockerfile_installs_from_the_export():
     assert "--require-hashes -r requirements.txt" in dockerfile
 
     req = next(i for i, c in enumerate(copies) if c.startswith("COPY requirements.txt"))
-    # The runtime stage copies pyproject.toml too, harmlessly — only the one in
-    # the dependency stage matters, so take the FIRST that isn't --chown'd into
-    # the runtime image.
+    # pyproject.toml is copied exactly once — into the dependency stage, for
+    # the final `uv sync --frozen` — and the runtime stage does not copy it at
+    # all (the venv carries the installed metadata). The first match is
+    # therefore that one, and it must come after the requirements install.
     proj = next(
         i for i, c in enumerate(copies)
         if c.startswith("COPY pyproject.toml")

@@ -17,19 +17,9 @@
   height: var(--safe-top);
   z-index: 110;
   pointer-events: none;
-  background: rgba(6, 0, 17, 0.82);
+  background: rgb(var(--bg-deep-rgb) / 0.82);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
-}
-
-/* The page starts below the status bar, not under it. Phone only: at lg the
-   sticky top nav takes the inset instead (below). */
-@media (max-width: 991.98px) {
-  main.container { padding-top: calc(16px + var(--safe-top)); }
-}
-
-@media (min-width: 768px) and (max-width: 991.98px) {
-  main.container { padding-top: calc(28px + var(--safe-top)); }
 }
 
 /* ===== Skip link =================================================== */
@@ -91,7 +81,7 @@ main.container:focus { outline: none; }
   left: 0;
   width: 40%;
   background: linear-gradient(90deg, transparent, var(--neon-pink), var(--neon-cyan), transparent);
-  box-shadow: 0 0 10px rgba(255, 46, 182, 0.7);
+  box-shadow: 0 0 10px rgb(var(--neon-pink-rgb) / 0.7);
   transform: translateX(-100%);
 }
 
@@ -119,7 +109,13 @@ main.container:focus { outline: none; }
 }
 
 /* ===== Top nav (lg+) =============================================== */
+/* The bar and its links are owned here; app.css keeps only the layout of
+   the brand and the link row. It used to restate `.navbar` and every
+   `.nav-link` state as well, and lost to these on import order alone. */
 .navbar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
   background: rgba(10, 3, 26, 0.8);
   backdrop-filter: blur(16px) saturate(140%);
   -webkit-backdrop-filter: blur(16px) saturate(140%);
@@ -135,7 +131,7 @@ main.container:focus { outline: none; }
   right: 0;
   bottom: -1px;
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(255, 46, 182, 0.55), rgba(0, 240, 255, 0.55), transparent);
+  background: linear-gradient(90deg, transparent, rgb(var(--neon-pink-rgb) / 0.55), rgb(var(--neon-cyan-rgb) / 0.55), transparent);
   pointer-events: none;
 }
 
@@ -146,8 +142,16 @@ main.container:focus { outline: none; }
   display: inline-flex;
   align-items: center;
   min-height: 40px;
-  color: var(--text-secondary);
   padding: 0.5rem 0.9rem;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-heading);
+  font-size: 0.78rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-decoration: none;
+  color: var(--text-secondary);
+  transition: color 0.15s, background 0.15s, text-shadow 0.15s;
 }
 
 /* The top nav is lg+ only, which on a touch screen means an iPad in
@@ -171,7 +175,7 @@ main.container:focus { outline: none; }
 .navbar .nav-link.active {
   color: var(--text);
   background: transparent;
-  text-shadow: 0 0 12px rgba(255, 46, 182, 0.35);
+  text-shadow: 0 0 12px rgb(var(--neon-pink-rgb) / 0.35);
 }
 
 .navbar .nav-link.active::after {
@@ -183,7 +187,7 @@ main.container:focus { outline: none; }
   height: 2px;
   border-radius: 2px;
   background: var(--gradient-pink-cyan);
-  box-shadow: 0 0 8px rgba(255, 46, 182, 0.65);
+  box-shadow: 0 0 8px rgb(var(--neon-pink-rgb) / 0.65);
 }
 
 .navbar .nav-link:focus-visible {
@@ -201,7 +205,7 @@ main.container:focus { outline: none; }
 .navbar .nav-link.hr-nav-icon.active { color: var(--neon-pink); }
 
 .navbar .nav-link.hr-nav-icon.active svg {
-  filter: drop-shadow(0 0 5px rgba(255, 46, 182, 0.7));
+  filter: drop-shadow(0 0 5px rgb(var(--neon-pink-rgb) / 0.7));
 }
 
 .navbar .nav-link.hr-nav-icon.active::after {
@@ -217,40 +221,48 @@ main.container:focus { outline: none; }
 /* ===== Analysis-error badge (both navs) ============================ */
 /* A pill that grows for "9+", ringed in the bar's color so it reads as
    sitting ON the icon. Dark ink: white on this red is 3.0:1 — below AA for
-   text this small — where the ink `.btn-danger` uses is 5.9:1. */
+   text this small — where the ink `.btn-danger` uses is 5.9:1. Its top/right
+   come from the nav that places it (`.navbar …` above, BottomNav.css); the
+   rest is this one rule — app.css held a smaller, white-ink copy that lost
+   to it on import order. */
 .hr-nav-error-badge {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   min-width: 17px;
   height: 17px;
   padding: 0 4px;
   border-radius: var(--radius-pill);
+  background: var(--neon-red);
   font-family: var(--font-body);
   font-size: 0.625rem;
   font-weight: 750;
   line-height: 1;
   color: var(--text-on-neon);
-  box-shadow: 0 0 0 2px var(--bg-surface), 0 0 10px rgba(255, 56, 96, 0.65);
+  box-shadow: 0 0 0 2px var(--bg-surface), 0 0 10px rgb(var(--neon-red-rgb) / 0.65);
   font-variant-numeric: tabular-nums;
 }
 
 /* ===== Footer ====================================================== */
+/* No bottom-nav padding here: the body already reserves the nav's height on
+   a phone (tokens.css). app.css used to add it a second time, leaving a
+   nav-sized gap under the last line, and a rule here undid it on import
+   order — the one real bug among the rules the two sheets both defined. The
+   app.css copy is gone, and with it the override. */
 .hr-footer {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 0.3rem;
-  padding-top: 1.5rem;
+  padding: 1.5rem 1rem;
   margin-top: 3rem;
   border-top: 1px solid var(--border-soft);
+  text-align: center;
   font-family: var(--font-body);
   font-size: var(--fs-xs);
   letter-spacing: 0;
   color: var(--text-muted);
-}
-
-/* The body already reserves the bottom nav's height on a phone, so the
-   footer adding it a second time left a nav-sized gap under the last line. */
-@media (max-width: 991.98px) {
-  .hr-footer { padding-bottom: 1.5rem; }
 }
 
 .hr-footer-line { margin: 0; }
@@ -272,7 +284,7 @@ main.container:focus { outline: none; }
 .hr-footer a {
   color: inherit;
   text-decoration: underline;
-  text-decoration-color: rgba(154, 134, 196, 0.45);
+  text-decoration-color: rgb(var(--text-muted-rgb) / 0.45);
   text-underline-offset: 3px;
 }
 
@@ -282,42 +294,19 @@ main.container:focus { outline: none; }
   text-shadow: none;
 }
 
-/* ===== Loading spinner ============================================= */
-.hr-loading {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 0.85rem;
-  padding: 3rem 1rem;
-  color: var(--text-muted);
-  font-size: var(--fs-sm);
-  font-weight: 550;
-  /* Held back a beat, so a fast answer never flashes a spinner. */
-  animation: hrLoadingIn 0.25s ease-out 0.2s both;
+/* The one outbound link is 15px of small print on every page; a fingertip
+   gets the documented 44px, centered on the line it sits in. */
+@media (pointer: coarse) {
+  .hr-footer a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
 }
 
-.hr-loading-ring {
-  width: 2.25rem;
-  height: 2.25rem;
-  border-radius: 50%;
-  /* A comet tail: transparent → cyan → pink around the ring, masked to a
-     3px band. */
-  background: conic-gradient(from 90deg, transparent 0 20%, rgba(0, 240, 255, 0.9) 65%, var(--neon-pink));
-  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
-  mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
-  filter: drop-shadow(0 0 6px rgba(255, 46, 182, 0.55));
-  animation: spin 0.85s linear infinite;
-}
-
-.hr-loading-label { letter-spacing: 0.01em; }
-
-@keyframes hrLoadingIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-/* In-button busy ring ("Signing in…"). */
+/* In-button busy ring ("Signing in…"). Loading CONTENT holds its shape with
+   placeholders (`ui/Skeleton`); the page-level spinner those replaced is
+   gone, with its styles. */
 .hr-btn-spinner {
   flex: none;
   width: 1em;
@@ -326,12 +315,6 @@ main.container:focus { outline: none; }
   border: 2px solid currentColor;
   border-right-color: transparent;
   animation: spin 0.7s linear infinite;
-}
-
-.hr-btn-icon {
-  flex: none;
-  width: 1.15em;
-  height: 1.15em;
 }
 
 /* ===== Error note ================================================== */
@@ -356,9 +339,18 @@ main.container:focus { outline: none; }
 }
 
 /* ===== Lightbox ==================================================== */
+/* The whole lightbox lives here. app.css carried an older copy of each rule,
+   and which one won depended only on the import order in main.tsx — so a fix
+   made in the losing sheet did nothing. One owner per selector now. */
 .hr-lightbox-trigger {
   position: relative;
+  display: block;
+  width: 100%;
   max-width: 100%;
+  margin: 0 auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
   cursor: zoom-in;
 }
 
@@ -385,7 +377,7 @@ main.container:focus { outline: none; }
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  background: rgba(6, 0, 17, 0.6);
+  background: rgb(var(--bg-deep-rgb) / 0.6);
   border: 1px solid var(--border);
   color: var(--text-secondary);
   opacity: 0.75;
@@ -400,32 +392,57 @@ main.container:focus { outline: none; }
 .hr-lightbox-trigger:focus-visible .hr-lightbox-hint {
   opacity: 1;
   color: var(--neon-cyan);
-  border-color: rgba(0, 240, 255, 0.45);
+  border-color: rgb(var(--neon-cyan-rgb) / 0.45);
 }
 
 .hr-lightbox-overlay {
-  background: rgba(3, 0, 10, 0.92);
-  animation: hrLightboxFade 0.18s ease-out;
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: calc(1rem + var(--safe-top)) 1rem calc(1rem + var(--safe-bottom));
+  background: rgba(3, 0, 10, 0.92);
+  backdrop-filter: blur(8px);
+  cursor: pointer;
+  animation: hrLightboxFade 0.18s ease-out;
 }
 
 .hr-lightbox-content {
+  max-width: 92vw;
+  max-height: 88vh;
+  object-fit: contain;
+  border-radius: var(--radius);
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+  cursor: default;
   animation: hrLightboxZoom 0.24s var(--ease-out);
 }
 
 .hr-lightbox-close {
+  position: absolute;
   top: calc(1rem + var(--safe-top));
-  background: rgba(22, 10, 48, 0.85);
+  right: 1.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid var(--border-bright);
+  background: rgb(var(--bg-card-rgb) / 0.85);
+  color: var(--text);
+  font-size: 1.4rem;
+  cursor: pointer;
   transition: background var(--dur-fast) ease, border-color var(--dur-fast) ease, box-shadow var(--dur) ease;
 }
 
 /* A tint, not a solid neon disc: closing a photo is not the loudest thing
    that can happen on a page. */
 .hr-lightbox-close:hover {
-  background: rgba(255, 46, 182, 0.2);
+  background: rgb(var(--neon-pink-rgb) / 0.2);
   border-color: var(--neon-pink);
-  box-shadow: 0 0 14px rgba(255, 46, 182, 0.35);
+  box-shadow: 0 0 14px rgb(var(--neon-pink-rgb) / 0.35);
 }
 
 .hr-lightbox-close:focus-visible {
@@ -444,6 +461,15 @@ main.container:focus { outline: none; }
 }
 
 /* ===== Combobox ==================================================== */
+/* A text field with a visible list of known values. Replaces a native
+   <datalist>, which on iOS renders as a thin strip above the keyboard that is
+   easy to miss entirely — a field with ten known values read as a blank text
+   box. These options are real tap targets. (All of it is here; app.css held
+   an older copy of each rule that lost on import order.) */
+.hr-combobox {
+  position: relative;
+}
+
 /* The chevron a <select> has, on a field that also takes free text: it is
    the one visible sign that there is a list of known values behind the box
    — the whole reason this replaced <datalist>. Pink like the select's, so
@@ -456,23 +482,47 @@ main.container:focus { outline: none; }
   background-size: 12px 8px;
 }
 
+/* Position, size and max-height are set inline by `AnchoredList`, which
+   measures against the input — this list is portalled into <body> to escape
+   `.card { overflow: hidden }`, which was clipping it mid-row. */
 .hr-combobox-list {
-  border-color: var(--border-bright);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(0, 240, 255, 0.12);
+  z-index: 1100;
+  margin: 0;
+  padding: 0.25rem;
+  list-style: none;
+  max-height: 15rem;
+  overflow-y: auto;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-bright);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6), 0 0 0 1px rgb(var(--neon-cyan-rgb) / 0.12);
 }
 
 .hr-combobox-option {
+  display: block;
+  width: 100%;
+  /* 44px tap target — the phone is the primary interface here. */
+  min-height: 44px;
+  padding: 0.6rem 0.75rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
   transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
 }
 
 .hr-combobox-option:hover,
 .hr-combobox-option.is-active {
-  background: rgba(0, 240, 255, 0.1);
+  background: rgb(var(--neon-cyan-rgb) / 0.1);
   color: var(--text);
 }
 
 .hr-combobox-option.is-selected {
   color: var(--neon-cyan);
+  font-weight: 600;
 }
 
 /* ===== Outside-viewer frame (guest, share) ========================= */
@@ -506,7 +556,7 @@ main.container:focus { outline: none; }
   right: 0;
   bottom: -1px;
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(255, 46, 182, 0.5), rgba(0, 240, 255, 0.5), transparent);
+  background: linear-gradient(90deg, transparent, rgb(var(--neon-pink-rgb) / 0.5), rgb(var(--neon-cyan-rgb) / 0.5), transparent);
   pointer-events: none;
 }
 
@@ -526,7 +576,7 @@ main.container:focus { outline: none; }
 .hr-public-brand img {
   height: 30px;
   width: auto;
-  filter: drop-shadow(0 0 8px rgba(255, 46, 182, 0.45));
+  filter: drop-shadow(0 0 8px rgb(var(--neon-pink-rgb) / 0.45));
 }
 
 .hr-public-action { flex: none; }
@@ -691,7 +741,7 @@ main.container:focus { outline: none; }
   height: 56px;
   color: var(--text-muted);
   opacity: 0.7;
-  filter: drop-shadow(0 0 12px rgba(177, 78, 255, 0.35));
+  filter: drop-shadow(0 0 12px rgb(var(--neon-purple-rgb) / 0.35));
 }
 
 /* The message, in reading type: this is a sentence, not a page title. */
@@ -823,7 +873,7 @@ span.hr-share-thumb.hr-skeleton {
   width: max(120vw, 900px);
   height: 70vh;
   transform: translateX(-50%);
-  background: radial-gradient(closest-side, rgba(255, 46, 182, 0.22), rgba(177, 78, 255, 0.1) 55%, transparent 78%);
+  background: radial-gradient(closest-side, rgb(var(--neon-pink-rgb) / 0.22), rgb(var(--neon-purple-rgb) / 0.1) 55%, transparent 78%);
   pointer-events: none;
 }
 
@@ -868,7 +918,7 @@ span.hr-share-thumb.hr-skeleton {
 .hr-auth-logo {
   max-height: 64px;
   width: auto;
-  filter: drop-shadow(0 0 12px rgba(255, 46, 182, 0.45));
+  filter: drop-shadow(0 0 12px rgb(var(--neon-pink-rgb) / 0.45));
 }
 
 .hr-auth-wordmark {
@@ -955,15 +1005,60 @@ span.hr-share-thumb.hr-skeleton {
 }
 
 /* ===== Tag landing ================================================= */
-.hr-tag-landing { padding-top: 2rem; }
+/* Tag landing (/t/h/:id) — where a hat's QR sticker or NFC tag lands.
 
-.hr-tag-name {
-  font-size: 1.4rem;
-  line-height: 1.25;
+   Sized for one-handed use at the moment you're putting the hat on: the
+   action is a thumb-height target, centered, with nothing above it that
+   needs reading first. Everything else on the page is confirmation that you
+   scanned the right hat. All of it is here; half of it used to be a copy in
+   app.css that these rules overrode on import order. */
+.hr-tag-landing {
+  max-width: 26rem;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+  text-align: center;
 }
 
+.hr-tag-photo {
+  display: block;
+  width: 190px;
+  height: 190px;
+  margin: 0 auto 1rem;
+  object-fit: contain;
+  /* Cutouts are transparent PNGs and float on the canvas — no plate behind. */
+  filter: drop-shadow(0 8px 22px rgba(0, 0, 0, 0.55));
+}
+
+.hr-tag-photo-empty {
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  filter: none;
+}
+
+.hr-tag-name {
+  margin: 0 0 0.15rem;
+  font-size: 1.4rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.hr-tag-sub {
+  margin: 0 0 1.5rem;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+/* The whole reason the page exists. Deliberately oversized. */
 .hr-tag-action {
-  box-shadow: 0 6px 28px rgba(255, 46, 182, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  width: 100%;
+  min-height: 3.75rem;
+  font-size: 1.15rem;
+  letter-spacing: 0.02em;
+  box-shadow: 0 6px 28px rgb(var(--neon-pink-rgb) / 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.3);
 }
 
 .hr-tag-actions {
@@ -983,20 +1078,26 @@ span.hr-share-thumb.hr-skeleton {
   padding: 0.55rem 1.25rem;
   margin: 0;
   border-radius: var(--radius-pill);
-  border: 1px solid rgba(57, 255, 20, 0.38);
-  background: rgba(57, 255, 20, 0.08);
-  box-shadow: 0 0 22px rgba(57, 255, 20, 0.12);
-  color: #8dff7a;
+  border: 1px solid rgb(var(--neon-green-rgb) / 0.38);
+  background: rgb(var(--neon-green-rgb) / 0.08);
+  box-shadow: 0 0 22px rgb(var(--neon-green-rgb) / 0.12);
+  color: var(--tint-green);
   font-family: var(--font-body);
   font-size: 1.05rem;
   font-weight: 650;
   animation: hrTagPop 0.32s var(--ease-out);
 }
 
+.hr-tag-note {
+  margin: 0.75rem 0 0;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
 .hr-tag-done svg {
   width: 20px;
   height: 20px;
-  filter: drop-shadow(0 0 4px rgba(57, 255, 20, 0.7));
+  filter: drop-shadow(0 0 4px rgb(var(--neon-green-rgb) / 0.7));
 }
 
 @keyframes hrTagPop {
@@ -1010,12 +1111,18 @@ span.hr-share-thumb.hr-skeleton {
    became a flex row (icon + message), which packs to the left edge. */
 .hr-tag-landing .hr-error-note { justify-content: center; }
 
-.hr-tag-meta { font-variant-numeric: tabular-nums; }
+.hr-tag-meta {
+  margin: 1.25rem 0 0.5rem;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
 
 .hr-tag-more {
   display: inline-flex;
   align-items: center;
   min-height: 44px;
+  font-size: 0.85rem;
 }
 
 /* Skeleton pieces in the landing's own shape. */

@@ -63,16 +63,20 @@ class CaseRead(BaseModel):
     beanie_count: int
     regular_count: int
     room_id: int
-    room_name: str
+    #: Null when the case points at a room that no longer exists — an orphan
+    #: an older version could leave (see `case_service.delete_case`). It used
+    #: to read "Unknown", a room name nobody created, indistinguishable from
+    #: a room actually called that.
+    room_name: str | None
+    # Photo paths of the active hats inside, in shelf order (`position_in_case`,
+    # the order the display ids run), capped at four. The Cases grid renders
+    # these as a collage: a photo of the case itself is the same gray box for
+    # every case, where the hats are the thing you are actually looking for.
+    hat_thumbs: list[str] = []
     # Computed server-side from `services/capacity`, the same rule the write
     # path enforces. Sent so the case picker can gray out a case that would
     # 409 on save rather than letting you pick it and fail — at 40-60 cases
     # you cannot eyeball which are full or hold the wrong hat type.
-    # Photo paths of the hats inside, newest-first-ish (id order), capped at
-    # four. The Cases grid renders these as a collage: a photo of the case
-    # itself is the same gray box for every case, where the hats are the thing
-    # you are actually looking for.
-    hat_thumbs: list[str] = []
     accepts_regular: bool = True
     accepts_beanie: bool = True
     #: Slots left before FULL — zero at nominal, even though one more will

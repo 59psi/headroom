@@ -5,7 +5,7 @@ import { Modal } from '../common/Modal';
  * In-app replacements for `window.confirm` and `window.prompt`.
  *
  * The browser's own dialogs are the one piece of the app that cannot be
- * styled: a grey system sheet reading "localhost:8000 says…" dropped over a
+ * styled: a gray system sheet reading "localhost:8000 says…" dropped over a
  * neon UI, blocking the page's JavaScript while it is up. They also cannot
  * explain themselves — no title, no way to mark the destructive button as
  * destructive — and iOS standalone PWAs suppress them entirely after a few

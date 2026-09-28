@@ -63,6 +63,16 @@ describe('HatFilterBar', () => {
     expect(screen.getByRole('option', { name: 'Beanies' })).toBeInTheDocument();
   });
 
+  it('ties each label to its select, so tapping the word focuses the control', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<Harness />);
+    const style = screen.getByLabelText('Style');
+    // Named by its <label>, not a repeated aria-label.
+    expect(style).not.toHaveAttribute('aria-label');
+    await user.click(screen.getByText('Style', { selector: 'label' }));
+    expect(style).toHaveFocus();
+  });
+
   it('offers the colors it is handed, not a hard-coded palette', () => {
     renderWithProviders(<Harness />);
     const color = screen.getByLabelText('Color') as HTMLSelectElement;
@@ -185,6 +195,24 @@ describe('ActiveFilterChips', () => {
     }
     renderWithProviders(<ColorHarness />, { route: '/search?color=%23aabbcc' });
     expect(screen.getByTestId('color')).toHaveTextContent('');
+  });
+
+  it('refuses a Type the filter cannot hold, and names a valid one as the select does', async () => {
+    function TypeHarness() {
+      const state = useHatFilters();
+      return (
+        <>
+          <div data-testid="type">{state.filters.type}</div>
+          <ActiveFilterChips state={state} />
+        </>
+      );
+    }
+    const { unmount } = renderWithProviders(<TypeHarness />, { route: '/hats?type=hats' });
+    expect(screen.getByTestId('type')).toHaveTextContent('');
+    unmount();
+
+    renderWithProviders(<TypeHarness />, { route: '/hats?type=beanie' });
+    expect(screen.getByRole('button', { name: 'Remove filter Type: Beanies' })).toBeInTheDocument();
   });
 
   it('renders nothing when nothing is filtering', () => {

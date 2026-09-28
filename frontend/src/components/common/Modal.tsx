@@ -83,8 +83,10 @@ interface ModalProps {
   footer?: ReactNode;
   /** `max-width` of the dialog box; the stylesheet's default otherwise. */
   maxWidth?: number;
-  /** Class for the body wrapper; the cropper zeroes its padding. */
-  bodyStyle?: React.CSSProperties;
+  /** Extra class for the body wrapper — the cropper's zeroes its padding
+   *  (`.hr-cropper-body`). A class, not a style object: styling lives in the
+   *  stylesheets, and this prop was documented as one while taking the other. */
+  bodyClassName?: string;
   /**
    * The body is the dialog's DESCRIPTION (`aria-describedby`), read out with
    * the title when it opens. For short message dialogs — a confirm's "its
@@ -100,11 +102,11 @@ interface ModalProps {
 
 /**
  * The one modal shell. Renders into `<body>` (see `ModalPortal`), carries
- * the dialog role and labelling, and delegates the keyboard to
+ * the dialog role and labeling, and delegates the keyboard to
  * `useDialogKeys`. A click on the backdrop closes; a click inside does not.
  */
 export function Modal({
-  title, onClose, children, footer, maxWidth, bodyStyle, describeBody = false, alert = false,
+  title, onClose, children, footer, maxWidth, bodyClassName, describeBody = false, alert = false,
 }: ModalProps) {
   const titleId = useId();
   const bodyId = useId();
@@ -131,7 +133,7 @@ export function Modal({
             <h5 className="modal-title" id={titleId}>{title}</h5>
             <button type="button" className="btn-close" onClick={onClose} aria-label="Close" />
           </div>
-          <div className="modal-body" id={bodyId} style={bodyStyle}>{children}</div>
+          <div className={`modal-body${bodyClassName ? ` ${bodyClassName}` : ''}`} id={bodyId}>{children}</div>
           {footer && <div className="modal-footer">{footer}</div>}
         </div>
       </div>

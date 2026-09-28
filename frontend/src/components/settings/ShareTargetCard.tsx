@@ -1,10 +1,11 @@
 import { useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { DEFAULT_HAT_BASICS } from '../hats/HatFormFields';
-import { copyText } from '../../lib/clipboard';
+import { useHatLabels } from '../../lib/labels';
+import { CopyButton } from '../ui/CopyButton';
 import { Panel } from '../ui/Panel';
 import { Segmented, type SegmentedOption } from '../ui/Segmented';
-import { useToast } from '../ui/Toast';
+import { StatusPill } from '../ui/StatusPill';
 
 type Platform = 'ios' | 'android';
 
@@ -36,23 +37,39 @@ function detectPlatform(): Platform {
  * button.
  */
 export function ShareTargetCard() {
-  const toast = useToast();
+  const labels = useHatLabels();
   const [platform, setPlatform] = useState<Platform>(detectPlatform);
   const urlRef = useRef<HTMLInputElement>(null);
   const importUrl = `${window.location.origin}/api/hats/import`;
-
-  async function copyUrl() {
-    if (await copyText(importUrl, urlRef.current)) toast.success('URL copied');
-    // `copyText` leaves the field selected when it cannot copy, so a
-    // long-press → Copy is one gesture away.
-    else toast.error('Couldn’t copy — the URL is selected, copy it by hand.');
-  }
 
   return (
     <Panel
       title="Share photos to Headroom"
       className="hr-sharing"
+      // Nothing here is stored — the setup lives on each phone — so the one
+      // word is what the card asks of you, not a state it could check.
+      status={(
+        <StatusPill tone="info" title="A one-time setup on each phone; nothing to switch on here">
+          Per phone
+        </StatusPill>
+      )}
       description="Send photos from your phone's share sheet straight into a bulk import."
+      help={(
+        <>
+          <p>
+            A shared photo goes into the same queue as the Bulk Import page:
+            each one becomes a hat, its background is removed, and — with a
+            Claude key — it is identified. Nothing about the photo leaves this
+            server.
+          </p>
+          <p>
+            Android uses the browser&rsquo;s Web Share Target, which only an
+            installed app gets. iOS Safari has no Share Target, so a Shortcut
+            posts the photos instead, signed with your API token — rotating
+            the token means updating the Shortcut.
+          </p>
+        </>
+      )}
     >
       <Segmented
         label="Instructions for"
@@ -95,9 +112,11 @@ export function ShareTargetCard() {
                       readOnly
                       onFocus={e => e.currentTarget.select()}
                     />
-                    <button type="button" className="btn btn-outline-secondary" onClick={() => { void copyUrl(); }}>
-                      Copy
-                    </button>
+                    {/* The field is the fallback: `copyText` selects it and,
+                        when even that is refused, leaves it selected for a
+                        long-press → Copy. */}
+                    <CopyButton text={importUrl} what="import URL" fallbackInput={urlRef} />
+
                   </div>
                 </li>
                 <li>Method: <code>POST</code></li>
@@ -121,8 +140,9 @@ export function ShareTargetCard() {
 
       <p className="text-muted small mt-3 mb-0">
         Each shared photo becomes a hat with the same defaults the Bulk Import
-        page uses (style: {DEFAULT_HAT_BASICS.style} · size: {DEFAULT_HAT_BASICS.size} ·
-        condition: {DEFAULT_HAT_BASICS.condition}) — edit after Claude finishes analyzing.
+        page uses (style: {labels.style(DEFAULT_HAT_BASICS.style)} · size:{' '}
+        {labels.size(DEFAULT_HAT_BASICS.size)} · condition:{' '}
+        {labels.condition(DEFAULT_HAT_BASICS.condition)}) — edit after Claude finishes analyzing.
       </p>
     </Panel>
   );

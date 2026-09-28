@@ -17,21 +17,29 @@
 .hr-crumb-link {
   color: inherit;
   text-decoration: underline;
-  text-decoration-color: rgba(0, 240, 255, 0.45);
+  text-decoration-color: rgb(var(--neon-cyan-rgb) / 0.45);
   text-underline-offset: 0.2em;
   transition: text-decoration-color var(--dur-fast) ease;
 }
 
 .hr-crumb-link:hover { text-decoration-color: currentColor; }
 
-/* The analysis badge in the pills' voice: sentence case at caption size.
-   Tracked caps made "2/4 · IDENTIFYING" the loudest words in the header. */
-.hr-analysis-status {
-  min-height: 26px;
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  text-transform: none;
+/* A fingertip needs the documented 44px, and people DO tap this (see
+   `HatHeadingId`) — at the title's line height it was a 77×32 target. It
+   sits inside a heading beside the rest of the id, so the box grows by an
+   invisible hit area around the glyphs rather than by its own height, which
+   would push the title line apart. */
+@media (pointer: coarse) {
+  .hr-crumb-link { position: relative; }
+  .hr-crumb-link::after {
+    content: '';
+    position: absolute;
+    left: -4px;
+    right: -4px;
+    top: 50%;
+    height: 44px;
+    transform: translateY(-50%);
+  }
 }
 
 /* A link inside an alert takes the alert's ink, underlined. */
@@ -39,6 +47,22 @@
   color: inherit;
   text-decoration: underline;
   text-underline-offset: 2px;
+}
+
+/* The analysis banners' "Settings" link is one word in a sentence — 53×17
+   under a fingertip. Same invisible hit area as the breadcrumb above: the
+   sentence keeps its line height, the target gets its 44px. */
+@media (pointer: coarse) {
+  .hr-alert-link { position: relative; }
+  .hr-alert-link::after {
+    content: '';
+    position: absolute;
+    left: -6px;
+    right: -6px;
+    top: 50%;
+    height: 44px;
+    transform: translateY(-50%);
+  }
 }
 
 .hr-empty-title {
@@ -100,6 +124,15 @@
 .hr-hero-actions .btn { width: 100%; }
 .hr-hero-actions > .hr-hero-primary { grid-column: 1 / -1; }
 
+/* What Reanalyze keeps and rewrites, under the buttons: the one sentence a
+   confirm dialog would have carried, for a button that has none. */
+.hr-hero-note {
+  margin: 0.5rem 0 0;
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
 .hr-upload-note {
   margin-top: 0.5rem;
   font-family: var(--font-mono);
@@ -137,7 +170,7 @@
   font-size: 1.5rem;
   letter-spacing: 0.04em;
   color: var(--neon-pink);
-  text-shadow: 0 0 16px rgba(255, 46, 182, 0.35);
+  text-shadow: 0 0 16px rgb(var(--neon-pink-rgb) / 0.35);
   overflow-wrap: anywhere;
 }
 
@@ -173,7 +206,7 @@
 .hr-id-notes {
   margin: 1rem 0 0;
   padding-left: 0.75rem;
-  border-left: 2px solid rgba(177, 78, 255, 0.45);
+  border-left: 2px solid rgb(var(--neon-purple-rgb) / 0.45);
   font-style: italic;
   line-height: 1.5;
   color: var(--text-secondary);
@@ -185,7 +218,7 @@
   padding: 0.9rem 1rem;
   border-radius: var(--radius-sm);
   background:
-    radial-gradient(ellipse at 0% 0%, rgba(0, 240, 255, 0.08), transparent 60%),
+    radial-gradient(ellipse at 0% 0%, rgb(var(--neon-cyan-rgb) / 0.08), transparent 60%),
     var(--surface-inset);
   border: 1px solid var(--border-soft);
 }
@@ -346,7 +379,7 @@
   margin: 1rem 0;
   padding: 0.65rem;
   border-radius: var(--radius);
-  background: rgba(15, 5, 36, 0.88);
+  background: rgb(var(--bg-surface-rgb) / 0.88);
   backdrop-filter: blur(14px) saturate(140%);
   -webkit-backdrop-filter: blur(14px) saturate(140%);
   border: 1px solid var(--border);
@@ -374,14 +407,15 @@ body.hr-picker-open .hr-form-actions {
 
 .hr-form-actions-row > .hr-form-actions-main { flex: 1 1 auto; }
 
-/* Edit form color rows: swatch | name | remove, with the general color
-   under the name on a phone and beside it from 576px. */
+/* Edit form color rows: swatch, name and remove on the first line; the
+   general color and the tier side by side under the name on a phone, all
+   five in one row from 576px. */
 .hr-color-edit-row {
   display: grid;
-  grid-template-columns: 48px minmax(0, 1fr) 44px;
+  grid-template-columns: 48px minmax(0, 1fr) minmax(0, 8.5rem) 44px;
   grid-template-areas:
-    "swatch name remove"
-    "swatch general remove";
+    "swatch name name remove"
+    "swatch general tier remove";
   gap: 0.5rem;
   align-items: center;
   padding: 0.6rem 0;
@@ -394,6 +428,7 @@ body.hr-picker-open .hr-form-actions {
 .hr-color-edit-swatch { grid-area: swatch; }
 .hr-color-edit-name { grid-area: name; }
 .hr-color-edit-general { grid-area: general; }
+.hr-color-edit-tier { grid-area: tier; }
 
 .hr-color-edit-remove.btn {
   grid-area: remove;
@@ -405,8 +440,8 @@ body.hr-picker-open .hr-form-actions {
 
 @media (min-width: 576px) {
   .hr-color-edit-row {
-    grid-template-columns: 48px minmax(0, 1.3fr) minmax(0, 1fr) 44px;
-    grid-template-areas: "swatch name general remove";
+    grid-template-columns: 48px minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 8.5rem) 44px;
+    grid-template-areas: "swatch name general tier remove";
   }
 }
 
@@ -433,10 +468,10 @@ body.hr-picker-open .hr-form-actions {
   aspect-ratio: 1;
   margin: 0 auto;
   padding: 1rem;
-  border: 1.5px dashed rgba(255, 46, 182, 0.4);
+  border: 1.5px dashed rgb(var(--neon-pink-rgb) / 0.4);
   border-radius: var(--radius-sm);
   background:
-    radial-gradient(ellipse at center, rgba(255, 46, 182, 0.08), transparent 65%),
+    radial-gradient(ellipse at center, rgb(var(--neon-pink-rgb) / 0.08), transparent 65%),
     var(--surface-inset);
   color: var(--text-secondary);
   font: inherit;
@@ -449,7 +484,7 @@ body.hr-picker-open .hr-form-actions {
 .hr-photo-capture.is-dragging .hr-photo-drop,
 .hr-import-drop-zone.is-dragging .hr-photo-drop {
   border-color: var(--neon-cyan);
-  box-shadow: 0 0 22px rgba(0, 240, 255, 0.18);
+  box-shadow: 0 0 22px rgb(var(--neon-cyan-rgb) / 0.18);
 }
 
 .hr-photo-drop:focus-visible {
@@ -466,7 +501,7 @@ body.hr-picker-open .hr-form-actions {
   width: 2.25rem;
   height: 2.25rem;
   color: var(--neon-pink);
-  filter: drop-shadow(0 0 6px rgba(255, 46, 182, 0.55));
+  filter: drop-shadow(0 0 6px rgb(var(--neon-pink-rgb) / 0.55));
 }
 
 .hr-photo-drop-title {
@@ -486,6 +521,10 @@ body.hr-picker-open .hr-form-actions {
 }
 
 /* ===== Crop modal ==================================================== */
+/* The crop stage runs edge to edge; the controls under it carry their own
+   padding. Given to the modal body through `Modal`'s `bodyClassName`. */
+.hr-cropper-body { padding: 0; }
+
 .hr-cropper-stage {
   position: relative;
   width: 100%;
@@ -500,6 +539,13 @@ body.hr-picker-open .hr-form-actions {
   width: 100%;
   height: 32px;
   accent-color: var(--neon-pink);
+}
+
+/* The crop's zoom slider is dragged with a thumb on a phone; 32px of track
+   height is less than the documented 44px target, and a range input's hit
+   area is its box. */
+@media (pointer: coarse) {
+  .hr-range { height: 44px; }
 }
 
 /* ===== Modals: footer + color editor ================================= */
@@ -623,7 +669,7 @@ body.hr-picker-open .hr-form-actions {
 .hr-import-error {
   font-family: var(--font-mono);
   font-size: 0.7rem;
-  color: #ff8aa3;
+  color: var(--tint-red);
   overflow-wrap: anywhere;
 }
 

@@ -61,6 +61,16 @@ describe('ValuationPage', () => {
     expect(within(other).getAllByRole('cell').map(c => c.textContent)).toEqual(['1', '—', '—']);
   });
 
+  it('names a style the way the rest of the app does', async () => {
+    hats.getStyles.mockResolvedValue([{ value: 'a_game', label: 'A-Game', is_beanie: false }]);
+    hats.listAllHats.mockResolvedValue([hatFixture({ id: 1, style: 'a_game' })]);
+    renderWithProviders(<ValuationPage />);
+
+    const card = await screen.findByRole('region', { name: 'By style' });
+    expect(await within(card).findByRole('rowheader', { name: 'A-Game' })).toBeInTheDocument();
+    expect(within(card).queryByText('a game')).toBeNull();
+  });
+
   it('keeps the whole method on the page, folded behind a disclosure', async () => {
     renderWithProviders(<ValuationPage />);
 

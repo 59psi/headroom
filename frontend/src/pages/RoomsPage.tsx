@@ -2,8 +2,11 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useQuery, useMutation, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import { listRooms, createRoom, updateRoom, deleteRoom, setDefaultRoom } from '../api/rooms';
-import { invalidateHatViews } from '../lib/invalidate';
-import { ErrorNote } from '../components/common/ErrorNote';
+import { hatViewKeys, invalidateAll } from '../lib/invalidate';
+import { plural } from '../lib/format';
+import { qk } from '../lib/queryKeys';
+import { ErrorNote, type Failing } from '../components/common/ErrorNote';
+import { LoadError } from '../components/common/LoadError';
 import { PageHeader } from '../components/ui/PageHeader';
 import { Panel } from '../components/ui/Panel';
 import { StatusPill } from '../components/ui/StatusPill';
@@ -12,15 +15,26 @@ import { useConfirm } from '../components/ui/Dialogs';
 import { useToast } from '../components/ui/Toast';
 import type { RoomRead } from '../types';
 
-const ROOMS_KEY = ['rooms'] as const;
+const ROOMS_KEY = qk.rooms();
 
 /** Server-side names are capped here (`schemas/common.RoomName`). */
 const ROOM_NAME_MAX = 100;
 
-type Failing = { isError: boolean; error: unknown };
-
-function plural(n: number, one: string, many = `${one}s`) {
-  return `${n} ${n === 1 ? one : many}`;
+/**
+ * Everything a room mutation changes, for all four of them.
+ *
+ * Every room change lands in TWO room lists that are not prefixes of each
+ * other: the full `RoomRead[]` this page renders, and the `{value, label}`
+ * options behind the room dropdowns (the hat filters, the hat forms, the
+ * Cases filter). Each mutation listed its own keys, and nothing held them to
+ * both — removing every options invalidation left all the tests green while
+ * the dropdowns offered a deleted or renamed room for the 30s staleTime. A
+ * rename or delete also changes what is IN rooms — the `room_name` on every
+ * hat and case, the cases and loose hats a delete moves to the default room —
+ * so those two refresh every hat view as well (`hatViewKeys`).
+ */
+function invalidateRoomViews(qc: QueryClient, { contents }: { contents: boolean }) {
+  void invalidateAll(qc, [qk.meta.rooms(), ROOMS_KEY], contents ? hatViewKeys() : []);
 }
 
 /**
@@ -67,6 +81,11 @@ function RenameForm({ room, draft, onSave, onCancel }: {
   onCancel: () => void;
 }) {
   const [value, setValue] = useState(draft ?? room.name);
+  // Whether this field was REOPENED by a failed save, as of mounting. A
+  // reopened field is a fresh mount (see `Editing`), so this is fixed for the
+  // field's life — which makes the focus effect below run once, with its one
+  // input named, rather than by leaving `draft` out of its dependencies.
+  const [reopened] = useState(draft !== undefined);
   const inputRef = useRef<HTMLInputElement>(null);
   const trimmed = value.trim();
   // Focus with the old name SELECTED, so typing replaces it and an arrow key
@@ -77,12 +96,10 @@ function RenameForm({ room, draft, onSave, onCancel }: {
   // row's own Rename button, the element focus was on.
   useEffect(() => {
     const active = document.activeElement;
-    if (draft !== undefined && active && active !== document.body) return;
+    if (reopened && active && active !== document.body) return;
     inputRef.current?.focus();
     inputRef.current?.select();
-    // Mount only: a reopened field is a fresh mount (see `Editing`).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [reopened]);
 
   return (
     <form
@@ -222,10 +239,7 @@ export function RoomsPage() {
       setNewRoomName('');
       toast.success(`Added “${room.name}”`);
     },
-    onSettled: () => {
-      qc.invalidateQueries({ queryKey: ROOMS_KEY });
-      qc.invalidateQueries({ queryKey: ['meta', 'rooms'] });
-    },
+    onSettled: () => invalidateRoomViews(qc, { contents: false }),
   });
 
   // Renaming a room changes the `room_name` printed on every hat card and
@@ -248,10 +262,7 @@ export function RoomsPage() {
       setEditing(cur => cur ?? { id, draft: name });
     },
     onSuccess: (room) => toast.success(`Renamed to “${room.name}”`),
-    onSettled: () => {
-      invalidateHatViews(qc);
-      qc.invalidateQueries({ queryKey: ['meta', 'rooms'] });
-    },
+    onSettled: () => invalidateRoomViews(qc, { contents: true }),
   });
 
   const deleteMut = useMutation({
@@ -259,10 +270,7 @@ export function RoomsPage() {
     onMutate: ({ id }) => applyOptimistic(qc, rooms => rooms.filter(r => r.id !== id)),
     onError: (_err, _vars, ctx) => rollback(qc, ctx),
     onSuccess: (_void, { name }) => toast.success(`Deleted “${name}”`),
-    onSettled: () => {
-      invalidateHatViews(qc);
-      qc.invalidateQueries({ queryKey: ['meta', 'rooms'] });
-    },
+    onSettled: () => invalidateRoomViews(qc, { contents: true }),
   });
 
   // Exactly one room holds the flag, so moving it is predictable: this row
@@ -272,10 +280,7 @@ export function RoomsPage() {
     onMutate: id => applyOptimistic(qc, rooms => rooms.map(r => ({ ...r, is_default: r.id === id }))),
     onError: (_err, _id, ctx) => rollback(qc, ctx),
     onSuccess: (room) => toast.success(`“${room.name}” is now the default room`),
-    onSettled: () => {
-      qc.invalidateQueries({ queryKey: ROOMS_KEY });
-      qc.invalidateQueries({ queryKey: ['meta', 'rooms'] });
-    },
+    onSettled: () => invalidateRoomViews(qc, { contents: false }),
   });
 
   function handleRename(room: RoomRead, name: string) {
@@ -332,12 +337,9 @@ export function RoomsPage() {
   if (roomsQ.isLoading) {
     body = <Skeleton lines={4} label="Loading rooms…" />;
   } else if (roomsQ.error || !rooms) {
-    body = (
-      <>
-        <ErrorNote of={{ isError: true, error: roomsQ.error }} what="Could not load rooms" className="" />
-        <Link to="/" className="btn btn-outline-secondary btn-sm mt-3">Back</Link>
-      </>
-    );
+    // A retry in place, like every other list — "Back" was the only way out
+    // and it went home.
+    body = <LoadError what="Couldn’t load your rooms." queries={[roomsQ]} />;
   } else {
     body = (
       <ul className="hr-room-list">

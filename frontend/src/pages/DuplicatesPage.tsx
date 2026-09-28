@@ -7,7 +7,10 @@ import { Panel } from '../components/ui/Panel';
 import { Skeleton } from '../components/ui/Skeleton';
 import { StatusPill } from '../components/ui/StatusPill';
 import { tileSrc } from '../lib/photo';
-import { placementLabel } from '../lib/placement';
+import { hatName, placementLabel } from '../lib/placement';
+import { plural } from '../lib/format';
+import { qk } from '../lib/queryKeys';
+import { LoadError } from '../components/common/LoadError';
 
 /**
  * Hats that look like the same hat entered twice.
@@ -18,10 +21,11 @@ import { placementLabel } from '../lib/placement';
  * stays theirs.
  */
 export function DuplicatesPage() {
-  const { data, isLoading, error, refetch, isFetching } = useQuery({
-    queryKey: ['duplicates'],
+  const dupesQ = useQuery({
+    queryKey: qk.duplicates(),
     queryFn: findDuplicates,
   });
+  const { data, isLoading, error } = dupesQ;
 
   const header = (
     <PageHeader
@@ -52,15 +56,7 @@ export function DuplicatesPage() {
     return (
       <>
         {header}
-        <div className="alert alert-danger hr-cp-error" role="alert">
-          <span>Couldn&rsquo;t check for duplicates.</span>
-          <button
-            type="button"
-            className="btn btn-sm btn-outline-secondary"
-            onClick={() => { void refetch(); }}
-            disabled={isFetching}
-          >{isFetching ? 'Retrying…' : 'Try again'}</button>
-        </div>
+        <LoadError what="Couldn’t check for duplicates." queries={[dupesQ]} />
       </>
     );
   }
@@ -85,8 +81,7 @@ export function DuplicatesPage() {
       ) : (
         <>
           <p className="hr-cp-lede">
-            {total} hats across {groups.length}{' '}
-            {groups.length === 1 ? 'group' : 'groups'}. Nothing is deleted
+            {plural(total, 'hat')} across {plural(groups.length, 'group')}. Nothing is deleted
             here — open a hat to dispose of it, or leave it if you really do own
             two.
           </p>
@@ -113,13 +108,13 @@ export function DuplicatesPage() {
                       {hat.photo_path ? (
                         <img
                           src={tileSrc(hat)}
-                          alt={hat.display_id || `Hat ${hat.id}`}
+                          alt={hatName(hat)}
                           className="hr-cp-dup-photo"
                         />
                       ) : (
                         <div className="hr-cp-dup-photo hr-cp-dup-nophoto">no photo</div>
                       )}
-                      <div className="hr-cp-dup-id">{hat.display_id || `#${hat.id}`}</div>
+                      <div className="hr-cp-dup-id">{hatName(hat)}</div>
                       <div className="hr-cp-dup-where">
                         {placementLabel(hat)}
                         {hat.case_display_id && hat.room_name ? ` · ${hat.room_name}` : ''}
