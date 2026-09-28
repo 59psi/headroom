@@ -86,6 +86,11 @@ that fails without the fix.
 - Stricter validation on passkey sign-in and on several admin inputs.
 - `/docs` and `/redoc` are no longer served; `/openapi.json` stays behind
   sign-in.
+- In the container image, the app's code, Python environment, background-
+  removal model and web bundle are all read-only to the user the app runs as;
+  CI checks this from inside the built image. A different rembg model is now
+  chosen at build time (`REMBG_MODEL` build argument), not downloaded at run
+  time.
 
 ### Changed
 
