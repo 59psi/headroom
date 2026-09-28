@@ -3,6 +3,7 @@ import { Link } from 'react-router';
 import type { HatRead } from '../../types';
 import { tileSrc } from '../../lib/photo';
 import { useHatLabels } from '../../lib/labels';
+import { hatName } from '../../lib/placement';
 
 /**
  * A ranked "top N" list of hats — number, thumbnail, id, name, one figure.
@@ -59,7 +60,9 @@ export function RankedHatList({
               <span className="hr-cp-rank-thumb hr-cp-thumb-empty" aria-hidden="true" />
             )}
             <span className="hr-cp-rank-main">
-              <span className="hr-cp-rank-id">{h.display_id || `Hat #${h.id}`}</span>
+              {/* The id line only — the model has its own line below, so the
+                  shelf id or "Hat #id", never the model twice. */}
+              <span className="hr-cp-rank-id">{hatName({ id: h.id, display_id: h.display_id })}</span>
               <span className="hr-cp-rank-name">
                 {h.brand || labels.style(h.style)}{h.model_name && ` · ${h.model_name}`}
               </span>

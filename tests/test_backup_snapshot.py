@@ -9,11 +9,10 @@ invisible until a restore, which is the worst possible time to discover them.
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 import tarfile
 from pathlib import Path
-
-import asyncio
 
 import pytest
 
@@ -90,8 +89,6 @@ async def test_backup_download_streams_in_chunks(client, tmp_path, monkeypatch):
     memory limit, the one operation whose job is protecting the data was the
     one most able to kill the process.
     """
-    from headroom.services import backup_service
-
     # Force several chunks out of a small payload rather than fabricating a
     # multi-megabyte fixture. The payload has to be INCOMPRESSIBLE, though: an
     # empty test database gzips to under 512 bytes, so the old `>= 1` assertion
@@ -99,6 +96,7 @@ async def test_backup_download_streams_in_chunks(client, tmp_path, monkeypatch):
     import os
 
     from headroom.config import settings
+    from headroom.services import backup_service
 
     (settings.upload_dir / "hats").mkdir(parents=True, exist_ok=True)
     (settings.upload_dir / "hats" / "noise.bin").write_bytes(os.urandom(4096))
@@ -114,18 +112,60 @@ async def test_backup_download_streams_in_chunks(client, tmp_path, monkeypatch):
 
 @pytest.mark.anyio
 async def test_streaming_cleans_up_its_temp_copy(client, monkeypatch):
-    """An abandoned download must not leak a full copy of the collection."""
-    import tempfile
-    from pathlib import Path
+    """A finished download must not leave a full copy of the collection behind.
 
+    Looks where the archive is actually staged — `backups/.spool/` on the data
+    volume (see `test_backup_staging.py`). This used to glob the system temp
+    dir, and would have gone on passing there, vacuously, after the spool
+    moved.
+    """
     from headroom.services import backup_service
 
-    before = {p.name for p in Path(tempfile.gettempdir()).glob("headroom-stream-*")}
+    spool = backup_service._backup_dir() / backup_service.SPOOL_DIR_NAME
     async for _ in backup_service.stream_backup(include_uploads=False):
-        pass
-    after = {p.name for p in Path(tempfile.gettempdir()).glob("headroom-stream-*")}
+        assert list(spool.glob("headroom-stream-*")), "not staged where this test looks"
+    assert list(spool.glob("headroom-stream-*")) == [], "the staged tarball was left behind"
 
-    assert after == before, "the temp tarball was left behind"
+
+@pytest.mark.anyio
+async def test_an_abandoned_download_cleans_up_too(client, tmp_path, monkeypatch):
+    """An abandoned download must not leak a full copy of the collection.
+
+    A client that disconnects mid-download closes the generator EARLY, which
+    is a different exit from the finished download above: cleanup that ran
+    only on normal completion passed a test that read the stream to its end.
+    So this takes one chunk of several and closes.
+
+    It also used to glob the system temp dir, shared with every other process
+    on the machine, and failed on another run's leftovers. Staging is on the
+    data volume now; the temp dir is pointed at a private directory anyway so
+    that nothing here can read — or be failed by — shared state.
+    """
+    import os
+    import tempfile
+
+    from headroom.config import settings
+    from headroom.services import backup_service
+
+    private_tmp = tmp_path / "system-tmp"
+    private_tmp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(private_tmp))
+    (settings.upload_dir / "hats" / "noise.bin").write_bytes(os.urandom(4096))
+    monkeypatch.setattr(backup_service, "_STREAM_CHUNK", 512)
+    spool = backup_service._backup_dir() / backup_service.SPOOL_DIR_NAME
+
+    gen = backup_service.stream_backup(include_uploads=True)
+    await gen.__anext__()
+    staged = list(spool.glob("headroom-stream-*"))
+    # Preconditions: the archive is staged where this test looks, and the
+    # download really is being cut off partway (more than one chunk is left).
+    assert len(staged) == 1, "not staged where this test looks"
+    assert (staged[0] / "backup.tar.gz").stat().st_size > 2 * 512, "one chunk was the whole archive"
+    await gen.aclose()
+
+    assert not staged[0].exists(), "an abandoned download leaked its archive"
+    assert list(spool.iterdir()) == [], "an abandoned download left staging behind"
+    assert list(private_tmp.iterdir()) == [], "the download staged in the system temp dir"
 
 
 @pytest.mark.anyio

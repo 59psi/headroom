@@ -10,6 +10,7 @@ import { screen } from '@testing-library/react';
 import { Routes, Route } from 'react-router';
 import { renderWithProviders } from '../test/utils';
 import { GuestHatPage } from './GuestHatPage';
+import { ApiError } from '../api/client';
 import * as guestApi from '../api/guest';
 import type { SharedHat } from '../types';
 
@@ -26,7 +27,8 @@ const mocked = vi.mocked(guestApi);
 function hat(over: Partial<SharedHat> = {}): SharedHat {
   return {
     id: 7, display_id: 'A-001-01', brand: 'Melin', model_name: 'Coronado',
-    style: 'a_game', photo_url: null, thumb_url: null, colors: [], case: 'A-001', room: 'Study',
+    style: 'a_game', style_label: 'A-Game', photo_url: null, thumb_url: null, colors: [],
+    case: 'A-001', room: 'Study',
     ...over,
   };
 }
@@ -63,13 +65,29 @@ describe('GuestHatPage', () => {
     expect(screen.getByText('Shelf')).toBeInTheDocument();
   });
 
+  it('names the style as every screen does — the server’s word, not the value unpicked', async () => {
+    // No brand or model: the style is the title. It read "A Game" here while
+    // every signed-in screen says "A-Game".
+    render(hat({ brand: null, model_name: null }));
+    expect(await screen.findByRole('heading', { name: 'A-Game' })).toBeInTheDocument();
+    expect(screen.queryByText('A Game')).toBeNull();
+  });
+
   it('offers a way back to the collection', async () => {
     render(hat());
     expect(await screen.findByRole('link', { name: '← Collection' })).toBeInTheDocument();
   });
 
+  it('says "not available" only for a 404, and retries a server failure', async () => {
+    render(new ApiError('database is locked', 500));
+    expect(await screen.findByRole('heading', { name: 'Couldn’t load this right now' })).toBeInTheDocument();
+    expect(screen.queryByText(/isn't available/i)).toBeNull();
+    expect(screen.getByRole('link', { name: '← Collection' })).toHaveAttribute('href', '/guest');
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+  });
+
   it('handles a hat that is not available', async () => {
-    render(new Error('Not found'));
+    render(new ApiError('Not found', 404));
     expect(await screen.findByText(/isn't available/i)).toBeInTheDocument();
     // The notice's one action says where it goes in words — it is the only
     // thing on the page, so a bare "← Collection" chip is too little.
@@ -82,7 +100,7 @@ describe('GuestHatPage', () => {
   });
 
   it('lists the colors by name', async () => {
-    render(hat({ colors: [{ name: 'Navy', hex: '#001f3f' }, { name: 'White', hex: null }] }));
+    render(hat({ colors: [{ name: 'Navy', hex: '#001f3f' }, { name: 'White', hex: '#ffffff' }] }));
     const colors = await screen.findByRole('heading', { name: 'Colors' });
     expect(colors).toBeInTheDocument();
     expect(screen.getAllByRole('listitem').map(li => li.textContent)).toEqual(['Navy', 'White']);

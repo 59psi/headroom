@@ -1,6 +1,7 @@
 """Tests for the admin endpoints (recent errors + backup) and model setting."""
 
 import pytest
+
 from headroom.config import settings
 
 pytestmark = pytest.mark.anyio
@@ -102,6 +103,23 @@ async def test_the_badge_sees_a_failure_that_is_not_status_error(client, db_sess
     assert {r["analysis_error"] for r in rows} == {
         "529 Overloaded", "No API key configured.",
     }, "the badge and the list must describe the same set"
+
+
+async def test_a_recent_error_names_its_thumbnail(client, db_session):
+    """The card draws a small tile per failure: the 320 px thumbnail, not the
+    full-size cutout it used to load for want of this field."""
+    from headroom.models.hat import Hat
+
+    db_session.add(Hat(
+        condition="new", size="classic", style="a_game",
+        analysis_status="error", analysis_error="529 Overloaded",
+        photo_path="hats/a.png", thumb_path="hats/a.thumb.webp",
+    ))
+    await db_session.commit()
+
+    [row] = (await client.get("/api/admin/recent-errors")).json()
+    assert row["photo_path"] == "hats/a.png"
+    assert row["thumb_path"] == "hats/a.thumb.webp"
 
 
 # ---- Backup --------------------------------------------------------- #

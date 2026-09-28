@@ -57,7 +57,8 @@ describe('HatDetailPage — header', () => {
     const head = (await screen.findByRole('heading', { level: 1 })).closest('header')!;
     expect(within(head).getByText('HYDRO')).toBeInTheDocument();
     expect(within(head).getByText('Analyzed')).toBeInTheDocument();
-    expect(within(head).getByText('new')).toBeInTheDocument();
+    // The condition's label, not its stored value (`ConditionBadge`).
+    expect(within(head).getByText('New')).toBeInTheDocument();
   });
 
   it('while the hat loads: no heading yet, and one "Loading hat…" for the page', () => {

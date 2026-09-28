@@ -5,6 +5,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+import pillow_heif
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,16 @@ MAX_DIMENSION = 1200
 #: the one a new `Image.open` forgets.
 MAX_SOURCE_PIXELS = 40_000_000
 Image.MAX_IMAGE_PIXELS = MAX_SOURCE_PIXELS
+
+# HEIC/HEIF — what an iPhone shoots — registered here, once, for the same
+# reason as the pixel ceiling above: every decoder imports this module. It used
+# to be registered inside `process_image`, so Pillow could read HEIC only after
+# some HEIC-or-not hat photo had been processed in this process: a HEIC logo
+# uploaded first after a restart was refused as "not an image", and the same
+# file succeeded once a hat photo had gone through. `pillow-heif` is a hard
+# dependency (pyproject), so a plain import — the old `except ImportError:
+# pass` could only have hidden HEIC support disappearing.
+pillow_heif.register_heif_opener()
 
 #: The 400 both single-file upload routes answer with. One string, so the
 #: two cannot drift apart in wording the way they drifted apart in behavior.
@@ -61,6 +72,7 @@ def decoded_image(path: Path) -> Iterator[Image.Image]:
         except (Image.DecompressionBombError, OSError, ValueError) as exc:
             raise UnreadableImage(str(exc)) from exc
         yield opened
+
 
 # Gallery tiles render at roughly 160 CSS px, so 320 covers a 2x display and
 # nothing more. The full cutout is a 1200px RGBA PNG — a few hundred KB each,
@@ -104,14 +116,9 @@ def process_image(input_path: Path, output_path: Path) -> Path:
     """Resize and convert to JPEG. Returns the final output path.
 
     Synchronous — call from sync code, or wrap in `asyncio.to_thread` from
-    async code so Pillow's CPU work doesn't block the event loop.
+    async code so Pillow's CPU work doesn't block the event loop. HEIC input
+    works because the opener is registered at module import (above).
     """
-    try:
-        import pillow_heif  # noqa: PLC0415 — optional dependency; registering the opener is the import's side effect, done once per call site that needs HEIC
-        pillow_heif.register_heif_opener()
-    except ImportError:
-        pass
-
     # Context manager, like the two encoders below (this one held its handle
     # until GC). `exif_transpose` FIRST: a phone shoots portrait with the
     # sensor sideways and records Orientation 6/8 in EXIF; `.convert("RGB")`
@@ -130,6 +137,37 @@ def process_image(input_path: Path, output_path: Path) -> Path:
     return final_path
 
 
+def _encode_webp(
+    source_path: Path, dest_path: Path, *, dimension: int, quality: int, method: int,
+    what: str,
+) -> Path | None:
+    """Write a WebP copy of `source_path` no larger than `dimension`, or None.
+
+    The one encoder behind both derivatives below; they differ only in size,
+    quality and effort. Two hand-kept copies of this body is how one of them
+    ends up handling a mode the other flattens.
+
+    Best-effort by design, and `what` names the derivative in the warning.
+    Best-effort still gets a voice: this returned None with no record, so a
+    pipeline failing on every hat (disk full, a Pillow build without WebP)
+    was indistinguishable from "already existed".
+    """
+    try:
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        with Image.open(source_path) as img:
+            # Preserve alpha; RGBA is what a cutout is, and P-mode with
+            # transparency needs converting before resize or the edges fringe.
+            if img.mode not in ("RGBA", "RGB"):
+                img = img.convert("RGBA")
+            img.thumbnail((dimension, dimension), Image.LANCZOS)
+            final = dest_path.with_suffix(".webp")
+            img.save(final, "WEBP", quality=quality, method=method)
+        return final
+    except Exception as exc:  # noqa: BLE001 — a derivative is best-effort; its callers must never fail on one
+        logger.warning("%s failed for %s: %s", what, source_path, exc)
+        return None
+
+
 def make_thumbnail(source_path: Path, dest_path: Path) -> Path | None:
     """Write a small WebP copy of a hat photo. Returns the path, or None.
 
@@ -140,23 +178,10 @@ def make_thumbnail(source_path: Path, dest_path: Path) -> Path | None:
     Best-effort by design. A gallery falling back to full-size images is slow;
     an upload that fails because a thumbnail could not be written is broken.
     """
-    try:
-        dest_path.parent.mkdir(parents=True, exist_ok=True)
-        with Image.open(source_path) as img:
-            # Preserve alpha; RGBA is what a cutout is, and P-mode with
-            # transparency needs converting before resize or the edges fringe.
-            if img.mode not in ("RGBA", "RGB"):
-                img = img.convert("RGBA")
-            img.thumbnail((THUMB_DIMENSION, THUMB_DIMENSION), Image.LANCZOS)
-            final = dest_path.with_suffix(".webp")
-            img.save(final, "WEBP", quality=80, method=4)
-        return final
-    except Exception as exc:  # noqa: BLE001 — a missing thumbnail must never fail an upload
-        # Best-effort still gets a voice. This returned None with no record, so
-        # a thumbnail pipeline failing on every hat (disk full, a Pillow build
-        # without WebP) was indistinguishable from "already existed".
-        logger.warning("Thumbnail failed for %s: %s", source_path, exc)
-        return None
+    return _encode_webp(
+        source_path, dest_path,
+        dimension=THUMB_DIMENSION, quality=80, method=4, what="Thumbnail",
+    )
 
 
 def export_derivative_path(upload_dir: Path, photo_rel: str) -> Path:
@@ -179,22 +204,15 @@ def make_export_image(source_path: Path, dest_path: Path) -> Path | None:
     Generated from the CANONICAL photo, not from the thumbnail — upscaling a
     320px thumbnail to 800 would produce a larger file that looks worse than
     the thumbnail it came from.
+
+    method=6 is the slowest/smallest WebP effort. Worth it here and not for
+    thumbnails: this runs once per hat per export, and the bytes are what
+    someone downloads.
     """
-    try:
-        dest_path.parent.mkdir(parents=True, exist_ok=True)
-        with Image.open(source_path) as img:
-            if img.mode not in ("RGBA", "RGB"):
-                img = img.convert("RGBA")
-            img.thumbnail((EXPORT_DIMENSION, EXPORT_DIMENSION), Image.LANCZOS)
-            final = dest_path.with_suffix(".webp")
-            # method=6 is the slowest/smallest WebP effort. Worth it here and
-            # not for thumbnails: this runs once per hat per export, and the
-            # bytes are what someone downloads.
-            img.save(final, "WEBP", quality=EXPORT_QUALITY, method=6)
-        return final
-    except Exception as exc:  # noqa: BLE001 — one bad photo must not fail an export
-        logger.warning("Export image failed for %s: %s", source_path, exc)
-        return None
+    return _encode_webp(
+        source_path, dest_path,
+        dimension=EXPORT_DIMENSION, quality=EXPORT_QUALITY, method=6, what="Export image",
+    )
 
 
 async def make_thumbnail_async(source_path: Path, dest_path: Path) -> Path | None:

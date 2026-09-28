@@ -3,23 +3,23 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../../test/utils';
 import { ShareLinksCard } from './ShareLinksCard';
-import * as auth from '../../api/auth';
+import * as shareLinksApi from '../../api/shareLinks';
 import * as clipboard from '../../lib/clipboard';
-import type { ShareLinkInfo } from '../../api/auth';
+import type { ShareLinkRead } from '../../types';
 
-vi.mock('../../api/auth', async (importOriginal) => {
+vi.mock('../../api/shareLinks', async (importOriginal) => {
   const { stubAll } = await import('../../test/stubModule');
   return { ...stubAll(await importOriginal<object>()) };
 });
 
 vi.mock('../../lib/clipboard', () => ({ copyText: vi.fn(async () => true) }));
 
-const mocked = vi.mocked(auth);
+const mocked = vi.mocked(shareLinksApi);
 const copyText = vi.mocked(clipboard.copyText);
 
 const DAY = 86_400_000;
 
-function link(over: Partial<ShareLinkInfo> = {}): ShareLinkInfo {
+function link(over: Partial<ShareLinkRead> = {}): ShareLinkRead {
   return {
     id: 1,
     token: 'tok-1',
@@ -80,15 +80,15 @@ describe('ShareLinksCard', () => {
     expect(screen.queryByText('None active')).not.toBeInTheDocument();
   });
 
-  it('copies the full URL and confirms with a toast', async () => {
+  it('copies the full URL and says so on the button', async () => {
     const user = userEvent.setup();
     mocked.listShareLinks.mockResolvedValue([link()]);
     renderWithProviders(<ShareLinksCard />);
 
-    await user.click(await screen.findByRole('button', { name: 'Copy link: Group chat' }));
+    await user.click(await screen.findByRole('button', { name: 'Copy the link “Group chat”' }));
 
     expect(copyText).toHaveBeenCalledWith(`${window.location.origin}/share/tok-1`);
-    expect(await screen.findByText('Link copied')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Copied the link “Group chat”' })).toBeInTheDocument();
   });
 
   it('keeps the link when the revoke is canceled', async () => {
@@ -167,7 +167,7 @@ describe('ShareLinksCard', () => {
     await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Revoke link' }));
     await waitFor(() => expect(screen.queryByText('B')).not.toBeInTheDocument());
 
-    client.setQueryData<ShareLinkInfo[]>(['share-links'], list =>
+    client.setQueryData<ShareLinkRead[]>(['share-links'], list =>
       list?.map(l => (l.id === 1 ? { ...l, revoked_at: new Date().toISOString() } : l)));
     await waitFor(() => expect(screen.queryByText('A')).not.toBeInTheDocument());
 

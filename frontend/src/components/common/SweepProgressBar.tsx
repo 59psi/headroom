@@ -1,4 +1,4 @@
-import type { SweepProgress } from '../../types';
+import type { SweepProgressRead } from '../../types';
 
 /**
  * Live state of a long in-process sweep — bar, counts, and what it is on.
@@ -12,7 +12,7 @@ import type { SweepProgress } from '../../types';
  * bar reads as a stalled job, which is the opposite of the point.
  */
 export function SweepProgressBar({ progress, idleLabel }: {
-  progress: SweepProgress | undefined;
+  progress: SweepProgressRead | undefined;
   /** Shown when a previous run finished and there is nothing in flight. */
   idleLabel?: string;
 }) {
@@ -20,10 +20,12 @@ export function SweepProgressBar({ progress, idleLabel }: {
 
   if (!progress.running) {
     // An error outlives the run that produced it — that is what makes it
-    // readable at all, since nobody is watching at the moment it fails.
+    // readable at all, since nobody is watching at the moment it fails. In
+    // the error color, from the stylesheet: it was an inline pink, which is
+    // this app's accent, not its word for "failed".
     if (progress.error) {
       return (
-        <p className="small mb-2" style={{ color: 'var(--neon-pink)' }}>
+        <p className="hr-sweep-error small mb-2">
           Last run failed: {progress.error}
         </p>
       );

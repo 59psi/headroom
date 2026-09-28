@@ -5,27 +5,33 @@
  * already loads, so opening this page costs one cached query rather than a new
  * reporting endpoint. That also means every figure is computed by the same
  * `lib/valuation` rule the home page and the valuation page use — the three
- * hand-rolled copies that preceded it had already drifted apart.
+ * hand-rolled copies that preceded it had already drifted apart — and the
+ * roll-ups over it are the ones the Valuation page shows (`lib/collectionViews`).
  */
 import { useMemo, type MouseEvent, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
-import { listAllHats, listDisposedHats } from '../api/hats';
-import { listCases } from '../api/cases';
 import { listRooms } from '../api/rooms';
 import {
-  BarList, ChartCard, Donut, StatTiles, StatTilesSkeleton, TimeSeries,
+  BarList, Donut, StatTiles, StatTilesSkeleton, TimeSeries,
   type ChartDatum, type TimePoint,
 } from '../components/charts/Charts';
+import { caseRoomName } from '../components/cases/CaseTile';
+import { LoadError } from '../components/common/LoadError';
 import { PageHeader } from '../components/ui/PageHeader';
 import { Panel } from '../components/ui/Panel';
 import {
-  BASIS_LABEL, money, moneyPrecise, realizedTotals, valueCases, valueCollection, valueHat,
-  costOf, type ValueBasis,
-  CONDITION_LABEL,
+  money, moneyPrecise, realizedTotals, valueCases, valueCollection, valueHat, costOf,
 } from '../lib/valuation';
+import { basisRows, bucketize, topValued } from '../lib/collectionViews';
+import { plural } from '../lib/format';
+import { useCollection } from '../lib/useCollection';
+import { useHatLabels } from '../lib/labels';
+import { qk } from '../lib/queryKeys';
 import { RankedHatList } from '../components/hats/RankedHatList';
 import type { CaseRead, HatRead } from '../types';
+
+const CONDITIONS = ['new_with_tags', 'new', 'worn'] as const;
 
 const CONDITION_COLOR: Record<string, string> = {
   new_with_tags: 'var(--neon-cyan)',
@@ -33,13 +39,23 @@ const CONDITION_COLOR: Record<string, string> = {
   worn: 'var(--neon-orange)',
 };
 
-const prettify = (s: string) => s.replace(/_/g, ' ');
-
-/** Count hats by a key, drop the ones with no value for it, biggest first. */
+/**
+ * Count hats by a key, drop the ones with no value for it, biggest first.
+ *
+ * The KEY and the LABEL are kept apart. The style bars used to label each row
+ * with the stored value, underscores swapped for spaces ("a game"), and then
+ * rebuilt the link's `?style=` by swapping them back — a link that worked only
+ * because the label was lossy in exactly the reversible way. With the real
+ * label ("A-Game") that round trip breaks, so `hrefFn` is handed the key.
+ */
 function countBy(
   hats: HatRead[],
   keyFn: (h: HatRead) => string | null | undefined,
-  limit?: number,
+  { label = k => k, href, limit }: {
+    label?: (key: string) => string;
+    href?: (key: string) => string;
+    limit?: number;
+  } = {},
 ): ChartDatum[] {
   const counts = new Map<string, number>();
   for (const h of hats) {
@@ -47,31 +63,11 @@ function countBy(
     if (!k) continue;
     counts.set(k, (counts.get(k) ?? 0) + 1);
   }
-  const rows = Array.from(counts, ([label, value]) => ({ label, value }))
-    .sort((a, b) => b.value - a.value || a.label.localeCompare(b.label));
-  return limit ? rows.slice(0, limit) : rows;
-}
-
-/** Sum estimated sale value by a key. */
-function valueBy(
-  hats: HatRead[],
-  keyFn: (h: HatRead) => string | null | undefined,
-  limit?: number,
-): ChartDatum[] {
-  const totals = new Map<string, { total: number; count: number }>();
-  for (const h of hats) {
-    const k = keyFn(h);
-    if (!k) continue;
-    const { value } = valueHat(h);
-    if (value == null) continue;
-    const prev = totals.get(k) ?? { total: 0, count: 0 };
-    totals.set(k, { total: prev.total + value, count: prev.count + 1 });
-  }
-  const rows = Array.from(totals, ([label, v]) => ({
-    label,
-    value: v.total,
-    display: `${money(v.total)} · ${v.count}`,
-  })).sort((a, b) => b.value - a.value);
+  const rows = Array.from(counts, ([key, value]) => ({
+    label: label(key),
+    value,
+    ...(href ? { href: href(key) } : {}),
+  })).sort((a, b) => b.value - a.value || a.label.localeCompare(b.label));
   return limit ? rows.slice(0, limit) : rows;
 }
 
@@ -170,20 +166,16 @@ function PageHead() {
 }
 
 export function StatsPage() {
-  const hatsQ = useQuery({ queryKey: ['hats'], queryFn: listAllHats });
-  const disposedQ = useQuery({ queryKey: ['hats', 'disposed'], queryFn: listDisposedHats });
-  const casesQ = useQuery({ queryKey: ['cases'], queryFn: listCases });
-  const roomsQ = useQuery({ queryKey: ['rooms'], queryFn: listRooms });
-
-  const hats = useMemo(() => hatsQ.data ?? [], [hatsQ.data]);
-  const disposed = useMemo(() => disposedQ.data ?? [], [disposedQ.data]);
-  const cases = useMemo(() => casesQ.data ?? [], [casesQ.data]);
+  const collection = useCollection();
+  const { hats, disposed, cases } = collection;
+  const roomsQ = useQuery({ queryKey: qk.rooms(), queryFn: listRooms });
+  const labels = useHatLabels();
 
   const valuation = useMemo(() => valueCollection(hats), [hats]);
   // Cases are part of the collection: dozens of them at $49 each. Shown as
   // their own tile rather than folded into the hat figures — they are valued
   // at replacement cost, where hats are valued at market.
-  const caseValue = useMemo(() => valueCases(casesQ.data ?? []), [casesQ.data]);
+  const caseValue = useMemo(() => valueCases(cases), [cases]);
   const realized = useMemo(() => realizedTotals(disposed), [disposed]);
 
   const wear = useMemo(() => {
@@ -253,7 +245,7 @@ export function StatsPage() {
     const capacityOf = (c: CaseRead) => c.nominal_capacity;
     return [...cases]
       .map(c => ({
-        label: `${c.display_id} · ${c.room_name}`,
+        label: `${c.display_id} · ${caseRoomName(c)}`,
         value: c.hat_count,
         display: `${c.hat_count}/${capacityOf(c)}`,
         href: `/cases/${c.display_id}`,
@@ -265,46 +257,24 @@ export function StatsPage() {
       .slice(0, 12);
   }, [cases]);
 
-  const basisRows: ChartDatum[] = useMemo(() => {
-    const order: ValueBasis[] = ['manual', 'comp', 'retail', 'category', 'none'];
-    return order
-      .map(b => ({
-        label: BASIS_LABEL[b],
-        value: valuation.byBasis[b].count,
-        display: b === 'none'
-          ? `${valuation.byBasis[b].count} hats`
-          : `${valuation.byBasis[b].count} hats · ${money(valuation.byBasis[b].total)}`,
-      }))
-      .filter(r => r.value > 0);
-  }, [valuation]);
+  const bases = useMemo(() => basisRows(valuation), [valuation]);
 
-  // A failed fetch must not render as an empty collection. `?? []` turns a
-  // 500 or a dropped connection into "$0 across 0 hats", which is a confident
-  // wrong answer — the exact thing `valueHat` returns `null` rather than 0 to
-  // avoid. Errors are shown, not averaged in.
-  if (hatsQ.isError || disposedQ.isError || casesQ.isError) {
-    const retrying = hatsQ.isFetching || disposedQ.isFetching || casesQ.isFetching;
+  // A failed fetch must not render as an empty collection — see
+  // `useCollection`. Errors are shown, not averaged in.
+  if (collection.failed) {
     return (
       <>
         <PageHead />
-        <div className="alert alert-danger hr-cp-error" role="alert">
-          <span>
-            Couldn&rsquo;t load the collection, so no charts are shown — they would
-            describe a collection you don&rsquo;t have.
-          </span>
-          <button
-            type="button"
-            className="btn btn-sm btn-outline-secondary"
-            onClick={() => { void hatsQ.refetch(); void disposedQ.refetch(); void casesQ.refetch(); }}
-            disabled={retrying}
-          >{retrying ? 'Retrying…' : 'Try again'}</button>
-        </div>
+        <LoadError
+          what="Couldn’t load the collection, so no charts are shown — they would describe a collection you don’t have."
+          queries={collection.queries}
+        />
       </>
     );
   }
   // The disposed list too: the Realized tile read "$0 · 0 sold" until it
   // arrived, which is a claim, not a placeholder.
-  if (hatsQ.isLoading || casesQ.isLoading || disposedQ.isLoading) {
+  if (collection.loading) {
     return (
       <>
         <PageHead />
@@ -318,13 +288,17 @@ export function StatsPage() {
     );
   }
 
-  const conditionData: ChartDatum[] = ['new_with_tags', 'new', 'worn']
+  const conditionData: ChartDatum[] = CONDITIONS
     .map(k => ({
-      label: CONDITION_LABEL[k],
+      label: labels.condition(k),
       value: hats.filter(h => h.condition === k).length,
       color: CONDITION_COLOR[k],
     }))
     .filter(d => d.value > 0);
+
+  const valueByRoom: ChartDatum[] = bucketize(hats, h => h.room_name)
+    .filter(b => b.valuedCount > 0)
+    .map(b => ({ label: b.label, value: b.value, display: `${money(b.value)} · ${b.valuedCount}` }));
 
   return (
     <>
@@ -344,7 +318,7 @@ export function StatsPage() {
 
       {/* ===== Totals ===== */}
       <Section id="stats-overview" title="Overview">
-        <ChartCard title="The collection" as="h3" className="hr-cp-span">
+        <Panel title="The collection" as="h3" className="hr-cp-span">
           <StatTiles tiles={[
             { label: 'Hats', value: String(hats.length), tone: 'pink' },
             { label: 'Cases', value: String(cases.length), tone: 'cyan' },
@@ -358,20 +332,20 @@ export function StatsPage() {
               sub: `${wear.neverWorn} never worn`,
             },
           ]} />
-        </ChartCard>
+        </Panel>
 
-        <ChartCard
+        <Panel
           title="Money"
           as="h3"
           className="hr-cp-span"
-          subtitle={<>Sale value is estimated — <Link to="/valuation">how it's worked out</Link>.</>}
+          description={<>Sale value is estimated — <Link to="/valuation">how it's worked out</Link>.</>}
         >
           <StatTiles tiles={[
             {
               label: 'Paid',
               value: money(valuation.spentTotal),
               tone: 'purple',
-              sub: `${valuation.spentCount} of ${valuation.total} hats priced`,
+              sub: `${valuation.spentCount} of ${plural(valuation.total, 'hat')} priced`,
             },
             {
               label: 'Retail value',
@@ -404,122 +378,121 @@ export function StatsPage() {
               sub: `${realized.sold} sold${realized.otherDisposals > 0 ? ` · ${realized.otherDisposals} other` : ''}`,
             },
           ]} />
-        </ChartCard>
+        </Panel>
 
         {/* ===== Where the value estimate comes from ===== */}
-        <ChartCard
+        <Panel
           title="What the estimate rests on"
           as="h3"
           className="hr-cp-span"
-          subtitle="Each hat is valued from the best signal it has. Weaker bases are worth knowing about."
+          description="Each hat is valued from the best signal it has. Weaker bases are worth knowing about."
         >
-          <BarList data={basisRows} colorize />
-        </ChartCard>
+          <BarList data={bases} colorize />
+        </Panel>
       </Section>
 
       {/* ===== Composition ===== */}
       <Section id="stats-composition" title="Composition">
-        <ChartCard title="By condition" as="h3">
+        <Panel title="By condition" as="h3">
           <Donut
             data={conditionData}
             centerValue={String(hats.length)}
             centerLabel="hats"
           />
-        </ChartCard>
+        </Panel>
 
-        <ChartCard title="By style" as="h3">
+        {/* Labeled as the rest of the app labels a style ("A-Game"), linked
+            by the stored value the Hats filter reads. */}
+        <Panel title="By style" as="h3">
           <BarList
-            data={countBy(hats, h => prettify(h.style)).map(d => ({
-              ...d,
-              href: `/hats?style=${encodeURIComponent(d.label.replace(/ /g, '_'))}`,
-            }))}
+            data={countBy(hats, h => h.style, {
+              label: labels.style,
+              href: key => `/hats?style=${encodeURIComponent(key)}`,
+            })}
             colorize
           />
-        </ChartCard>
+        </Panel>
 
-        <ChartCard title="By size" as="h3">
-          <BarList data={countBy(hats, h => prettify(h.size))} colorize />
-        </ChartCard>
+        <Panel title="By size" as="h3">
+          <BarList data={countBy(hats, h => h.size, { label: labels.size })} colorize />
+        </Panel>
 
-        <ChartCard title="By brand" as="h3" subtitle="Hats with no brand identified are left out.">
-          <BarList data={countBy(hats, h => h.brand, 12)} colorize />
-        </ChartCard>
+        <Panel title="By brand" as="h3" description="Hats with no brand identified are left out.">
+          <BarList data={countBy(hats, h => h.brand, { limit: 12 })} colorize />
+        </Panel>
 
-        <ChartCard title="By construction" as="h3" subtitle="Hats with no construction recorded are left out.">
-          <BarList data={countBy(hats, h => h.construction, 12)} colorize />
-        </ChartCard>
+        <Panel title="By construction" as="h3" description="Hats with no construction recorded are left out.">
+          <BarList data={countBy(hats, h => h.construction, { limit: 12 })} colorize />
+        </Panel>
 
-        <ChartCard title="Top colorways" as="h3">
-          <BarList data={countBy(hats, h => h.colorway, 12)} colorize />
-        </ChartCard>
+        <Panel title="Top colorways" as="h3">
+          <BarList data={countBy(hats, h => h.colorway, { limit: 12 })} colorize />
+        </Panel>
 
-        <ChartCard title="Artist & collab series" as="h3">
+        <Panel title="Artist & collab series" as="h3">
           <BarList
-            data={countBy(hats, h => h.artist_series, 12)}
+            data={countBy(hats, h => h.artist_series, { limit: 12 })}
             emptyText="No collab or artist series recorded yet."
             colorize
           />
-        </ChartCard>
+        </Panel>
 
-        <ChartCard title="Colors" as="h3" subtitle="One vote per hat per color. Tap to search that shade.">
+        <Panel title="Colors" as="h3" description="One vote per hat per color. Tap to search that shade.">
           <BarList data={colors} emptyText="No colors detected yet." />
-        </ChartCard>
+        </Panel>
       </Section>
 
       {/* ===== Where it all lives ===== */}
       <Section id="stats-where" title="Where it lives">
-        <ChartCard title="Hats by room" as="h3">
+        <Panel title="Hats by room" as="h3">
           <BarList data={countBy(hats, h => h.room_name)} colorize />
-        </ChartCard>
+        </Panel>
 
-        <ChartCard title="Value by room" as="h3">
-          <BarList data={valueBy(hats, h => h.room_name)} colorize />
-        </ChartCard>
+        <Panel title="Value by room" as="h3">
+          <BarList data={valueByRoom} colorize />
+        </Panel>
 
-        <ChartCard title="Fullest cases" as="h3" className="hr-cp-span" subtitle="Full in pink, overfull in orange.">
+        <Panel title="Fullest cases" as="h3" className="hr-cp-span" description="Full in pink, overfull in orange.">
           <BarList data={caseFill} emptyText="No cases yet." />
-        </ChartCard>
+        </Panel>
       </Section>
 
       {/* ===== Over time ===== */}
       <Section id="stats-time" title="Over time">
-        <ChartCard
+        <Panel
           title="Hats acquired"
           as="h3"
           className="hr-cp-span"
-          subtitle="By purchase date where known, otherwise when the photo was added."
+          description="By purchase date where known, otherwise when the photo was added."
         >
           <TimeSeries points={timelines.acquired} />
-        </ChartCard>
+        </Panel>
 
-        <ChartCard
+        <Panel
           title="Spend over time"
           as="h3"
           className="hr-cp-span"
-          subtitle={
+          description={
             valuation.costUnknown > 0
-              ? <>Only the {valuation.spentCount} hats with a recorded price and date. The cyan line is the running total.</>
+              ? <>Only the {plural(valuation.spentCount, 'hat')} with a recorded price and date. The cyan line is the running total.</>
               : <>The cyan line is the running total.</>
           }
         >
           <TimeSeries points={timelines.spend} cumulative />
-        </ChartCard>
+        </Panel>
       </Section>
 
       {/* ===== Leaderboards ===== */}
       <Section id="stats-leaders" title="Leaderboards">
-        <ChartCard title="Most valuable" as="h3">
+        <Panel title="Most valuable" as="h3">
           <RankedHatList
-            hats={[...hats]
-              .filter(h => valueHat(h).value != null)
-              .sort((a, b) => (valueHat(b).value ?? 0) - (valueHat(a).value ?? 0))
-              .slice(0, 10)}
+            hats={topValued(hats)}
             valueFor={h => money(valueHat(h).value ?? 0)}
             empty="No hats have a value estimate yet."
           />
-        </ChartCard>
+        </Panel>
 
-        <ChartCard title="Most expensive (paid)" as="h3">
+        <Panel title="Most expensive (paid)" as="h3">
           <RankedHatList
             hats={[...hats]
               .filter(h => costOf(h) != null)
@@ -528,20 +501,20 @@ export function StatsPage() {
             valueFor={h => money(costOf(h) ?? 0)}
             empty="No purchase prices recorded yet."
           />
-        </ChartCard>
+        </Panel>
 
-        <ChartCard title="Most worn" as="h3">
+        <Panel title="Most worn" as="h3">
           <RankedHatList
             hats={wear.mostWorn}
             valueFor={h => `${h.wear_count}×`}
             empty="No wears logged yet — tap “Wearing this today” on a hat."
           />
-        </ChartCard>
+        </Panel>
 
-        <ChartCard
+        <Panel
           title="Best cost per wear"
           as="h3"
-          subtitle="What you paid, divided by how often you've worn it. Needs both numbers."
+          description="What you paid, divided by how often you've worn it. Needs both numbers."
         >
           <RankedHatList
             hats={wear.costPerWear.slice(0, 10).map(x => x.h)}
@@ -551,7 +524,7 @@ export function StatsPage() {
             }}
             empty="Needs a purchase price and at least one logged wear."
           />
-        </ChartCard>
+        </Panel>
       </Section>
     </>
   );

@@ -43,6 +43,7 @@ OVERFILL_ALLOWANCE = 1
 # that was already answered.
 BEANIE_OVERFILL_ALLOWANCE = 0
 
+
 #: Serializes every write that decides WHERE a hat goes: creating into a case,
 #: assigning, undisposing back into one, a style change that flips a hat's
 #: type, and allocating a case's sequence number. Each of those is

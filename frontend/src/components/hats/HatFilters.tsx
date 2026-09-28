@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { getStyles, getSizes, getConditions, getConstructions } from '../../api/hats';
 import { optionLabel } from '../../lib/labels';
+import { qk } from '../../lib/queryKeys';
 import { getRoomOptions } from '../../api/rooms';
 import type { ColorTag } from '../../types';
 
@@ -21,12 +22,14 @@ export interface FilterableHat {
   colors: ColorTag[];
 }
 
+/** The Type filter: all, regular hats, or beanies. */
+export type HatTypeFilter = '' | 'regular' | 'beanie';
+
 export interface HatFilterState {
   style: string;
   size: string;
   condition: string;
-  /** '' | 'regular' | 'beanie' */
-  type: string;
+  type: HatTypeFilter;
   color: string;
   room: string;
   /** A construction value, or `NO_CONSTRUCTION` for "not recorded". */
@@ -44,9 +47,106 @@ export interface HatFilterState {
  */
 export const NO_CONSTRUCTION = '(none)';
 
+type Option = { value: string; label: string };
+
+const TYPE_OPTIONS: readonly Option[] = [
+  { value: 'regular', label: 'Regular' },
+  { value: 'beanie', label: 'Beanies' },
+];
+
+function isTypeFilter(v: string): v is HatTypeFilter {
+  return v === '' || TYPE_OPTIONS.some(o => o.value === v);
+}
+
+/** The option lists `useHatFilters` loads, as `FILTER_FIELDS` reads them. */
+type FilterOptions = ReturnType<typeof useHatFilters>['options'];
+
+/**
+ * Every shared filter, once: its label, its choices, whether a URL value may
+ * seed it, and how a hat passes it.
+ *
+ * The filter set used to be spelled out five times — the state type, its
+ * empty value, a hand-written `<select>` block per filter in the bar, a line
+ * per filter in the chips and a predicate in `matchesHatFilters` — and the
+ * Type filter's words were typed twice. Adding a filter was five edits, and
+ * the one missed showed up as a chip that said "beanie" beside a select that
+ * said "Beanies". Now it is a row here.
+ */
+interface FilterField {
+  key: keyof HatFilterState;
+  label: string;
+  /** The choices after "All". `colors` is what the current result set holds. */
+  options: (o: FilterOptions, colors: readonly string[]) => readonly Option[];
+  /** Whether a value from the URL may seed this filter. Default: any. */
+  accepts?: (raw: string) => boolean;
+  /** Whether `hat` passes a set filter. Absent = the PAGE applies it (see
+   *  `useHatFilters` on Room). */
+  matches?: (hat: FilterableHat, value: string) => boolean;
+}
+
+const FILTER_FIELDS: readonly FilterField[] = [
+  {
+    key: 'style', label: 'Style',
+    options: o => o.styles.data ?? [],
+    matches: (h, v) => h.style === v,
+  },
+  {
+    key: 'size', label: 'Size',
+    options: o => o.sizes.data ?? [],
+    matches: (h, v) => h.size === v,
+  },
+  {
+    key: 'condition', label: 'Condition',
+    options: o => o.conditions.data ?? [],
+    matches: (h, v) => h.condition === v,
+  },
+  {
+    key: 'type', label: 'Type',
+    options: () => TYPE_OPTIONS,
+    accepts: isTypeFilter,
+    matches: (h, v) => (v === 'beanie' ? h.is_beanie : !h.is_beanie),
+  },
+  {
+    key: 'color', label: 'Color',
+    options: (_o, colors) => colors.map(c => ({ value: c, label: c })),
+    // A hex is a color SEARCH (`/search?color=%23aabbcc`, the form the stats
+    // page's color bars used to link with), never a Color filter value —
+    // those are palette names like "blue". Seeding it here set the filter to
+    // "#aabbcc", which no hat's `general_color` can equal, so the ranked
+    // results arrived and were all filtered away: "0 of 12 results".
+    accepts: raw => !raw.startsWith('#'),
+    matches: (h, v) => h.colors.some(c => c.general_color === v),
+  },
+  {
+    key: 'room', label: 'Room',
+    options: o => (o.rooms.data ?? []).map(r => ({ value: String(r.value), label: r.label })),
+  },
+  {
+    key: 'construction', label: 'Construction',
+    options: o => [
+      ...(o.constructions.data ?? []).map(c => ({ value: c, label: c })),
+      { value: NO_CONSTRUCTION, label: 'Not recorded' },
+    ],
+    matches: (h, v) => {
+      const value = h.construction?.trim() ?? '';
+      if (v === NO_CONSTRUCTION) return !value;
+      // Full equality, never substring: "HYDRO" must not match "HYDROLite".
+      // Case-insensitive only to tolerate rows written before the vocabulary
+      // service began snapping values to one spelling on write.
+      return value.toLowerCase() === v.toLowerCase();
+    },
+  },
+];
+
 const EMPTY: HatFilterState = {
   style: '', size: '', condition: '', type: '', color: '', room: '', construction: '',
 };
+
+/** Assign a raw string (a select, a URL) to one filter, refusing a value it cannot hold. */
+function assign(state: HatFilterState, field: FilterField, raw: string): HatFilterState {
+  if (raw && field.accepts && !field.accepts(raw)) return state;
+  return { ...state, [field.key]: raw };
+}
 
 /**
  * Filter state plus the option lists the bar renders.
@@ -66,20 +166,8 @@ export function useHatFilters() {
   // `useMirrorToUrl` — one-way, state → URL — so Back and reload return to
   // the same view; that direction never overrides a choice.)
   const [searchParams] = useSearchParams();
-  const [filters, setFilters] = useState<HatFilterState>(() => {
-    const seeded = { ...EMPTY };
-    for (const key of Object.keys(EMPTY) as Array<keyof HatFilterState>) {
-      const value = searchParams.get(key);
-      // A hex is a color SEARCH (`/search?color=%23aabbcc`, the form the stats
-      // page's color bars used to link with), never a Color filter value —
-      // those are palette names like "blue". Seeding it here set the filter
-      // to "#aabbcc", which no hat's `general_color` can equal, so the ranked
-      // results arrived and were all filtered away: "0 of 12 results".
-      if (key === 'color' && value?.startsWith('#')) continue;
-      if (value) seeded[key] = value;
-    }
-    return seeded;
-  });
+  const [filters, setFilters] = useState<HatFilterState>(() =>
+    FILTER_FIELDS.reduce((acc, f) => assign(acc, f, searchParams.get(f.key) ?? ''), EMPTY));
   // Starts closed even when a link arrived with filters applied. It used to
   // open so the reason the list is short was on screen; `ActiveFilterChips`
   // now shows exactly that in one line, and a removable chip is a shorter way
@@ -88,18 +176,20 @@ export function useHatFilters() {
   // would also have unfolded it every time you came Back from a hat.
   const [isOpen, setIsOpen] = useState(false);
 
-  const styles = useQuery({ queryKey: ['meta', 'styles'], queryFn: getStyles });
-  const sizes = useQuery({ queryKey: ['meta', 'sizes'], queryFn: getSizes });
-  const conditions = useQuery({ queryKey: ['meta', 'conditions'], queryFn: getConditions });
-  const rooms = useQuery({ queryKey: ['meta', 'rooms'], queryFn: getRoomOptions });
+  const styles = useQuery({ queryKey: qk.meta.styles(), queryFn: getStyles });
+  const sizes = useQuery({ queryKey: qk.meta.sizes(), queryFn: getSizes });
+  const conditions = useQuery({ queryKey: qk.meta.conditions(), queryFn: getConditions });
+  const rooms = useQuery({ queryKey: qk.meta.rooms(), queryFn: getRoomOptions });
   // Curated list merged with everything actually in use, so a specialty fabric
   // typed once is filterable from then on without shipping a migration.
-  const constructions = useQuery({ queryKey: ['meta', 'constructions'], queryFn: getConstructions });
+  const constructions = useQuery({ queryKey: qk.meta.constructions(), queryFn: getConstructions });
 
   const activeCount = Object.values(filters).filter(Boolean).length;
 
-  function set<K extends keyof HatFilterState>(key: K, value: HatFilterState[K]) {
-    setFilters(prev => ({ ...prev, [key]: value }));
+  /** Set one filter from a raw string; a value the filter cannot hold is ignored. */
+  function set(key: keyof HatFilterState, raw: string) {
+    const field = FILTER_FIELDS.find(f => f.key === key);
+    if (field) setFilters(prev => assign(prev, field, raw));
   }
 
   return {
@@ -160,24 +250,10 @@ export function collectGeneralColors(hats: readonly FilterableHat[] | undefined)
 /** The predicates both pages apply identically. Room/brand/assignment are the
  *  caller's job — they differ per page (see `useHatFilters`). */
 export function matchesHatFilters(hat: FilterableHat, f: HatFilterState): boolean {
-  if (f.style && hat.style !== f.style) return false;
-  if (f.size && hat.size !== f.size) return false;
-  if (f.condition && hat.condition !== f.condition) return false;
-  if (f.type === 'beanie' && !hat.is_beanie) return false;
-  if (f.type === 'regular' && hat.is_beanie) return false;
-  if (f.color && !hat.colors.some(c => c.general_color === f.color)) return false;
-  if (f.construction) {
-    const value = hat.construction?.trim() ?? '';
-    if (f.construction === NO_CONSTRUCTION) {
-      if (value) return false;
-    } else if (value.toLowerCase() !== f.construction.toLowerCase()) {
-      // Full equality, never substring: "HYDRO" must not match "HYDROLite".
-      // Case-insensitive only to tolerate rows written before the vocabulary
-      // service began snapping values to one spelling on write.
-      return false;
-    }
-  }
-  return true;
+  return FILTER_FIELDS.every(field => {
+    const value = f[field.key];
+    return !value || !field.matches || field.matches(hat, value);
+  });
 }
 
 type FilterState = ReturnType<typeof useHatFilters>;
@@ -199,66 +275,38 @@ interface FilterBarProps {
  * The seven shared filter selects, plus any page-specific extras as children.
  *
  * Every select applies on change — there is no Apply button, and the list
- * under the bar re-filters as you choose.
+ * under the bar re-filters as you choose. Each select has an id its `<label>`
+ * points at, so the label is its accessible name AND a tap target that focuses
+ * it; they used to be bare labels beside selects named by a repeated
+ * `aria-label`, and tapping one did nothing.
  */
 export function HatFilterBar({ state, colors, activeCount, onClearExtras, children }: FilterBarProps) {
   const { filters, set, clear, options } = state;
+  const idPrefix = useId();
   const shownCount = activeCount ?? state.activeCount;
   return (
     <div className="card hr-cp-filters mb-3" role="group" aria-label="Filters">
       <div className="card-body">
         <div className="hr-cp-filter-grid">
-          <div className="hr-cp-field">
-            <label className="form-label">Style</label>
-            <select aria-label="Style" className="form-select form-select-sm" value={filters.style} onChange={e => set('style', e.target.value)}>
-              <option value="">All</option>
-              {options.styles.data?.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
-            </select>
-          </div>
-          <div className="hr-cp-field">
-            <label className="form-label">Size</label>
-            <select aria-label="Size" className="form-select form-select-sm" value={filters.size} onChange={e => set('size', e.target.value)}>
-              <option value="">All</option>
-              {options.sizes.data?.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
-            </select>
-          </div>
-          <div className="hr-cp-field">
-            <label className="form-label">Condition</label>
-            <select aria-label="Condition" className="form-select form-select-sm" value={filters.condition} onChange={e => set('condition', e.target.value)}>
-              <option value="">All</option>
-              {options.conditions.data?.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
-            </select>
-          </div>
-          <div className="hr-cp-field">
-            <label className="form-label">Type</label>
-            <select aria-label="Type" className="form-select form-select-sm" value={filters.type} onChange={e => set('type', e.target.value)}>
-              <option value="">All</option>
-              <option value="regular">Regular</option>
-              <option value="beanie">Beanies</option>
-            </select>
-          </div>
-          <div className="hr-cp-field">
-            <label className="form-label">Color</label>
-            <select aria-label="Color" className="form-select form-select-sm" value={filters.color} onChange={e => set('color', e.target.value)}>
-              <option value="">All</option>
-              {colors.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-          </div>
-          <div className="hr-cp-field">
-            <label className="form-label">Room</label>
-            <select aria-label="Room" className="form-select form-select-sm" value={filters.room} onChange={e => set('room', e.target.value)}>
-              <option value="">All</option>
-              {options.rooms.data?.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
-            </select>
-          </div>
-          <div className="hr-cp-field">
-            <label className="form-label">Construction</label>
-            <select aria-label="Construction" className="form-select form-select-sm" value={filters.construction} onChange={e => set('construction', e.target.value)}>
-              <option value="">All</option>
-              {options.constructions.data?.map(c => <option key={c} value={c}>{c}</option>)}
-              <option value={NO_CONSTRUCTION}>Not recorded</option>
-            </select>
-          </div>
+          {FILTER_FIELDS.map(field => {
+            const id = `${idPrefix}-${field.key}`;
+            return (
+              <div key={field.key} className="hr-cp-field">
+                <label className="form-label" htmlFor={id}>{field.label}</label>
+                <select
+                  id={id}
+                  className="form-select form-select-sm"
+                  value={filters[field.key]}
+                  onChange={e => set(field.key, e.target.value)}
+                >
+                  <option value="">All</option>
+                  {field.options(options, colors).map(o => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              </div>
+            );
+          })}
           {children}
         </div>
         {shownCount > 0 && (
@@ -290,7 +338,8 @@ export interface ExtraFilterChip {
  *
  * Without it a filtered list looked exactly like a small collection: the only
  * sign was a digit on the Filters button, and undoing one filter meant opening
- * the bar and finding which of seven selects was set.
+ * the bar and finding which of seven selects was set. Each chip reads its
+ * words from the same option list the select shows.
  */
 export function ActiveFilterChips({ state, extras = [], onClearExtras }: {
   state: FilterState;
@@ -299,19 +348,15 @@ export function ActiveFilterChips({ state, extras = [], onClearExtras }: {
   onClearExtras?: () => void;
 }) {
   const { filters, set, clear, options } = state;
-  const chips: ExtraFilterChip[] = [];
-  const add = (key: keyof HatFilterState, name: string, text: string) => {
-    chips.push({ key, label: `${name}: ${text}`, onRemove: () => set(key, '') });
-  };
-  if (filters.style) add('style', 'Style', optionLabel(options.styles.data, filters.style));
-  if (filters.size) add('size', 'Size', optionLabel(options.sizes.data, filters.size));
-  if (filters.condition) add('condition', 'Condition', optionLabel(options.conditions.data, filters.condition));
-  if (filters.type) add('type', 'Type', filters.type === 'beanie' ? 'Beanies' : 'Regular');
-  if (filters.color) add('color', 'Color', filters.color);
-  if (filters.room) add('room', 'Room', optionLabel(options.rooms.data, filters.room));
-  if (filters.construction) {
-    add('construction', 'Construction', filters.construction === NO_CONSTRUCTION ? 'Not recorded' : filters.construction);
-  }
+  const chips: ExtraFilterChip[] = FILTER_FIELDS
+    .filter(field => filters[field.key])
+    .map(field => {
+      const value = filters[field.key];
+      // The current value stands in for "colors present": a color's label is
+      // itself, and the chip has no result set to collect from.
+      const text = optionLabel(field.options(options, [value]), value);
+      return { key: field.key, label: `${field.label}: ${text}`, onRemove: () => set(field.key, '') };
+    });
   chips.push(...extras);
   if (!chips.length) return null;
 

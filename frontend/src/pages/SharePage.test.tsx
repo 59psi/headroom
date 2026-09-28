@@ -8,9 +8,11 @@
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { Routes, Route } from 'react-router';
 import { renderWithProviders } from '../test/utils';
 import { SharePage } from './SharePage';
+import { ApiError } from '../api/client';
 import * as shareApi from '../api/share';
 import type { SharedCollection } from '../types';
 
@@ -30,7 +32,7 @@ function collection(names: string[], label = 'Summer rotation'): SharedCollectio
     hat_count: names.length,
     hats: names.map((model_name, i) => ({
       id: i + 1, display_id: null, brand: 'Melin', model_name,
-      style: 'a_game', photo_url: null, thumb_url: null,
+      style: 'a_game', style_label: 'A-Game', photo_url: null, thumb_url: null,
       colors: [{ name: 'Navy', hex: '#001f3f' }], case: null, room: null,
     })),
   };
@@ -56,6 +58,15 @@ describe('SharePage', () => {
     expect(mocked.getSharedCollection).toHaveBeenCalledWith('tok123');
   });
 
+  it('names an unidentified hat by its style, in the server’s words', async () => {
+    const shared = collection(['x']);
+    shared.hats[0] = { ...shared.hats[0], brand: null, model_name: null };
+    mocked.getSharedCollection.mockResolvedValue(shared);
+    render();
+    expect(await screen.findByText('A-Game')).toBeInTheDocument();
+    expect(screen.queryByText('A Game')).toBeNull();
+  });
+
   it('does not make tiles look tappable — there is nowhere to go', async () => {
     mocked.getSharedCollection.mockResolvedValue(collection(['Coronado']));
     render();
@@ -71,10 +82,24 @@ describe('SharePage', () => {
   });
 
   it('says so in words when the link is dead', async () => {
-    mocked.getSharedCollection.mockRejectedValue(new Error('Not found'));
+    mocked.getSharedCollection.mockRejectedValue(new ApiError('Not found', 404));
     render();
     expect(await screen.findByText('This share link is invalid, expired, or was revoked.')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: "This link isn't working" })).toBeInTheDocument();
+  });
+
+  it('does not call a good link revoked when the server fails — and retries', async () => {
+    const user = userEvent.setup();
+    mocked.getSharedCollection.mockRejectedValue(new ApiError('database is locked', 500));
+    render();
+
+    expect(await screen.findByRole('heading', { name: 'Couldn’t load this right now' })).toBeInTheDocument();
+    expect(screen.getByText(/database is locked/)).toBeInTheDocument();
+    expect(screen.queryByText(/revoked/)).toBeNull();
+
+    mocked.getSharedCollection.mockResolvedValue(collection(['Coronado']));
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByRole('heading', { name: 'Summer rotation' })).toBeInTheDocument();
   });
 
   it('shows the brand in the header, not as the page heading', async () => {

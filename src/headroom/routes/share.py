@@ -12,8 +12,6 @@ to /api/hats/import.
 
 from __future__ import annotations
 
-import asyncio
-import logging
 import shutil
 import tempfile
 from pathlib import Path
@@ -23,14 +21,12 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.database import get_db
+from headroom.routes import _uploads
+from headroom.routes._api import DomainErrorRoute
 from headroom.schemas.hat import HAT_DEFAULTS
 from headroom.services import import_service
-from headroom.utils.photo import validate_image_content_type
-from headroom.utils.upload import copy_upload_truncating
 
-logger = logging.getLogger(__name__)
-
-router = APIRouter()
+router = APIRouter(route_class=DomainErrorRoute)
 
 
 @router.post("/share", response_class=RedirectResponse)
@@ -41,11 +37,10 @@ async def share_target(
     """Receive shared photos and queue a bulk-import job.
 
     Spools each file to a temp dir and hands `create_job` PATHS, exactly like
-    the bulk-import route. This previously read whole files into memory and
-    passed BYTES — which `create_job` cannot use at all: it calls
-    `source.stat()` and `shutil.copy2(source, ...)`, so every share raised
-    AttributeError on the first file. The route was both unbounded and broken,
-    and nothing exercised it (Android-only, and no test covered the handler).
+    the bulk-import route — through the same `spool_batch`, in its lenient
+    mode: the share sheet opens this as a page, so there is no error screen to
+    show a 400 on. Non-images are skipped and a batch over the total cap keeps
+    its leading files.
     """
     incoming = photos or []
     if not incoming:
@@ -53,40 +48,12 @@ async def share_target(
 
     staging = Path(tempfile.mkdtemp(prefix="share-", dir=import_service.spool_dir()))
     try:
-        files: list[tuple[str, Path]] = []
-        total = 0
-        for idx, f in enumerate(incoming[:import_service.MAX_FILES_PER_JOB]):
-            if not validate_image_content_type(f.content_type):
-                logger.info("Share-target rejected non-image: %s", f.content_type)
-                continue
-            name = Path(f.filename or "shared.jpg").name
-            dest = staging / f"{idx:04d}-{name[:120]}"
-            # The SHARED helper, off the event loop — identical to what
-            # `routes/import_jobs` does, because this is the same operation.
-            # This carried its own copy of the chunk loop until 2.57.2, which
-            # is how `utils/upload.py` came to claim "one definition, used by
-            # all" while four existed. It also ran on the event loop, so a
-            # 20 MB share blocked every other request for the duration.
-            with dest.open("wb") as out:
-                written = await asyncio.to_thread(
-                    copy_upload_truncating, f, out, import_service.MAX_BYTES_PER_FILE
-                )
-            total += written
-            # A per-file cap is not a cap. The share sheet will hand over a
-            # whole camera roll selection, and 100 x 20 MB is 2 GB written to a
-            # Pi's SD card in one unattended request — the disk exhaustion
-            # `utils/disk.py` exists to notice, caused by the app itself.
-            # `routes/import_jobs` has enforced this since it was written;
-            # sharing from the phone was the path without it.
-            if total > import_service.MAX_TOTAL_UPLOAD_BYTES:
-                logger.warning(
-                    "Share-target batch over %d MB — keeping the first %d file(s)",
-                    import_service.MAX_TOTAL_UPLOAD_BYTES // 1024 // 1024, len(files),
-                )
-                dest.unlink(missing_ok=True)
-                break
-            files.append((name, dest))
-
+        files = await _uploads.spool_batch(
+            incoming[:import_service.MAX_FILES_PER_JOB],
+            staging,
+            strict=False,
+            default_name="shared.jpg",
+        )
         if not files:
             # No usable files — bounce them to the regular import page.
             return RedirectResponse("/hats/import", status_code=303)

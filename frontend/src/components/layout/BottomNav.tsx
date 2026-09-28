@@ -12,9 +12,13 @@ function Icon({ children }: { children: ReactNode }) {
   );
 }
 
-const TABS: { to: string; label: string; end?: boolean; icon: ReactNode }[] = [
+// No `end` on Home: React Router special-cases a link to the root route — it
+// is active only AT "/", `end` or not — so the prop was dead code, and a
+// mutation that removed it changed nothing. The nav test at `/hats` is what
+// holds Home unlit on other pages.
+const TABS: { to: string; label: string; icon: ReactNode }[] = [
   {
-    to: '/', label: 'Home', end: true,
+    to: '/', label: 'Home',
     icon: <Icon><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></Icon>,
   },
   {
@@ -47,7 +51,6 @@ export function BottomNav() {
         <NavLink
           key={tab.to}
           to={tab.to}
-          end={tab.end}
           className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
         >
           {/* The active tab is marked by a lit pill behind its icon, which

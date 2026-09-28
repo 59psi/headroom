@@ -9,17 +9,18 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from html import escape
+from importlib.metadata import PackageNotFoundError, version
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.models.case import Case
 from headroom.models.hat import Hat
-from headroom.services.hat_service import hat_loads
+from headroom.schemas.hat import SIZE_LABELS, STYLE_LABELS, condition_label
 from headroom.services import valuation
+from headroom.services.hat_service import hat_loads
 
 
-from importlib.metadata import version
 def _fmt_dollars(v: float | None) -> str:
     return f"${v:,.0f}" if v is not None else "—"
 
@@ -94,9 +95,11 @@ async def render_report(
 
 
 def _version_label() -> str:
+    """The footer's version, or the bare name when the package is not installed
+    (a source checkout run without `uv sync`) — the one way this can fail."""
     try:
         return f"Headroom v{version('headroom')}"
-    except Exception:  # noqa: BLE001 — a photo that will not open is a missing picture in a report, not a failed report
+    except PackageNotFoundError:
         return "Headroom"
 
 
@@ -122,15 +125,23 @@ def _row_html(h: Hat, include_photos: bool) -> str:
             f'letter-spacing:0.05em">Disposed: {escape(h.disposed_via or "")}</div>'
         )
 
-    brand_model = " · ".join(p for p in [h.brand, h.model_name] if p) or h.style.replace("_", " ")
+    # Style, condition and size in the words every screen uses (`STYLE_LABELS`,
+    # `SIZE_LABELS`, `condition_label` — what `/api/meta` serves): the report
+    # printed the stored values with their underscores swapped for spaces, so
+    # the page an insurer reads said "a game" and "x large" where the app says
+    # "A-Game" and "X Large".
+    brand_model = (
+        " · ".join(p for p in [h.brand, h.model_name] if p)
+        or STYLE_LABELS.get(h.style, h.style)
+    )
 
     return f"""
 <tr>
   <td>{photo_cell}</td>
   <td><strong>{escape(h.display_id or '#' + str(h.id))}</strong>{disposed_label}</td>
   <td>{escape(brand_model)}</td>
-  <td>{escape(h.condition.replace('_', ' '))}</td>
-  <td>{escape(h.size.replace('_', ' '))}</td>
+  <td>{escape(condition_label(h.condition))}</td>
+  <td>{escape(SIZE_LABELS.get(h.size, h.size))}</td>
   <td>{escape(case_label)} / {escape(room_label)}</td>
   <td style="text-align:right">{_fmt_dollars(h.estimated_new_price)}</td>
   <td style="text-align:right"><strong>{_fmt_dollars(value)}</strong><div style="font-size:9px;color:#888">{escape(source)}</div></td>

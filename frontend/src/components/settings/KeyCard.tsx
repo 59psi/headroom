@@ -21,7 +21,7 @@ import type { ApiKeyStatus, ApiKeyTestResult } from '../../types';
 export interface KeyProviderSpec {
   /** Card heading, e.g. "Claude API key". */
   title: string;
-  /** Query key under `['settings', …]`; also what save/remove invalidate. */
+  /** Its `qk.settings` key; also what save/remove invalidate. */
   queryKey: readonly [string, string];
   getStatus: () => Promise<ApiKeyStatus>;
   setKey: (key: string) => Promise<ApiKeyStatus>;

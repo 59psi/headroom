@@ -56,7 +56,9 @@ describe('AnalysisStatus', () => {
   it('falls back to 1/4 rather than 0/4 on an unrecognized stage', () => {
     // A newer backend publishing a stage this build doesn't know must not
     // render "0/4", which reads as "nothing is happening".
-    render(<AnalysisStatus hat={hat({ analysis_status: 'pending', analysis_stage: 'sizing' })} />);
+    // Outside this build's union on purpose — the type names today's stages.
+    const fromANewerServer = 'sizing' as unknown as HatRead['analysis_stage'];
+    render(<AnalysisStatus hat={hat({ analysis_status: 'pending', analysis_stage: fromANewerServer })} />);
 
     expect(screen.getByText('1/4')).toBeInTheDocument();
   });

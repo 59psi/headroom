@@ -3,15 +3,15 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ErrorNote } from '../common/ErrorNote';
 import { auditFrozenPrices, releaseFrozenPrices } from '../../api/settings';
 import type { FrozenPriceRow } from '../../types';
+import { plural } from '../../lib/format';
 import { invalidateHatViews } from '../../lib/invalidate';
+import { qk } from '../../lib/queryKeys';
 import { Panel } from '../ui/Panel';
 import { StatusPill } from '../ui/StatusPill';
 import { Skeleton } from '../ui/Skeleton';
 import { useToast } from '../ui/Toast';
 
-const KEY = ['admin', 'frozen-prices'] as const;
-
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const KEY = qk.admin.frozenPrices();
 
 const MARKET_PRICED_NOTE =
   'A melinrecap listing is on record underneath the manual stamp — the fingerprint of the bug rather than of you typing a number.';
@@ -59,11 +59,10 @@ export function FrozenPricesCard() {
     },
     onSuccess: result => {
       toast.success(`Released ${plural(result.released, 'price')}`);
-      invalidateHatViews(qc);
-      // Releasing a `manual` scope makes those hats newly ELIGIBLE for the
-      // shared-price report, which excludes manual prices — so this mutation
-      // can only ever add rows there, and never told it.
-      qc.invalidateQueries({ queryKey: ['admin', 'shared-prices'] });
+      // Includes the shared-price report: releasing a `manual` scope makes
+      // those hats newly ELIGIBLE for it (it excludes manual prices), so this
+      // mutation can only ever add rows there — and once never told it.
+      void invalidateHatViews(qc);
     },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: KEY });

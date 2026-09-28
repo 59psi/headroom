@@ -1,5 +1,7 @@
+import { Suspense } from 'react';
 import { Outlet } from 'react-router';
 import { useIsFetching, useIsMutating } from '@tanstack/react-query';
+import { Skeleton } from '../ui/Skeleton';
 import { TopNav } from './TopNav';
 import { BottomNav } from './BottomNav';
 import { Footer } from './Footer';
@@ -42,7 +44,14 @@ export function AppShell() {
       <ScrollToTop />
       <TopNav />
       <main id="main" className="container">
-        <Outlet />
+        {/* The boundary for the pages `App` loads on demand (Settings, Stats,
+            Valuation, bulk import, duplicates): inside `<main>`, so while a
+            page's code arrives the nav and footer stay up and only the page
+            area holds a placeholder. Above the shell, a first visit to one of
+            them blanked the whole app. */}
+        <Suspense fallback={<Skeleton lines={4} label="Loading…" />}>
+          <Outlet />
+        </Suspense>
       </main>
       <Footer />
       <BottomNav />

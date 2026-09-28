@@ -3,8 +3,11 @@ import { Link } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getRecentErrors, getRecentErrorsCount, getApiKeyStatus } from '../../api/settings';
 import { reanalyzeHat } from '../../api/hats';
-import { invalidateHatViews } from '../../lib/invalidate';
+import { analysisViewKeys, hatViewKeys, invalidateAll } from '../../lib/invalidate';
 import { timeAgo } from '../../lib/format';
+import { tileSrc } from '../../lib/photo';
+import { hatName } from '../../lib/placement';
+import { qk } from '../../lib/queryKeys';
 import { ErrorNote } from '../common/ErrorNote';
 import { Panel } from '../ui/Panel';
 import { StatusPill } from '../ui/StatusPill';
@@ -13,12 +16,12 @@ import { useToast } from '../ui/Toast';
 import type { RecentError } from '../../types';
 
 const LIMIT = 20;
-const ERRORS_KEY = ['admin', 'recent-errors'] as const;
-// The nav badge reads ['admin','recent-errors-count'], which is a sibling key,
-// NOT a child — 'recent-errors' does not prefix-match 'recent-errors-count',
-// so refreshing the list alone left the badge showing a count the list no
+const ERRORS_KEY = qk.admin.recentErrors();
+// The nav badge reads `recentErrorsCount`, which is a sibling key, NOT a
+// child — 'recent-errors' does not prefix-match 'recent-errors-count', so
+// refreshing the list alone left the badge showing a count the list no
 // longer agreed with. Every refresh here names both.
-const COUNT_KEY = ['admin', 'recent-errors-count'] as const;
+const COUNT_KEY = qk.admin.recentErrorsCount();
 
 /**
  * One failed hat, with a retry that re-runs analysis on its current photo.
@@ -32,7 +35,7 @@ const COUNT_KEY = ['admin', 'recent-errors-count'] as const;
 function ErrorRow({ err }: { err: RecentError }) {
   const qc = useQueryClient();
   const toast = useToast();
-  const name = err.display_id || `Hat #${err.hat_id}`;
+  const name = hatName(err);
 
   const retry = useMutation({
     mutationFn: () => reanalyzeHat(err.hat_id),
@@ -45,13 +48,11 @@ function ErrorRow({ err }: { err: RecentError }) {
       if (hat?.analysis_status === 'pending') toast.success(`${name} queued for re-analysis`);
       else if (hat?.analysis_error) toast.info(`${name} re-analyzed, but it is still failing`);
       else toast.success(`${name} re-analyzed`);
-      qc.invalidateQueries({ queryKey: ERRORS_KEY });
-      qc.invalidateQueries({ queryKey: COUNT_KEY });
-      // The queue card's backlog and failure groups both just changed.
-      qc.invalidateQueries({ queryKey: ['admin', 'analysis-queue'] });
-      qc.invalidateQueries({ queryKey: ['admin', 'analysis-failures'] });
-      qc.invalidateQueries({ queryKey: ['admin', 'analysis-job'] });
-      invalidateHatViews(qc, err.hat_id);
+      // This list, the badge's count, and the queue card's backlog and
+      // failure groups all just changed — the same set the queue card's own
+      // retry refreshes, so both name it through one helper — and so did the
+      // hat, wherever it is shown.
+      void invalidateAll(qc, analysisViewKeys(), hatViewKeys(err.hat_id));
     },
   });
 
@@ -64,8 +65,10 @@ function ErrorRow({ err }: { err: RecentError }) {
     <li className="hr-an-err">
       <div className="hr-an-err-row">
         <Link to={`/hats/${err.hat_id}`} className="hr-an-err-main">
+          {/* The tile derivative, not the full cutout: this is a thumbnail,
+              and a page of twenty 1200px PNGs is megabytes for nothing. */}
           {err.photo_path ? (
-            <img src={`/uploads/${err.photo_path}`} alt="" className="hr-thumb hr-an-err-thumb" />
+            <img src={tileSrc(err)} alt="" className="hr-thumb hr-an-err-thumb" />
           ) : (
             <span className="hr-an-err-thumb is-empty" aria-hidden="true" />
           )}
@@ -116,7 +119,7 @@ export function RecentErrorsCard() {
   // top out at 20 and call it the whole story. Shared with the nav badge,
   // which polls it — this is a cache hit, not another request.
   const count = useQuery({ queryKey: COUNT_KEY, queryFn: getRecentErrorsCount });
-  const apiKey = useQuery({ queryKey: ['settings', 'api-key'], queryFn: getApiKeyStatus });
+  const apiKey = useQuery({ queryKey: qk.settings.apiKey(), queryFn: getApiKeyStatus });
 
   // The count polls (the badge's once a minute); the list does not. When the
   // count MOVES, the list is out of date — refetch it, so the pill above and

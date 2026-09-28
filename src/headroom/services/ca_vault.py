@@ -51,9 +51,17 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
+from cryptography import x509
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.config import env_flag
+
+# Top-level: both of these were local imports under noqa reasons that did not
+# hold. `settings_service` was marked "cycle" and is not one (it imports only
+# the config and its model); `cryptography` was marked "heavy, only needed
+# here" and is already loaded at boot — `tls_health` imports it at its top,
+# and `webauthn` depends on it.
+from headroom.services import settings_service
 
 logger = logging.getLogger(__name__)
 
@@ -101,20 +109,36 @@ Restoring
 Stop the stack, extract this directory from the archive (it unpacks to
 data/caddy-pki/, beside this file), copy the four files back into Caddy's
 volume and let it start. Only root.* and intermediate.* are copied, so this
-README does not land in the PKI directory:
+README does not land in the PKI directory. The last step drops the
+certificates Caddy issued from whatever authority it had in the meantime, so
+it reissues them from the restored one — otherwise it keeps serving a
+certificate your devices do not trust.
 
-    docker compose down
+Stop it with the SAME -f files you deploy with. A bare `docker compose down`
+reads only docker-compose.yml, which does not define Caddy, so Caddy keeps
+running on the authority it has in memory and the restore never takes:
+
+    docker compose -f docker-compose.yml -f docker-compose.https-lan.yml down
     tar xzf headroom-backup-<timestamp>.tar.gz data/caddy-pki
     docker run --rm -v headroom_caddy-data:/data -v "$PWD/data/caddy-pki":/restore \\
       alpine sh -c 'mkdir -p /data/caddy/pki/authorities/local &&
                     cp /restore/root.* /restore/intermediate.* /data/caddy/pki/authorities/local/ &&
                     chown -R root:root /data/caddy/pki &&
-                    chmod 0700 /data/caddy/pki/authorities/local'
+                    chmod 0700 /data/caddy/pki/authorities/local &&
+                    rm -rf /data/caddy/certificates/local'
     docker compose -f docker-compose.yml -f docker-compose.https-lan.yml up -d
 
 Check afterwards that Settings shows the same CA fingerprint your devices
-already trust. If it differs, Caddy generated a fresh authority and the
-devices need the new root.
+already trust, and no "different authority" warning. If the fingerprint
+differs, Caddy generated a fresh authority and the devices need the new root.
+
+To check the chain Caddy SERVES rather than the file it exports, verify the
+live handshake against the restored root (use your own hostname). It must
+print "Verify return code: 0 (ok)"; anything else means Caddy is still
+serving a certificate from a different authority:
+
+    openssl s_client -connect headroom.local:443 -servername headroom.local \\
+      -showcerts -CAfile data/caddy-pki/root.crt </dev/null | grep 'Verify return code'
 """
 
 
@@ -201,8 +225,6 @@ def issuer_expiry() -> datetime | None:
     try:
         if not path.is_file():
             return None
-        from cryptography import x509  # noqa: PLC0415 — heavy, only needed here
-
         return x509.load_pem_x509_certificate(path.read_bytes()).not_valid_after_utc
     except Exception:  # a diagnostic must never break the page
         logger.warning("Could not read intermediate expiry", exc_info=True)
@@ -237,8 +259,6 @@ async def check_root(db: AsyncSession, current: str | None) -> tuple[bool, str |
     mismatch. The stored fingerprint is what the DEVICES trust, and the whole
     value of the check is that it keeps saying so until somebody deals with it.
     """
-    from headroom.services import settings_service  # noqa: PLC0415 — cycle
-
     if not current:
         return False, None
 

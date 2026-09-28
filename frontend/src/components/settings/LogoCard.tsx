@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getLogo, uploadLogo, deleteLogo } from '../../api/settings';
 import { logoSrc } from '../../lib/photo';
+import { qk } from '../../lib/queryKeys';
 import { ErrorNote } from '../common/ErrorNote';
 import { useConfirm } from '../ui/Dialogs';
 import { Panel } from '../ui/Panel';
@@ -11,7 +12,8 @@ import { useToast } from '../ui/Toast';
 
 import type { LogoStatus } from '../../types';
 
-const LOGO_KEY = ['settings', 'logo'] as const;
+// Shared with the navbar and the home hero, which read the same query.
+const LOGO_KEY = qk.settings.logo();
 
 export function LogoCard() {
   const qc = useQueryClient();
@@ -111,6 +113,15 @@ export function LogoCard() {
       title="Site logo"
       status={status}
       description="Shown in the navbar and home hero, scaled down to fit 96px tall. JPEG, PNG, WebP or HEIC."
+      help={(
+        <p>
+          The upload is converted and resized on the server, so a phone photo
+          or a HEIC is fine; a transparent PNG sits best on the dark canvas.
+          The login screen shows it too, before anyone signs in — so it is the
+          one image here that is public. The home-screen app icon is set when
+          the image is built, not here.
+        </p>
+      )}
       // No buttons until the status is known, as before this card was a
       // Panel: "Upload logo" as the primary button is itself a claim that
       // there is no logo, and it flipped to "Replace logo" a moment later on

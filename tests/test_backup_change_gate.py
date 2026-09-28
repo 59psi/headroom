@@ -42,21 +42,83 @@ async def test_a_new_photo_changes_the_fingerprint():
     assert backup_service._data_fingerprint_sync() != before
 
 
-async def test_the_wal_is_measured_as_well_as_the_database(monkeypatch, tmp_path):
-    """In WAL mode a commit can leave `headroom.db` completely untouched.
-
-    Watching the main file alone would report a day of edits as "no changes"
-    — the exact failure this gate must not have, since its consequence is a
-    backup that never runs.
-    """
+async def test_an_unreadable_database_falls_back_to_the_file_and_its_wal(monkeypatch, tmp_path):
+    """When the rows cannot be read, the gate judges the FILES — and both of
+    them: in WAL mode a commit can leave `headroom.db` completely untouched,
+    and watching the main file alone would report a day of edits as "no
+    changes", whose consequence is a backup that never runs."""
     db = tmp_path / "headroom.db"
-    db.write_bytes(b"main")
+    db.write_bytes(b"not a database")
     wal = tmp_path / "headroom.db-wal"
     wal.write_bytes(b"")
     monkeypatch.setattr(backup_service, "_db_path", lambda: db)
 
     before = backup_service._data_fingerprint_sync()
     wal.write_bytes(b"a committed transaction")
+
+    assert backup_service._data_fingerprint_sync() != before
+
+
+async def _seed_priced_hat(factory) -> int:
+    from datetime import datetime, timezone
+
+    from headroom.models.hat import Hat
+
+    async with factory() as db:
+        hat = Hat(
+            brand="melin", model_name="Odysea Hydro", style="cap", condition="excellent",
+            size="classic", resale_price=80.0,
+            updated_at=datetime(2020, 1, 1, tzinfo=timezone.utc),
+        )
+        db.add(hat)
+        await db.commit()
+        return hat.id
+
+
+async def test_a_sweep_that_moved_nothing_and_a_restart_leave_the_gate_closed(
+    file_engine, monkeypatch
+):
+    """The gate answered "changed" from the database FILE, which a re-pricing
+    sweep (stamping every hat it consults) and a stop/start (the shutdown
+    checkpoint) both rewrite — so with re-pricing on, every daily cycle wrote
+    a full tarball and KEEP=5 covered five days, not five changes."""
+    from pathlib import Path
+
+    from sqlalchemy import text
+
+    from headroom.services import hat_analysis_pipeline, repricing
+
+    engine, factory = file_engine
+    monkeypatch.setattr(backup_service, "_db_path", lambda: Path(engine.url.database))
+    await _seed_priced_hat(factory)
+    after_backup = backup_service._data_fingerprint_sync()
+
+    async def consulted_unchanged(hat):
+        return hat_analysis_pipeline.RESALE_PRICED
+
+    monkeypatch.setattr(hat_analysis_pipeline, "refresh_melin_resale", consulted_unchanged)
+    monkeypatch.setenv("HEADROOM_REPRICING_DELAY_SECONDS", "0")
+    assert await repricing.reprice_once(factory) == (0, 1)
+    async with factory() as db:
+        await db.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
+
+    assert backup_service._data_fingerprint_sync() == after_backup
+
+
+async def test_a_real_edit_still_opens_the_gate(file_engine, monkeypatch):
+    from pathlib import Path
+
+    from headroom.models.hat import Hat
+
+    engine, factory = file_engine
+    monkeypatch.setattr(backup_service, "_db_path", lambda: Path(engine.url.database))
+    hat_id = await _seed_priced_hat(factory)
+    before = backup_service._data_fingerprint_sync()
+
+    async with factory() as db:
+        hat = await db.get(Hat, hat_id)
+        hat.resale_price = 95.0
+        await db.commit()
 
     assert backup_service._data_fingerprint_sync() != before
 

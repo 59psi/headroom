@@ -64,6 +64,56 @@ async def test_search_by_size(client):
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("term", ["x-large", "xlarge", "X-Large", "x_large"])
+async def test_a_size_is_found_by_how_it_is_printed(client, term):
+    """Every page prints `x_large` as "X Large". A search for "x-large" or
+    "xlarge" found nothing; only "x large" did, by accident — "x" and "large"
+    each matched something on their own."""
+    big = await client.post(
+        "/api/hats", json={"condition": "new", "size": "x_large", "style": "a_game"}
+    )
+    await client.post(
+        "/api/hats", json={"condition": "new", "size": "classic", "style": "a_game"}
+    )
+
+    resp = await client.get("/api/search", params={"q": term})
+
+    assert resp.status_code == 200
+    assert [h["id"] for h in resp.json()] == [big.json()["id"]], term
+
+
+@pytest.mark.anyio
+async def test_the_size_labels_are_the_ones_search_matches(client):
+    """The picker's labels and the search's are one table, so what a person
+    reads on the page is what finds the hat."""
+    from headroom.schemas.hat import SIZE_LABELS, HatSize
+
+    sizes = (await client.get("/api/meta/sizes")).json()
+
+    assert sizes == [{"value": s.value, "label": SIZE_LABELS[s.value]} for s in HatSize]
+    assert {o["label"] for o in sizes} == {"Small", "Classic", "X Large"}
+
+
+@pytest.mark.anyio
+async def test_a_size_label_is_matched_for_the_owner_only(client, db_session):
+    """A guest's `SharedHat` carries no size, so a guest search must not match
+    one by its label either — that would read every hat's size by probing.
+    And a term that is all punctuation names no size at all, rather than
+    being contained in every label."""
+    from headroom.services import search_service
+
+    # Odysea: a style label with no hyphen, so "-" has nothing else to match.
+    created = await client.post(
+        "/api/hats", json={"condition": "new", "size": "x_large", "style": "odysea"}
+    )
+    hat_id = created.json()["id"]
+
+    assert [h.id for h in await search_service.search_hats(db_session, "xlarge")] == [hat_id]
+    assert await search_service.search_hats(db_session, "xlarge", public_fields_only=True) == []
+    assert await search_service.search_hats(db_session, "-") == []
+
+
+@pytest.mark.anyio
 async def test_search_multi_term_and(client):
     await client.post(
         "/api/hats",
@@ -237,6 +287,23 @@ async def test_search_finds_hydro_and_hydrolite_flags(client):
 
 
 @pytest.mark.anyio
+async def test_search_matches_the_colorway_for_the_owner_only(client, db_session):
+    """"808" is printed on the hat card and matched nothing. The guest view
+    does not show a colorway, so it must not match on one either."""
+    from headroom.services import search_service
+
+    created = await client.post(
+        "/api/hats", json={"condition": "new", "size": "classic", "style": "a_game"}
+    )
+    hat_id = created.json()["id"]
+    await client.put(f"/api/hats/{hat_id}", json={"colorway": "Hawaii 808"})
+
+    found = await client.get("/api/search?q=808")
+    assert hat_id in {h["id"] for h in found.json()}
+    assert await search_service.search_hats(db_session, "808", public_fields_only=True) == []
+
+
+@pytest.mark.anyio
 async def test_search_matches_artist_series(client):
     """Special editions are findable by collaborator, not just by model."""
     created = await client.post(
@@ -368,11 +435,19 @@ async def test_secondary_colors_still_count_as_major(client):
 
 
 @pytest.mark.anyio
-async def test_an_unknown_color_scope_falls_back_to_the_default(client):
-    """It arrives from a query string. The safe reading of a typo is the
-    default — not a 500, and not a silently wider search."""
+async def test_an_unknown_color_scope_is_refused_not_guessed(client, db_session):
+    """It arrives from a query string, so a typo is the caller's 422 — not a
+    500, not a silently wider search, and not the default scope's answer
+    under a request that asked for a different one (which is what reading it
+    as `major` returned, indistinguishable from "no accent matches").
+
+    Below the route the service still reads anything unknown as the
+    narrowest scope, for a caller that is not an HTTP request."""
+    from headroom.services import search_service
+
     await _hat_with_colors(client, "Odysea", ["black", "grey", "pink"])
 
-    hits = (await client.get("/api/search?q=pink&color_scope=nonsense")).json()
+    resp = await client.get("/api/search?q=pink&color_scope=nonsense")
+    assert resp.status_code == 422
 
-    assert hits == []
+    assert await search_service.search_hats(db_session, "pink", color_scope="nonsense") == []

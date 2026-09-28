@@ -11,23 +11,20 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException, Request
 
+from headroom.routes import _background
+from headroom.routes._api import DomainErrorRoute
 from headroom.schemas.admin import (
     RepricingRunResult,
     RepricingStatus,
     RepricingSweepStarted,
 )
-from headroom.services import repricing
-from headroom.services.melin_recap import MelinRecapError
+from headroom.services import melin_recap, repricing
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(route_class=DomainErrorRoute)
 
-#: Strong references to in-flight sweeps. `asyncio` holds only a weak reference
-#: to a running task, so without this the garbage collector may collect a sweep
-#: part-way through — and one that vanishes never reaches the `finally` that
-#: releases the slot, which is the same permanent lockout `create_task` was
-#: chosen to avoid.
+#: In-flight sweeps, held strongly — see `_background.launch`.
 _running_sweeps: set[asyncio.Task] = set()
 
 
@@ -83,7 +80,7 @@ async def run_repricing(request: Request):
         repriced, considered = await repricing.reprice_once(
             session_factory=factory, limit=repricing.MANUAL_SWEEP_LIMIT
         )
-    except MelinRecapError as exc:
+    except melin_recap.MelinRecapError as exc:
         # The marketplace was unreachable for every hat swept. Recorded like
         # any failure, and answered as a 503 with the reason rather than a
         # 500 with a traceback: a dead marketplace is a condition to report,
@@ -145,8 +142,8 @@ async def run_repricing_all(request: Request):
     use a BackgroundTask while it claimed nothing; since 2.76.0 it claims a slot
     too, and moved to `create_task` for this same reason.) Here the guard
     outlives the work it guards.
-    `create_task` schedules on the event loop immediately, so the release in
-    `_sweep_everything`'s `finally` is reachable regardless of the response.
+    `_background.launch` schedules on the event loop immediately and releases
+    the slot however the sweep ends, regardless of the response.
     """
     if not repricing.claim_full_sweep():
         return RepricingSweepStarted(started=False, already_running=True)
@@ -154,9 +151,11 @@ async def run_repricing_all(request: Request):
     # Captured here: the request's `app.state` is the seam tests swap, and the
     # task runs after the request is gone.
     factory = request.app.state.session_factory
-    task = asyncio.create_task(_sweep_everything(factory))
-    _running_sweeps.add(task)
-    task.add_done_callback(_running_sweeps.discard)
+    _background.launch(
+        _sweep_everything(factory),
+        release=repricing.release_full_sweep,
+        running=_running_sweeps,
+    )
     return RepricingSweepStarted(started=True, already_running=False)
 
 
@@ -167,19 +166,14 @@ async def _sweep_everything(session_factory) -> None:
     sweep could fail every time while the card went on showing the last
     success. `scheduled=False` — a button press proves the code works, not that
     the background loop is alive, so it must not clear a standing failure.
+    The slot is released by `_background.launch`, however this ends.
     """
-    # try/FINALLY: the slot must be released however this ends, or one crashed
-    # sweep refuses every later press for the life of the process. `finally`
-    # rather than `except Exception`, because CancelledError is a BaseException
-    # — the same trap `sweep_progress` documents.
     try:
         repriced, considered = await repricing.reprice_once(session_factory=session_factory)
     except Exception as exc:  # noqa: BLE001 — a failed run must be RECORDED
         repricing.health().record_failure(exc)
         logger.warning("Full re-pricing sweep failed: %s", exc)
         return
-    finally:
-        repricing.release_full_sweep()
     repricing.health().record_success(repriced, considered, scheduled=False)
     logger.info(
         "Full re-pricing sweep finished: %d price(s) changed across %d hat(s)",

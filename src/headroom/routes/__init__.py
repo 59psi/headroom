@@ -1,36 +1,75 @@
-from fastapi import APIRouter
+"""The API's route table, and which parts of it demand a signed-in user.
 
-from headroom.routes.admin import router as admin_router
-from headroom.routes.auth import router as auth_router
-from headroom.routes.cases import router as cases_router
-from headroom.routes.hats import router as hats_router
-from headroom.routes.health import router as health_router
-from headroom.routes.import_jobs import router as import_jobs_router
-from headroom.routes.meta import router as meta_router
-from headroom.routes.public import router as public_router
-from headroom.routes.rooms import router as rooms_router
-from headroom.routes.search import router as search_router
-from headroom.routes.settings import router as settings_router
-from headroom.routes.share import router as share_router
-from headroom.routes.ca_cert import router as ca_cert_router
-from headroom.routes.guest import router as guest_router
-from headroom.routes.share_links import router as share_links_router
+Two layers guard the data-bearing routes. `AuthGateMiddleware` is the first:
+it refuses an anonymous caller on every protected PATH before routing runs.
+The second is here — `require_user` attached to each protected ROUTER as it is
+included — so a route that ends up outside the gate's prefixes (a new
+top-level path, a prefix edited by one character, the middleware dropped from
+`create_app`) still answers 401 instead of serving the collection. Until this,
+`require_admin` was attached to the admin router alone, and its presence there
+read as a guard for modules that had none: with the gate out of the picture,
+26 routes — deleting a hat, the logo, creating share links, the share target —
+answered an anonymous caller. `tests/test_route_layer.py` removes the gate and
+enumerates the route table to hold both layers to the same answer.
+
+The open routers are the ones whose whole point is to be reachable signed
+out: health probes, the way in (`auth`), and the token- or setting-gated
+public views. They are listed apart so an open router is a decision someone
+wrote down, not a guard someone forgot.
+"""
+
+from fastapi import APIRouter, Depends
+
+from headroom.auth import require_user
+from headroom.routes import (
+    admin,
+    auth,
+    ca_cert,
+    cases,
+    guest,
+    hats,
+    health,
+    import_jobs,
+    meta,
+    public,
+    rooms,
+    search,
+    settings,
+    share,
+    share_links,
+)
+
+#: Reachable signed out. `auth` guards its own session-only routes per route
+#: (`/me`, the token, passkey management), because its login and setup must
+#: stay open.
+_OPEN = (
+    health.router,
+    public.router,
+    auth.router,
+    share_links.public_router,
+    guest.router,
+    ca_cert.router,
+)
+
+#: Everything else. `import_jobs` before `hats` is no longer load-bearing —
+#: the hat routes take `{hat_id:int}`, which cannot match `import`, and
+#: `tests/test_route_layer.py` holds that collision closed — but it is the
+#: order the table has always had.
+_PROTECTED = (
+    cases.router,
+    import_jobs.router,
+    hats.router,
+    rooms.router,
+    meta.router,
+    search.router,
+    settings.router,
+    admin.router,
+    share.router,
+    share_links.router,
+)
 
 api_router = APIRouter()
-api_router.include_router(health_router)
-api_router.include_router(public_router)
-api_router.include_router(auth_router)
-api_router.include_router(cases_router)
-# import_jobs must register before hats so /api/hats/import isn't shadowed
-# by /api/hats/{hat_id} path-parsing.
-api_router.include_router(import_jobs_router)
-api_router.include_router(hats_router)
-api_router.include_router(rooms_router)
-api_router.include_router(meta_router)
-api_router.include_router(search_router)
-api_router.include_router(settings_router)
-api_router.include_router(admin_router)
-api_router.include_router(share_router)
-api_router.include_router(share_links_router)
-api_router.include_router(guest_router)
-api_router.include_router(ca_cert_router)
+for _router in _OPEN:
+    api_router.include_router(_router)
+for _router in _PROTECTED:
+    api_router.include_router(_router, dependencies=[Depends(require_user)])

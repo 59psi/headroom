@@ -57,13 +57,14 @@ a far worse failure than one wasted round trip.
 """
 
 import asyncio
+import ipaddress
 import logging
-import os
+import re
 import socket
 import struct
 from urllib.parse import urlsplit
 
-from headroom.config import env_flag, env_int, settings
+from headroom.config import env_flag, env_int, env_raw, env_str, settings
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +98,7 @@ logger = logging.getLogger(__name__)
 
 _MDNS_GROUP = "224.0.0.251"
 _MDNS_PORT = 5353
+
 
 def _held_types() -> tuple[int, ...]:
     """The record types this advertisement actually holds at the hostname.
@@ -278,6 +280,7 @@ async def _start_nsec_responder(hostname: str, ip: str):
     )
     return transport
 
+
 _aiozc = None  # zeroconf.asyncio.AsyncZeroconf | None — module-level singleton
 
 # The only runtime-captured facts; everything else in mdns_status() is derived.
@@ -290,10 +293,44 @@ def mdns_enabled() -> bool:
     return env_flag("HEADROOM_MDNS_ENABLED")
 
 
+DEFAULT_HOSTNAME = "headroom"
+
+#: One lowercase DNS label: what `<label>.local` needs, and — more to the point
+#: — what the https-lan overlay can safely append `.local` to.
+_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+
+
 def mdns_hostname() -> str:
-    """Advertised host label, normalized: 'headroom.local' / 'headroom.' → 'headroom'."""
-    raw = os.environ.get("HEADROOM_MDNS_HOSTNAME", "headroom").strip().lower()
-    return raw.removesuffix(".").removesuffix(".local").strip(".") or "headroom"
+    """The advertised host label, EXACTLY as configured — or the default.
+
+    This used to normalize: `headroom.local`, `Hats.Local.` and `  lids  ` all
+    became a clean label. The app was the only reader that did. The https-lan
+    overlay builds Caddy's site address, `HEADROOM_ORIGIN` and `HEADROOM_RP_ID`
+    by appending `.local` to the RAW value, so `hats.local` advertised
+    `hats.local` here while Caddy served `hats.local.local` and passkeys were
+    bound to it — a mismatch that surfaced only as a TLS SNI rejection and
+    broken passkeys, far from its cause. A value this app would quietly fix is
+    a value the overlay silently breaks on, so it is no longer fixed: see
+    `hostname_problem`, which `start_mdns` refuses to advertise past.
+    """
+    return env_raw("HEADROOM_MDNS_HOSTNAME", DEFAULT_HOSTNAME)
+
+
+def hostname_problem() -> str | None:
+    """Why the configured label cannot be advertised, or None when it can."""
+    label = mdns_hostname()
+    if _LABEL_RE.match(label):
+        return None
+    cleaned = label.strip().lower().removesuffix(".").removesuffix(".local").strip(".")
+    hint = (
+        f" Set it to `{cleaned}`." if cleaned and _LABEL_RE.match(cleaned) else ""
+    )
+    return (
+        f"HEADROOM_MDNS_HOSTNAME={label!r} is not a bare host label. It must be "
+        "one lowercase name like `hats` — no `.local`, no dots, no spaces — "
+        "because `.local` is appended to it, by this app and by the LAN-HTTPS "
+        "overlay's certificate and passkey settings alike." + hint
+    )
 
 
 def mdns_port() -> int:
@@ -313,23 +350,61 @@ def _mdns_interfaces(lan_ips: list[str]):
     bridge and multicast can egress the wrong NIC, so the name never resolves
     on the LAN while the raw IP still works.
 
-    Override with ``HEADROOM_MDNS_INTERFACE`` — an explicit IP to bind, or the
-    literal ``all`` to restore zeroconf's pre-2.0.3 all-interfaces behavior.
-    An explicit override replaces the whole list rather than joining it: it
-    exists to say "use exactly this NIC", and quietly binding a second address
-    beside it would defeat the point.
+    Override with ``HEADROOM_MDNS_INTERFACE`` — an explicit IPv4 address to
+    bind, or the literal ``all`` to restore zeroconf's pre-2.0.3
+    all-interfaces behavior. An explicit override replaces the whole list
+    rather than joining it: it exists to say "use exactly this NIC", and
+    quietly binding a second address beside it would defeat the point. The
+    same address is what gets ADVERTISED — see `_pinned_ipv4`.
 
     Returns whatever zeroconf's ``interfaces=`` accepts: a list of IPs, or
     ``InterfaceChoice.All`` (its own default) for the ``all`` escape hatch.
     """
-    override = os.environ.get("HEADROOM_MDNS_INTERFACE", "").strip()
+    override = _interface_override()
     if override.lower() == "all":
-        from zeroconf import InterfaceChoice  # noqa: PLC0415 — lazy, as elsewhere
+        from zeroconf import InterfaceChoice  # noqa: PLC0415 — zeroconf stays off the boot path when mDNS is disabled
 
         return InterfaceChoice.All
     if override:
         return [override]
     return list(lan_ips)
+
+
+def _interface_override() -> str:
+    return env_str("HEADROOM_MDNS_INTERFACE")
+
+
+def _pinned_ipv4() -> str | None:
+    """The IPv4 address `HEADROOM_MDNS_INTERFACE` pins, or None when unpinned.
+
+    Raises ValueError for an override that is neither `all` nor an IPv4
+    address, so `start_mdns` can say so instead of advertising a guess.
+
+    Pinning has to decide what is ADVERTISED, not only what is bound. It used
+    to bind the pinned NIC and then publish `_lan_ip()` — the default-route
+    NIC's address — in the A record and the NSEC membership. On a multi-homed
+    host, the only place the knob matters, clients on the pinned network were
+    told to connect to the other network's address.
+
+    IPv4 only, and a pinned host advertises no AAAA. The v6 detector reads the
+    default route the same way `_lan_ip` does, so its answer may belong to a
+    different NIC — the exact mistake being fixed. With no AAAA, the NSEC
+    responder negates AAAA queries (`_held_types`), so v6-preferring clients
+    fall back to the A record at once rather than stalling.
+    """
+    override = _interface_override()
+    if not override or override.lower() == "all":
+        return None
+    try:
+        address = ipaddress.ip_address(override)
+    except ValueError:
+        address = None
+    if address is None or address.version != 4:
+        raise ValueError(
+            f"HEADROOM_MDNS_INTERFACE={override!r} must be an IPv4 address of "
+            "the network card to advertise on, or `all`."
+        )
+    return override
 
 
 def _advertised_url(host: str, port: int) -> str:
@@ -405,12 +480,26 @@ async def start_mdns() -> None:
     global _aiozc, _ip, _ipv6, _error
     if not mdns_enabled() or _aiozc is not None:
         return
-    ip = _lan_ip()
+    # Refused rather than repaired: the LAN-HTTPS overlay appends `.local` to
+    # the same raw value for Caddy and passkeys, so advertising a cleaned-up
+    # name here would only move the breakage somewhere harder to trace.
+    problem = hostname_problem()
+    if problem is not None:
+        logger.error("mDNS: %s Not advertising.", problem)
+        _error = problem
+        return
+    try:
+        pinned = _pinned_ipv4()
+    except ValueError as exc:
+        logger.error("mDNS: %s Not advertising.", exc)
+        _error = str(exc)
+        return
+    ip = pinned or _lan_ip()
     if ip is None:
         logger.warning("mDNS: no LAN address found — not advertising")
         _error = "no LAN address found"
         return
-    ipv6 = _lan_ipv6()
+    ipv6 = None if pinned else _lan_ipv6()
     host, port = mdns_hostname(), mdns_port()
     aiozc = None
     try:
@@ -472,8 +561,11 @@ async def start_mdns() -> None:
         if aiozc is not None:
             try:
                 await aiozc.async_close()
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as close_exc:  # noqa: BLE001 — best-effort teardown after a failure already reported above
+                logger.debug(
+                    "mDNS: teardown after the failed registration also failed "
+                    "(zeroconf may already be closed): %s", close_exc,
+                )
 
 
 async def stop_mdns() -> None:
@@ -484,7 +576,7 @@ async def stop_mdns() -> None:
     if _nsec_transport is not None:
         try:
             _nsec_transport.close()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 — shutdown cleanup; the remaining steps must still run
             logger.debug("mDNS NSEC responder shutdown error: %s", exc)
         _nsec_transport = None
     if _aiozc is None:
@@ -494,7 +586,7 @@ async def stop_mdns() -> None:
         # async_unregister_all_services() first would broadcast the goodbye
         # packets twice and double the shutdown sleeps.
         await _aiozc.async_close()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001 — best-effort teardown; zeroconf may already be closed
         logger.debug("mDNS shutdown error: %s", exc)
     _aiozc = None
     _ip = None

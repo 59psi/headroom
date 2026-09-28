@@ -46,6 +46,8 @@ for _leaky in (
 ):
     os.environ.pop(_leaky, None)
 
+import functools
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
@@ -84,6 +86,45 @@ def isolated_upload_dir(tmp_path, monkeypatch):
     for sub in ("hats", "branding"):
         (upload_dir / sub).mkdir(parents=True)
     monkeypatch.setattr(settings, "upload_dir", upload_dir)
+
+
+#: The stub bundle's `index.html`. Tests that expect the SPA shell assert on
+#: `SPA_SHELL_MARKER`, so a 200 from anything else — a JSON body, some other
+#: file — cannot pass for the shell.
+SPA_SHELL_MARKER = "headroom-test-spa-shell"
+SPA_SHELL = (
+    "<!doctype html><html><head><title>Headroom</title></head>"
+    f'<body><div id="root" data-shell="{SPA_SHELL_MARKER}"></div></body></html>'
+)
+
+
+@pytest.fixture(autouse=True)
+def spa_bundle(tmp_path, monkeypatch):
+    """Every app a test builds serves the same stub SPA bundle.
+
+    `create_app()` registers the SPA catch-all and the `/assets` mount only
+    when `FRONTEND_DIST` exists, and that constant points at the repo's real
+    `frontend/dist`. CI's backend job never builds the frontend, so there the
+    catch-all did not exist: "a typo under /api is a 404, not the shell" passed
+    against a plain routing 404 and could not fail, and "the share page stays
+    open" passed on the same 404. A developer who had run `vite build` ran a
+    different route table and so a different suite. Pointing every test at a
+    stub bundle gives both runs the production shape (the image always ships
+    a built SPA), and a stale local build can no longer reach the results.
+
+    Autouse, and patched on the module rather than passed to `create_app`,
+    because tests build apps in several places (the `app` fixture, the
+    lifespan and gate tests, `test_security._make_app_with_dist`) and the SPA
+    handler reads the global per request. A test that wants its own bundle
+    patches over this one, as `_make_app_with_dist` does.
+    """
+    import headroom.app as app_mod
+
+    dist = tmp_path / "frontend-dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text(SPA_SHELL)
+    monkeypatch.setattr(app_mod, "FRONTEND_DIST", dist.resolve())
+    return dist
 
 
 @pytest.fixture(autouse=True)
@@ -171,15 +212,14 @@ def stub_background_removal(monkeypatch):
 
     The pipeline accepts `None` as 'background removal failed' and falls back
     to the processed JPEG, which is exactly what we want for the test contract.
+    One patch: the pipeline calls `background_removal.remove_background`
+    through the module, so the owner's attribute is the only seam.
     """
     async def _noop(_input, _output):
         return None
 
     monkeypatch.setattr(
         "headroom.services.background_removal.remove_background", _noop
-    )
-    monkeypatch.setattr(
-        "headroom.services.hat_analysis_pipeline.remove_background", _noop
     )
 
 
@@ -235,34 +275,47 @@ def app():
     return app
 
 
-# One argon2 hash for the whole run — hashing per-test would be slow.
 _TEST_PASSWORD = "test-password-123"
 _TEST_SESSION_ID = "test-session-cookie-value"
 
 
-async def _seed_owner():
-    """Insert the test owner + a valid session row directly (no HTTP)."""
+@functools.cache
+def _test_password_hash() -> str:
+    """One argon2 hash for the whole run — hashing per test would be slow."""
+    from headroom.services import auth_service
+
+    return auth_service.hash_password(_TEST_PASSWORD)
+
+
+async def _seed_owner(
+    factory=test_session_factory,
+    *,
+    username: str = "testowner",
+    api_token: str = "hr_test-api-token",
+    session_id: str = _TEST_SESSION_ID,
+):
+    """Insert an owner and a valid session row directly (no HTTP); return the user.
+
+    The one definition, for every database the suite builds: the in-memory
+    one by default, the file-backed one through `factory`. The password is
+    always `_TEST_PASSWORD`.
+    """
     from datetime import datetime, timedelta, timezone
 
     from headroom.models.user import AuthSession, User
-    from headroom.services import auth_service
 
-    global _TEST_HASH
-    if "_TEST_HASH" not in globals():
-        _TEST_HASH = auth_service.hash_password(_TEST_PASSWORD)
-
-    async with test_session_factory() as session:
+    async with factory() as session:
         user = User(
-            username="testowner",
-            password_hash=_TEST_HASH,
-            api_token="hr_test-api-token",
+            username=username,
+            password_hash=_test_password_hash(),
+            api_token=api_token,
         )
         session.add(user)
         await session.commit()
         await session.refresh(user)
         session.add(
             AuthSession(
-                id=_TEST_SESSION_ID,
+                id=session_id,
                 user_id=user.id,
                 expires_at=datetime.now(timezone.utc) + timedelta(days=1),
             )
@@ -275,17 +328,16 @@ async def _seed_owner():
 async def client(app):
     """Authenticated client — the default for the suite."""
     await _seed_owner()
-    transport = ASGITransport(app=app)
-    c = AsyncClient(transport=transport, base_url="http://test")
-    c.cookies.set("headroom_session", _TEST_SESSION_ID)
-    return c
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        c.cookies.set("headroom_session", _TEST_SESSION_ID)
+        yield c
 
 
 @pytest.fixture
-def anon_client(app):
+async def anon_client(app):
     """Unauthenticated client for auth-flow tests (no seeded user)."""
-    transport = ASGITransport(app=app)
-    return AsyncClient(transport=transport, base_url="http://test")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        yield c
 
 
 # ---- a FILE-backed database, for concurrency ------------------------------ #
@@ -340,25 +392,10 @@ def file_app(file_engine):
 @pytest.fixture
 async def file_client(file_app, file_engine):
     """Authenticated client whose every request gets its own connection."""
-    from datetime import datetime, timedelta, timezone
-
-    from headroom.models.user import AuthSession, User
-    from headroom.services import auth_service
-
     _, factory = file_engine
-    global _TEST_HASH
-    if "_TEST_HASH" not in globals():
-        _TEST_HASH = auth_service.hash_password(_TEST_PASSWORD)
-    async with factory() as db:
-        user = User(username="fileowner", password_hash=_TEST_HASH, api_token="hr_file-token")
-        db.add(user)
-        await db.commit()
-        await db.refresh(user)
-        db.add(AuthSession(
-            id="file-session", user_id=user.id,
-            expires_at=datetime.now(timezone.utc) + timedelta(days=1),
-        ))
-        await db.commit()
-    c = AsyncClient(transport=ASGITransport(app=file_app), base_url="http://test")
-    c.cookies.set("headroom_session", "file-session")
-    return c
+    await _seed_owner(
+        factory, username="fileowner", api_token="hr_file-token", session_id="file-session"
+    )
+    async with AsyncClient(transport=ASGITransport(app=file_app), base_url="http://test") as c:
+        c.cookies.set("headroom_session", "file-session")
+        yield c

@@ -15,6 +15,7 @@ export function hatFixture(over: Partial<HatRead> = {}): HatRead {
     case_display_id: 'A-001', case_type: null, photo_path: null,
     original_path: null, thumb_path: null, condition: 'new', date_last_worn: null,
     wear_count: 0, size: 'classic', style: 'a_game', is_beanie: false, colors: [],
+    colors_source: null,
     room_id: null, room_name: null, brand: null, logo_detected: null,
     artist_series: null, construction: null, hydrolite: false, hydro: false,
     model_name: null, colorway: null, purchase_price: null, purchased_at: null,
@@ -36,12 +37,12 @@ export function hatFixture(over: Partial<HatRead> = {}): HatRead {
 /** Idle sweep progress — what the server sends when nothing is running.
  *
  *  Shared rather than rebuilt per test file: two byte-identical copies of this
- *  shape already existed, so adding a field to `SweepProgress` would have
+ *  shape already existed, so adding a field to `SweepProgressRead` would have
  *  broken each independently — the exact failure this module exists to stop.
  */
 export function sweepProgressFixture(
-  over: Partial<import('../types').SweepProgress> = {},
-): import('../types').SweepProgress {
+  over: Partial<import('../types').SweepProgressRead> = {},
+): import('../types').SweepProgressRead {
   return {
     running: false, done: 0, total: 0, label: null,
     started_at: null, finished_at: null, error: null, pct: 0,

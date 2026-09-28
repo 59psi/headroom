@@ -1,9 +1,42 @@
+/**
+ * Every response shape the API returns, mirrored from its Pydantic schema.
+ *
+ * Each interface carries the SCHEMA'S OWN NAME (`ImportJobRead`, not
+ * `ImportJob`), so a mirror can be found from the OpenAPI document by name and
+ * checked field by field — eleven used to go by a second name, which made the
+ * pairing a lookup table nobody kept. Shapes that only the client builds (the
+ * WebAuthn JSON forms below, the write bodies) say so where they are declared.
+ *
+ * A union spelled out here must name exactly the server's enum values —
+ * `tests/test_wire_vocabulary.py` reads this file and compares them. That is
+ * why the status fields spell their literals inline rather than through an
+ * alias: an alias leaves the test nothing to compare.
+ */
+
+/** How prominent a color is on the hat. Mirrors `ColorTier`. */
+export type ColorTier = 'primary' | 'secondary' | 'tertiary' | 'accent';
+
 export interface ColorTag {
   color_name: string;
   general_color: string;
   hex_value: string;
   dominance_rank: number;
-  tier?: string;
+  tier?: 'primary' | 'secondary' | 'tertiary' | 'accent';
+}
+
+/**
+ * One color as `PUT /api/hats/{id}/colors` takes it (`ColorTagWrite`).
+ *
+ * The rank is the position in the list — the server ignores a sent
+ * `dominance_rank` — and a blank name or general color is derived from the
+ * hex. A read `ColorTag` is assignable to this, so an edit can send the
+ * palette it loaded.
+ */
+export interface ColorTagWrite {
+  color_name?: string | null;
+  general_color?: string | null;
+  hex_value: string;
+  tier?: ColorTier;
 }
 
 export interface HatSummary {
@@ -28,7 +61,9 @@ export interface CaseRead {
   beanie_count: number;
   regular_count: number;
   room_id: number;
-  room_name: string;
+  /** Null for an orphaned case — its room is gone. It used to arrive as the
+   *  placeholder "Unknown", which read as a room of that name. */
+  room_name: string | null;
   /** Up to 4 hat photos for the collage the Cases grid renders. */
   hat_thumbs: string[];
   /** Past nominal capacity — a 4th hat in a 3-hat case. Allowed, but shown. */
@@ -75,6 +110,9 @@ export interface HatRead {
   style: string;
   is_beanie: boolean;
   colors: ColorTag[];
+  /** "owner" when you set these colors — re-analysis keeps them; null when
+   *  analysis wrote them. */
+  colors_source: string | null;
   room_id: number | null;
   room_name: string | null;
 
@@ -107,8 +145,9 @@ export interface HatRead {
    *  model) · "category" (every listing in the style category — a price level,
    *  not this hat's value) · null (no price). */
   resale_price_scope: 'manual' | 'model' | 'category' | null;
-  analysis_status: string | null;
-  analysis_stage: string | null;
+  analysis_status: 'pending' | 'ok' | 'fallback' | 'skipped' | 'error' | null;
+  /** Set while analysis (or a re-cut) is in flight — the step it is on. */
+  analysis_stage: 'cutout' | 'identifying' | 'pricing' | 'resale' | null;
   /** When `analysis_stage` last changed — lets the UI say "in identifying
    *  for 41 min" instead of an indefinite "Analyzing…". */
   analysis_stage_at: string | null;
@@ -118,7 +157,7 @@ export interface HatRead {
 
   // v0.3 disposition
   disposed_at: string | null;
-  disposed_via: string | null;
+  disposed_via: 'sold' | 'gifted' | 'lost' | 'trashed' | 'trade' | null;
   disposed_price: number | null;
   disposed_to: string | null;
   disposed_notes: string | null;
@@ -134,25 +173,48 @@ export interface HatRead {
   updated_at: string;
 }
 
-export interface ImportJobItem {
+/** Named for reuse; the literals live on `HatRead`, where the parity test reads them. */
+export type AnalysisStatus = NonNullable<HatRead['analysis_status']>;
+export type AnalysisStage = NonNullable<HatRead['analysis_stage']>;
+export type DisposedVia = NonNullable<HatRead['disposed_via']>;
+
+/** What `POST /api/admin/ebay/refresh/{id}` answers with: the
+ *  comparable-listing fields as they were persisted on the hat. */
+export interface EbayComps {
+  ebay_avg_price: number | null;
+  ebay_median_price: number | null;
+  ebay_listing_count: number | null;
+  ebay_search_url: string | null;
+  ebay_checked_at: string | null;
+}
+
+export interface ImportJobItemRead {
   id: number;
   filename: string;
   status: 'queued' | 'processing' | 'done' | 'error' | 'skipped' | 'canceled';
   hat_id: number | null;
   error: string | null;
-  bytes: number;
+  /** Null for an item recorded before sizes were kept. */
+  bytes: number | null;
 }
 
-export interface ImportJob {
+export interface ImportJobRead {
   id: number;
-  created_at: string;
+  created_at: string | null;
   finished_at: string | null;
   total: number;
   done: number;
   errors: number;
   skipped: number;
   status: 'queued' | 'running' | 'done' | 'canceled';
-  items: ImportJobItem[];
+  items: ImportJobItemRead[];
+}
+
+/** `POST /api/hats/import` — the job was queued; poll it by id. */
+export interface ImportJobCreated {
+  id: number;
+  total: number;
+  status: ImportJobRead['status'];
 }
 
 export interface ActivityRow {
@@ -186,6 +248,8 @@ export interface SearchResult {
   model_name: string | null;
   /** Projected so the shared filter bar works on this page too. */
   construction: string | null;
+  /** A text search matches it, so the row shows it (`HatRow`). */
+  colorway: string | null;
   colors: ColorTag[];
   room_id: number | null;
   room_name: string | null;
@@ -204,8 +268,11 @@ export interface PaletteColor {
   hex: string;
 }
 
-export interface MetaOption {
-  value: string;
+/** One dropdown option: the stored value and the label a person reads. The
+ *  server types `value` as string-or-integer; each endpoint serves one kind —
+ *  enum values are strings, room ids (`/api/meta/rooms`) are numbers. */
+export interface MetaOption<V extends string | number = string> {
+  value: V;
   label: string;
 }
 
@@ -246,6 +313,12 @@ export interface RoomDetail extends RoomRead {
   cases: CaseRead[];
 }
 
+/** One color on a shared hat: its name and swatch, nothing else. */
+export interface SharedColor {
+  name: string;
+  hex: string;
+}
+
 /** One hat as an outside viewer sees it — the server's narrowed projection.
  *  No prices, purchase history, disposition, wear counts or notes: they are
  *  not in the payload, so they cannot be rendered by accident. */
@@ -255,10 +328,13 @@ export interface SharedHat {
   brand: string | null;
   model_name: string | null;
   style: string;
+  /** The style as every screen prints it ("A-Game") — a guest cannot read
+   *  `/api/meta` for the labels, so the server sends the words with the hat. */
+  style_label: string;
   photo_url: string | null;
   /** The grid thumbnail on the same public route; the full photo is for the hat page. */
   thumb_url: string | null;
-  colors: { name: string; hex: string | null }[];
+  colors: SharedColor[];
   case: string | null;
   room: string | null;
 }
@@ -279,7 +355,9 @@ export interface LogoStatus {
 
 export interface ApiKeyStatus {
   configured: boolean;
-  source: string | null;
+  /** Where the key came from — the database (set in Settings, which wins) or
+   *  the server's environment. Null when there is none. */
+  source: 'database' | 'environment' | null;
   masked: string | null;
 }
 
@@ -321,6 +399,10 @@ export interface RecentError {
   analysis_error: string | null;
   analyzed_at: string | null;
   photo_path: string | null;
+  /** The 320px tile derivative, so the row's thumbnail is not the full
+   *  1200px cutout. Null for a hat analyzed before thumbnails existed;
+   *  `tileSrc` falls back to `photo_path`. */
+  thumb_path: string | null;
 }
 
 export interface BackupInfo {
@@ -344,7 +426,7 @@ export interface AnalysisJobRead {
   total: number;
   done: number;
   failed: number;
-  status: string;
+  status: 'running' | 'done';
   started_at: string;
   finished_at: string | null;
 }
@@ -358,6 +440,18 @@ export interface AnalysisQueueStatus {
   recent_jobs: AnalysisJobRead[];
 }
 
+/** A background task's pulse: last attempt, last success, failures in a row. */
+export interface TaskHealthRead {
+  name: string;
+  last_attempt_at: string | null;
+  last_success_at: string | null;
+  last_error: string | null;
+  consecutive_failures: number;
+  /** What the last successful run produced — for the retention prune, rows
+   *  removed across both tables. Null before the first run. */
+  last_result: number | null;
+}
+
 /** Is the daily retention prune still running?
  *
  *  The activity-log row COUNT cannot answer this — a table nobody is writing
@@ -366,20 +460,12 @@ export interface AnalysisQueueStatus {
  *  death ends in a full disk. */
 export interface RetentionStatus {
   retention_days: number;
-  health: {
-    name: string;
-    last_attempt_at: string | null;
-    last_success_at: string | null;
-    last_error: string | null;
-    consecutive_failures: number;
-    /** Rows removed by the last successful sweep, both tables combined. */
-    last_result: number;
-  };
+  health: TaskHealthRead;
 }
 
 /** Whether the scheduled-backup task is actually working — last attempt, last
  *  success, consecutive failures — plus the persisted off-box upload record. */
-export interface BackupHealth {
+export interface BackupHealthRead {
   enabled: boolean;
   running: boolean;
   last_attempt_at: string | null;
@@ -399,7 +485,7 @@ export interface BackupHealth {
  *
  *  Reported, never enforced: the certificate belongs to Caddy, so failing
  *  readiness on it would restart-loop the app without fixing anything. */
-export interface TlsStatus {
+export interface TlsStatusRead {
   /** False on every install without an HTTPS front door — not a problem. */
   applicable: boolean;
   host: string | null;
@@ -433,6 +519,12 @@ export interface TlsStatus {
    *  chain that verifies fine at the server. Only the fingerprint separates
    *  them. */
   ca_sha256: string | null;
+  /** Whether the chain the front door actually SERVES leads up to
+   *  `ca_sha256` (the exported root). False after a CA restore while Caddy
+   *  still holds a leaf from the interim authority — every device refuses it.
+   *  Null when it cannot be told (no exported root, no handshake,
+   *  Python < 3.13). */
+  chain_matches_ca: boolean | null;
   error: string | null;
 }
 
@@ -457,7 +549,7 @@ export interface BackupUploadProvider {
 
 /** Whether the off-box backup copy is configured, and whether it works.
  *
- *  Separate from `BackupHealth` because the two fail independently: a local
+ *  Separate from `BackupHealthRead` because the two fail independently: a local
  *  backup can succeed every night while the upload has been failing for a
  *  month, and only the second means the archive exists nowhere but the card
  *  it is protecting against. */
@@ -486,7 +578,7 @@ export interface BackupUploadStatus {
 }
 
 /** A set of hats that look like the same hat entered more than once. */
-export interface DuplicateGroup {
+export interface DuplicateGroupRead {
   key: string;
   /** "exact" — every identity field agrees. "likely" — same model and size,
    *  with the colorway missing on at least one side (usually an unanalyzed
@@ -521,7 +613,7 @@ export interface ConstructionClearResult {
 
 // ---- Purchase history ---------------------------------------------- //
 
-export interface PurchaseRow {
+export interface PurchaseRead {
   id: number;
   order_ref: string | null;
   order_date: string | null;
@@ -541,8 +633,36 @@ export interface UnmatchOneResult {
   cleared: string[];
 }
 
+/**
+ * One proposed purchase → hat link, from the matcher or the import preview.
+ *
+ * The matcher names the purchase row (`purchase_id`); the preview scores rows
+ * that are not stored yet, so it has no id and says instead which half of the
+ * click each row is (`already_on_record`: the backlog, not the new file).
+ */
+export interface MatchProposal {
+  purchase_id: number | null;
+  item_title: string;
+  order_ref: string | null;
+  price: number | null;
+  size: string | null;
+  hat_id: number;
+  hat_display_id: string | null;
+  score: number;
+  /** Which fields agreed — "model", "colorway", "size"… */
+  matched_on: string[];
+  /** Tied between equally good hats; `tied_hat_ids` names the others. */
+  ambiguous: boolean;
+  tied_hat_ids: number[];
+  sets_price: boolean;
+  sets_colorway: boolean;
+  already_on_record: boolean | null;
+}
+
 /** What importing WOULD do. Nothing is written to produce this. */
 export interface ImportPreview {
+  /** Always true here — the preview is the dry run. */
+  dry_run: boolean;
   would_import: number;
   duplicates: number;
   unusable: number;
@@ -558,21 +678,31 @@ export interface ImportPreview {
    *  backlog. The number the preview is accountable for. */
   would_match_total: number;
   ambiguous: number;
+  /** The links the import would make, row by row. */
+  proposals: MatchProposal[];
 }
 
+/** The write path of the purchase import: rows imported, then the matching
+ *  run that follows — the response that reports prices written onto hats. */
 export interface ImportResult {
   imported: number;
   skipped: number;
   matched: number;
   unmatched: number;
+  /** Matches that were a tie between equally good hats. */
+  ambiguous: number;
 }
 
+/** What matching linked, or would link under `dry_run`. */
 export interface MatchResult {
+  dry_run: boolean;
   matched: number;
   unmatched: number;
+  ambiguous: number;
+  proposals: MatchProposal[];
 }
 
-export interface UnmatchResult {
+export interface UnmatchAllResult {
   unmatched: number;
   fields_cleared: number;
 }
@@ -602,6 +732,9 @@ export interface AnalysisFailureGroup {
    *  button is labeled with. Lower than `hat_count` when a hat here has no
    *  photo left to analyze, which is its own failure and cannot be retried. */
   retryable_count: number;
+  /** Why the rest cannot be retried: no photo on disk, or no Claude key yet
+   *  (the card's one "Add a key" nudge). Null when every hat is retryable. */
+  unretryable_reason: 'no_photo' | 'no_api_key' | null;
   sample_hat_ids: number[];
   last_seen: string | null;
   /** Anthropic billing/quota — the failure that looks like a missing key. */
@@ -614,7 +747,7 @@ export interface AnalysisJobHat {
   display_id: string | null;
   label: string | null;
   photo_path: string | null;
-  analysis_status: string | null;
+  analysis_status: 'pending' | 'ok' | 'fallback' | 'skipped' | 'error' | null;
   /** Verbatim and untruncated. The failures CARD groups on a cleaned key so
    *  one problem reads as one; here the whole string is the point. */
   analysis_error: string | null;
@@ -635,7 +768,7 @@ export interface AnalysisJobDetail extends AnalysisJobRead {
 
 /** What a re-analysis run queued. Shared by the whole-collection run and the
  *  retry-failed run, which differ only in which hats go in. */
-export interface ReanalyzeResult {
+export interface ReanalyzeAllResult {
   queued: number;
   worker_alive: boolean;
   job: AnalysisJobRead | null;
@@ -695,7 +828,7 @@ export interface SharedPriceGroup {
 /** Live state of a long in-process sweep (re-pricing, colorway harvest).
  *  `pct` is computed server-side so the cards that render it cannot disagree
  *  about how it rounds. */
-export interface SweepProgress {
+export interface SweepProgressRead {
   running: boolean;
   done: number;
   total: number;
@@ -717,11 +850,15 @@ export interface CatalogStatus {
   models: number;
   colorways: number;
   last_harvest: string | null;
-  progress: SweepProgress;
+  progress: SweepProgressRead;
   /** Claimed OR running. Not the same as `progress.running`: the slot is taken
    *  synchronously in the request while `begin()` happens inside the task, so
    *  `running` is briefly false on a harvest that is definitely queued. */
   in_flight: boolean;
+  /** Categories the last harvest could not read. Empty is good news only when
+   *  `entries` is not zero — a harvest that lost every category used to report
+   *  success with nothing to show for it. */
+  failed_categories: string[];
 }
 
 /** Periodic re-pricing: is the sweep alive, and what did it last manage?
@@ -734,11 +871,166 @@ export interface RepricingStatus {
   last_success_at: string | null;
   last_error: string | null;
   consecutive_failures: number;
+  /** Hats the last sweep could not consult the marketplace about — the
+   *  difference between a flat market and a dead one. Non-zero alongside a
+   *  success is a partial outage. */
+  last_unreachable: number;
   /** Hats whose price CHANGED, not hats visited. A flat market is a working
    *  sweep, and reporting the visit count would hide a sweep that writes nothing. */
   last_repriced: number;
   last_considered: number;
   /** The sweep in flight, if any. Distinct from the fields above, which
    *  describe the last one that FINISHED. */
-  progress: SweepProgress;
+  progress: SweepProgressRead;
+}
+
+/** `POST /api/admin/repricing/run` — one bounded batch, done while you wait. */
+export interface RepricingRunResult {
+  repriced: number;
+  considered: number;
+  /** Still DUE after this batch — press again to continue. */
+  remaining: number;
+}
+
+/** 202 body for the colorway harvest. `started` false with `already_running`
+ *  is a refusal, not a start: another harvest holds the slot. */
+export interface CatalogRefreshStarted {
+  started: boolean;
+  already_running: boolean;
+  detail: string;
+}
+
+// ---- Settings and admin results ------------------------------------- //
+
+/** `POST /api/admin/ebay/test`. `stage` says how far the check got (OAuth,
+ *  then Browse), which is what tells a bad keyset from a bad marketplace. */
+export interface EbayTestResult {
+  ok: boolean;
+  stage: string;
+  detail: string;
+}
+
+/** `POST /api/admin/backups/upload/test`. */
+export interface BackupUploadTestResult {
+  ok: boolean;
+  detail: string;
+}
+
+export interface GuestViewStatus {
+  enabled: boolean;
+}
+
+/** A bare count — `GET /api/admin/recent-errors/count`. */
+export interface CountRead {
+  count: number;
+}
+
+// ---- Auth --------------------------------------------------------------- //
+
+export interface AuthStatus {
+  needs_setup: boolean;
+  authenticated: boolean;
+  username: string | null;
+  /** Whether to offer "browse as a guest" on the login screen. Rides along on
+   *  the one unauthenticated call the page already makes; null or absent on
+   *  the responses that do not carry it. */
+  guest_view_enabled?: boolean | null;
+}
+
+/** Profile only. The bearer token needs the password — see `ApiTokenRead`. */
+export interface MeRead {
+  username: string;
+  token_set: boolean;
+}
+
+/** The long-lived bearer token, answered only on proof of the password. */
+export interface ApiTokenRead {
+  api_token: string;
+}
+
+export interface OkRead {
+  ok: boolean;
+}
+
+export interface PasskeyRead {
+  id: number;
+  name: string;
+  created_at: string;
+}
+
+/**
+ * The first half of a passkey ceremony: a state id to hand back, and the
+ * options py_webauthn serialized for the browser. The schema types `options`
+ * as an object; the two JSON shapes below are what it holds for each
+ * ceremony, as `lib/webauthn` reads them.
+ */
+export interface PasskeyCeremonyOptions<O = Record<string, unknown>> {
+  state_id: string;
+  options: O;
+}
+
+/** A credential descriptor as py_webauthn serializes it: the id is base64url.
+ *  Client-side shape (inside `PasskeyCeremonyOptions.options`), no schema of
+ *  its own. */
+export interface CredentialDescriptorJSON {
+  id: string;
+  type: PublicKeyCredentialType;
+  transports?: AuthenticatorTransport[];
+}
+
+/** `PublicKeyCredentialCreationOptions` with every binary field as base64url. */
+export interface CredentialCreationOptionsJSON
+  extends Omit<PublicKeyCredentialCreationOptions, 'challenge' | 'user' | 'excludeCredentials'> {
+  challenge: string;
+  user: Omit<PublicKeyCredentialUserEntity, 'id'> & { id: string };
+  excludeCredentials?: CredentialDescriptorJSON[];
+}
+
+/** `PublicKeyCredentialRequestOptions` with every binary field as base64url. */
+export interface CredentialRequestOptionsJSON
+  extends Omit<PublicKeyCredentialRequestOptions, 'challenge' | 'allowCredentials'> {
+  challenge: string;
+  allowCredentials?: CredentialDescriptorJSON[];
+}
+
+/** A new passkey as the register-verify endpoint reads it (binary as base64url). */
+export interface RegistrationCredentialJSON {
+  id: string;
+  rawId: string;
+  type: string;
+  response: { clientDataJSON: string; attestationObject: string };
+  clientExtensionResults: AuthenticationExtensionsClientOutputs;
+}
+
+/** A passkey assertion as the login-verify endpoint reads it. */
+export interface AuthenticationCredentialJSON {
+  id: string;
+  rawId: string;
+  type: string;
+  response: {
+    clientDataJSON: string;
+    authenticatorData: string;
+    signature: string;
+    userHandle: string | null;
+  };
+  clientExtensionResults: AuthenticationExtensionsClientOutputs;
+}
+
+// ---- Share links -------------------------------------------------------- //
+
+export interface ShareLinkRead {
+  id: number;
+  token: string;
+  label: string;
+  url_path: string;
+  created_at: string | null;
+  expires_at: string | null;
+  revoked_at: string | null;
+}
+
+/** `POST /api/share-links` — the new link; the list refetch fills the rest. */
+export interface ShareLinkCreated {
+  id: number;
+  token: string;
+  url_path: string;
 }

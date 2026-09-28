@@ -7,7 +7,8 @@
  * refetch (the error badge polls every minute) would otherwise pulse it
  * forever and teach everyone to ignore it.
  */
-import { useState } from 'react';
+import { lazy, useState } from 'react';
+import { Route, Routes } from 'react-router';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -124,6 +125,27 @@ describe('skip link', () => {
   });
 });
 
+describe('a page whose code is still loading', () => {
+  it('keeps the nav up and holds only the page area', async () => {
+    // `App` loads its heavy pages on demand (React.lazy). The boundary is the
+    // shell's, inside <main>: without it a first visit to Settings suspended
+    // to the root and blanked the whole app, nav included.
+    const Slow = lazy(() => new Promise<never>(() => {}));
+    renderWithProviders(
+      <Routes>
+        <Route element={<AppShell />}>
+          <Route path="/settings" element={<Slow />} />
+        </Route>
+      </Routes>,
+      { route: '/settings' },
+    );
+
+    const main = document.getElementById('main')!;
+    expect(await within(main).findByRole('status')).toHaveTextContent('Loading…');
+    expect(screen.getAllByRole('navigation').length).toBeGreaterThan(0);
+  });
+});
+
 describe('BottomNav', () => {
   it('has the six tabs, each a named link', () => {
     renderWithProviders(<BottomNav />);
@@ -137,8 +159,9 @@ describe('BottomNav', () => {
     const hats = screen.getByRole('link', { name: 'Hats' });
     expect(hats).toHaveClass('active');
     expect(hats).toHaveAttribute('aria-current', 'page');
-    // `end` on Home: "/" is a prefix of every path, and without it Home
-    // would be lit on every page.
+    // "/" is a prefix of every path. The router lights a root link only AT
+    // "/", which this holds it to — the thing that keeps Home from being
+    // lit on every page.
     expect(screen.getByRole('link', { name: 'Home' })).not.toHaveClass('active');
   });
 
@@ -147,6 +170,19 @@ describe('BottomNav', () => {
     renderWithProviders(<BottomNav />);
     const settings = screen.getByRole('link', { name: /Settings/ });
     expect(await within(settings).findByLabelText('3 hats failed analysis')).toHaveTextContent('3');
+  });
+
+  it('caps the digit at "9+" while the label keeps the real count', async () => {
+    vi.mocked(settingsApi.getRecentErrorsCount).mockResolvedValue({ count: 23 } as never);
+    renderWithProviders(<BottomNav />);
+    const badge = await screen.findByLabelText('23 hats failed analysis');
+    expect(badge).toHaveTextContent(/^9\+$/);
+  });
+
+  it('agrees in number for one failure', async () => {
+    vi.mocked(settingsApi.getRecentErrorsCount).mockResolvedValue({ count: 1 } as never);
+    renderWithProviders(<BottomNav />);
+    expect(await screen.findByLabelText('1 hat failed analysis')).toHaveTextContent('1');
   });
 });
 

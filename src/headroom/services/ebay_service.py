@@ -11,8 +11,8 @@ out of scope for v0.4.
 
 from __future__ import annotations
 
+import hashlib
 import logging
-import os
 import statistics
 import time
 from datetime import datetime, timezone
@@ -32,53 +32,109 @@ EBAY_BROWSE_HTML_BASE = "https://www.ebay.com/sch/i.html"
 # Cache the application token in process memory; refresh shortly before expiry.
 _token: str | None = None
 _token_expires_at: float = 0.0
+#: WHICH credentials minted `_token`, as a fingerprint rather than a second
+#: copy of the secret. The cache used to be keyed on nothing: replacing the
+#: keyset in Settings kept searching with the token the OLD one minted for up
+#: to its two-hour life, so a revoked or mistyped keyset went on "working"
+#: while the Test button (which resets the cache) reported the truth.
+_token_creds: str | None = None
 
 
 EBAY_APP_ID_KEY = "ebay_app_id"
 EBAY_CERT_ID_KEY = "ebay_cert_id"
 EBAY_MARKETPLACE_KEY = "ebay_marketplace"  # default EBAY_US
 
+# The keyset is an externally issued credential like the Anthropic and Vision
+# keys, so it resolves the way they do — `settings_service.get_key`, database
+# over `config.settings` — instead of a hand-rolled copy that read
+# `os.environ` directly, bypassed the one module that owns the environment,
+# and could not say where a value came from. Not mounted through the generic
+# `/api/settings/<slug>` routes: eBay's two halves are set together, with a
+# marketplace, by `routes/admin/ebay.py`. The slug is the one a generic mount
+# would give them.
+EBAY_APP_ID = settings_service.KeyProvider(
+    name="ebay_app_id",
+    slug="ebay-app-id",
+    setting_key=EBAY_APP_ID_KEY,
+    env_attr="ebay_app_id",
+    label="eBay App ID",
+)
+EBAY_CERT_ID = settings_service.KeyProvider(
+    name="ebay_cert_id",
+    slug="ebay-cert-id",
+    setting_key=EBAY_CERT_ID_KEY,
+    env_attr="ebay_cert_id",
+    label="eBay Cert ID",
+)
+
 
 async def get_creds(db: AsyncSession) -> tuple[str | None, str | None, str]:
-    """Returns (app_id, cert_id, marketplace) — None when not configured."""
-    app_id = await settings_service.get_setting(db, EBAY_APP_ID_KEY)
-    cert_id = await settings_service.get_setting(db, EBAY_CERT_ID_KEY)
+    """Returns (app_id, cert_id, marketplace) — None when not configured.
+
+    Database first, then `HEADROOM_EBAY_APP_ID` / `HEADROOM_EBAY_CERT_ID` for
+    ops users who would rather inject them via docker-compose.
+    """
+    app_id, _app_source = await settings_service.get_key(db, EBAY_APP_ID)
+    cert_id, _cert_source = await settings_service.get_key(db, EBAY_CERT_ID)
     marketplace = await settings_service.get_setting(db, EBAY_MARKETPLACE_KEY) or "EBAY_US"
-    # Env fallbacks for ops users who'd rather inject via docker-compose
-    app_id = app_id or os.environ.get("HEADROOM_EBAY_APP_ID")
-    cert_id = cert_id or os.environ.get("HEADROOM_EBAY_CERT_ID")
     return app_id, cert_id, marketplace
 
 
+def _fingerprint(app_id: str, cert_id: str) -> str:
+    return hashlib.sha256(f"{app_id}\0{cert_id}".encode()).hexdigest()
+
+
+def _json_object(resp: httpx.Response) -> dict | None:
+    """The body as a JSON object, or None if it is not one (not JSON at all,
+    or a JSON list/string). Callers decide what a missing object means."""
+    try:
+        body = resp.json()
+    except ValueError:
+        return None
+    return body if isinstance(body, dict) else None
+
+
 async def _ensure_token(app_id: str, cert_id: str) -> str:
-    global _token, _token_expires_at
-    if _token and _token_expires_at - time.time() > 60:
+    """An application token for THESE credentials. Raises only `EbayError`.
+
+    Every failure is typed — transport, a rejected keyset, and a 200 that
+    carries no usable token (a proxy's HTML page, or JSON without the field),
+    which used to escape as a raw KeyError or decode error. Callers catch
+    `EbayError` and degrade; `verify_creds` reports it as the OAuth stage.
+    """
+    global _token, _token_expires_at, _token_creds
+    creds = _fingerprint(app_id, cert_id)
+    if _token and _token_creds == creds and _token_expires_at - time.time() > 60:
         return _token
     auth = httpx.BasicAuth(app_id, cert_id)
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.post(
-            EBAY_OAUTH,
-            auth=auth,
-            data={"grant_type": "client_credentials", "scope": "https://api.ebay.com/oauth/api_scope"},
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                EBAY_OAUTH,
+                auth=auth,
+                data={"grant_type": "client_credentials", "scope": "https://api.ebay.com/oauth/api_scope"},
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+    except httpx.HTTPError as exc:
+        raise EbayError(f"Network/transport error reaching eBay OAuth: {exc}") from exc
     if resp.status_code == 200:
-        body = resp.json()
-        _token = body["access_token"]
-        _token_expires_at = time.time() + int(body.get("expires_in", 7200))
+        body = _json_object(resp) or {}
+        token = body.get("access_token")
+        if not isinstance(token, str) or not token:
+            raise EbayError("eBay OAuth answered 200 without an access token")
+        try:
+            lifetime = int(body.get("expires_in", 7200))
+        except (TypeError, ValueError):
+            lifetime = 7200  # eBay's documented default for this grant
+        _token, _token_expires_at, _token_creds = token, time.time() + lifetime, creds
         return _token
 
     # Failure path — try to extract eBay's structured `error` + `error_description`
     # so the user sees what's actually wrong instead of a generic guess.
     raw = resp.text or ""
-    err_code = ""
-    err_desc = ""
-    try:
-        body = resp.json()
-        err_code = str(body.get("error") or "")
-        err_desc = str(body.get("error_description") or "")
-    except Exception:  # noqa: BLE001
-        pass
+    body = _json_object(resp) or {}
+    err_code = str(body.get("error") or "")
+    err_desc = str(body.get("error_description") or "")
 
     logger.warning(
         "eBay OAuth failed: status=%s error=%r desc=%r raw=%s",
@@ -135,32 +191,39 @@ async def verify_creds(db: AsyncSession) -> dict:
         return {"ok": False, "stage": "creds", "detail": "No App ID + Cert ID configured."}
 
     # Force a fresh token on every test so we don't accept a stale-cached one.
-    global _token, _token_expires_at
+    global _token, _token_expires_at, _token_creds
     _token = None
     _token_expires_at = 0.0
+    _token_creds = None
 
     try:
         token = await _ensure_token(app_id, cert_id)
     except EbayError as exc:
+        # Transport failures included: `_ensure_token` raises nothing else.
         return {"ok": False, "stage": "oauth", "detail": str(exc)}
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "stage": "oauth", "detail": f"Network/transport error: {exc}"}
 
     try:
         resp = await _browse(token, "melin hat", marketplace, limit=1, timeout=10.0)
-        if resp.status_code != 200:
-            return {
-                "ok": False, "stage": "browse",
-                "detail": f"Browse API {resp.status_code}: {resp.text[:180]}",
-            }
-        body = resp.json()
-        n = len(body.get("itemSummaries") or [])
-        return {
-            "ok": True, "stage": "ok",
-            "detail": f"OAuth + Browse working. Sample query 'melin hat' returned {n} item(s).",
-        }
-    except Exception as exc:  # noqa: BLE001
+    except (httpx.HTTPError, UnicodeError) as exc:
+        # UnicodeError: a stored marketplace id no HTTP header can carry.
         return {"ok": False, "stage": "browse", "detail": f"Browse request failed: {exc}"}
+    if resp.status_code != 200:
+        return {
+            "ok": False, "stage": "browse",
+            "detail": f"Browse API {resp.status_code}: {resp.text[:180]}",
+        }
+    body = _json_object(resp)
+    if body is None:
+        return {
+            "ok": False, "stage": "browse",
+            "detail": "Browse API answered 200 with a body that is not a JSON object.",
+        }
+    items = body.get("itemSummaries")
+    n = len(items) if isinstance(items, list) else 0
+    return {
+        "ok": True, "stage": "ok",
+        "detail": f"OAuth + Browse working. Sample query 'melin hat' returned {n} item(s).",
+    }
 
 
 class EbayError(Exception):
@@ -230,7 +293,9 @@ async def find_comps(
         if resp.status_code != 200:
             raise EbayError(f"Browse API {resp.status_code}: {resp.text[:200]}")
 
-        body = resp.json()
+        body = _json_object(resp)
+        if body is None:
+            raise EbayError("Browse API answered 200 with a body that is not a JSON object")
         items = body.get("itemSummaries") or []
         prices: list[float] = []
         for it in items:

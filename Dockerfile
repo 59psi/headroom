@@ -1,4 +1,10 @@
-# syntax=docker/dockerfile:1.6
+# syntax=docker/dockerfile:1
+#
+# The FLOATING major, deliberately. This was pinned to `1.6` — a 2023 frontend
+# — and nothing could move it: Dependabot's docker ecosystem reads FROM lines
+# only, so a syntax directive is invisible to it. `1` is Docker's documented
+# channel for "latest stable 1.x"; the 1.x line is backward compatible by
+# policy, so it tracks the newest frontend without a pin that silently ages.
 #
 # Multi-stage build:
 #   1. node       — install JS deps + build the SPA
@@ -24,7 +30,11 @@ RUN npm install -g "npm@${NPM_VERSION}"
 # in the SPA build stays visible instead of scrolling past in a wall of notices.
 ENV NPM_CONFIG_LOGLEVEL=warn
 WORKDIR /build
-COPY frontend/package.json frontend/package-lock.json* ./
+# `.npmrc` with the manifests, BEFORE `npm ci`: it carries `engine-strict`,
+# and copied only with the rest of the tree below it arrived after the install
+# it exists to govern — so the image build never applied the engines check
+# the file promises.
+COPY frontend/package.json frontend/package-lock.json* frontend/.npmrc ./
 # Cache mount, matching the uv one in the Python stage below.
 #
 # This layer is busted by every release, because cutting one edits
@@ -140,9 +150,13 @@ ENV HEADROOM_REMBG_MODEL=${REMBG_MODEL}
 # NON-FATAL, deliberately. Every other network call in this build is a package
 # manager against a registry; this one is arbitrary Python reaching out to a
 # file host, and it is the only build step that can fail for a reason that has
-# nothing to do with this project. rembg fetches the weights on first use
-# anyway, so a failure here costs a slow first analysis — not a deploy you
-# cannot perform because someone else's host is down.
+# nothing to do with this project. A failure here does NOT heal at runtime —
+# the model directory is root-owned and the compose root filesystem is
+# read-only, so rembg cannot fetch the weights on first use (it used to be
+# said that it would). Background removal then fails until a rebuild while the
+# rest of the pipeline degrades around it: a degraded feature, not a deploy you
+# cannot perform because someone else's host is down. CI's no-network model
+# probe is what keeps a release from shipping that way.
 #
 # The directory is created FIRST so the runtime stage's `COPY --from` has
 # something to copy even when the fetch failed.
@@ -155,7 +169,7 @@ onnxruntime.set_default_logger_severity(3); \
 from rembg import new_session; new_session('${REMBG_MODEL}')" \
       && cp -a /opt/model-cache/. /root/.u2net/ \
       && echo "rembg model ${REMBG_MODEL} cached into the image" ; } \
- || echo "WARNING: could not pre-cache the rembg model — the app will download it on first use"
+ || echo "WARNING: could not pre-cache the rembg model — background removal will fail until a rebuild fetches it"
 
 # The project itself, last: this is the layer that SHOULD bust on every
 # release, and it is cheap (measured 6.5s) because the venv above already
@@ -187,13 +201,22 @@ ARG REMBG_MODEL=isnet-general-use
 # all. Verified with `--network none`: without this line `new_session()`
 # raises ConnectionError; with it, the session loads. CI now runs that exact
 # probe, because `/health/ready` passing says nothing about the model.
+#
+# `/opt/u2net`, beside `/opt/venv`, and NOT in the runtime user's home. The
+# model lived at `/home/headroom/.u2net`, and the `chown -R` of the home
+# directory below handed it to the runtime user — 179 MB of weights a
+# compromised process could rewrite in place, against this file's own rule
+# that nothing the app executes is writable by it. Owning the files as root
+# would not have been enough there either: whoever owns a directory can rename
+# its entries, so a model inside the user's home can always be swapped out
+# wholesale. Outside it, root owns the whole path.
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH" \
     HEADROOM_UPLOAD_DIR=/data/uploads \
     HEADROOM_DATABASE_URL=sqlite+aiosqlite:////data/headroom.db \
     HEADROOM_REMBG_MODEL=${REMBG_MODEL} \
-    U2NET_HOME=/home/headroom/.u2net
+    U2NET_HOME=/opt/u2net
 
 # Create unprivileged user so the container does not run as root
 RUN groupadd --system --gid 1000 headroom \
@@ -214,16 +237,25 @@ RUN groupadd --system --gid 1000 headroom \
 # `pyproject.toml` is NOT copied: the venv carries the installed
 # distribution's metadata and nothing in `src/` reads the file.
 COPY --from=python-base /opt/venv /opt/venv
-COPY --from=python-base /root/.u2net /home/headroom/.u2net
+COPY --from=python-base /root/.u2net /opt/u2net
 COPY --from=python-base /app/src /app/src
 COPY --from=frontend /build/dist /app/frontend/dist
 COPY seed /app/seed
 
+# `/data` and nothing else is chowned. The home directory already belongs to
+# the user (`useradd --create-home`), which is all anything there needs — the
+# SSH and rclone overlays bind-mount into it — and a recursive chown of it is
+# precisely how the model became writable. CI asserts the ownership of every
+# path below from inside the built image, not from this text.
 WORKDIR /app
 RUN mkdir -p /data/uploads/hats /data/uploads/branding \
-    && chown -R headroom:headroom /data /home/headroom \
-    && chmod -R a+rX /app /home/headroom/.u2net
+    && chown -R headroom:headroom /data \
+    && chmod -R a+rX /app /opt/u2net
 
+# Non-root, and the LAST `USER` in the file. CI runs `id -u` in the built
+# image and fails the build on 0; `tests/test_compose_and_ignores.py` reads
+# this stage for the same rule. Semgrep's check reports but does not block (see
+# .github/dependabot.yml), so neither of those is optional.
 USER headroom
 
 VOLUME ["/data"]

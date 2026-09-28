@@ -36,7 +36,8 @@ largest body any route here legitimately accepts.
 **Bytes are counted, not trusted.** `Content-Length` is checked first because
 rejecting before reading is strictly better, but a request may lie or omit it
 entirely (chunked transfer), so the body is also counted as it streams and cut
-off the moment it goes over.
+off the moment it goes over — and "cut off" means the handler never runs on
+what arrived before the cut. A 413 is a promise that nothing happened.
 """
 
 from __future__ import annotations
@@ -48,6 +49,7 @@ from collections.abc import Callable
 
 from fastapi import UploadFile
 from starlette.datastructures import Headers
+from starlette.exceptions import HTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from headroom.config import env_int
@@ -73,7 +75,16 @@ MIN_MAX_BODY_BYTES = 1024
 
 
 def max_body_bytes() -> int:
-    """Live-read so it stays monkeypatchable, like the other runtime knobs."""
+    """`HEADROOM_MAX_BODY_BYTES`: the cap for every endpoint that takes no file.
+
+    Chosen by endpoint, not by the request's Content-Type — a multipart-labeled
+    body sent to a JSON route gets this cap too. Endpoints that take an
+    `UploadFile` get `MULTIPART_MAX_BODY_BYTES` instead, which this knob does
+    not move. A value below `MIN_MAX_BODY_BYTES` (or one that does not parse)
+    is ignored in favor of the default, for the lock-out reason given there.
+
+    Live-read so it stays monkeypatchable, like the other runtime knobs.
+    """
     value = env_int("HEADROOM_MAX_BODY_BYTES", DEFAULT_MAX_BODY_BYTES)
     return value if value >= MIN_MAX_BODY_BYTES else DEFAULT_MAX_BODY_BYTES
 
@@ -153,12 +164,44 @@ class BodySizeLimitMiddleware:
         # unauthenticated way to write an audit row per request — the same
         # disk-filling shape as the rate-limit branch. Two halves of one
         # middleware, disagreeing about what "refused" means.
-        over_limit = False
+        #
+        # Its replacement was no better in the other direction. It ended the
+        # body early with a clean, empty final chunk, so the route saw a
+        # complete (short) body and RAN on it: a chunked `{"name": "X"}`
+        # followed by a few MB of JSON whitespace parsed fine as its prefix,
+        # the room was created and committed, and the client was told 413.
+        # A client that then retried with a smaller body got a duplicate.
+        #
+        # So the over-limit read now FAILS — it raises — and the handler never
+        # starts. FastAPI reads the whole body (JSON or multipart) before it
+        # solves a single dependency or calls the handler, inside one `try`
+        # that turns any failure of that read into an HTTP error response:
+        # never a handler call, never the unhandled-exception path and its
+        # durable row. Multipart parsing closes its spooled parts on any
+        # exception, so a refused upload leaves nothing on disk either.
+        #
+        # What that `try` answers is a 400, though, not the 413 raised here:
+        # the refusal travels up through `BaseHTTPMiddleware`'s receive
+        # wrapper (the auth gate and the security headers are both one), which
+        # reads inside an anyio task group, and the group re-raises it wrapped
+        # in an `ExceptionGroup` — so FastAPI sees "the body could not be
+        # read", not the `HTTPException` it would otherwise pass through. The
+        # status is therefore corrected on the way out, at the
+        # `http.response.start` boundary, before anything has been written.
+        # That swap alone was the old mechanism; it only ever relabeled a
+        # response. It is safe now because the read failing is what stops the
+        # handler — the swap no longer stands between a committed write and a
+        # client told otherwise.
         received = 0
         limit: int | None = None
+        refused = False
 
         async def counting_receive() -> Message:
-            nonlocal received, over_limit, limit
+            nonlocal received, limit, refused
+            if refused:
+                # A reader that caught the first refusal and asked again gets
+                # the same answer, never the rest of the body.
+                raise _too_large()
             message = await receive()
             if message["type"] == "http.request":
                 if limit is None:
@@ -172,33 +215,33 @@ class BodySizeLimitMiddleware:
                     )
                 received += len(message.get("body", b""))
                 if received > limit:
-                    over_limit = True
+                    refused = True
                     logger.warning(
                         "Request body over the %d byte limit on %s %s — refused.",
                         limit, scope["method"], scope.get("path", ""),
                     )
-                    # Stop the body cleanly. The route sees a complete (short)
-                    # body rather than a disconnect, and `guarded_send` below
-                    # replaces whatever it decides with the 413.
-                    return {"type": "http.request", "body": b"", "more_body": False}
+                    raise _too_large()
             return message
 
-        # The route still runs — it has to, because the cap is only known once
-        # the body has been read past it — but its response never reaches the
-        # client. Swapping at the `http.response.start` boundary means nothing
-        # partial has been written yet.
         started = False
 
-        async def guarded_send(message: Message) -> None:
+        async def refusing_send(message: Message) -> None:
             nonlocal started
-            if over_limit:
+            if refused:
                 if not started:
                     started = True
                     await _reject(scope, send, limit or ordinary)
-                return  # drop the route's own body chunks
+                return  # the app's own answer to a body it could not read
             await send(message)
 
-        await self.app(scope, counting_receive, guarded_send)
+        await self.app(scope, counting_receive, refusing_send)
+
+
+def _too_large() -> HTTPException:
+    # A fresh instance per raise: re-raising one shared exception object grows
+    # its traceback chain for the life of the process (`routes/guest.py`'s
+    # `_not_found` has the measurement).
+    return HTTPException(status_code=413, detail="Request body too large")
 
 
 async def _reject(scope: Scope, send: Send, limit: int) -> None:

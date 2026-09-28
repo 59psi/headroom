@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { getMdnsStatus } from '../../api/settings';
 import type { MdnsStatus } from '../../types';
+import { qk } from '../../lib/queryKeys';
 import { ErrorNote } from '../common/ErrorNote';
 import { Panel } from '../ui/Panel';
 import { CopyButton } from '../ui/CopyButton';
@@ -10,7 +11,7 @@ import { StatusPill } from '../ui/StatusPill';
 export function MdnsCard() {
   // Env-configured — only changes at server boot, so never refetch.
   const mdns = useQuery({
-    queryKey: ['settings', 'mdns'],
+    queryKey: qk.settings.mdns(),
     queryFn: getMdnsStatus,
     staleTime: Infinity,
     refetchOnWindowFocus: false,
@@ -49,11 +50,18 @@ export function MdnsCard() {
                   {d.url}
                 </a>
               ) : (
-                d.error ?? d.hostname
+                d.hostname
               )}
             </div>
             {d.url && <CopyButton text={d.url} what="address" />}
           </div>
+
+          {/* Why nothing is advertised, in reading text under the name. It
+              used to REPLACE the name in the name's slot — bold monospace
+              sized for a hostname — which was tolerable for "no LAN address
+              found" and not for a sentence telling you which setting to
+              change and to what. */}
+          {!d.advertising && d.error && <p className="hr-mdns-error">{d.error}</p>}
 
           {d.advertising && (
             <div className="hr-net-list hr-mdns-list">
@@ -61,13 +69,15 @@ export function MdnsCard() {
               <span className="hr-net-value">{d.ip ?? '—'}</span>
               {d.ip ? <CopyButton text={d.ip} what="IPv4 address" /> : <span aria-hidden="true" />}
 
-              {/* Listed even when absent, because the ABSENCE is the
-                  diagnosis: with no IPv6 record every lookup of the name
-                  stalls for the client's full resolver timeout, which reads
-                  as a slow or dead site rather than a missing record. */}
+              {/* Listed even when absent: which families the name answers
+                  for is what a client resolving it gets. "None on this host"
+                  stopped being the only reason — an interface pinned by IPv4
+                  advertises no AAAA on purpose — and "lookups may be slow"
+                  stopped being true when the NSEC responder began answering
+                  AAAA negatively on a v4-only advertisement. */}
               <span className="hr-net-label">IPv6</span>
               <span className={`hr-net-value${d.ipv6 ? '' : ' is-absent'}`}>
-                {d.ipv6 ?? 'none on this host — lookups may be slow'}
+                {d.ipv6 ?? 'none advertised'}
               </span>
               {d.ipv6 ? <CopyButton text={d.ipv6} what="IPv6 address" /> : <span aria-hidden="true" />}
             </div>

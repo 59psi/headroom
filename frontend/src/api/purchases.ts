@@ -1,6 +1,6 @@
 import { apiFetch } from './client';
 import type {
-  ImportPreview, ImportResult, MatchResult, PurchaseRow, UnmatchOneResult, UnmatchResult,
+  ImportPreview, ImportResult, MatchResult, PurchaseRead, UnmatchAllResult, UnmatchOneResult,
 } from '../types';
 
 /**
@@ -12,7 +12,7 @@ import type {
  */
 
 export function listPurchases() {
-  return apiFetch<PurchaseRow[]>('/api/admin/purchases');
+  return apiFetch<PurchaseRead[]>('/api/admin/purchases');
 }
 
 /** Dry run. Reports what `importPurchases` would do and changes nothing. */
@@ -35,7 +35,7 @@ export function rematchPurchases() {
 }
 
 export function unmatchAllPurchases() {
-  return apiFetch<UnmatchResult>('/api/admin/purchases/unmatch-all', { method: 'POST' });
+  return apiFetch<UnmatchAllResult>('/api/admin/purchases/unmatch-all', { method: 'POST' });
 }
 
 /**

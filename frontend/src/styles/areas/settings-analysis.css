@@ -52,9 +52,9 @@
   overflow-wrap: anywhere;
 }
 
-.hr-an-result.is-ok { color: #8dff7a; }
+.hr-an-result.is-ok { color: var(--tint-green); }
 
-.hr-an-result.is-busy { color: #d9a8ff; }
+.hr-an-result.is-busy { color: var(--tint-purple); }
 
 .hr-an-result.is-busy::before {
   content: '';
@@ -93,8 +93,8 @@
   height: 1.2rem;
   padding: 0 0.35rem;
   border-radius: var(--radius-pill);
-  background: rgba(177, 78, 255, 0.16);
-  color: #d9a8ff;
+  background: rgb(var(--neon-purple-rgb) / 0.16);
+  color: var(--tint-purple);
   font-family: var(--font-mono);
   font-size: 0.68rem;
   letter-spacing: 0;
@@ -173,7 +173,7 @@
   padding: 0.75rem 0.9rem;
   border-radius: var(--radius-sm);
   background: var(--surface-inset);
-  border: 1px solid rgba(177, 78, 255, 0.3);
+  border: 1px solid rgb(var(--neon-purple-rgb) / 0.3);
 }
 
 .hr-an-run-head {
@@ -208,7 +208,7 @@
 
 .hr-an-failure.is-billing {
   border-left-color: var(--neon-yellow);
-  background: rgba(255, 225, 86, 0.05);
+  background: rgb(var(--neon-yellow-rgb) / 0.05);
 }
 
 .hr-an-failure-count {

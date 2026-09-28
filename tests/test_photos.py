@@ -74,13 +74,13 @@ async def test_there_is_no_case_photo_route(client):
         "/api/cases/A-001/photo",
         files={"photo": ("test.jpg", _make_test_image_file(), "image/jpeg")},
     )
-    # 404 or 405, and WHICH depends on the environment rather than on the app:
-    # the SPA catch-all is only mounted when `frontend/dist` exists, and when it
-    # is, it matches this path for GET — so an unmatched POST becomes "method
-    # not allowed" instead of "not found". A dev box that has run a build gets
-    # 405; CI, which builds the frontend in a separate job, gets 404. Asserting
-    # either one alone pins the harness, not the behavior.
-    assert resp.status_code in (404, 405), (
+    # 405: the SPA catch-all matches every path for GET, so a POST that no
+    # route takes is "method not allowed". This used to accept 404 as well,
+    # because the catch-all existed only where `frontend/dist` had been built
+    # (a dev box) and not in CI; every test now runs against the stub bundle
+    # in conftest's `spa_bundle`, so there is one answer — and a revived route
+    # that refused this request with a 404 of its own no longer passes.
+    assert resp.status_code == 405, (
         f"the case-photo upload route is back (got {resp.status_code})"
     )
 
@@ -111,8 +111,7 @@ async def test_upload_hat_photo_no_api_key(client):
 async def test_the_no_key_path_still_logs_its_timing(client, caplog):
     """A 24 s rembg run (minutes on a Pi) left no log line at all when no key
     was set: the timing line sat below the early return. Per-stage timing is
-    a promise CLAUDE.md makes for every analysis, not only the ones Claude
-    joined."""
+    promised for every analysis, not only the ones Claude joined."""
     import logging
 
     resp = await client.post(

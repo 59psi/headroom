@@ -3,9 +3,9 @@ import { useEffect, useState } from 'react';
 /**
  * The inline "Saving… / Saved" note beside a field that saves itself.
  *
- * Autosave with no acknowledgement is worse than a Save button: the person
+ * Autosave with no acknowledgment is worse than a Save button: the person
  * cannot tell whether the change took, so they reload to check. This is the
- * acknowledgement, placed next to the thing that changed, and it fades once
+ * acknowledgment, placed next to the thing that changed, and it fades once
  * it has been read. Failure does not fade — and says where the error is.
  */
 export type SaveStatus = 'idle' | 'pending' | 'saving' | 'saved' | 'error';

@@ -1,12 +1,15 @@
-import { useState, useEffect, useRef, type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { isNotFound } from '../api/client';
 import { ErrorNote } from '../components/common/ErrorNote';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams, useNavigate } from 'react-router';
 import { getCase, updateCase } from '../api/cases';
 import { listRooms } from '../api/rooms';
-import { CAPACITY_PLACEHOLDER } from '../lib/capacity';
 import { invalidateHatViews } from '../lib/invalidate';
+import { caseTypePrefix, type CaseType } from '../lib/caseTypes';
+import { qk } from '../lib/queryKeys';
+import { CaseFields } from '../components/cases/CaseFields';
+import { caseRoomName } from '../components/cases/CaseTile';
 import { PageHeader } from '../components/ui/PageHeader';
 import { Panel } from '../components/ui/Panel';
 import { Skeleton } from '../components/ui/Skeleton';
@@ -19,36 +22,33 @@ export function EditCasePage() {
   const toast = useToast();
 
   const caseQuery = useQuery({
-    queryKey: ['case', displayId],
+    queryKey: qk.case(displayId),
     queryFn: () => getCase(displayId!),
     enabled: !!displayId,
   });
 
-  const roomsQ = useQuery({ queryKey: ['rooms'], queryFn: listRooms });
+  const roomsQ = useQuery({ queryKey: qk.rooms(), queryFn: listRooms });
 
-  const [caseType, setCaseType] = useState('');
-  // No room until the case says which — a hardcoded `1` was the seed room's
-  // id on a fresh install and some other room's on any install that had
-  // deleted it, so the select could name a room the case was never in.
-  const [roomId, setRoomId] = useState<number | ''>('');
-  const [capacity, setCapacity] = useState('');
+  // What the person has CHANGED, over the case as loaded — null means "not
+  // touched, show the case's own value". Nothing is copied out of the case
+  // into the form, so there is no seeding to get wrong: this query refetches
+  // on window focus, and the old seed-on-every-load effect reverted a
+  // half-edited form to the server's values; a room of `1` hardcoded before
+  // the seed could name a room the case was never in. An edit is never
+  // overwritten, and an untouched field shows the case as it now is.
+  const [typeEdit, setTypeEdit] = useState<CaseType | null>(null);
+  const [roomEdit, setRoomEdit] = useState<number | null>(null);
+  const [capacityEdit, setCapacityEdit] = useState<string | null>(null);
 
-  // Seed the form ONCE per case, not on every refetch — the same rule the
-  // Edit-hat page follows. This query refetches on window focus, and re-running
-  // the seed then reverted a half-edited form to the server's values.
-  const seededFor = useRef<string | null>(null);
-  useEffect(() => {
-    if (!caseQuery.data || seededFor.current === caseQuery.data.display_id) return;
-    seededFor.current = caseQuery.data.display_id;
-    setCaseType(caseQuery.data.case_type);
-    setRoomId(caseQuery.data.room_id);
-    setCapacity(caseQuery.data.capacity != null ? String(caseQuery.data.capacity) : '');
-  }, [caseQuery.data]);
+  const loaded = caseQuery.data;
+  const caseType = typeEdit ?? loaded?.case_type;
+  const roomId = roomEdit ?? loaded?.room_id;
+  const capacity = capacityEdit ?? (loaded?.capacity != null ? String(loaded.capacity) : '');
 
   const mutation = useMutation({
     mutationFn: () => updateCase(displayId!, {
       case_type: caseType,
-      ...(roomId === '' ? {} : { room_id: roomId }),
+      ...(roomId === undefined ? {} : { room_id: roomId }),
       // An emptied box sends `null` — "back to the type default" — rather
       // than omitting the field, which the server reads as "leave it".
       capacity: capacity ? Number(capacity) : null,
@@ -74,9 +74,7 @@ export function EditCasePage() {
     mutation.mutate();
   }
 
-  const loaded = caseQuery.data;
-  const typeChanged = !!loaded && caseType !== '' && caseType !== loaded.case_type;
-  const nextPrefix = caseType === 'archive' ? 'A' : 'D';
+  const typeChanged = !!loaded && typeEdit !== null && typeEdit !== loaded.case_type;
 
   let body: ReactNode;
   if (caseQuery.isLoading) {
@@ -86,9 +84,22 @@ export function EditCasePage() {
       </Panel>
     );
   } else if (caseQuery.error && !isNotFound(caseQuery.error)) {
-    body = <div className="py-4"><ErrorNote of={{ isError: true, error: caseQuery.error }} what="Could not load this case" /></div>;
-  } else if (!loaded) {
-    body = <div className="alert alert-danger">Case not found</div>;
+    body = (
+      <div className="py-4">
+        <ErrorNote of={caseQuery} what="Could not load this case" />
+        <Link to="/cases" className="btn btn-outline-secondary mt-3">Back to cases</Link>
+      </div>
+    );
+  } else if (!loaded || caseType === undefined || roomId === undefined) {
+    // The same "not found" the case page shows, with the way out it offers —
+    // this used to be a bare red box with nowhere to go.
+    body = (
+      <div className="hr-cr-empty mt-3">
+        <p className="hr-cr-empty-title">Case not found</p>
+        <p className="hr-cr-empty-text">This case may have been deleted or doesn't exist.</p>
+        <Link to="/cases" className="btn btn-outline-secondary">Back to cases</Link>
+      </div>
+    );
   } else {
     body = (
       <form onSubmit={handleSubmit} className="hr-case-form">
@@ -107,49 +118,34 @@ export function EditCasePage() {
             </>
           }
         >
-          <div className="hr-case-field">
-            <label className="form-label" htmlFor="case-type">Case type</label>
-            <select id="case-type" className="form-select" value={caseType} onChange={e => setCaseType(e.target.value)}>
-              <option value="archive">Archive</option>
-              <option value="daily_wear">Daily wear</option>
-            </select>
-            {/* Said BEFORE the save, because it cannot be taken back by
-                switching the type again: the case gets the next free number
-                in the other series, not its old one. */}
-            {typeChanged && (
+          <CaseFields
+            idPrefix="case"
+            caseType={caseType}
+            onCaseType={setTypeEdit}
+            typeNote={typeChanged && (
+              // Said BEFORE the save, because it cannot be taken back by
+              // switching the type again: a case number is never issued twice
+              // (`case_service.get_next_sequence`), so switching back gives a
+              // new number, not the old one — and the old label finds nothing
+              // rather than whichever case would otherwise have been numbered
+              // next.
               <div className="alert alert-warning small mt-2 mb-0" role="note">
                 Changing the type renumbers this case — {displayId} becomes the
-                next {nextPrefix}-### — and its hats&rsquo; IDs change with it. An
-                NFC tag written for {displayId} will stop finding it.
+                next {caseTypePrefix(caseType)}-### — and its hats&rsquo; IDs change with it. A
+                label or NFC tag for {displayId} will stop finding it; that number is
+                never reused, so it can&rsquo;t open a different case.
               </div>
             )}
-          </div>
-          <div className="hr-case-field">
-            <label className="form-label" htmlFor="case-room">Room</label>
-            <select id="case-room" className="form-select" value={roomId} onChange={e => setRoomId(Number(e.target.value))}>
-              {roomsQ.data?.map(r => (
-                <option key={r.id} value={r.id}>{r.name}</option>
-              ))}
-            </select>
-            {/* A failed list is an empty select otherwise — no rooms to pick
-                and no word why. Same note as the New case form. */}
-            <ErrorNote of={roomsQ} what="Could not load rooms" />
-          </div>
-          <div className="hr-case-field">
-            <label className="form-label" htmlFor="case-capacity">Capacity (hats)</label>
-            <input
-              id="case-capacity"
-              type="number"
-              inputMode="numeric"
-              className="form-control"
-              min={1}
-              max={50}
-              placeholder={CAPACITY_PLACEHOLDER}
-              value={capacity}
-              onChange={e => setCapacity(e.target.value)}
-            />
-            <div className="form-text">Leave empty to use the default for the case type.</div>
-          </div>
+            roomId={roomId}
+            onRoomId={setRoomEdit}
+            roomsQ={roomsQ}
+            // The room the case is in now stays an option even when the list
+            // lacks it — an orphaned case's room is gone.
+            ownRoom={{ id: loaded.room_id, name: caseRoomName(loaded) }}
+            capacity={capacity}
+            onCapacity={setCapacityEdit}
+            capacityHint="Leave empty to use the default for the case type."
+          />
           <ErrorNote of={mutation} what="Could not save" className="mt-3" />
         </Panel>
       </form>

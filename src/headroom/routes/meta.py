@@ -3,20 +3,28 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.database import get_db
 from headroom.models.hat import Hat
+from headroom.routes._api import DomainErrorRoute
 from headroom.schemas.hat import (
-    STYLE_LABELS,
     KNOWN_CONSTRUCTIONS,
+    SIZE_LABELS,
+    STYLE_LABELS,
     HatCondition,
     HatSize,
     HatStyle,
+    condition_label,
     is_beanie_style,
 )
 from headroom.schemas.settings import MetaOption, PaletteColor, StyleOption, TextOption
-from headroom.services import room_service, vocabulary
-from headroom.services.catalog_service import catalog_options
-from headroom.services.color_extraction import palette
+from headroom.services import (
+    catalog_service,
+    color_extraction,
+    naming,
+    room_service,
+    vocabulary,
+)
 
-router = APIRouter(prefix="/api/meta", tags=["meta"])
+router = APIRouter(prefix="/api/meta", tags=["meta"], route_class=DomainErrorRoute)
+
 
 @router.get("/styles", response_model=list[StyleOption])
 async def list_styles():
@@ -41,12 +49,14 @@ async def list_styles():
 
 @router.get("/sizes", response_model=list[MetaOption])
 async def list_sizes():
-    return [{"value": s.value, "label": s.value.replace("_", " ").title()} for s in HatSize]
+    """Size options, labeled from `SIZE_LABELS` — the table search reads too,
+    so what the picker prints is what a search for it finds."""
+    return [{"value": s.value, "label": SIZE_LABELS[s.value]} for s in HatSize]
 
 
 @router.get("/conditions", response_model=list[MetaOption])
 async def list_conditions():
-    return [{"value": c.value, "label": c.value.replace("_", " ").title()} for c in HatCondition]
+    return [{"value": c.value, "label": condition_label(c.value)} for c in HatCondition]
 
 
 @router.get("/rooms", response_model=list[MetaOption])
@@ -58,7 +68,7 @@ async def list_rooms(db: AsyncSession = Depends(get_db)):
 @router.get("/colors", response_model=list[PaletteColor])
 async def list_colors():
     """The curated color palette — the UI renders these as filter chips."""
-    return palette()
+    return color_extraction.palette()
 
 
 @router.get("/constructions", response_model=list[str])
@@ -70,12 +80,21 @@ async def list_constructions(db: AsyncSession = Depends(get_db)):
     one-tap choice from then on — that is what stops the free-form half of the
     field from filling up with five spellings of the same material. Curated
     entries come first because they are the common answers; the rest follow
-    alphabetically. Case-insensitive de-dupe, keeping the curated casing.
+    alphabetically.
+
+    De-duplicated by the same key a write canonicalizes on (`naming.name_key`,
+    which folds case AND punctuation), with the same curated list: a stored
+    `HYDRO-Lite` is offered as `HYDROLite`, the spelling saving it would
+    store. A casefold-only comparison, with no `known` list, offered the
+    stored variant beside the curated one — two picker entries for one fabric,
+    one of which every save silently rewrote.
     """
-    curated = {c.casefold() for c in KNOWN_CONSTRUCTIONS}
-    in_use = await vocabulary.distinct_values(db, Hat.construction)
+    curated = {naming.name_key(c) for c in KNOWN_CONSTRUCTIONS}
+    in_use = await vocabulary.distinct_values(
+        db, Hat.construction, known=KNOWN_CONSTRUCTIONS
+    )
     return list(KNOWN_CONSTRUCTIONS) + [
-        v for v in in_use if v.casefold() not in curated
+        v for v in in_use if naming.name_key(v) not in curated
     ]
 
 
@@ -110,4 +129,4 @@ async def list_colorways(
     The payload is a few hundred short strings, so the cap is a sanity bound
     rather than a page size.
     """
-    return await catalog_options(db, q=q, model=model, limit=limit)
+    return await catalog_service.catalog_options(db, q=q, model=model, limit=limit)

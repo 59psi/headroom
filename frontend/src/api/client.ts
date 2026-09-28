@@ -57,7 +57,10 @@ export async function apiFetchWithHeaders<T>(
       const next = here + window.location.search;
       window.location.assign(`/login?next=${encodeURIComponent(next)}`);
     }
-    throw new Error('Authentication required');
+    // An ApiError like every other failure, so the one status the app acts on
+    // specially still carries it: a caller on a public page (where no
+    // redirect happens) can tell "signed out" from "broken".
+    throw new ApiError('Authentication required', 401);
   }
   if (!resp.ok) {
     const body = await resp.json().catch(() => ({ detail: resp.statusText }));

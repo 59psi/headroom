@@ -12,14 +12,15 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from headroom.auth import resolve_user
 from headroom.config import settings
 from headroom.database import get_db
+from headroom.routes._api import DomainErrorRoute
 from headroom.schemas.settings import LivenessRead, ReadinessRead
 from headroom.services import analysis_queue, import_service, settings_service
 from headroom.utils import disk
-from headroom.auth import resolve_user
 
-router = APIRouter()
+router = APIRouter(route_class=DomainErrorRoute)
 
 
 @router.get("/health", response_model=LivenessRead)
@@ -49,7 +50,7 @@ async def ready(request: Request, db: AsyncSession = Depends(get_db)):
     This endpoint is unauthenticated (the Docker healthcheck polls it), so for
     anonymous callers it returns booleans ONLY — no raw exception strings, no
     filesystem paths, no API-key source. Authenticated callers see full detail
-    plus the import-worker liveness canary. (S2/R9 — docs/AUDIT-HISTORY.md)
+    plus the import-worker liveness canary.
     """
     overall_ok = True
 
@@ -68,7 +69,7 @@ async def ready(request: Request, db: AsyncSession = Depends(get_db)):
         probe = upload_dir / ".readiness_probe"
         probe.write_text("ok")
         probe.unlink(missing_ok=True)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001 — any failure to write IS the not-ready answer
         up_ok, up_err = False, str(exc)
         overall_ok = False
 

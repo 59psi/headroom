@@ -75,8 +75,8 @@ async def test_the_prompt_agrees_with_the_price_table():
     Claude a HYDRO was $69 while the table said $79 would produce estimates the
     table then silently discarded, which is just a slower way to be wrong.
     """
-    from headroom.services.claude_analysis import SYSTEM_PROMPT
     from headroom.services import retail_pricing
+    from headroom.services.claude_analysis import SYSTEM_PROMPT
 
     assert "PRICING" in SYSTEM_PROMPT
 

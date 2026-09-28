@@ -272,7 +272,6 @@ async def test_an_unusable_destination_is_recorded_not_merely_skipped(
     from pathlib import Path
 
     from headroom.services import settings_service
-
     from tests.conftest import test_session_factory
 
     backup_service._health = backup_service.BackupHealth()
@@ -451,13 +450,17 @@ async def test_the_endpoint_refuses_an_injected_flag(client):
 
 
 async def test_the_endpoint_refuses_an_unknown_provider(client):
-    """There is no free-text command field, so this is the only lever on argv[0]."""
+    """There is no free-text command field, so this is the only lever on argv[0].
+
+    Refused at the schema (422), where the provider is a closed vocabulary
+    generated from `UPLOAD_PROVIDERS`, before the route runs at all."""
     resp = await client.put(
         "/api/admin/backups/upload",
         json={"provider": "bash", "destination": "box:Headroom"},
     )
 
-    assert resp.status_code == 400
+    assert resp.status_code == 422
+    assert (await client.get("/api/admin/backups/upload")).json()["configured"] is False
 
 
 async def test_clearing_turns_it_off(client):
@@ -738,6 +741,10 @@ async def test_the_module_host_is_parsed_from_the_destination(monkeypatch):
         seen["env"] = kwargs.get("env")
 
         class _Proc:
+            # A finished process, as `communicate()` leaves a real one: the
+            # caller checks it to decide whether a child is still to be killed.
+            returncode = 0
+
             async def communicate(self):
                 return b"NetBackup\tbackups\nhome\thome dirs\n", b""
 
@@ -762,3 +769,14 @@ async def test_module_listing_never_raises_on_a_dead_host():
     """It only ever decorates an error message."""
     assert await backup_service.list_rsync_modules("u@127.0.0.1::x", timeout=1) == []
     assert await backup_service.list_rsync_modules("", timeout=1) == []
+
+
+async def test_the_rclone_steps_lock_the_directory_down_before_handing_it_over():
+    """`sudo chown -R 1000:1000 DIR && chmod 700 DIR` fails for any host user
+    who is not uid 1000: after the chown only uid 1000 or root may chmod it,
+    so the directory of live tokens was left at the umask's mode. The steps
+    are rendered verbatim on the Settings card and copied as written."""
+    step = next(
+        s for s in backup_service.UPLOAD_PROVIDERS["rclone"].setup if "chown" in s
+    )
+    assert step.index("chmod 700") < step.index("sudo chown"), step

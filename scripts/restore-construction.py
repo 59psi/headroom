@@ -15,17 +15,33 @@ their previous values.
 The backups do hold those values. This reads a backup's database, compares its
 `construction` column against the live one, and restores the differences.
 
-Usage, on the box running Headroom:
+Usage — Docker. The script is not in the image, and `/data` is a named volume
+the host cannot see as a path, so feed the script to the CONTAINER's Python on
+stdin; inside it, `/data` is where the backups and the database are:
 
     # See what would change — reads only, writes nothing:
-    python3 scripts/restore-construction.py /data/backups/headroom-backup-....tar.gz
+    docker compose exec -T headroom python - \\
+        /data/backups/headroom-backup-<timestamp>.tar.gz < scripts/restore-construction.py
 
     # Apply it:
-    python3 scripts/restore-construction.py /data/backups/....tar.gz --apply
+    docker compose exec -T headroom python - \\
+        /data/backups/headroom-backup-<timestamp>.tar.gz --apply < scripts/restore-construction.py
+
+Usage — bare metal, from the project root (backups sit beside `./uploads`):
+
+    uv run python scripts/restore-construction.py backups/headroom-backup-<timestamp>.tar.gz
+    uv run python scripts/restore-construction.py backups/headroom-backup-<timestamp>.tar.gz --apply
+
+The live database defaults to the one the app itself is configured with —
+`HEADROOM_DATABASE_URL`, resolved exactly as the backup code resolves it — so
+the same command is right in both places. It used to be a hardcoded
+`/data/headroom.db`, which is wrong on bare metal and, on Docker, a path only
+the container has. `--db` overrides it.
 
 Pick a backup from BEFORE the values were overwritten. `--apply` rewrites
-`construction` and re-derives `hydro`/`hydrolite` from it, matching
-`Hat.set_construction()`. Hats absent from the backup, and hats whose backup
+`construction`, re-derives `hydro`/`hydrolite` from it and records the value as
+the owner's (`construction_source`, so the construction audit's bulk clear
+leaves it alone), matching `Hat.set_construction()`. Hats absent from the backup, and hats whose backup
 value was empty, are left alone: a blank in the backup means "not stated then",
 which is not a reason to erase something stated since.
 """
@@ -39,7 +55,25 @@ import tarfile
 import tempfile
 from pathlib import Path
 
-LIVE_DB = Path("/data/headroom.db")
+try:
+    # The app's own resolution of its database path — the container's Python
+    # and `uv run` both have the package, and asking it beats a second copy of
+    # the rule that has to be kept in step.
+    from headroom.services import backup_service
+except ImportError:  # a Python without the app installed: --db is then required
+    backup_service = None
+
+
+def _default_db() -> Path | None:
+    """The database the app is configured with, or None if it cannot be told."""
+    if backup_service is None:
+        return None
+    return backup_service._db_path()
+
+
+#: `construction_audit.OWNER_SOURCE`, restated because this script also runs
+#: on a Python without the app installed; the test file pins the two together.
+_OWNER_SOURCE = "owner"
 
 
 def _derive_flags(value: str | None) -> tuple[bool, bool]:
@@ -73,18 +107,29 @@ def _extract_db(archive: Path, into: Path) -> Path:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__)
+    default_db = _default_db()
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     ap.add_argument("archive", type=Path, help="Path to a headroom-backup-*.tar.gz")
-    ap.add_argument("--db", type=Path, default=LIVE_DB, help=f"Live DB (default {LIVE_DB})")
+    ap.add_argument(
+        "--db", type=Path, default=default_db,
+        help=f"Live DB (default: the app's configured database, {default_db or 'unresolved'})",
+    )
     ap.add_argument("--apply", action="store_true", help="Actually write the changes")
     args = ap.parse_args()
 
     if not args.archive.is_file():
         sys.exit(f"No such backup: {args.archive}")
+    if args.db is None:
+        sys.exit("Could not work out the app's database — pass --db PATH.")
     if not args.db.is_file():
         sys.exit(f"No such database: {args.db}")
 
-    with tempfile.TemporaryDirectory(prefix="headroom-restore-") as tmp:
+    # Extracted beside the archive, not into the system temp dir: in the
+    # container that is a RAM tmpfs charged to the app's memory limit, and the
+    # archive's own directory is the data volume.
+    with tempfile.TemporaryDirectory(prefix="headroom-restore-", dir=args.archive.parent) as tmp:
         old_db = _extract_db(args.archive, Path(tmp))
 
         old = sqlite3.connect(f"file:{old_db}?mode=ro", uri=True)
@@ -121,12 +166,33 @@ def main() -> None:
                 print("\nDry run. Re-run with --apply to write these back.")
                 return
 
+            # `construction_source` is the provenance `Hat.set_construction`
+            # keeps beside the value, and the construction audit's bulk clear
+            # leaves an OWNER's value alone by it. A restored value is the
+            # owner's — that is this script's whole premise — and applying it
+            # is their own decision, made after reading the preview above, the
+            # same footing as a replacement picked in the audit. Left alone,
+            # the column went on describing the value it REPLACED: a restore
+            # over an analyzer's guess stayed unprotected from the next sweep.
+            # Only where the column exists, so a database not yet migrated by
+            # a 2.81+ boot is still restorable.
+            has_source = any(
+                row[1] == "construction_source"
+                for row in live.execute("PRAGMA table_info(hats)")
+            )
             for hat_id, _current, original in changes:
                 hydrolite, hydro = _derive_flags(original)
-                live.execute(
-                    "UPDATE hats SET construction = ?, hydrolite = ?, hydro = ? WHERE id = ?",
-                    (original, int(hydrolite), int(hydro), hat_id),
-                )
+                if has_source:
+                    live.execute(
+                        "UPDATE hats SET construction = ?, construction_source = ?, "
+                        "hydrolite = ?, hydro = ? WHERE id = ?",
+                        (original, _OWNER_SOURCE, int(hydrolite), int(hydro), hat_id),
+                    )
+                else:
+                    live.execute(
+                        "UPDATE hats SET construction = ?, hydrolite = ?, hydro = ? WHERE id = ?",
+                        (original, int(hydrolite), int(hydro), hat_id),
+                    )
             live.commit()
             print(f"\nRestored {len(changes)} hat(s). Restart Headroom to pick them up.")
         finally:

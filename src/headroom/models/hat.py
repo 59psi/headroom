@@ -2,11 +2,22 @@ from datetime import date, datetime
 from enum import StrEnum
 
 from sqlalchemy import (
-    Boolean, Date, Float, ForeignKey, Index, Integer, String, Text, func, text,
+    Boolean,
+    Date,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    func,
+    select,
+    text,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, column_property, mapped_column, relationship
 
 from headroom.database import Base, UtcDateTime
+from headroom.models.wear_log import WearLog
 
 
 class ResaleScope(StrEnum):
@@ -15,14 +26,85 @@ class ResaleScope(StrEnum):
     Three different measurements that share a column, not degrees of confidence
     in one. Seven modules compared against the bare strings and one of them had
     its own `MANUAL_SCOPE`; this is the enum they all read now.
+
+    `resale_price_source` carries the same fact inside a display sentence;
+    valuation branches on THIS, because parsing prose for " model listings"
+    would silently start valuing the collection differently the day someone
+    reworded the label.
     """
 
-    MANUAL = "manual"      # a person typed it; nothing is ever applied to it
-    MODEL = "model"        # median live ask for this model (or product), used as-is
-    CATEGORY = "category"  # median live ask for the whole style category
+    #: A person typed it. Authoritative; nothing is ever applied to it.
+    MANUAL = "manual"
+    #: Median asking price of listings matching this model name (or, with a
+    #: colorway, this exact product). A comparable, used AS-IS: melinrecap is a
+    #: fixed-price marketplace, so the ask is the sale price and valuation does
+    #: not discount it.
+    MODEL = "model"
+    #: Median asking price of every listing in the style category, because too
+    #: few model listings existed to be worth using. A price level for "an
+    #: Odysea", not a value for THIS Odysea — treating it as one gave every hat
+    #: in a category the same number and made the collection total meaningless.
+    CATEGORY = "category"
 
 
-class Hat(Base):
+# ---- the price-provenance clumps ------------------------------------------- #
+#
+# Each group below is a set of columns that are only ever meaningful together:
+# a price without its source, or a comparable without the date it was checked,
+# is a number nobody can act on. They lived as loose parallel columns in the
+# body of `Hat`, each restated field-by-field wherever it travelled. Declaring
+# each group once, as a mixin, makes the clump a named thing — the unit
+# `schemas.hat.HatRead` and `schemas.admin.EbayComps` mirror — rather than a
+# convention of adjacency. The columns themselves are unchanged (same names,
+# same types, still flat on `hats`), so no migration is involved.
+
+
+class NewPriceColumns:
+    """What the hat costs new, and who said so."""
+
+    estimated_new_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    estimated_new_price_source: Mapped[str | None] = mapped_column(String(80), nullable=True)
+
+
+class ResaleColumns:
+    """The resale observation: a price, where it came from, when, and of what.
+
+    `resale_price_scope` is a `ResaleScope` — see that enum for what each
+    value means; it is the one definition and is not restated here.
+    """
+
+    resale_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    resale_price_source: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    resale_price_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    resale_checked_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
+    resale_price_scope: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
+
+class EbayCompsColumns:
+    """v0.4 — eBay live comparable-listings prices, as of `ebay_checked_at`."""
+
+    ebay_avg_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ebay_median_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ebay_listing_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ebay_search_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    ebay_checked_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
+
+
+class DispositionColumns:
+    """v0.3 — how the hat left the collection (sold/gifted/lost/trashed/trade).
+
+    `disposed_at` is the flag: a disposed hat stays in the database, frees its
+    case slot, and keeps the other four as the record of where it went.
+    """
+
+    disposed_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
+    disposed_via: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    disposed_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    disposed_to: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    disposed_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class Hat(NewPriceColumns, ResaleColumns, EbayCompsColumns, DispositionColumns, Base):
     __tablename__ = "hats"
     __table_args__ = (
         # Two ACTIVE hats can never share a slot. `display_id` is derived from
@@ -39,6 +121,14 @@ class Hat(Base):
             unique=True,
             sqlite_where=text("case_id IS NOT NULL AND disposed_at IS NULL"),
         ),
+        # AUTOINCREMENT: a hat's id is never reused. Without it SQLite hands out
+        # max(id)+1, so deleting the newest hat gave its id to the next one
+        # created — and a hat's NFC/QR tag is `/t/h/<id>`, printed on a sticker
+        # that cannot be rewritten. The old sticker kept scanning and silently
+        # opened the new hat, one tap from logging a wear against it. Existing
+        # databases are rebuilt once by `database._rebuild_hats_autoincrement`,
+        # which also carries the high-water mark of ids already handed out.
+        {"sqlite_autoincrement": True},
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -62,7 +152,12 @@ class Hat(Base):
     )
     # Special/limited runs. Not derived from anything — a hat is limited
     # because the drop was, which no photo and no field can tell you.
-    limited_edition: Mapped[bool] = mapped_column(Boolean, default=False)
+    # `server_default` matches `_HAT_COLUMN_DDL` ("NOT NULL DEFAULT 0"), so a
+    # fresh install and an upgraded one build the same column; without it a
+    # raw INSERT that omits the flag worked on one and failed on the other.
+    limited_edition: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("0")
+    )
     photo_path: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # The processed JPEG the cutout was made from, kept so the background can be
     # redone later. Before this the JPEG was deleted the moment rembg succeeded,
@@ -90,36 +185,10 @@ class Hat(Base):
     # the only free-text field on a hat that a re-analysis cannot touch.
     owner_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # Pricing
-    # Cost basis — what was actually paid (purchase-history import or manual)
+    # Pricing. Cost basis — what was actually paid (purchase-history import or
+    # manual). The new-price, resale and eBay clumps are the mixins above.
     purchase_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     purchased_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
-    estimated_new_price: Mapped[float | None] = mapped_column(Float, nullable=True)
-    estimated_new_price_source: Mapped[str | None] = mapped_column(String(80), nullable=True)
-    resale_price: Mapped[float | None] = mapped_column(Float, nullable=True)
-    resale_price_source: Mapped[str | None] = mapped_column(String(80), nullable=True)
-    resale_price_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    resale_checked_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
-    # How much `resale_price` is actually about THIS hat. The three values are
-    # not degrees of confidence in one measurement -- they are three different
-    # measurements that happen to share a column:
-    #   "manual"   -- a person typed it. Authoritative; nothing is applied to it.
-    #   "model"    -- median asking price of listings matching this model name
-    #                 (or, with a colorway, this exact product). A comparable,
-    #                 used AS-IS: melinrecap is a fixed-price marketplace, so
-    #                 the ask is the sale price and valuation does not discount
-    #                 it (this comment claimed a discount for several releases
-    #                 after `lib/valuation.ts` stopped applying one).
-    #   "category" -- median asking price of every listing in the style category,
-    #                 because too few model listings existed to be worth using.
-    #                 That is a price level for "an Odysea", not a value for this
-    #                 Odysea, and treating it as one gave every hat in a category
-    #                 the same number and made the collection total meaningless.
-    # `resale_price_source` carries the same fact inside a display sentence;
-    # valuation needs to branch on it, and parsing prose for " model listings"
-    # would silently start valuing the collection differently the day someone
-    # reworded the label.
-    resale_price_scope: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     # Analysis bookkeeping
     # What the hat is BUILT from, free-form. Construction is orthogonal to the
@@ -134,6 +203,14 @@ class Hat(Base):
     # earlier. `hydro` / `hydrolite` below stay as the indexed fast path for the
     # two common values; `set_construction()` is the only writer of all three.
     construction: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    # Who wrote the construction now standing: `construction_audit.OWNER_SOURCE`
+    # when a person typed or chose it, NULL when analysis (or an import) did.
+    # The construction audit's bulk clear/reassign skips owner values by this
+    # column, so an owner's correction survives the sweep meant for the
+    # analyzer's guesses — and survives the activity log's retention prune,
+    # which a check against the audit log alone would not. Written only by
+    # `set_construction()`, like the flags below.
+    construction_source: Mapped[str | None] = mapped_column(String(20), nullable=True)
     # DERIVED from `construction` -- do not assign directly, call
     # `set_construction()`. Kept as real columns rather than properties because
     # search filters and the pricing prompt query them, and a @property cannot
@@ -172,26 +249,19 @@ class Hat(Base):
     #: information a person would use to decide something is stuck.
     analysis_stage_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
     # Which bulk re-analysis run this hat belongs to, if any. Indexed because
-    # progress for a job is a COUNT over exactly this column.
+    # progress for a job is a COUNT over exactly this column. The column
+    # arrived by ALTER in 2.10, so upgraded databases get the index from
+    # `database._INDEX_DDL`, not from this declaration.
     analysis_job_id: Mapped[int | None] = mapped_column(
         Integer, nullable=True, index=True
     )
     analysis_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     analyzed_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
-
-    # v0.3 — disposition (sold/gifted/lost/trashed/trade)
-    disposed_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
-    disposed_via: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    disposed_price: Mapped[float | None] = mapped_column(Float, nullable=True)
-    disposed_to: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    disposed_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    # v0.4 — eBay live comparable-listings prices
-    ebay_avg_price: Mapped[float | None] = mapped_column(Float, nullable=True)
-    ebay_median_price: Mapped[float | None] = mapped_column(Float, nullable=True)
-    ebay_listing_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    ebay_search_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    ebay_checked_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
+    # Who set the colors: 'owner' (`hat_service.COLORS_OWNER_SOURCE`) when a
+    # person set them via PUT /api/hats/{id}/colors; NULL means analysis wrote
+    # them. Re-analysis replaces only the second kind, so a corrected palette
+    # survives Reanalyze. Same shape as `construction_source`.
+    colors_source: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         UtcDateTime, server_default=func.now()
@@ -200,6 +270,24 @@ class Hat(Base):
         UtcDateTime, server_default=func.now(), onupdate=func.now()
     )
 
+    #: How many days this hat has been worn — counted by the database in the
+    #: same SELECT that loads the hat.
+    #:
+    #: This was `len(self.wear_logs)`, which is why `wear_logs` was a selectin
+    #: collection: every hat list loaded every wear row of every hat in it to
+    #: produce one integer per hat. The count is the only thing any listing
+    #: needs; the rows are wanted only by the two handlers that edit them.
+    wear_count: Mapped[int] = column_property(
+        select(func.count(WearLog.id))
+        .where(WearLog.hat_id == id)
+        .correlate_except(WearLog)
+        .scalar_subquery()
+    )
+
+    # Many-to-one and selectin: one row, needed by every read model (the
+    # `display_id` / `room` properties below). `direct_room` used to drag its
+    # room's whole shelf in through `Room.cases`; neither cascades further now
+    # that `Case.hats` and `Room.cases` are "raise".
     case: Mapped["Case | None"] = relationship(  # noqa: F821
         back_populates="hats", lazy="selectin"
     )
@@ -209,11 +297,15 @@ class Hat(Base):
     direct_room: Mapped["Room | None"] = relationship(  # noqa: F821
         foreign_keys=[direct_room_id], lazy="selectin"
     )
+    # A handful per hat, and `HatRead` renders every one of them.
     colors: Mapped[list["HatColor"]] = relationship(  # noqa: F821
         back_populates="hat", lazy="selectin", cascade="all, delete-orphan"
     )
-    wear_logs: Mapped[list["WearLog"]] = relationship(  # noqa: F821
-        lazy="selectin", cascade="all, delete-orphan", order_by="WearLog.worn_at"
+    # `lazy="raise"`: see `wear_count`. Load with `selectinload(Hat.wear_logs)`
+    # where the rows themselves are wanted. The delete-orphan cascade still
+    # runs — a flush loads the collection itself when it deletes a hat.
+    wear_logs: Mapped[list["WearLog"]] = relationship(
+        lazy="raise", cascade="all, delete-orphan", order_by="WearLog.worn_at"
     )
 
     def detach_from_case(self, room_id: int | None) -> None:
@@ -236,12 +328,21 @@ class Hat(Base):
         self.position_in_case = None
         self.direct_room_id = room_id
 
-    def set_construction(self, value: str | None) -> None:
+    def set_construction(self, value: str | None, *, source: str | None = None) -> None:
         """Record the construction and re-derive the two indexed flags.
 
-        The ONLY writer of `construction`, `hydro` and `hydrolite`. Assigning
-        the flags by hand is what lets them drift out of step with the text a
-        person actually typed, so they are derived here every time instead.
+        The ONLY writer of `construction`, `construction_source`, `hydro` and
+        `hydrolite`. Assigning the flags by hand is what lets them drift out of
+        step with the text a person actually typed, so they are derived here
+        every time instead.
+
+        `source` records who wrote a NEW value — `construction_audit.
+        OWNER_SOURCE` for a person, None for analysis or an import. Re-writing
+        the value already there, in any spelling, keeps its provenance: a
+        vocabulary snap ("hydro" → "Hydro") or an Edit form re-sending a field
+        the owner never touched is not a new assertion, and must neither
+        promote the analyzer's guess to the owner's nor demote the owner's
+        answer to a guess. Clearing clears both.
 
         Substring matching, not equality: real answers arrive as "A-Game Hydro",
         "Hydro Thermal" or "HYDROLite" depending on whether the speaker is
@@ -249,7 +350,10 @@ class Hat(Base):
         first because it contains "hydro" — order is load-bearing.
         """
         cleaned = (value or "").strip()
+        rewrite = bool(cleaned) and cleaned.casefold() == (self.construction or "").casefold()
         self.construction = cleaned or None
+        if not rewrite:
+            self.construction_source = source if self.construction else None
         key = cleaned.lower().replace("-", "").replace(" ", "")
         self.hydrolite = "hydrolite" in key
         self.hydro = "hydro" in key and not self.hydrolite
@@ -294,7 +398,3 @@ class Hat(Base):
     def room_name(self) -> str | None:
         room = self.room
         return room.name if room else None
-
-    @property
-    def wear_count(self) -> int:
-        return len(self.wear_logs or [])

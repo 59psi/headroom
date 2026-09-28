@@ -76,8 +76,9 @@ describe('SharedPricesCard', () => {
       .toHaveAttribute('href', '/hats/12');
     expect(screen.getByRole('link', { name: 'A-001-02' }))
       .toHaveAttribute('href', '/hats/13');
-    // ...and the caseless one falls back to its id rather than borrowing a label.
-    expect(screen.getByRole('link', { name: '#11' }))
+    // ...and the caseless one is named the way every other screen names it,
+    // rather than borrowing a neighbor's label.
+    expect(screen.getByRole('link', { name: 'Hat #11' }))
       .toHaveAttribute('href', '/hats/11');
   });
 
@@ -176,13 +177,35 @@ describe('SharedPricesCard', () => {
   it('says what the fill did once it lands', async () => {
     mocked.auditSharedPrices.mockResolvedValue([group()]);
     mocked.getUnclaimedFromPurchases.mockResolvedValue(unclaimed({ colorways: 3 }));
-    purchases.rematchPurchases.mockResolvedValue({ matched: 3, unmatched: 5 });
+    purchases.rematchPurchases.mockResolvedValue({
+      dry_run: false, matched: 3, unmatched: 5, ambiguous: 0, proposals: [],
+    });
 
     renderWithProviders(<SharedPricesCard />);
     await userEvent.click(await screen.findByRole('button', { name: /Fill 3 from purchase history/ }));
 
     expect(await screen.findByText('Matched 3 purchases from your order history'))
       .toBeInTheDocument();
+  });
+
+  it('refreshes the offer it just used up, the purchase list and this report after a fill', async () => {
+    // Left alone, the offer went on advertising "Fill 17" straight after the
+    // button that consumed the backlog.
+    mocked.auditSharedPrices.mockResolvedValue([group()]);
+    mocked.getUnclaimedFromPurchases.mockResolvedValue(unclaimed({ colorways: 3 }));
+    purchases.rematchPurchases.mockResolvedValue({
+      dry_run: false, matched: 3, unmatched: 5, ambiguous: 0, proposals: [],
+    });
+
+    const { client } = renderWithProviders(<SharedPricesCard />);
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+    await userEvent.click(await screen.findByRole('button', { name: /Fill 3 from purchase history/ }));
+    await screen.findByText('Matched 3 purchases from your order history');
+
+    const keys = invalidate.mock.calls.map(([f]) => JSON.stringify(f?.queryKey));
+    for (const k of [
+      ['admin', 'unclaimed-purchases'], ['admin', 'purchases'], ['admin', 'shared-prices'], ['hats'],
+    ]) expect(keys).toContain(JSON.stringify(k));
   });
 
   it('offers the backlog even when no price is shared yet', async () => {

@@ -51,7 +51,9 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
-router = APIRouter(prefix="/api/public", tags=["public"])
+from headroom.routes._api import DomainErrorRoute
+
+router = APIRouter(prefix="/api/public", tags=["public"], route_class=DomainErrorRoute)
 
 #: Where `docker-compose.https-lan.yml`'s export sidecar publishes Caddy's
 #: public root, read-only. Absent on every other deployment, which is what
@@ -97,6 +99,7 @@ def _unavailable_detail() -> str:
         "No local CA certificate on this install. It exists only when "
         "running docker-compose.https-lan.yml."
     )
+
 
 #: What makes iOS and Android offer to INSTALL the file rather than display or
 #: download it. Serving it as text/plain is a common way to make a perfectly

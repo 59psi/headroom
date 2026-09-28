@@ -24,10 +24,13 @@ from headroom.database import async_session
 from headroom.models.hat import Hat
 from headroom.models.import_job import ImportJob, ImportJobItem
 from headroom.schemas.hat import HAT_DEFAULTS, HatCreate
-from headroom.services import hat_service
-from headroom.services.activity_service import log_activity
-from headroom.services.hat_analysis_pipeline import finalize_hat_photo
-from headroom.utils.photo import process_image_async
+
+# Collaborators as MODULES, called through at run time: `finalize_hat_photo`
+# and `log_activity` are seams tests patch, and a by-name import kept this
+# worker holding the original after the owner's attribute was replaced.
+from headroom.services import activity_service, errors, hat_analysis_pipeline, hat_service
+from headroom.utils import upload
+from headroom.utils.photo import generate_filename, process_image_async
 
 #: The session factory this worker opens sessions with. Set by
 #: `start_worker(session_factory=)` — the lifespan passes `app.state`'s — and
@@ -37,8 +40,6 @@ from headroom.utils.photo import process_image_async
 #: monkeypatch, and a factory captured at import would have silently ignored
 #: them. `stop_worker()` resets it so one test's factory cannot leak into the
 #: next boot.
-from fastapi import HTTPException
-from headroom.utils.photo import generate_filename
 _session_factory = None
 
 
@@ -49,12 +50,14 @@ def _sessions():
 logger = logging.getLogger(__name__)
 
 MAX_FILES_PER_JOB = 100
-MAX_BYTES_PER_FILE = 20 * 1024 * 1024  # 20 MB
+#: The photo cap — the same number, not a second constant that happens to
+#: agree with it (`tests/test_documented_limits.py` pins the two together).
+MAX_BYTES_PER_FILE = upload.MAX_PHOTO_BYTES
 #: Ceiling on the total bytes accepted for ONE batch, whichever door it comes
 #: through (the upload route or the Android share target). Files are spooled to
 #: disk as they arrive, so this bounds disk and job size rather than RAM; phone
 #: photos are a few MB, so it is generous for real use while blocking the
-#: pathological case (S9/R6 — docs/AUDIT-HISTORY.md). It lived as two mirrored
+#: pathological case. It lived as two mirrored
 #: constants in the two routes; a mirrored constant is two constants.
 MAX_TOTAL_UPLOAD_BYTES = 750 * 1024 * 1024
 
@@ -103,11 +106,18 @@ async def create_job(
     bytes so a batch is never resident in memory — the caller spools each
     upload to disk as it arrives and deletes its temp dir afterwards. Spool
     under `spool_dir()` so staging is a rename rather than a second write.
+
+    An empty or over-count batch is refused as `errors.Invalid`, in domain
+    terms; the route layer decides what that is on the wire. Both callers
+    refuse such batches themselves before spooling a byte (the upload route
+    with its own 400/413, the share target by capping and redirecting), so this
+    is the backstop for a caller that forgets. It raised `HTTPException` once,
+    which handed an HTTP status to a function that is not an endpoint.
     """
     if not files:
-        raise HTTPException(status_code=400, detail="No files provided")
+        raise errors.Invalid("No files provided")
     if len(files) > MAX_FILES_PER_JOB:
-        raise HTTPException(status_code=413, detail=f"Max {MAX_FILES_PER_JOB} files per job")
+        raise errors.Invalid(f"Max {MAX_FILES_PER_JOB} files per job")
 
     job = ImportJob(
         total=len(files),
@@ -153,7 +163,7 @@ async def create_job(
         job.status = "done"
         job.finished_at = datetime.now(timezone.utc)
     await db.commit()
-    await log_activity(
+    await activity_service.log_activity(
         db, kind="import.created", entity_type="system", entity_id=job.id,
         summary=f"Bulk import job #{job.id} queued with {len(files)} file(s)",
     )
@@ -205,6 +215,11 @@ async def list_recent_jobs(db: AsyncSession, limit: int = 20) -> list[ImportJob]
     return list(result.scalars().all())
 
 
+def _unlink_all(paths: list[str]) -> None:
+    for p in paths:
+        Path(p).unlink(missing_ok=True)
+
+
 async def cancel_job(db: AsyncSession, job_id: int) -> ImportJob | None:
     job = await get_job(db, job_id)
     if not job:
@@ -219,12 +234,17 @@ async def cancel_job(db: AsyncSession, job_id: int) -> ImportJob | None:
             ImportJobItem.status == "queued",
         )
     )
+    staged: list[str] = []
     for item in result.scalars().all():
         item.status = "canceled"
         if item.staged_path:
-            Path(item.staged_path).unlink(missing_ok=True)
+            staged.append(item.staged_path)
+    # Off the event loop, like every other file operation here: a canceled
+    # batch is up to `MAX_FILES_PER_JOB` unlinks on an SD card, run from a
+    # request handler.
+    await asyncio.to_thread(_unlink_all, staged)
     await db.commit()
-    await log_activity(
+    await activity_service.log_activity(
         db, kind="import.canceled", entity_type="system", entity_id=job_id,
         summary=f"Bulk import job #{job_id} canceled",
     )
@@ -337,7 +357,7 @@ async def _process_item(item_id: int) -> None:
             # from a dead attempt — is this import's to remove if it fails
             # again; one that already has its photo is a finished hat.
             created_hat_id = None if hat.photo_path else hat.id
-            await finalize_hat_photo(db, hat, final_path)
+            await hat_analysis_pipeline.finalize_hat_photo(db, hat, final_path)
             await db.commit()
 
             # Update the job item
@@ -348,8 +368,9 @@ async def _process_item(item_id: int) -> None:
             item.hat_id = hat.id
             await db.commit()
 
-            # Update job progress + cleanup staged file
-            staged.unlink(missing_ok=True)
+            # Update job progress + cleanup staged file (off the loop — the
+            # worker shares it with every request).
+            await asyncio.to_thread(staged.unlink, missing_ok=True)
         await _bump_job_counter(job_id, "done")
 
     except Exception as exc:  # noqa: BLE001 — never crash the worker
@@ -364,7 +385,9 @@ async def _process_item(item_id: int) -> None:
                     item.error = str(exc)[:1000]
                     await db.commit()
                     if item.staged_path:
-                        Path(item.staged_path).unlink(missing_ok=True)
+                        await asyncio.to_thread(
+                            Path(item.staged_path).unlink, missing_ok=True
+                        )
                 # A hat this attempt created but never finished must not
                 # outlive its failed import: with no committed photo it is
                 # indistinguishable from a hat somebody added by hand and
@@ -430,12 +453,12 @@ async def _bump_job_counter(job_id: int, item_status: str) -> None:
                     job.id, still_live,
                 )
             else:
-                jdir = staging_dir() / f"job-{job.id}"
-                if jdir.exists():
-                    try:
-                        shutil.rmtree(jdir)
-                    except OSError:
-                        pass
+                # A whole directory tree, off the loop. A missing one (already
+                # cleaned, or never made) is fine, and a failure only leaves
+                # the directory behind — disk, not data; nothing reads it now.
+                await asyncio.to_thread(
+                    shutil.rmtree, staging_dir() / f"job-{job.id}", ignore_errors=True
+                )
 
 
 async def _worker_loop() -> None:

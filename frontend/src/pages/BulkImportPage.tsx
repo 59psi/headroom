@@ -7,11 +7,11 @@ import {
   getImportJob,
   listImportJobs,
 } from '../api/settings';
-import { getStyles, getSizes, getConditions } from '../api/hats';
-import { listCases } from '../api/cases';
-import { DEFAULT_HAT_BASICS } from '../components/hats/HatFormFields';
+import { DEFAULT_HAT_BASICS, useHatFormOptions } from '../components/hats/HatFormFields';
+import { OptionSelect } from '../components/hats/OptionSelect';
 import { invalidateHatViews } from '../lib/invalidate';
-import { formatBytes } from '../lib/format';
+import { formatBytes, plural } from '../lib/format';
+import { qk } from '../lib/queryKeys';
 import { ErrorNote } from '../components/common/ErrorNote';
 import { PageHeader } from '../components/ui/PageHeader';
 import { Panel } from '../components/ui/Panel';
@@ -19,7 +19,7 @@ import { StatusPill, type PillTone } from '../components/ui/StatusPill';
 import { Skeleton } from '../components/ui/Skeleton';
 import { useToast } from '../components/ui/Toast';
 import { useConfirm } from '../components/ui/Dialogs';
-import type { ImportJob, ImportJobItem } from '../types';
+import type { ImportJobItemRead, ImportJobRead } from '../types';
 
 const MAX_FILES = 100;
 
@@ -30,14 +30,14 @@ const fileKey = (f: File) => `${f.name}:${f.size}:${f.lastModified}`;
 const isImage = (f: File) => f.type.startsWith('image/') || /\.(heic|heif)$/i.test(f.name);
 
 /** A job's and an item's state as one word with a tone — never the tone alone. */
-const JOB_PILL: Record<ImportJob['status'], { tone: PillTone; label: string }> = {
+const JOB_PILL: Record<ImportJobRead['status'], { tone: PillTone; label: string }> = {
   queued: { tone: 'info', label: 'Queued' },
   running: { tone: 'busy', label: 'Running' },
   done: { tone: 'ok', label: 'Done' },
   canceled: { tone: 'off', label: 'Canceled' },
 };
 
-const ITEM_PILL: Record<ImportJobItem['status'], { tone: PillTone; label: string }> = {
+const ITEM_PILL: Record<ImportJobItemRead['status'], { tone: PillTone; label: string }> = {
   queued: { tone: 'off', label: 'Queued' },
   processing: { tone: 'busy', label: 'Processing' },
   done: { tone: 'ok', label: 'Done' },
@@ -77,11 +77,10 @@ export function BulkImportPage() {
     }
   }, [activeJobId, queryJobId, setSearchParams]);
 
-  const styles = useQuery({ queryKey: ['meta', 'styles'], queryFn: getStyles });
-  const sizes = useQuery({ queryKey: ['meta', 'sizes'], queryFn: getSizes });
-  const conditions = useQuery({ queryKey: ['meta', 'conditions'], queryFn: getConditions });
-  const cases = useQuery({ queryKey: ['cases'], queryFn: listCases });
-  const recentJobs = useQuery({ queryKey: ['admin', 'import-jobs'], queryFn: () => listImportJobs(10) });
+  // The option lists both hat forms use, with their one loading flag — this
+  // page re-declared the style, size, condition and case queries by hand.
+  const options = useHatFormOptions();
+  const recentJobs = useQuery({ queryKey: qk.admin.importJobs(), queryFn: () => listImportJobs(10) });
 
   const [defaultCondition, setDefaultCondition] = useState(DEFAULT_HAT_BASICS.condition);
   const [defaultSize, setDefaultSize] = useState(DEFAULT_HAT_BASICS.size);
@@ -92,7 +91,7 @@ export function BulkImportPage() {
   // update on their own every 2s, and the polling stops the moment the job
   // reaches a terminal state.
   const job = useQuery({
-    queryKey: ['admin', 'import-job', activeJobId],
+    queryKey: qk.admin.importJob(activeJobId),
     queryFn: () => getImportJob(activeJobId!),
     enabled: activeJobId != null,
     refetchInterval: (q) => {
@@ -114,8 +113,8 @@ export function BulkImportPage() {
     onSuccess: (data) => {
       setFiles([]);
       setActiveJobId(data.id);
-      qc.invalidateQueries({ queryKey: ['admin', 'import-jobs'] });
-      toast.success(`Import started — ${data.total} ${data.total === 1 ? 'photo' : 'photos'} queued`);
+      qc.invalidateQueries({ queryKey: qk.admin.importJobs() });
+      toast.success(`Import started — ${plural(data.total, 'photo')} queued`);
     },
   });
 
@@ -124,9 +123,9 @@ export function BulkImportPage() {
     onSuccess: (data) => {
       // The DELETE answers with the job as it now stands; show it at once
       // rather than waiting for the next poll, which is about to stop anyway.
-      if (data && data.id === activeJobId) qc.setQueryData(['admin', 'import-job', activeJobId], data);
-      qc.invalidateQueries({ queryKey: ['admin', 'import-job', activeJobId] });
-      qc.invalidateQueries({ queryKey: ['admin', 'import-jobs'] });
+      if (data && data.id === activeJobId) qc.setQueryData(qk.admin.importJob(activeJobId), data);
+      qc.invalidateQueries({ queryKey: qk.admin.importJob(activeJobId) });
+      qc.invalidateQueries({ queryKey: qk.admin.importJobs() });
       toast.success('Import canceled');
     },
   });
@@ -186,7 +185,7 @@ export function BulkImportPage() {
   function clearFiles() {
     const cleared = files;
     setFiles([]);
-    toast.info(`${cleared.length} ${cleared.length === 1 ? 'photo' : 'photos'} cleared`, {
+    toast.info(`${plural(cleared.length, 'photo')} cleared`, {
       action: {
         label: 'Undo',
         onClick: () => setFiles(prev => {
@@ -226,7 +225,6 @@ export function BulkImportPage() {
     },
   };
 
-  const optionsLoading = styles.isLoading || sizes.isLoading || conditions.isLoading;
   const jobData = activeJobId != null ? job.data : undefined;
   const processed = jobData ? jobData.done + jobData.errors + jobData.skipped : 0;
   const pct = jobData ? Math.round((processed / Math.max(1, jobData.total)) * 100) : 0;
@@ -241,7 +239,7 @@ export function BulkImportPage() {
       {/* The option lists feed the defaults form below; a failed fetch used
           to render three empty selects with no explanation. */}
       <ErrorNote
-        of={[styles, sizes, conditions, cases, recentJobs]}
+        of={[options.styles, options.sizes, options.conditions, options.cases, recentJobs]}
         what="Could not load the import options"
         className="mb-3"
       />
@@ -273,32 +271,18 @@ export function BulkImportPage() {
             title="Defaults for every hat"
             description="You can edit each hat after Claude finishes analyzing it."
           >
-            {optionsLoading ? <Skeleton lines={2} /> : (
+            {options.isLoading ? <Skeleton lines={2} /> : (
               <div className="hr-import-defaults">
-                <div>
-                  <label className="form-label" htmlFor="import-style">Style</label>
-                  <select id="import-style" className="form-select" value={defaultStyle} onChange={e => setDefaultStyle(e.target.value)}>
-                    {styles.data?.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="form-label" htmlFor="import-size">Size</label>
-                  <select id="import-size" className="form-select" value={defaultSize} onChange={e => setDefaultSize(e.target.value)}>
-                    {sizes.data?.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="form-label" htmlFor="import-condition">Condition</label>
-                  <select id="import-condition" className="form-select" value={defaultCondition} onChange={e => setDefaultCondition(e.target.value)}>
-                    {conditions.data?.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
-                  </select>
-                </div>
+                <OptionSelect id="import-style" label="Style" value={defaultStyle} onChange={setDefaultStyle} options={options.styles.data} />
+                <OptionSelect id="import-size" label="Size" value={defaultSize} onChange={setDefaultSize} options={options.sizes.data} />
+                <OptionSelect id="import-condition" label="Condition" value={defaultCondition} onChange={setDefaultCondition} options={options.conditions.data} />
                 <div>
                   <label className="form-label" htmlFor="import-case">Case</label>
                   <select id="import-case" className="form-select" value={defaultCaseId} onChange={e => setDefaultCaseId(e.target.value)}>
                     <option value="">Unassigned</option>
-                    {cases.data?.map(c => (
-                      <option key={c.id} value={c.id}>{c.display_id} ({c.hat_count} hats)</option>
+                    {/* "A-001 (1 hat)", never "(1 hats)". */}
+                    {options.cases.data?.map(c => (
+                      <option key={c.id} value={c.id}>{c.display_id} ({plural(c.hat_count, 'hat')})</option>
                     ))}
                   </select>
                 </div>

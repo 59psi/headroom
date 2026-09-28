@@ -256,7 +256,13 @@ async def test_the_responder_really_answers_on_a_socket():
 
 async def test_a_query_for_a_type_we_hold_draws_no_packet_at_all():
     """Silence is correct HERE — zeroconf is answering, and two responders
-    putting records for the same name on the wire is a conflict, not a fix."""
+    putting records for the same name on the wire is a conflict, not a fix.
+
+    The wait runs OFF the event loop, like the sibling test above. It used to
+    call `recvfrom` right here, which blocked the very loop the responder runs
+    on for the whole timeout: the protocol could not have answered even if it
+    wanted to, so a responder that replied to everything passed this test.
+    """
     import asyncio
     import socket as sock_mod
 
@@ -273,7 +279,7 @@ async def test_a_query_for_a_type_we_hold_draws_no_packet_at_all():
         try:
             client.sendto(query(HOST, TYPE_A, unicast=True), ("127.0.0.1", port))
             with pytest.raises(sock_mod.timeout):
-                client.recvfrom(4096)
+                await loop.run_in_executor(None, client.recvfrom, 4096)
         finally:
             client.close()
     finally:

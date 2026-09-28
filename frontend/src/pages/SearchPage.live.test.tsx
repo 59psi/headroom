@@ -9,12 +9,13 @@
  * that filter to a value no hat has, filtering every ranked result away.
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useLocation } from 'react-router';
 import { renderWithProviders } from '../test/utils';
 import { SearchPage, SEARCH_DEBOUNCE_MS } from './SearchPage';
 import * as searchApi from '../api/search';
+import type { SearchAnswer } from '../api/search';
 import type { ColorSearchResult, SearchResult } from '../types';
 
 vi.mock('../api/search', async (importOriginal) => {
@@ -50,7 +51,7 @@ function result(over: Partial<SearchResult> = {}): SearchResult {
   return {
     id: 1, display_id: 'A-001-01', case_display_id: 'A-001', photo_path: null, thumb_path: null,
     style: 'a_game', condition: 'new', size: 'classic', is_beanie: false,
-    brand: 'melin', model_name: null, construction: null,
+    brand: 'melin', model_name: null, construction: null, colorway: null,
     colors: [{ color_name: 'ocean', general_color: 'blue', hex_value: '#0af', dominance_rank: 1 }],
     room_id: null, room_name: null,
     ...over,
@@ -59,6 +60,12 @@ function result(over: Partial<SearchResult> = {}): SearchResult {
 
 function colorResult(over: Partial<ColorSearchResult> = {}): ColorSearchResult {
   return { ...result(), matched_hex: '#0af', distance: 4, matched_rank: 1, ...over };
+}
+
+/** A text search's answer: the rows and, by default, no more matches than
+ *  those rows. */
+function answer(results: SearchResult[], total = results.length): SearchAnswer {
+  return { results, total };
 }
 
 function LocationProbe() {
@@ -79,7 +86,7 @@ const settle = () => new Promise(r => setTimeout(r, SEARCH_DEBOUNCE_MS + 150));
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocked.searchHats.mockResolvedValue([result()]);
+  mocked.searchHats.mockResolvedValue(answer([result()]));
   mocked.searchHatsByColor.mockResolvedValue([colorResult()]);
 });
 
@@ -187,5 +194,82 @@ describe('SearchPage live search', () => {
     expect(swatch).toHaveAttribute('aria-pressed', 'true');
     expect(searchParams().get('hex')).toBe('#0000ff');
     expect(searchParams().get('q')).toBeNull();
+  });
+});
+
+describe('SearchPage — the free color picker', () => {
+  it('does nothing when it is merely tabbed past', async () => {
+    // It used to search on blur: tabbing through the page ran a color search
+    // for the picker's default color and threw the typed search away.
+    renderSearch('/search?q=odysea');
+    expect(await screen.findByText(/for “odysea”/)).toBeInTheDocument();
+
+    const picker = screen.getByLabelText('Pick any color');
+    fireEvent.focus(picker);
+    fireEvent.blur(picker);
+
+    await settle();
+    expect(mocked.searchHatsByColor).not.toHaveBeenCalled();
+    expect(screen.getByRole('searchbox', { name: 'Search hats' })).toHaveValue('odysea');
+    expect(searchParams().get('q')).toBe('odysea');
+  });
+
+  it('searches the color that was chosen, and choosing it again keeps the search', async () => {
+    renderSearch();
+    const picker = screen.getByLabelText('Pick any color');
+
+    fireEvent.change(picker, { target: { value: '#ff0000' } });
+    await waitFor(() => expect(mocked.searchHatsByColor).toHaveBeenCalledWith('#ff0000', undefined));
+    await waitFor(() => expect(searchParams().get('hex')).toBe('#ff0000'));
+
+    // Re-committing the same color is a pick, not a toggle off.
+    fireEvent.change(picker, { target: { value: '#ff0000' } });
+    await settle();
+    expect(searchParams().get('hex')).toBe('#ff0000');
+    expect(screen.queryByText('Search across every hat')).toBeNull();
+  });
+});
+
+describe('SearchPage — a capped result list', () => {
+  it('says how many matched in all, and that it is showing the first of them', async () => {
+    // The server stops at 50 rows and reports the rest in X-Total-Count.
+    const rows = Array.from({ length: 50 }, (_, i) => result({ id: i + 1, display_id: `A-${i + 1}` }));
+    mocked.searchHats.mockResolvedValue(answer(rows, 212));
+    renderSearch('/search?q=blue');
+
+    expect(await screen.findByText(/50 of 212 results/)).toBeInTheDocument();
+    expect(screen.getByText(/showing the first 50, refine your search/)).toBeInTheDocument();
+  });
+
+  it('adds nothing when every match is on screen', async () => {
+    renderSearch('/search?q=blue');
+    expect(await screen.findByText(/1 of 1 result/)).toBeInTheDocument();
+    expect(screen.queryByText(/refine your search/)).toBeNull();
+  });
+});
+
+describe('SearchPage — result rows', () => {
+  it('calls a hat outside a case by its model, as the Hats list does', async () => {
+    mocked.searchHats.mockResolvedValue(answer([
+      result({ id: 12, display_id: null, case_display_id: null, model_name: 'Odysea Hydro' }),
+    ]));
+    renderSearch('/search?q=odysea');
+    expect(await screen.findByText('Odysea Hydro', { selector: '.hr-cp-row-id' })).toBeInTheDocument();
+    expect(screen.queryByText('#12')).toBeNull();
+  });
+
+  it('is the Hats tab’s own row — colorway included, the word a search may have matched', async () => {
+    mocked.searchHats.mockResolvedValue(answer([result({ colorway: 'Coronado' })]));
+    renderSearch('/search?q=coronado');
+    const row = (await screen.findByText('A-001-01', { selector: '.hr-cp-row-id' })).closest('a')!;
+    expect(row).toHaveAttribute('href', '/hats/1');
+    expect(row.querySelector('.hr-cp-row-meta')).toHaveTextContent('Coronado');
+  });
+
+  it('says which swatch a color search matched, under the row', async () => {
+    mocked.searchHatsByColor.mockResolvedValue([colorResult({ matched_rank: 3, distance: 2 })]);
+    renderSearch('/search?hex=%23aabbcc');
+    const row = (await screen.findByText('A-001-01', { selector: '.hr-cp-row-id' })).closest('a')!;
+    expect(row.querySelector('.hr-cp-match')).toHaveTextContent(/matched\s*Δ2\s*· accent/);
   });
 });

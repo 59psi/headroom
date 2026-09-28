@@ -1,5 +1,6 @@
 import { inventoryReportUrl } from '../../api/settings';
 import { Panel } from '../ui/Panel';
+import { StatusPill } from '../ui/StatusPill';
 
 /**
  * The valuation table — the version with the money in it (the zip in "Share
@@ -14,6 +15,10 @@ export function InventoryReportCard() {
     <Panel
       title="Inventory report"
       className="hr-sharing"
+      // Built fresh on every open, so there is no stale state to report —
+      // what the word can usefully say is what is IN it, beside the export
+      // card's "No prices".
+      status={<StatusPill tone="info" title="Every report carries current values">With values</StatusPill>}
       description="A print-friendly valuation of every hat you own — open it, then Print → Save as PDF."
       help={
         <p>

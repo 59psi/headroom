@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate, Link } from 'react-router';
-import { getHat, deleteHat, uploadHatPhoto, reanalyzeHat, recutHat, refreshEbayForHat, undisposeHat, updateHatColors, logWear, undoLatestWear } from '../api/hats';
+import { getHat, deleteHat, uploadHatPhoto, reanalyzeHat, recutHat, refreshEbayForHat, undisposeHat, updateHatColors } from '../api/hats';
+import { getApiKeyStatus } from '../api/settings';
 import { ConditionBadge } from '../components/common/ConditionBadge';
 import { ImageLightbox } from '../components/common/ImageLightbox';
 import { PhotoCapture } from '../components/photos/PhotoCapture';
@@ -16,11 +17,17 @@ import { Skeleton } from '../components/ui/Skeleton';
 import { useToast } from '../components/ui/Toast';
 import { useConfirm } from '../components/ui/Dialogs';
 import { useHatLabels } from '../lib/labels';
-import { useState } from 'react';
-import { invalidateHatViews } from '../lib/invalidate';
+import { useEffect, useState } from 'react';
+import { hatViewKeys, invalidateAll, invalidateHatViews } from '../lib/invalidate';
+import { qk } from '../lib/queryKeys';
+import { hatName } from '../lib/placement';
 import { ErrorNote } from '../components/common/ErrorNote';
 import { isNotFound } from '../api/client';
-import { money, valueHat } from '../lib/valuation';
+import { costOf, money, moneyPrecise, valueHat } from '../lib/valuation';
+import { caseTypeName } from '../lib/caseTypes';
+import { formatDateOnly } from '../lib/dates';
+import { uploadUrl } from '../lib/photo';
+import { useWearLog } from '../lib/useWearLog';
 import type { HatRead } from '../types';
 
 /**
@@ -34,6 +41,17 @@ const CONSTRUCTION_TITLES: Record<string, string> = {
 };
 
 const CONFIDENCE_TONE = { high: 'info', medium: 'warn', low: 'off' } as const;
+
+/**
+ * What re-analysis keeps and what it rewrites, said where the button is.
+ *
+ * The single Reanalyze has no confirmation (it is undoable in the sense that
+ * matters: nothing typed is lost), so the one line that would have been in a
+ * confirm dialog sits under it instead. Same words as the whole-collection
+ * re-analyze confirm in Settings.
+ */
+export const REANALYZE_KEEPS =
+  'Prices you entered by hand and colors you edited are kept. Model names and design notes are rewritten from the photo.';
 
 /**
  * The hat's ID heading, with the case part of it linking to that case.
@@ -51,10 +69,11 @@ const CONFIDENCE_TONE = { high: 'info', medium: 'warn', low: 'off' } as const;
  */
 export function HatHeadingId({ hat }: { hat: HatRead }) {
   const caseId = hat.case_display_id;
-  // An unassigned hat has no display_id at all — nothing to link to, and
-  // `Hat #12` must not be dressed up as navigation.
+  // A hat outside a case has no display_id at all — nothing to link to, so
+  // it goes by the name every other screen gives it (`hatName`: its model,
+  // then "Hat #12"), and that name is not dressed up as navigation.
   if (!caseId || !hat.display_id?.startsWith(caseId)) {
-    return <>{hat.display_id || `Hat #${hat.id}`}</>;
+    return <>{hatName(hat)}</>;
   }
   return (
     <>
@@ -72,7 +91,7 @@ function PriceTile({ label, value, source }: { label: string; value: number | nu
       <div className="hr-metric-label">{label}</div>
       {value !== null && value !== undefined ? (
         <>
-          <div className="hr-metric-value hr-price">${value.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
+          <div className="hr-metric-value hr-price">{money(value)}</div>
           {source && <div className="hr-metric-source">{source}</div>}
         </>
       ) : (
@@ -83,18 +102,11 @@ function PriceTile({ label, value, source }: { label: string; value: number | nu
 }
 
 /**
- * A write's response, when it is this hat's fresh row.
- *
- * Most writes here answer with the updated `HatRead`. Putting it straight
- * into the cache shows the result now — a new photo's "Analyzing" badge, a
- * restored hat's case — instead of after the invalidation's refetch lands.
- * It is the server's answer, not a guess at one, so nothing needs rolling
- * back. Checked rather than trusted: two API wrappers type their result
- * `unknown`, and a test double may return nothing.
+ * Which color the editor is open on: adding one, or editing the swatch at a
+ * rank. Named states rather than a number whose sentinels (`-1` for adding,
+ * `null` for closed) had to be decoded from a comment.
  */
-function freshHat(res: unknown, id: number): HatRead | null {
-  return res && typeof res === 'object' && (res as { id?: unknown }).id === id ? res as HatRead : null;
-}
+type ColorEditor = { mode: 'add' } | { mode: 'edit'; rank: number };
 
 /** The page's shape while the hat loads: title, photo, then two cards of text. */
 function HatDetailSkeleton() {
@@ -130,57 +142,92 @@ export function HatDetailPage() {
   const confirm = useConfirm();
   const labels = useHatLabels();
   const [disposeOpen, setDisposeOpen] = useState(false);
-  // null = closed, -1 = adding, >= 1 = editing that dominance_rank
-  const [colorEditOpen, setColorEditOpen] = useState<number | null>(null);
+  const [colorEditor, setColorEditor] = useState<ColorEditor | null>(null);
+  // The hat this page has just deleted, so its row can leave the cache with
+  // the page (below).
+  const [deletedId, setDeletedId] = useState<number | null>(null);
 
   const id = Number(hatId);
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['hat', id],
+  const hatQ = useQuery({
+    queryKey: qk.hat(id),
     queryFn: () => getHat(id),
     enabled: !isNaN(id),
-    // Analysis runs on a background worker now, so the result arrives after
-    // this page has already rendered. Poll while it's pending and stop the
-    // moment it reaches any terminal status — returning false is what ends the
-    // polling, so a hat that errors or is skipped doesn't get hammered forever.
-    refetchInterval: query =>
-      query.state.data?.analysis_status === 'pending' ? 2000 : false,
+    // Analysis runs on a background worker, so the result arrives after this
+    // page has already rendered. Poll while it's pending — and while a re-cut
+    // is in flight, which keeps the hat's status (its identification still
+    // stands) but reports `analysis_stage` until the new cutout lands; polling
+    // on status alone left the old photo up until something else refetched.
+    // Returning false is what ends the polling, so a hat that finishes, errors
+    // or is skipped is not hammered forever.
+    refetchInterval: query => {
+      const hat = query.state.data;
+      return hat && (hat.analysis_status === 'pending' || hat.analysis_stage != null) ? 2000 : false;
+    },
   });
+  const data = hatQ.data;
+
+  // Whether a Claude key exists decides what the skipped and fallback banners
+  // advise. Same key the Add hat page and the Settings key card use, so it is
+  // usually cached already.
+  const apiKey = useQuery({ queryKey: qk.settings.apiKey(), queryFn: getApiKeyStatus });
+  const keyMissing = apiKey.data?.configured === false;
+  const keyKnown = apiKey.data !== undefined;
+
+  // A deleted hat's row leaves the cache with the page — not before: the
+  // navigation away is a transition, so this page renders again first, and
+  // a query whose row was already removed is rebuilt and FETCHED on that
+  // render. Left in the cache for good, Back from the list would open the
+  // deleted hat from cache as if it still existed.
+  useEffect(() => {
+    if (deletedId === null) return;
+    return () => { qc.removeQueries({ queryKey: qk.hat(deletedId), exact: true }); };
+  }, [deletedId, qc]);
 
   /**
    * Show the server's fresh row now, then refresh everywhere else it shows.
-   * `hatId` defaults to the page's hat; the wear mutations pass the hat they
-   * were started for (see `undoWearMut`).
+   *
+   * Every mutation on this page takes the hat it acts on as its VARIABLE and
+   * settles against that, never against the render's `id`: React Router keeps
+   * this page mounted from one hat to the next (Back from hat 13 lands on hat
+   * 12 with the same instance), and TanStack hands a running mutation the
+   * LATEST render's options. A closure over `id` put a re-cut started on hat
+   * 12 into hat 13's cache, and invalidated 13 while 12 kept its stale row.
+   * `res` is optional only because a test double may answer nothing.
    */
-  function settle(res: unknown, hatId = id) {
-    const hat = freshHat(res, hatId);
-    if (hat) qc.setQueryData(['hat', hatId], hat);
+  function settle(res: HatRead | undefined, hatId: number) {
+    if (res) qc.setQueryData(qk.hat(hatId), res);
     return invalidateHatViews(qc, hatId);
   }
 
   const removeMutation = useMutation({
-    mutationFn: () => deleteHat(id),
-    onSuccess: () => {
-      invalidateHatViews(qc, id);
+    mutationFn: (hatId: number) => deleteHat(hatId),
+    onSuccess: (_void, hatId) => {
+      setDeletedId(hatId);
       toast.success('Hat deleted');
       navigate('/hats');
+      // Every view a hat change shows in, LESS the hat pages: `hatViewKeys`
+      // names the detail key too, and the page still observing it refetched
+      // a hat that was gone — a 404 after every delete. No other hat's page
+      // shows this one.
+      void invalidateAll(qc, hatViewKeys().filter(key => key[0] !== qk.hat()[0]));
     },
   });
 
   const recutMut = useMutation({
-    mutationFn: () => recutHat(id),
-    onSuccess: res => {
-      settle(res);
+    mutationFn: (hatId: number) => recutHat(hatId),
+    onSuccess: (res, hatId) => {
+      void settle(res, hatId);
       toast.info('Redoing the cutout from the original photo');
     },
   });
 
   const reanalyzeMut = useMutation({
-    mutationFn: () => reanalyzeHat(id),
-    onSuccess: res => {
-      settle(res);
+    mutationFn: (hatId: number) => reanalyzeHat(hatId),
+    onSuccess: (res, hatId) => {
+      void settle(res, hatId);
       // With a key the work is queued and the badge takes over; without one
       // the fallback ran inline and this response IS the result.
-      toast.info(freshHat(res, id)?.analysis_status === 'pending' ? 'Reanalysis started' : 'Reanalysis finished');
+      toast.info(res?.analysis_status === 'pending' ? 'Reanalysis started' : 'Reanalysis finished');
     },
   });
 
@@ -191,104 +238,59 @@ export function HatDetailPage() {
   // eBay each vanished into an unhandled rejection and the button simply
   // un-pressed itself.
   const uploadMut = useMutation({
-    mutationFn: (file: File) => uploadHatPhoto(id, file),
-    onSuccess: res => {
-      settle(res);
+    mutationFn: (vars: { hatId: number; file: File }) => uploadHatPhoto(vars.hatId, vars.file),
+    onSuccess: (res, { hatId }) => {
+      void settle(res, hatId);
       toast.success('Photo uploaded');
     },
   });
   const ebayMut = useMutation({
-    mutationFn: () => refreshEbayForHat(id),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['hat', id] });
+    mutationFn: (hatId: number) => refreshEbayForHat(hatId),
+    onSuccess: (_res, hatId) => {
+      void qc.invalidateQueries({ queryKey: qk.hat(hatId) });
       toast.success('eBay prices refreshed');
     },
   });
   const undisposeMut = useMutation({
-    mutationFn: () => undisposeHat(id),
-    onSuccess: res => {
-      settle(res);
+    mutationFn: (hatId: number) => undisposeHat(hatId),
+    onSuccess: (res, hatId) => {
+      void settle(res, hatId);
       toast.success('Hat restored to active');
     },
   });
 
   // Wipe the whole palette in one call — PUT /colors replaces the set, so an
-  // empty list IS the delete-all. Beats removing swatches one modal at a time
-  // after a bad analysis.
+  // empty list IS the delete-all, and hands the colors back to analysis (a
+  // later Reanalyze rebuilds them from the photo). Beats removing swatches one
+  // modal at a time after a bad analysis.
   //
   // Optimistic: the answer to "replace the colors with none" is no colors,
   // so the palette empties the moment you confirm. A failure puts the old
   // palette back and says so under the card's header.
   const clearColorsMutation = useMutation({
-    mutationFn: () => updateHatColors(id, []),
-    onMutate: async () => {
+    mutationFn: (hatId: number) => updateHatColors(hatId, []),
+    onMutate: async (hatId: number) => {
       // A poll landing mid-flight would repaint the old palette over the
       // optimistic one.
-      await qc.cancelQueries({ queryKey: ['hat', id] });
-      const previous = qc.getQueryData<HatRead>(['hat', id]);
-      if (previous) qc.setQueryData<HatRead>(['hat', id], { ...previous, colors: [] });
+      await qc.cancelQueries({ queryKey: qk.hat(hatId) });
+      const previous = qc.getQueryData<HatRead>(qk.hat(hatId));
+      if (previous) qc.setQueryData<HatRead>(qk.hat(hatId), { ...previous, colors: [] });
       return { previous };
     },
-    onError: (_err, _vars, ctx) => {
-      if (ctx?.previous) qc.setQueryData(['hat', id], ctx.previous);
+    onError: (_err, hatId, ctx) => {
+      if (ctx?.previous) qc.setQueryData(qk.hat(hatId), ctx.previous);
     },
     onSuccess: () => toast.success('Colors cleared'),
     // Not returned: TanStack holds a mutation's error/success state until a
     // returned `onSettled` promise resolves, which would keep "Clearing…" up
     // and the failure unsaid until every list had refetched. The optimistic
     // state already shows the outcome.
-    onSettled: () => { void invalidateHatViews(qc, id); },
+    onSettled: (_res, _err, hatId) => { void invalidateHatViews(qc, hatId); },
   });
 
-  // Both wear mutations take the hat as their argument instead of closing
-  // over `id`. The "Wear logged" toast lives at the app root and outlives
-  // this page — and React Router keeps this component mounted from one hat's
-  // page to the next (Back from hat 13 lands on hat 12 with the same
-  // instance), where TanStack hands a mutation the LATEST render's options.
-  // A closure over `id` therefore undid a wear on whichever hat was on screen
-  // when the toast was tapped, not the one it was logged for.
-  const undoWearMut = useMutation({
-    mutationFn: (hatId: number) => undoLatestWear(hatId),
-    onSuccess: (res, hatId) => {
-      settle(res, hatId);
-      toast.success('Last wear removed');
-    },
-  });
+  const { wearMut, undoMut: undoWearMut } = useWearLog();
 
-  const wearMut = useMutation({
-    mutationFn: (hatId: number) => logWear(hatId),
-    onSuccess: (res, hatId) => {
-      // The server logs one wear per hat per (UTC) day and treats a second
-      // tap as a no-op, so the count is compared rather than assumed — and
-      // only a wear that was actually added offers an Undo, since undoing a
-      // no-op would delete the earlier, real entry.
-      const before = qc.getQueryData<HatRead>(['hat', hatId])?.wear_count;
-      const after = freshHat(res, hatId)?.wear_count;
-      settle(res, hatId);
-      if (before != null && after != null && after === before) {
-        toast.info('Already logged for today');
-        return;
-      }
-      toast.success('Wear logged', {
-        action: {
-          label: 'Undo',
-          // The server's undo is "delete the LATEST wear", not "delete this
-          // one". Once this wear is gone — the inline Undo beside the count
-          // took it back — the toast's Undo would delete an earlier, real
-          // wear, so it only acts while the count is still the one this wear
-          // produced. (Either count unknown — the page's cache already
-          // dropped, or the response was not a hat row — still undoes:
-          // there is nothing to check against.)
-          onClick: () => {
-            const now = qc.getQueryData<HatRead>(['hat', hatId])?.wear_count;
-            if (after === undefined || now === undefined || now === after) undoWearMut.mutate(hatId);
-          },
-        },
-      });
-    },
-  });
-
-  async function confirmDelete() {
+  async function confirmDelete(hatId: number) {
     const ok = await confirm({
       title: 'Delete this hat?',
       body: (
@@ -301,34 +303,34 @@ export function HatDetailPage() {
       confirmLabel: 'Delete hat',
       tone: 'danger',
     });
-    if (ok) removeMutation.mutate();
+    if (ok) removeMutation.mutate(hatId);
   }
 
-  async function confirmClearColors(count: number) {
+  async function confirmClearColors(hatId: number, count: number) {
     const ok = await confirm({
       title: `Remove all ${count} colors from this hat?`,
       body: 'You can add them back by hand, or reanalyze to rebuild the palette from the photo.',
       confirmLabel: 'Clear colors',
       tone: 'danger',
     });
-    if (ok) clearColorsMutation.mutate();
+    if (ok) clearColorsMutation.mutate(hatId);
   }
 
-  async function confirmRestore() {
+  async function confirmRestore(hatId: number) {
     const ok = await confirm({
       title: 'Restore this hat to active inventory?',
       body: 'It goes back to its case — or to unassigned, if that case has filled up since.',
       confirmLabel: 'Restore',
     });
-    if (ok) undisposeMut.mutate();
+    if (ok) undisposeMut.mutate(hatId);
   }
 
-  if (isLoading) return <HatDetailSkeleton />;
+  if (hatQ.isLoading) return <HatDetailSkeleton />;
   // Only a 404 is "not found". A locked database or a dead server used to
   // render the same "may have been deleted" copy — the opposite of the truth.
-  if (error && !isNotFound(error)) return (
+  if (hatQ.error && !isNotFound(hatQ.error)) return (
     <div className="py-4">
-      <ErrorNote of={{ isError: true, error }} what="Could not load this hat" />
+      <ErrorNote of={hatQ} what="Could not load this hat" />
       <Link to="/hats" className="btn btn-outline-secondary mt-3">← Back to hats</Link>
     </div>
   );
@@ -340,11 +342,13 @@ export function HatDetailPage() {
     </div>
   );
 
-  const caseTypeLabel = data.case_type === 'archive' ? 'Archive' : data.case_type === 'daily_wear' ? 'Daily wear' : null;
-  // Plain call, not a hook — it's pure and cheap, and putting it here keeps it
-  // below the `!data` guard without needing a null-safe variant.
+  // Plain calls, not hooks — pure and cheap, and here they sit below the
+  // `!data` guard without needing a null-safe variant.
   const hatValue = valueHat(data);
+  const paid = costOf(data);
   const placed = Boolean(data.case_display_id || data.direct_room_id);
+  // A re-cut keeps the hat's analysis status and reports only its stage.
+  const recutting = data.analysis_stage === 'cutout' && data.analysis_status !== 'pending';
 
   return (
     <>
@@ -381,9 +385,9 @@ export function HatDetailPage() {
           <section className="card hr-panel hr-hat-hero" aria-label="Photo and quick actions">
             <div className="card-body">
               {data.photo_path ? (
-                <ImageLightbox src={`/uploads/${data.photo_path}`} alt={data.display_id || 'Hat photo'} hat />
+                <ImageLightbox src={uploadUrl(data.photo_path)} alt={hatName(data)} hat />
               ) : (
-                <PhotoCapture onCapture={file => uploadMut.mutate(file)} previewUrl={null} />
+                <PhotoCapture onCapture={file => uploadMut.mutate({ hatId: data.id, file })} previewUrl={null} />
               )}
               {uploadMut.isPending && (
                 <div className="hr-upload-note" role="status">
@@ -423,7 +427,7 @@ export function HatDetailPage() {
                   </button>
                 )}
                 {data.photo_path && (
-                  <PhotoCapture onCapture={file => uploadMut.mutate(file)} hidePreview />
+                  <PhotoCapture onCapture={file => uploadMut.mutate({ hatId: data.id, file })} hidePreview />
                 )}
                 {/* Up here with the other primary actions, not only at the foot
                     of the page. Correcting a misidentification is the most
@@ -442,8 +446,9 @@ export function HatDetailPage() {
                   <button
                     type="button"
                     className="btn btn-outline-secondary"
-                    onClick={() => reanalyzeMut.mutate()}
+                    onClick={() => reanalyzeMut.mutate(data.id)}
                     disabled={reanalyzeMut.isPending}
+                    aria-describedby="hat-reanalyze-keeps"
                     title="Re-run analysis (Claude, or the fallback when no key is set)"
                   >
                     {reanalyzeMut.isPending ? '↻ Analyzing…' : '↻ Reanalyze'}
@@ -457,28 +462,30 @@ export function HatDetailPage() {
                   <button
                     type="button"
                     className="btn btn-outline-secondary"
-                    onClick={() => recutMut.mutate()}
-                    disabled={recutMut.isPending || data.analysis_status === 'pending'}
+                    onClick={() => recutMut.mutate(data.id)}
+                    disabled={recutMut.isPending || recutting || data.analysis_status === 'pending'}
                     title="Redo the background removal from the original photo"
                   >
-                    {recutMut.isPending ? '✂ Re-cutting…' : '✂ Redo cutout'}
+                    {recutMut.isPending || recutting ? '✂ Re-cutting…' : '✂ Redo cutout'}
                   </button>
                 )}
               </div>
+              {data.photo_path && (
+                <p className="hr-hero-note" id="hat-reanalyze-keeps">{REANALYZE_KEEPS}</p>
+              )}
 
               <div className="hr-wear-line">
                 <span>Worn <strong>{data.wear_count}×</strong></span>
                 {data.date_last_worn && <span>last {data.date_last_worn}</span>}
-                {/* Cost per wear needs what was PAID. It used to fall back to
-                    the estimated retail price, which answers a different
-                    question — a hat bought half-price showed a cost per wear
-                    it never had, on the one figure meant to reflect a real
-                    decision. Absent a purchase price, the honest output is
-                    nothing. */}
-                {data.wear_count > 0 && data.purchase_price != null && (
-                  <span>
-                    ${(data.purchase_price / data.wear_count).toFixed(2)}/wear
-                  </span>
+                {/* Cost per wear needs what was PAID — `costOf`, the same
+                    rule the Stats leaderboard ranks by, so a hat with no
+                    recorded price (or a $0 gift) shows nothing here rather
+                    than a figure that page leaves out. It used to fall back
+                    to the estimated retail price, which answers a different
+                    question: a hat bought half-price showed a cost per wear
+                    it never had. */}
+                {data.wear_count > 0 && paid != null && (
+                  <span>{moneyPrecise(paid / data.wear_count)}/wear</span>
                 )}
                 {data.wear_count > 0 && (
                   <button
@@ -486,7 +493,7 @@ export function HatDetailPage() {
                     className="btn btn-link btn-sm hr-wear-undo"
                     aria-label="Undo the last logged wear"
                     onClick={() => undoWearMut.mutate(data.id)}
-                    disabled={undoWearMut.isPending}
+                    disabled={undoWearMut.isPending || wearMut.isPending}
                   >
                     Undo
                   </button>
@@ -504,32 +511,54 @@ export function HatDetailPage() {
 
         <div className="hr-hat-main">
           {/* The analysis banners sit above what the analysis produced, so the
-              reason a card is thin is read before the thin card. */}
+              reason a card is thin is read before the thin card. Each says
+              what to do NEXT, which depends on whether a key exists now — a
+              hat skipped at upload for want of a key stays "skipped" after
+              one is added, and "add a key" is then the wrong advice. */}
+          {/* Until the key status arrives, neither piece of advice: each is
+              wrong for one of the two answers, and a banner that flips from
+              "Tap Reanalyze" to "configure your key" a moment after the page
+              loads reads as the app changing its mind. */}
           {data.analysis_status === 'skipped' && (
             <div className="alert alert-info mb-3">
-              Configure your Anthropic API key in <Link to="/settings?tab=analysis" className="hr-alert-link">Settings</Link> to enable AI brand, color and price detection.
+              {keyMissing ? (
+                <>
+                  Configure your Anthropic API key in{' '}
+                  <Link to="/settings?tab=analysis" className="hr-alert-link">Settings</Link>{' '}
+                  to enable AI brand, color and price detection.
+                </>
+              ) : keyKnown ? (
+                <>This hat was added before analysis could run. Tap Reanalyze to identify it.</>
+              ) : (
+                <>This hat has not been analyzed yet.</>
+              )}
             </div>
           )}
 
-          {/* Fallback means "Claude did not answer", which has two very different
-              causes, and this banner used to assert the wrong one. It said "add a
-              Claude API key" unconditionally — so when the Anthropic account ran
-              out of CREDIT, every hat in the collection told its owner to add the
-              key that was already there and plainly working. The real reason was
-              sitting in `analysis_error` the whole time and only the `error`
-              status ever rendered it. Show it here too. */}
+          {/* Fallback means "Claude did not answer", which has more than one
+              cause, and this banner once asserted the wrong one: it said "add
+              a Claude API key" unconditionally — so when the Anthropic
+              account ran out of CREDIT, every hat in the collection told its
+              owner to add the key that was already there. The key advice
+              comes from whether a key is configured NOW (`keyMissing`), never
+              from the absence of an error, which the fallback path always
+              writes; with no key that is the whole answer, since any
+              reanalysis would fall back again. Otherwise the reason is
+              `analysis_error`, shown as the server wrote it. Never both: the
+              server's text for a keyless hat carries the same "add a key"
+              sentence, and the banner used to print it twice. */}
           {data.analysis_status === 'fallback' && (
             <div className="alert alert-info mb-3 small">
               Basic fallback ID only (colors from the photo cutout{data.brand ? ', brand from logo detection' : ''}).
-              {data.analysis_error ? (
+              {keyMissing ? (
                 <>
-                  {' '}<strong>Why:</strong> {data.analysis_error}
-                </>
-              ) : (
-                <>
-                  {' '}Add a Claude API key in{' '}
+                  {' '}No Claude API key is set — add one in{' '}
                   <Link to="/settings?tab=analysis" className="hr-alert-link">Settings</Link>
                   {' '}and hit Reanalyze for full model + price identification.
+                </>
+              ) : data.analysis_error && (
+                <>
+                  {' '}<strong>Why:</strong> {data.analysis_error}
                 </>
               )}
             </div>
@@ -590,7 +619,7 @@ export function HatDetailPage() {
                 <button
                   type="button"
                   className="btn btn-outline-secondary btn-sm"
-                  onClick={() => ebayMut.mutate()}
+                  onClick={() => ebayMut.mutate(data.id)}
                   disabled={ebayMut.isPending}
                   title="Refresh eBay comparable-listings prices"
                 >
@@ -644,12 +673,16 @@ export function HatDetailPage() {
                   value={data.estimated_new_price ?? null}
                   source={data.estimated_new_price_source}
                 />
+                {/* A calendar date, printed as the date that was entered: the
+                    form stores midnight of that day and the API returns it as
+                    UTC, and formatting that instant put the purchase on the day
+                    BEFORE everywhere west of Greenwich — while the Edit form
+                    beside it showed the right one. "Date not recorded" rather
+                    than "not recorded", which read as the price being missing. */}
                 <PriceTile
                   label="Paid"
                   value={data.purchase_price ?? null}
-                  source={data.purchased_at
-                    ? new Date(data.purchased_at).toLocaleDateString()
-                    : 'not recorded'}
+                  source={data.purchased_at ? formatDateOnly(data.purchased_at) : 'date not recorded'}
                 />
                 <PriceTile
                   label="eBay ask"
@@ -717,9 +750,9 @@ export function HatDetailPage() {
               <div className="hr-case-summary">
                 <div className="hr-case-summary-what">
                   <span className="hr-case-code">{data.case_display_id}</span>
-                  {caseTypeLabel && (
+                  {data.case_type && (
                     <span className={`badge ${data.case_type === 'archive' ? 'bg-secondary' : 'bg-info'}`}>
-                      {caseTypeLabel}
+                      {caseTypeName(data.case_type)}
                     </span>
                   )}
                   {data.room_name && (
@@ -750,13 +783,16 @@ export function HatDetailPage() {
           {/* Colors — tap any row to edit */}
           <Panel
             title="Color palette"
+            description={data.colors_source === 'owner'
+              ? 'Set by you — re-analysis keeps these. Remove every color to hand them back to analysis.'
+              : undefined}
             actions={(
               <>
                 {data.colors.length > 0 && (
                   <button
                     type="button"
                     className="btn btn-outline-danger btn-sm"
-                    onClick={() => { void confirmClearColors(data.colors.length); }}
+                    onClick={() => { void confirmClearColors(data.id, data.colors.length); }}
                     disabled={clearColorsMutation.isPending}
                   >
                     {clearColorsMutation.isPending ? 'Clearing…' : 'Clear all'}
@@ -765,7 +801,7 @@ export function HatDetailPage() {
                 <button
                   type="button"
                   className="btn btn-outline-secondary btn-sm"
-                  onClick={() => setColorEditOpen(-1)}
+                  onClick={() => setColorEditor({ mode: 'add' })}
                 >
                   + Add color
                 </button>
@@ -783,7 +819,7 @@ export function HatDetailPage() {
                   key={c.dominance_rank}
                   type="button"
                   className="hr-color-row hr-color-row-btn"
-                  onClick={() => setColorEditOpen(c.dominance_rank)}
+                  onClick={() => setColorEditor({ mode: 'edit', rank: c.dominance_rank })}
                   title="Tap to edit"
                 >
                   <span
@@ -797,7 +833,9 @@ export function HatDetailPage() {
                     )}
                   </span>
                   <span className="text-end">
-                    <span className="hr-tier-label">{c.tier || 'primary'}</span>
+                    {/* The tier as stored: the server publishes it as one of
+                        its four values, whoever wrote the color. */}
+                    <span className="hr-tier-label">{c.tier}</span>
                     <span className="hr-color-row-sub font-mono">{c.hex_value}</span>
                   </span>
                 </button>
@@ -817,7 +855,7 @@ export function HatDetailPage() {
               <button
                 type="button"
                 className="btn btn-outline-secondary btn-sm"
-                onClick={() => { void confirmRestore(); }}
+                onClick={() => { void confirmRestore(data.id); }}
                 disabled={undisposeMut.isPending}
               >
                 {undisposeMut.isPending ? 'Restoring…' : 'Undo — restore to active'}
@@ -838,9 +876,11 @@ export function HatDetailPage() {
                   <div className="hr-metric-label">
                     {dispositionLabel(data.disposed_via)} on {new Date(data.disposed_at).toLocaleDateString()}
                   </div>
+                  {/* To the cent: this is one sale's actual proceeds, not an
+                      estimate rounded for a total. */}
                   {data.disposed_price != null && (
                     <div className="hr-metric-value hr-price">
-                      ${data.disposed_price.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                      {moneyPrecise(data.disposed_price)}
                     </div>
                   )}
                   {data.disposed_to && (
@@ -881,7 +921,7 @@ export function HatDetailPage() {
             <button
               type="button"
               className="btn btn-outline-danger"
-              onClick={() => { void confirmDelete(); }}
+              onClick={() => { void confirmDelete(data.id); }}
               disabled={removeMutation.isPending}
             >
               {removeMutation.isPending ? 'Deleting…' : 'Delete'}
@@ -892,12 +932,12 @@ export function HatDetailPage() {
       </div>
 
       <DisposeModal hatId={data.id} show={disposeOpen} onClose={() => setDisposeOpen(false)} />
-      {colorEditOpen !== null && (
+      {colorEditor && (
         <ColorEditModal
           hatId={data.id}
           colors={data.colors}
-          editingRank={colorEditOpen >= 0 ? colorEditOpen : null}
-          onClose={() => setColorEditOpen(null)}
+          editingRank={colorEditor.mode === 'edit' ? colorEditor.rank : null}
+          onClose={() => setColorEditor(null)}
         />
       )}
     </>

@@ -1,13 +1,13 @@
 import logging
-import os
 from collections.abc import AsyncGenerator
-
 from datetime import timezone
 
 from sqlalchemy import DateTime, TypeDecorator, event, inspect, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
+from headroom import config
 from headroom.config import settings
 
 logger = logging.getLogger(__name__)
@@ -39,16 +39,11 @@ def sqlite_synchronous() -> str:
 
     Anything unrecognized falls back to the default instead of being passed
     through: a typo in an env var must not silently turn durability off.
+    Read through `config.env_choice`, the one reader for closed-set knobs.
     """
-    raw = os.environ.get("HEADROOM_SQLITE_SYNCHRONOUS", "").strip().upper()
-    if raw in SYNCHRONOUS_MODES:
-        return raw
-    if raw:
-        logger.warning(
-            "Ignoring HEADROOM_SQLITE_SYNCHRONOUS=%r — not one of %s; using %s",
-            raw, ", ".join(SYNCHRONOUS_MODES), DEFAULT_SYNCHRONOUS,
-        )
-    return DEFAULT_SYNCHRONOUS
+    return config.env_choice(
+        "HEADROOM_SQLITE_SYNCHRONOUS", SYNCHRONOUS_MODES, DEFAULT_SYNCHRONOUS
+    )
 
 
 async def checkpoint_wal(bind=None) -> None:
@@ -115,6 +110,18 @@ if engine.dialect.name == "sqlite":
 
         `HEADROOM_SQLITE_SYNCHRONOUS` overrides it for anyone whose hardware
         makes that trade differently, but the default is durable.
+
+        **No `PRAGMA foreign_keys`, deliberately.** SQLite enforces no foreign
+        key without it, so the `REFERENCES` clauses in this schema document
+        relationships and enforce nothing; the app does its own integrity work
+        (`reattach_orphaned_cases`, `delete_hat` unlinking purchases, the ORM's
+        delete-orphan cascades). Turning enforcement on is not a one-line
+        change: every existing install would first need an orphan audit, and
+        `_rebuild_hats_autoincrement` depends on it being off — with it on,
+        `DROP TABLE hats` runs an implicit DELETE that fails on (or cascades
+        into) every row that references a hat. The models therefore declare no
+        `ondelete=` either; a clause the engine never runs is a promise the
+        schema should not make.
         """
         cur = dbapi_conn.cursor()
         try:
@@ -171,33 +178,81 @@ class UtcDateTime(TypeDecorator):
         return value.astimezone(timezone.utc)
 
 
-# Static, fully-formed DDL — column names and types are hard-coded literals,
-# so no interpolation is needed and SQL injection is structurally impossible.
-# Same contract as `_HAT_COLUMN_DDL` below: fully-static DDL, one entry per
-# column added after the table first shipped. `purchases` is created by
-# `Base.metadata.create_all`, which only ever CREATEs — it will not alter a
-# table that already exists, so a column added to the model without an entry
-# here is present on new installs and missing on every upgraded one.
+# ---- migrations ------------------------------------------------------------ #
+#
+# Two install paths have to arrive at ONE schema. A fresh install gets every
+# table from `Base.metadata.create_all`, straight off the models. An upgraded
+# install already has its tables, and `create_all` only ever CREATEs — it will
+# not add a column or an index to a table that exists — so everything a model
+# gained after its table first shipped reaches an upgraded database through the
+# static DDL below and nowhere else. SQLAlchemy SELECTs every mapped column, so
+# one forgotten entry is not a degraded feature: every read of that table fails
+# on every upgraded install, and on none of the machines the column was added
+# on.
+#
+# `tests/test_schema_consistency.py` holds each table as it FIRST shipped,
+# upgrades that, and compares the result with a fresh install column by column
+# (type, NOT NULL, default), index by index, and AUTOINCREMENT by table. It
+# covers every table in `Base.metadata` and fails when a new one appears
+# without being registered, which is what makes the per-table dicts below a
+# checked contract rather than a convention.
+#
+# Static, fully-formed DDL throughout — column names and types are hard-coded
+# literals, so no interpolation is needed and SQL injection is structurally
+# impossible.
+#
+# Every column a model declares NOT NULL has to be added here as `NOT NULL
+# DEFAULT <x>` with the model carrying the same `server_default`, because
+# SQLite refuses to ADD a NOT NULL column without a default. The one exception
+# is `cases.room_id`, whose only possible default was the hardcoded room the
+# `is_default` flag replaced (see `_CASE_COLUMN_DDL`).
+
+# v2.4 — the fallback room became a flag instead of a hardcoded id=1. Added
+# with `_ROOM_DEFAULT_BACKFILL_DML`, which flags the lowest id rather than a
+# literal 1, so a database whose original room was renamed or re-keyed still
+# ends up with exactly one default. `ensure_default_room()` re-checks the
+# invariant on every boot.
+_ROOM_COLUMN_DDL: dict[str, str] = {
+    "is_default": "ALTER TABLE rooms ADD COLUMN is_default BOOLEAN NOT NULL DEFAULT 0",
+}
+_ROOM_DEFAULT_BACKFILL_DML = (
+    "UPDATE rooms SET is_default = 1 WHERE id = (SELECT MIN(id) FROM rooms)"
+)
+
 _PURCHASE_COLUMN_DDL: dict[str, str] = {
     # v2.19 — the size on the order line, so matching can tell two sizes of the
     # same model apart instead of binding to whichever hat comes back first.
     "size": "ALTER TABLE purchases ADD COLUMN size VARCHAR(20)",
+    # What a match actually wrote onto the hat, so unmatch reverts exactly that.
+    "match_writes": "ALTER TABLE purchases ADD COLUMN match_writes TEXT",
 }
 
-# `cases` and `hat_colors` used to carry hand-written `if "x" not in columns`
-# blocks here, so a column added to either model had no guard at all —
-# `test_schema_consistency` covered hats, purchases and rooms only. Same
-# contract as the two dicts around it: one static entry per column added after
-# the table first shipped, and a parity test that fails when the model grows.
 _CASE_COLUMN_DDL: dict[str, str] = {
     # v0.9 — per-case capacity override (NULL → type default)
     "capacity": "ALTER TABLE cases ADD COLUMN capacity INTEGER",
-    "room_id": "ALTER TABLE cases ADD COLUMN room_id INTEGER DEFAULT 1 REFERENCES rooms(id)",
+    # Nullable and with NO default, where this used to say `DEFAULT 1`: that
+    # was the hardcoded room the `is_default` flag replaced, and it stayed in
+    # the schema as a silent destination for any INSERT that forgot its room.
+    # A database this old has no rooms table yet; `create_all` makes one,
+    # `ensure_default_room` seeds it, and `reattach_orphaned_cases` — the last
+    # step of `init_db` — moves every NULL here onto the default room. The
+    # column cannot be NOT NULL (SQLite needs a default for that), so
+    # `Case._require_room` is what refuses a room-less case on this install.
+    "room_id": "ALTER TABLE cases ADD COLUMN room_id INTEGER REFERENCES rooms(id)",
+}
+
+_WEAR_LOG_COLUMN_DDL: dict[str, str] = {
+    # What `hats.date_last_worn` held before this wear, so undoing it restores
+    # a hand-typed date (see `WearLog.date_last_worn_before`). Nullable: a
+    # wear logged before the column existed has no answer to give.
+    "date_last_worn_before": "ALTER TABLE wear_log ADD COLUMN date_last_worn_before DATE",
 }
 
 _HAT_COLOR_COLUMN_DDL: dict[str, str] = {
-    "general_color": "ALTER TABLE hat_colors ADD COLUMN general_color VARCHAR(30) DEFAULT ''",
-    "tier": "ALTER TABLE hat_colors ADD COLUMN tier VARCHAR(12) DEFAULT 'primary'",
+    "general_color": (
+        "ALTER TABLE hat_colors ADD COLUMN general_color VARCHAR(30) NOT NULL DEFAULT ''"
+    ),
+    "tier": "ALTER TABLE hat_colors ADD COLUMN tier VARCHAR(12) NOT NULL DEFAULT 'primary'",
 }
 
 _HAT_COLUMN_DDL: dict[str, str] = {
@@ -210,6 +265,9 @@ _HAT_COLUMN_DDL: dict[str, str] = {
     # v2.11 — free-form construction. `hydro`/`hydrolite` became derived from
     # this; `_backfill_construction()` seeds it from them for existing rows.
     "construction": "ALTER TABLE hats ADD COLUMN construction VARCHAR(80)",
+    # Who wrote the construction ('owner' or NULL) — the construction audit's
+    # bulk clear leaves an owner's value alone by this.
+    "construction_source": "ALTER TABLE hats ADD COLUMN construction_source VARCHAR(20)",
     "artist_series": "ALTER TABLE hats ADD COLUMN artist_series VARCHAR(160)",
     "model_name": "ALTER TABLE hats ADD COLUMN model_name VARCHAR(120)",
     "model_confidence": "ALTER TABLE hats ADD COLUMN model_confidence VARCHAR(10)",
@@ -226,8 +284,10 @@ _HAT_COLUMN_DDL: dict[str, str] = {
     # v2.19 — "manual" | "model" | "category": what resale_price is a price OF.
     "resale_price_scope": "ALTER TABLE hats ADD COLUMN resale_price_scope VARCHAR(20)",
     # v2.33 — a hat kept in a room with no case (a shelf, a hook, a stand).
-    # No FK clause: SQLite cannot add a column with a REFERENCES constraint to
-    # an existing table, and the app enforces the relationship anyway.
+    # No FK clause here: a table this old is rebuilt straight afterwards by
+    # `_rebuild_hats_autoincrement`, whose CREATE carries the model's
+    # `REFERENCES rooms (id)` — and SQLite enforces neither (see
+    # `_sqlite_pragmas`); the app keeps the relationship itself.
     "direct_room_id": "ALTER TABLE hats ADD COLUMN direct_room_id INTEGER",
     # v2.33 — special/limited runs, stated by the owner.
     "limited_edition": "ALTER TABLE hats ADD COLUMN limited_edition BOOLEAN NOT NULL DEFAULT 0",
@@ -236,6 +296,8 @@ _HAT_COLUMN_DDL: dict[str, str] = {
     "analysis_stage_at": "ALTER TABLE hats ADD COLUMN analysis_stage_at DATETIME",
     "analysis_job_id": "ALTER TABLE hats ADD COLUMN analysis_job_id INTEGER",
     "analysis_error": "ALTER TABLE hats ADD COLUMN analysis_error TEXT",
+    # Who set the colors ('owner' or NULL) — re-analysis keeps an owner's.
+    "colors_source": "ALTER TABLE hats ADD COLUMN colors_source VARCHAR(20)",
     "analyzed_at": "ALTER TABLE hats ADD COLUMN analyzed_at DATETIME",
     # v0.3 — disposition (sold/gifted/lost/trashed/trade)
     "disposed_at": "ALTER TABLE hats ADD COLUMN disposed_at DATETIME",
@@ -269,12 +331,172 @@ _STATUS_RENAME_DML: dict[str, str] = {
 }
 
 
+#: Every table's post-first-ship column DDL. A table with no entry has gained
+#: no column since it shipped; the parity test fails the day its model does.
+_COLUMN_DDL: dict[str, dict[str, str]] = {
+    "rooms": _ROOM_COLUMN_DDL,
+    "cases": _CASE_COLUMN_DDL,
+    "hat_colors": _HAT_COLOR_COLUMN_DDL,
+    "hats": _HAT_COLUMN_DDL,
+    "purchases": _PURCHASE_COLUMN_DDL,
+    "wear_log": _WEAR_LOG_COLUMN_DDL,
+}
+
+
 #: Static, like every DDL string here.
 _HAT_POSITION_INDEX_DDL = (
     "CREATE UNIQUE INDEX IF NOT EXISTS ux_hats_case_position "
     "ON hats(case_id, position_in_case) "
     "WHERE case_id IS NOT NULL AND disposed_at IS NULL"
 )
+
+#: Indexes a model declares that an upgraded database would otherwise never
+#: get: each is on a column (or a constraint) that arrived after its table
+#: first shipped, and `create_all` does not index a table that already exists.
+#: `analysis_job_id` came in 2.10 as a bare ALTER, so every older install was
+#: running job progress — a COUNT over exactly that column — as a full scan.
+#: Run after the data repairs, because two of these are UNIQUE and cannot be
+#: built over the duplicates the repairs remove.
+_INDEX_DDL: dict[str, tuple[str, ...]] = {
+    "hats": (
+        _HAT_POSITION_INDEX_DDL,
+        "CREATE INDEX IF NOT EXISTS ix_hats_analysis_job_id ON hats (analysis_job_id)",
+    ),
+    "hat_colors": (
+        "CREATE INDEX IF NOT EXISTS ix_hat_colors_general_color ON hat_colors (general_color)",
+    ),
+    "wear_log": (
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_wear_hat_day ON wear_log(hat_id, worn_at)",
+    ),
+}
+
+
+# ---- the one-time hats rebuild -------------------------------------------- #
+#
+# SQLite gives a rowid table `max(id) + 1`, so deleting the newest hat handed
+# its id to the next hat created. A hat's tag is `/t/h/<id>` on a sticker that
+# cannot be rewritten, so the old sticker went on scanning and opened the new
+# hat. `AUTOINCREMENT` is the only fix that holds (`models/hat.py`), and SQLite
+# can only add it by rebuilding the table: create the new shape, copy, drop the
+# old, rename the new into place — in that order, which is SQLite's own
+# documented procedure. Renaming the NEW table (never the old one) is what
+# keeps the `REFERENCES hats(id)` clauses in other tables pointing at `hats`.
+#
+# The CREATE below is the hats schema as of the release that introduced the
+# rebuild, frozen. It never needs editing: the rebuild runs after the
+# `_HAT_COLUMN_DDL` pass, copies exactly these columns, and the pass runs again
+# afterwards — so a column added to the model later is re-added to a freshly
+# rebuilt table empty, which is all it could have held on a database that had
+# never seen it. The parity test runs this path end to end.
+#
+# A retired column still sitting on an old install (`custom_style_detail`,
+# unmapped and unread since 2.7.0) is not copied. The rolling backups predate
+# the rebuild and still hold it.
+
+_HATS_TABLE_SQL = "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'hats'"
+
+_HATS_REBUILD_CREATE_DDL = (
+    "CREATE TABLE hats_new ("
+    "id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, "
+    "case_id INTEGER, "
+    "position_in_case INTEGER, "
+    "direct_room_id INTEGER, "
+    "limited_edition BOOLEAN DEFAULT 0 NOT NULL, "
+    "photo_path VARCHAR(255), "
+    "original_path VARCHAR(255), "
+    "thumb_path VARCHAR(255), "
+    "condition VARCHAR(20) NOT NULL, "
+    "date_last_worn DATE, "
+    "size VARCHAR(10) NOT NULL, "
+    "style VARCHAR(20) NOT NULL, "
+    "is_beanie BOOLEAN NOT NULL, "
+    "brand VARCHAR(80), "
+    "model_name VARCHAR(120), "
+    "colorway VARCHAR(120), "
+    "model_confidence VARCHAR(10), "
+    "style_descriptor VARCHAR(120), "
+    "design_notes TEXT, "
+    "owner_notes TEXT, "
+    "purchase_price FLOAT, "
+    "purchased_at DATETIME, "
+    "construction VARCHAR(80), "
+    "hydrolite BOOLEAN DEFAULT 0 NOT NULL, "
+    "hydro BOOLEAN DEFAULT 0 NOT NULL, "
+    "artist_series VARCHAR(160), "
+    "logo_detected VARCHAR(255), "
+    "analysis_status VARCHAR(20), "
+    "analysis_stage VARCHAR(20), "
+    "analysis_stage_at DATETIME, "
+    "analysis_job_id INTEGER, "
+    "analysis_error TEXT, "
+    "analyzed_at DATETIME, "
+    "created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL, "
+    "updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL, "
+    "estimated_new_price FLOAT, "
+    "estimated_new_price_source VARCHAR(80), "
+    "resale_price FLOAT, "
+    "resale_price_source VARCHAR(80), "
+    "resale_price_url VARCHAR(500), "
+    "resale_checked_at DATETIME, "
+    "resale_price_scope VARCHAR(20), "
+    "ebay_avg_price FLOAT, "
+    "ebay_median_price FLOAT, "
+    "ebay_listing_count INTEGER, "
+    "ebay_search_url VARCHAR(500), "
+    "ebay_checked_at DATETIME, "
+    "disposed_at DATETIME, "
+    "disposed_via VARCHAR(20), "
+    "disposed_price FLOAT, "
+    "disposed_to VARCHAR(120), "
+    "disposed_notes TEXT, "
+    "FOREIGN KEY(case_id) REFERENCES cases (id), "
+    "FOREIGN KEY(direct_room_id) REFERENCES rooms (id)"
+    ")"
+)
+
+#: Both column lists are the CREATE's, in its order; a test pins all three to
+#: one another.
+_HATS_REBUILD_COPY_DML = (
+    "INSERT INTO hats_new ("
+    "id, case_id, position_in_case, direct_room_id, limited_edition, photo_path, "
+    "original_path, thumb_path, condition, date_last_worn, size, style, is_beanie, "
+    "brand, model_name, colorway, model_confidence, style_descriptor, design_notes, "
+    "owner_notes, purchase_price, purchased_at, construction, hydrolite, hydro, "
+    "artist_series, logo_detected, analysis_status, analysis_stage, analysis_stage_at, "
+    "analysis_job_id, analysis_error, analyzed_at, created_at, updated_at, "
+    "estimated_new_price, estimated_new_price_source, resale_price, resale_price_source, "
+    "resale_price_url, resale_checked_at, resale_price_scope, ebay_avg_price, "
+    "ebay_median_price, ebay_listing_count, ebay_search_url, ebay_checked_at, "
+    "disposed_at, disposed_via, disposed_price, disposed_to, disposed_notes"
+    ") SELECT "
+    "id, case_id, position_in_case, direct_room_id, limited_edition, photo_path, "
+    "original_path, thumb_path, condition, date_last_worn, size, style, is_beanie, "
+    "brand, model_name, colorway, model_confidence, style_descriptor, design_notes, "
+    "owner_notes, purchase_price, purchased_at, construction, hydrolite, hydro, "
+    "artist_series, logo_detected, analysis_status, analysis_stage, analysis_stage_at, "
+    "analysis_job_id, analysis_error, analyzed_at, created_at, updated_at, "
+    "estimated_new_price, estimated_new_price_source, resale_price, resale_price_source, "
+    "resale_price_url, resale_checked_at, resale_price_scope, ebay_avg_price, "
+    "ebay_median_price, ebay_listing_count, ebay_search_url, ebay_checked_at, "
+    "disposed_at, disposed_via, disposed_price, disposed_to, disposed_notes"
+    " FROM hats"
+)
+
+#: Where an id this database has ALREADY handed out can still be seen. The
+#: rebuild seeds AUTOINCREMENT past all of them, not just past the hats that
+#: survive: a hat deleted last week was the newest, its id is on a sticker,
+#: and `MAX(hats.id)` alone would hand that id straight back. `activity_log`
+#: records every `hat.created` / `hat.deleted` (for the retention window) and
+#: import items keep the id of the hat they made. Keyed by table so only tables
+#: this database has are queried, and nothing is interpolated.
+_HAT_ID_HIGH_WATER_SQL: dict[str, str] = {
+    "hats": "SELECT MAX(id) FROM hats",
+    "hat_colors": "SELECT MAX(hat_id) FROM hat_colors",
+    "wear_log": "SELECT MAX(hat_id) FROM wear_log",
+    "purchases": "SELECT MAX(hat_id) FROM purchases",
+    "import_job_items": "SELECT MAX(hat_id) FROM import_job_items",
+    "activity_log": "SELECT MAX(entity_id) FROM activity_log WHERE entity_type = 'hat'",
+}
 
 
 def _repair_duplicate_positions(conn) -> int:
@@ -312,79 +534,141 @@ def _repair_duplicate_positions(conn) -> int:
     return moved
 
 
+def _add_missing_columns(conn, table: str) -> set[str]:
+    """Run `table`'s column DDL for every column it lacks. Returns those added.
+
+    Inspects afresh each call: an `Inspector` caches its reflection, and this
+    runs twice on `hats` with a table rebuild in between.
+    """
+    existing = {c["name"] for c in inspect(conn).get_columns(table)}
+    added: set[str] = set()
+    for column, ddl in _COLUMN_DDL[table].items():
+        if column not in existing:
+            conn.execute(text(ddl))
+            added.add(column)
+    return added
+
+
+def _recover_interrupted_hats_rebuild(conn) -> None:
+    """Finish or undo a `_rebuild_hats_autoincrement` a power cut interrupted.
+
+    The pysqlite driver does not wrap DDL in the transaction `engine.begin()`
+    opens — each CREATE/DROP/ALTER commits on its own unless a DML statement
+    has already started one — so the rebuild cannot rely on being atomic. It
+    is ordered so every intermediate state is one of two, and both are
+    recoverable here, before anything else looks at `hats`:
+
+      * `hats_new` beside `hats` — died before the swap; `hats` is intact and
+        `hats_new` a partial copy. Drop it; the rebuild runs again.
+      * `hats_new` and no `hats` — died between DROP and RENAME; the copy (a
+        single INSERT, which is atomic) completed before `hats` was dropped.
+        Rename it into place.
+    """
+    tables = set(inspect(conn).get_table_names())
+    if "hats_new" not in tables:
+        return
+    if "hats" in tables:
+        conn.execute(text("DROP TABLE hats_new"))
+        logger.warning("Discarded a partial hats rebuild; it will be redone")
+    else:
+        conn.execute(text("ALTER TABLE hats_new RENAME TO hats"))
+        logger.warning("Completed a hats rebuild that was interrupted after the copy")
+
+
+def _hat_id_high_water(conn, tables: set[str]) -> int:
+    """The largest hat id this database has ever shown anywhere it can still see."""
+    highest = 0
+    for table, sql in _HAT_ID_HIGH_WATER_SQL.items():
+        if table in tables:
+            highest = max(highest, conn.execute(text(sql)).scalar() or 0)
+    return highest
+
+
+def _rebuild_hats_autoincrement(conn) -> bool:
+    """Give an existing `hats` table AUTOINCREMENT, once. True if it rebuilt.
+
+    Skipped (False) when the table already has it — every fresh install and
+    every install that has run this — and, with an ERROR in the log, in the
+    two cases where going ahead could lose data instead of protecting it:
+
+      * foreign keys are being enforced, so the DROP would cascade into (or
+        fail on) every row referencing a hat;
+      * a row does not fit the model's constraints (a NULL where the model
+        says NOT NULL), so the copy fails. The table is left exactly as it
+        was; ids stay reusable there, as they always were, rather than the
+        boot failing — a boot that fails on an upgraded database is the worst
+        outcome on offer, and it would fail again on every restart.
+    """
+    table_sql = conn.execute(text(_HATS_TABLE_SQL)).scalar()
+    if table_sql is None or "AUTOINCREMENT" in table_sql.upper():
+        return False
+    if conn.execute(text("PRAGMA foreign_keys")).scalar():
+        logger.error(
+            "Not rebuilding hats for AUTOINCREMENT: PRAGMA foreign_keys is on, "
+            "and dropping the old table would reach every row that references it"
+        )
+        return False
+
+    high_water = _hat_id_high_water(conn, set(inspect(conn).get_table_names()))
+    conn.execute(text(_HATS_REBUILD_CREATE_DDL))
+    try:
+        conn.execute(text(_HATS_REBUILD_COPY_DML))
+    except IntegrityError as exc:
+        conn.execute(text("DROP TABLE hats_new"))
+        logger.error(
+            "Not rebuilding hats for AUTOINCREMENT: an existing row does not fit "
+            "the current schema (%s). Hat ids on this install can still be reused.",
+            exc.orig,
+        )
+        return False
+    # Seed the sequence BEFORE the swap, so a crash after it never leaves a
+    # rebuilt table that would hand out a deleted hat's id. `RENAME` carries
+    # the sqlite_sequence row across with the table.
+    conn.execute(text("DELETE FROM sqlite_sequence WHERE name = 'hats_new'"))
+    conn.execute(
+        text("INSERT INTO sqlite_sequence (name, seq) VALUES ('hats_new', :seq)"),
+        {"seq": high_water},
+    )
+    conn.execute(text("DROP TABLE hats"))
+    conn.execute(text("ALTER TABLE hats_new RENAME TO hats"))
+    logger.warning(
+        "Rebuilt hats with AUTOINCREMENT; new hat ids start after %d", high_water
+    )
+    return True
+
+
 def _run_migrations(conn) -> None:
-    """Add missing tables and columns to existing databases."""
-    inspector = inspect(conn)
-    existing_tables = inspector.get_table_names()
+    """Bring an EXISTING database's tables up to the models.
 
-    if "rooms" not in existing_tables:
-        conn.execute(
-            text(
-                "CREATE TABLE rooms ("
-                "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-                "  name VARCHAR(100) UNIQUE NOT NULL,"
-                "  is_default BOOLEAN NOT NULL DEFAULT 0,"
-                "  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
-                "  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP"
-                ")"
-            )
-        )
+    Creates nothing: on a fresh database this finds no tables and does
+    nothing, and `Base.metadata.create_all` (run next by `init_db`) builds
+    every table straight from its model. `rooms` and `app_settings` used to be
+    CREATEd by hand here, which made `create_all` skip them — so a fresh
+    install got the hand-written DDL instead of the model, and a column added
+    to `AppSetting` would have been missing on every new install with nothing
+    to catch it. One definition per table now: the model.
+    """
+    _recover_interrupted_hats_rebuild(conn)
+    existing_tables = set(inspect(conn).get_table_names())
 
-    if "app_settings" not in existing_tables:
-        conn.execute(
-            text(
-                "CREATE TABLE app_settings ("
-                "  key VARCHAR(64) PRIMARY KEY,"
-                "  value TEXT,"
-                "  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP"
-                ")"
-            )
-        )
-
-    # Re-inspect rather than reuse `existing_tables`: that snapshot predates the
-    # CREATE TABLE above, so on a *fresh* database it would say "no rooms table"
-    # and skip the column check entirely — while `create_all` is then a no-op
-    # because the table now exists. That combination shipped a fresh container
-    # with a rooms table missing is_default and crashed on boot.
-    if "rooms" in inspect(conn).get_table_names():
-        columns = [c["name"] for c in inspect(conn).get_columns("rooms")]
-        # v2.4 — the fallback room became a flag instead of a hardcoded id=1.
-        # Backfill picks the lowest id rather than literally 1, so a database
-        # whose original room was renamed or re-keyed still ends up with exactly
-        # one default. `ensure_default_room()` re-checks the invariant on boot.
-        if "is_default" not in columns:
-            conn.execute(
-                text("ALTER TABLE rooms ADD COLUMN is_default BOOLEAN NOT NULL DEFAULT 0")
-            )
-            conn.execute(
-                text("UPDATE rooms SET is_default = 1 WHERE id = (SELECT MIN(id) FROM rooms)")
-            )
+    if "rooms" in existing_tables:
+        if "is_default" in _add_missing_columns(conn, "rooms"):
+            conn.execute(text(_ROOM_DEFAULT_BACKFILL_DML))
 
     if "cases" in existing_tables:
-        existing_cols = {c["name"] for c in inspector.get_columns("cases")}
-        for col_name, ddl in _CASE_COLUMN_DDL.items():
-            if col_name not in existing_cols:
-                conn.execute(text(ddl))
+        _add_missing_columns(conn, "cases")
 
     if "hat_colors" in existing_tables:
-        existing_cols = {c["name"] for c in inspector.get_columns("hat_colors")}
-        for col_name, ddl in _HAT_COLOR_COLUMN_DDL.items():
-            if col_name not in existing_cols:
-                conn.execute(text(ddl))
+        _add_missing_columns(conn, "hat_colors")
 
     if "wear_log" in existing_tables:
-        # Enforce one wear per hat per day on already-created tables: dedupe any
-        # pre-constraint rows (keep the earliest), then add the unique index.
+        _add_missing_columns(conn, "wear_log")
+        # One wear per hat per day, on tables created before the constraint:
+        # dedupe (keep the earliest) so `uq_wear_hat_day` below can be built.
         conn.execute(
             text(
                 "DELETE FROM wear_log WHERE id NOT IN "
                 "(SELECT MIN(id) FROM wear_log GROUP BY hat_id, worn_at)"
-            )
-        )
-        conn.execute(
-            text(
-                "CREATE UNIQUE INDEX IF NOT EXISTS uq_wear_hat_day "
-                "ON wear_log(hat_id, worn_at)"
             )
         )
 
@@ -392,22 +676,21 @@ def _run_migrations(conn) -> None:
         conn.execute(
             text("UPDATE hats SET size = 'classic' WHERE size = 'standard'")
         )
-        existing_cols = {c["name"] for c in inspector.get_columns("hats")}
-        for col_name, ddl in _HAT_COLUMN_DDL.items():
-            if col_name not in existing_cols:
-                conn.execute(text(ddl))
+        _add_missing_columns(conn, "hats")
         _backfill_construction(conn)
+        if _rebuild_hats_autoincrement(conn):
+            # Columns newer than the rebuild's frozen CREATE come back here.
+            _add_missing_columns(conn, "hats")
+        # MUST precede `ux_hats_case_position` in `_INDEX_DDL`: a unique index
+        # cannot be built over the duplicates the pre-lock race left behind.
         _repair_duplicate_positions(conn)
-        # The same index `models/hat.py` declares for fresh databases. It
-        # MUST follow the repair: a unique index cannot be built over the
-        # duplicates the pre-lock race left behind, and a boot that fails on
-        # an upgraded database is the worst outcome on offer.
-        conn.execute(text(_HAT_POSITION_INDEX_DDL))
 
     if "purchases" in existing_tables:
-        existing_cols = {c["name"] for c in inspector.get_columns("purchases")}
-        for col_name, ddl in _PURCHASE_COLUMN_DDL.items():
-            if col_name not in existing_cols:
+        _add_missing_columns(conn, "purchases")
+
+    for table, statements in _INDEX_DDL.items():
+        if table in existing_tables:
+            for ddl in statements:
                 conn.execute(text(ddl))
 
     # v2.78 — the import job/item status `cancelled` became `canceled`. It is

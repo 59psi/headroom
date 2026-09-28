@@ -8,8 +8,30 @@ couple of seconds while a job runs.
 from __future__ import annotations
 
 from datetime import datetime
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict
+
+
+class ImportItemStatus(StrEnum):
+    """One photo's progress through the worker (`import_service`)."""
+
+    queued = "queued"
+    processing = "processing"
+    done = "done"
+    error = "error"
+    skipped = "skipped"
+    canceled = "canceled"
+
+
+class ImportJobStatus(StrEnum):
+    """A batch's progress. `canceled` since 2.78 — `cancelled` rows are
+    rewritten by the migration in `database.py`."""
+
+    queued = "queued"
+    running = "running"
+    done = "done"
+    canceled = "canceled"
 
 
 class ImportJobItemRead(BaseModel):
@@ -17,7 +39,7 @@ class ImportJobItemRead(BaseModel):
 
     id: int
     filename: str
-    status: str
+    status: ImportItemStatus
     hat_id: int | None = None
     error: str | None = None
     bytes: int | None = None
@@ -33,7 +55,7 @@ class ImportJobRead(BaseModel):
     done: int
     errors: int
     skipped: int
-    status: str
+    status: ImportJobStatus
     items: list[ImportJobItemRead] = []
 
 
@@ -42,4 +64,4 @@ class ImportJobCreated(BaseModel):
 
     id: int
     total: int
-    status: str
+    status: ImportJobStatus

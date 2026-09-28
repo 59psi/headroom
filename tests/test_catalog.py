@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-
 import json
 
 import pytest
@@ -40,7 +39,28 @@ def _pages(monkeypatch, pages_by_category):
         chunk = titles[(page - 1) * per : page * per]
         return [{"attributes": {"title": t}} for t in chunk]
 
-    monkeypatch.setattr("headroom.services.catalog_service.query_listings", _fake)
+    monkeypatch.setattr("headroom.services.melin_recap.query_listings", _fake)
+
+
+async def test_the_harvest_calls_through_the_melin_recap_seam(monkeypatch):
+    """`melin_recap.query_listings` is THE network seam — conftest stubs it for
+    every test — so patching it there must reach the harvest.
+
+    `catalog_service` imported the function by name, which bound it to the
+    real one when this file was collected: the harvest then bypassed the stub
+    and only the socket-level refusal kept it off the live marketplace.
+    """
+    from headroom.services import catalog_service, melin_recap
+
+    calls: list[dict] = []
+
+    async def spy(params):
+        calls.append(params)
+        return []
+
+    monkeypatch.setattr(melin_recap, "query_listings", spy)
+    assert await catalog_service._fetch_page({"page": 1}, attempts=1) == []
+    assert calls == [{"page": 1}]
 
 
 async def test_harvest_upserts_and_counts(client, db_session, monkeypatch):
@@ -58,6 +78,33 @@ async def test_harvest_upserts_and_counts(client, db_session, monkeypatch):
     result = await harvest_catalog(db_session)
     assert result["new_entries"] == 0
     assert result["catalog_total"] == 3
+
+
+async def test_a_category_whose_write_fails_does_not_take_the_rest_with_it(
+    client, db_session, monkeypatch
+):
+    """A database error mid-category leaves the session in a failed
+    transaction. The harvest's per-category `rollback` is what lets the NEXT
+    category run at all — without it every one after the failure raised
+    `PendingRollbackError` and the run lost the categories it had not reached."""
+    from headroom.models.catalog import ColorwayEntry
+    from headroom.services import catalog_service
+
+    _pages(monkeypatch, {"odysea": ["Odysea - Moss"], "coast": ["Coast - Sand"]})
+    real_sweep = catalog_service._sweep_category
+
+    async def _sweep(db, category, now):
+        if category == "aGame":  # the first category the harvest visits
+            db.add(ColorwayEntry(title="broken", model_name=None, category=category))
+            await db.commit()  # NOT NULL model_name → IntegrityError
+        return await real_sweep(db, category, now)
+
+    monkeypatch.setattr(catalog_service, "_sweep_category", _sweep)
+
+    result = await catalog_service.harvest_catalog(db_session)
+
+    assert result["failed_categories"] == ["aGame"]
+    assert result["new_entries"] == 2, "the categories after the failure were lost"
 
 
 async def test_a_started_harvest_runs_against_the_apps_database(client, monkeypatch):
@@ -541,6 +588,94 @@ async def test_unmatch_leaves_values_edited_since_alone(client, db_session):
     assert "colorway" in resp.json()["cleared"]
 
 
+async def test_unmatch_leaves_values_the_owner_typed_before_the_match_alone(
+    client, db_session
+):
+    """The match fills only EMPTY fields, so on a hat whose price, date and
+    colorway the owner already typed it writes nothing — and unmatch must
+    then clear nothing.
+
+    Unmatch compared the hat against the RECEIPT, so every value that merely
+    agreed with it was treated as the match's own and cleared: the owner's $89,
+    date and colorway were all wiped. Agreement is exactly what the matcher
+    rewards (`PRICE_EXACT`), so this was the common case, not a coincidence.
+    """
+    from datetime import datetime, timezone
+
+    from headroom.models.hat import Hat
+
+    hat_id = await _hat_with(
+        client, db_session, size="classic", model="A-Game Hydro", colorway="Black"
+    )
+    typed_at = datetime(2023, 3, 3, tzinfo=timezone.utc)
+    row = await db_session.get(Hat, hat_id)
+    row.purchase_price = 89.0
+    row.purchased_at = typed_at
+    await db_session.commit()
+
+    await _import_one(client, order_date="2023-03-03")
+    purchase = (await client.get("/api/admin/purchases")).json()[0]
+    assert purchase["hat_id"] == hat_id, "the receipt agrees on everything, so it links"
+
+    resp = await client.post(f"/api/admin/purchases/{purchase['id']}/unmatch")
+    assert resp.json()["unmatched"] == 1
+    assert resp.json()["cleared"] == [], "the match wrote nothing, so nothing is undone"
+
+    hat = (await client.get(f"/api/hats/{hat_id}")).json()
+    assert hat["purchase_price"] == 89.0
+    assert hat["colorway"] == "Black"
+    assert hat["purchased_at"] is not None
+
+
+async def test_unmatch_reverts_only_the_fields_that_match_wrote(client, db_session):
+    """A hat with a typed price and no colorway: the match writes the colorway
+    (and the date) but not the price, and unmatch undoes exactly those."""
+    from headroom.models.hat import Hat
+
+    hat_id = await _hat_with(client, db_session, size="classic", model="A-Game Hydro")
+    row = await db_session.get(Hat, hat_id)
+    row.purchase_price = 89.0
+    await db_session.commit()
+
+    await _import_one(client, order_date="2023-03-03")
+    pid = (await client.get("/api/admin/purchases")).json()[0]["id"]
+
+    resp = await client.post(f"/api/admin/purchases/{pid}/unmatch")
+    assert set(resp.json()["cleared"]) == {"colorway", "purchased_at"}
+    hat = (await client.get(f"/api/hats/{hat_id}")).json()
+    assert hat["purchase_price"] == 89.0
+    assert hat["colorway"] is None
+    assert hat["purchased_at"] is None
+
+
+async def test_matching_and_importing_are_audited(client, db_session):
+    """A match puts a cost onto a hat; it was logged only when UNDONE, and an
+    import left no trace at all. Both now write a row, and the match row
+    names the hat and exactly what was set on it."""
+    hat_id = await _hat_with(client, db_session, size="classic", model="A-Game Hydro")
+    await _import_one(client)
+    pid = (await client.get("/api/admin/purchases")).json()[0]["id"]
+
+    rows = (await client.get("/api/admin/activity-log")).json()
+    kinds = [r["kind"] for r in rows]
+    assert "purchase.imported" in kinds, kinds
+    matched = next(r for r in rows if r["kind"] == "purchase.matched")
+    assert matched["entity_id"] == pid
+    details = json.loads(matched["details"])
+    assert details["hat_id"] == hat_id
+    assert details["set"] == {"colorway": "Black", "purchase_price": 89.0}
+
+
+async def test_unmatching_a_missing_purchase_is_a_domain_refusal(db_session):
+    """The service says "no such purchase" in domain terms and the route layer
+    answers 404 (the HTTP half is asserted below). It raised `HTTPException`
+    itself, a web reply from a function that is not an endpoint."""
+    from headroom.services import catalog_service, errors
+
+    with pytest.raises(errors.NotFound):
+        await catalog_service.unmatch_purchase(db_session, 999999)
+
+
 async def test_unmatch_is_idempotent_and_404s_on_a_missing_row(client, db_session):
     await _hat_with(client, db_session, size="classic", model="A-Game Hydro")
     await _import_one(client)
@@ -622,7 +757,8 @@ async def test_one_failing_category_does_not_abandon_the_rest(db_session, monkey
             raise MelinRecapError("502 from the marketplace")
         return [{"attributes": {"title": f"{cat} Hydro - Color"}}]
 
-    monkeypatch.setattr("headroom.services.catalog_service.query_listings", flaky)
+    monkeypatch.setattr("headroom.services.melin_recap.query_listings", flaky)
+
     async def _no_sleep(_delay):  # the retry backoff, minus the waiting
         return None
 
@@ -658,13 +794,13 @@ async def test_a_harvest_that_loses_every_category_says_so(client, db_session, m
     "Harvest finished — the counts above are current" over zero entries.
     The failures were in a result dict the background task hands to nobody.
     """
-    from headroom.services import catalog_service
+    from headroom.services import catalog_service, melin_recap
     from headroom.services.melin_recap import MelinRecapError
 
     async def dead(params):
         raise MelinRecapError("All connection attempts failed")
 
-    monkeypatch.setattr("headroom.services.catalog_service.query_listings", dead)
+    monkeypatch.setattr("headroom.services.melin_recap.query_listings", dead)
 
     async def _no_sleep(_delay):
         return None
@@ -673,12 +809,12 @@ async def test_a_harvest_that_loses_every_category_says_so(client, db_session, m
 
     result = await catalog_service.harvest_catalog(db_session)
 
-    assert len(result["failed_categories"]) == len(catalog_service.STYLE_TO_CATEGORY)
+    assert len(result["failed_categories"]) == len(melin_recap.STYLE_TO_CATEGORY)
     status = (await client.get("/api/admin/colorways/status")).json()
     assert status["progress"]["running"] is False
     assert status["progress"]["error"], "an all-failed harvest must not read as finished"
     assert "every category failed" in status["progress"]["error"]
-    assert sorted(status["failed_categories"]) == sorted(catalog_service.STYLE_TO_CATEGORY.values())
+    assert sorted(status["failed_categories"]) == sorted(melin_recap.STYLE_TO_CATEGORY.values())
 
 
 async def test_a_partial_harvest_names_the_categories_it_lost(client, db_session, monkeypatch):
@@ -690,7 +826,7 @@ async def test_a_partial_harvest_names_the_categories_it_lost(client, db_session
             raise MelinRecapError("502")
         return [{"attributes": {"title": f"{params['pub_category']} Hydro - Color"}}]
 
-    monkeypatch.setattr("headroom.services.catalog_service.query_listings", flaky)
+    monkeypatch.setattr("headroom.services.melin_recap.query_listings", flaky)
 
     async def _no_sleep(_delay):
         return None
@@ -731,7 +867,7 @@ async def test_isolation_covers_any_failure_not_just_the_marketplace_one(
             raise ValueError("nothing to do with the marketplace")
         return [{"attributes": {"title": f"{cat} Hydro - Color"}}]
 
-    monkeypatch.setattr("headroom.services.catalog_service.query_listings", flaky)
+    monkeypatch.setattr("headroom.services.melin_recap.query_listings", flaky)
 
     result = await catalog_service.harvest_catalog(db_session)
 
@@ -758,7 +894,7 @@ async def test_a_canceled_harvest_stops_rather_than_becoming_a_failed_category(
         calls.append(params["pub_category"])
         raise asyncio.CancelledError()
 
-    monkeypatch.setattr("headroom.services.catalog_service.query_listings", canceled)
+    monkeypatch.setattr("headroom.services.melin_recap.query_listings", canceled)
 
     with pytest.raises(asyncio.CancelledError):
         await catalog_service.harvest_catalog(db_session)
@@ -780,7 +916,8 @@ async def test_a_transient_page_failure_is_retried(db_session, monkeypatch):
             raise MelinRecapError("429 slow down")
         return []
 
-    monkeypatch.setattr("headroom.services.catalog_service.query_listings", twitchy)
+    monkeypatch.setattr("headroom.services.melin_recap.query_listings", twitchy)
+
     async def _no_sleep(_delay):  # the retry backoff, minus the waiting
         return None
 
@@ -1569,6 +1706,28 @@ async def test_a_vaguer_colorway_than_the_product_is_refused(client, db_session)
     assert await is_real_product(db_session, "Trenches Hydro", "Rain Camo"), (
         "a hat named for the family still matches the fuller catalog name"
     )
+
+
+async def test_an_accent_is_a_spelling_on_both_halves(client, db_session):
+    """The vocabulary stores `Piña` and `Pina` as one colorway; the matcher
+    read them as two products, so a canonicalized colorway could fail the very
+    catalog it came from. Both read names through `naming` now — and the SQL
+    pre-filter, which cannot fold an accent, lets accented names through to
+    the token test instead of silently dropping them."""
+    from headroom.services import catalog_service
+    from headroom.services.catalog_service import is_real_product
+
+    await _catalog(db_session, [
+        ("Odysea Hydro", "Piña Colada"),
+        ("Coroñado Hydro", "Black"),
+    ])
+
+    assert await is_real_product(db_session, "Odysea Hydro", "Pina Colada")
+    assert await is_real_product(db_session, "Odysea Hydro", "PIÑA COLADA")
+    # The accent is in the MODEL half, where the SQL narrowing happens.
+    assert await is_real_product(db_session, "Coronado Hydro", "Black")
+    options = await catalog_service.catalog_options(db_session, model="coronado hydro")
+    assert options == [{"value": "Black"}]
 
 
 # --------------------------------------------------------------------------

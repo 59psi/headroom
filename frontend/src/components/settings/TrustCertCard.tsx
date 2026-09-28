@@ -1,6 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { CA_CERTIFICATE_URL, caCertificateAvailable, getTlsStatus } from '../../api/settings';
-import type { TlsStatus } from '../../types';
+import type { TlsStatusRead } from '../../types';
+import { plural } from '../../lib/format';
+import { qk } from '../../lib/queryKeys';
 import { ErrorNote } from '../common/ErrorNote';
 import { Panel } from '../ui/Panel';
 import { CopyButton } from '../ui/CopyButton';
@@ -33,7 +35,7 @@ export function TrustCertCard() {
   // add HEAD for free); this is a kilobyte and the answer is cached for the
   // page's life. See `caCertificateAvailable` for why it is not `apiFetch`.
   const { data: available } = useQuery({
-    queryKey: ['ca-certificate', 'available'],
+    queryKey: qk.caCertificateAvailable(),
     queryFn: caCertificateAvailable,
     retry: false,
   });
@@ -42,7 +44,7 @@ export function TrustCertCard() {
   // from whether this device trusts the issuer — and the one that went
   // unanswered while an expired certificate was served for 37 days.
   const tlsQuery = useQuery({
-    queryKey: ['settings', 'tls'],
+    queryKey: qk.settings.tls(),
     queryFn: getTlsStatus,
     retry: false,
     // Short enough that restarting Caddy and reloading shows the new
@@ -85,12 +87,45 @@ export function TrustCertCard() {
           <dl className="hr-cert-fp-pair">
             <dt>Your devices trust</dt>
             <dd><code>{tls.ca_expected_sha256}</code></dd>
-            <dt>Now serving</dt>
+            {/* The fingerprint is the EXPORTED root — what this server hands
+                out. It is only what it serves once the served chain has been
+                checked against it; the label used to claim "serving" either
+                way, which was false in exactly the case below. */}
+            <dt>{tls.chain_matches_ca === true ? 'Now serving' : 'Now handing out'}</dt>
             <dd><code>{tls.ca_sha256}</code></dd>
           </dl>
           If you have a backup from before this happened, restoring{' '}
           <code>caddy-pki/</code> from it puts the original authority back and
           saves re-trusting anything.
+        </div>
+      )}
+
+      {/* The served chain leads to a DIFFERENT authority than the one this
+          server hands out — the state a CA restore leaves behind while Caddy
+          still holds a leaf from the authority it minted in between. The
+          root file and the fingerprint below look perfect; the certificate
+          is valid and covers the name; and every device refuses it. Said as
+          loudly as a replaced root, because the effect is the same, but with
+          its own fix: the authority is already right, only the leaf is not. */}
+      {tls?.applicable && tls.chain_matches_ca === false && (
+        <div className="alert alert-danger hr-cert-alert">
+          <strong className="hr-cert-alert-head">
+            The certificate being served is from a different authority.
+          </strong>
+          Caddy is serving a certificate that was not signed by the authority
+          this server hands out below, so every device that installed it will
+          refuse the connection. This happens after an authority is restored
+          from a backup while Caddy still holds a certificate from the one it
+          created in between. Clear its issued certificates so it reissues
+          them from the restored authority — the root is untouched, so no
+          device has to be re-trusted:
+          <Command
+            what="certificate-reissue command"
+            text={
+              'docker exec headroom-caddy rm -rf /data/caddy/certificates/local '
+              + '&& docker restart headroom-caddy'
+            }
+          />
         </div>
       )}
 
@@ -103,7 +138,7 @@ export function TrustCertCard() {
           <strong className="hr-cert-alert-head">
             {tls.expired
               ? 'The certificate being served has expired.'
-              : `The certificate being served expires in ${days} day${days === 1 ? '' : 's'}.`}
+              : `The certificate being served expires in ${plural(days, 'day')}.`}
           </strong>
           {tls.not_after && (
             <>
@@ -171,7 +206,7 @@ export function TrustCertCard() {
         >Install the certificate</a>
         {tlsQuery.isLoading ? (
           <Skeleton lines={1} width="14rem" className="hr-cert-serving" />
-        ) : tls?.applicable && !tls.needs_attention && tls.not_after ? (
+        ) : tls?.applicable && !tls.needs_attention && tls.chain_matches_ca !== false && tls.not_after ? (
           <p className="hr-cert-serving">
             Currently serving a valid certificate for <code>{tls.host}</code>,
             good until {new Date(tls.not_after).toLocaleString()}.
@@ -230,12 +265,13 @@ export function TrustCertCard() {
 
 /**
  * The header pill, ranked the way the alerts are: a replaced authority first
- * (every device is locked out), then expiry, then a name the certificate
- * does not cover, then "running out". Nothing while the status is unknown —
- * a pill that said "Valid" before the answer arrived would be the one lie
- * this card exists to stop telling.
+ * (every device is locked out), then a served chain from another authority
+ * (the same lockout, with the authority itself intact), then expiry, then a
+ * name the certificate does not cover, then "running out". Nothing while the
+ * status is unknown — a pill that said "Valid" before the answer arrived
+ * would be the one lie this card exists to stop telling.
  */
-function certPill(tls: TlsStatus | undefined) {
+function certPill(tls: TlsStatusRead | undefined) {
   if (!tls) return null;
   if (tls.ca_changed) {
     return <StatusPill tone="error" title="Devices that trusted the old root will refuse to connect">CA changed</StatusPill>;
@@ -243,6 +279,13 @@ function certPill(tls: TlsStatus | undefined) {
   if (!tls.applicable) return null;
   if (tls.error) {
     return <StatusPill tone="warn" title={tls.error}>Can’t check</StatusPill>;
+  }
+  if (tls.chain_matches_ca === false) {
+    return (
+      <StatusPill tone="error" title="The served certificate was not signed by the authority your devices trust">
+        Wrong authority
+      </StatusPill>
+    );
   }
   if (tls.expired) return <StatusPill tone="error">Expired</StatusPill>;
   if (tls.hostname_ok === false) {
@@ -252,7 +295,7 @@ function certPill(tls: TlsStatus | undefined) {
     const days = Math.max(0, Math.floor(tls.days_remaining ?? 0));
     return (
       <StatusPill tone="warn" title="Renewal has evidently stopped">
-        {days} day{days === 1 ? '' : 's'} left
+        {plural(days, 'day')} left
       </StatusPill>
     );
   }

@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ErrorNote } from '../common/ErrorNote';
 import { listBackups, backupDownloadUrl, getBackupHealth } from '../../api/settings';
-import type { BackupHealth, BackupInfo } from '../../types';
-import { formatBytes, timeAgo } from '../../lib/format';
+import type { BackupHealthRead, BackupInfo } from '../../types';
+import { formatBytes, plural, timeAgo } from '../../lib/format';
+import { qk } from '../../lib/queryKeys';
 import { Panel } from '../ui/Panel';
 import { StatusPill } from '../ui/StatusPill';
 import { Skeleton } from '../ui/Skeleton';
@@ -29,7 +30,7 @@ function absolute(iso: string | null | undefined): string | undefined {
  * change it. Only ever derived from the health record — while that is still
  * loading (or failed to load) there is no pill at all, rather than a guess.
  */
-function HealthPill({ h }: { h: BackupHealth }) {
+function HealthPill({ h }: { h: BackupHealthRead }) {
   if (!h.enabled) {
     return <StatusPill tone="off" title="Scheduled backups are switched off for this deployment.">Off</StatusPill>;
   }
@@ -54,14 +55,14 @@ function HealthPill({ h }: { h: BackupHealth }) {
  * success. The endpoint that answers this has existed since 2.26 and nothing
  * rendered it, so the question stayed unanswerable outside curl.
  */
-function SchedulerStatus({ h, files }: { h: BackupHealth; files: BackupInfo[] | undefined }) {
+function SchedulerStatus({ h, files }: { h: BackupHealthRead; files: BackupInfo[] | undefined }) {
   // Ranked worst-first (see HealthPill).
   const problem = !h.enabled
     ? null
     : !h.running
       ? 'The scheduler is not running — no further backups will be written until restart.'
       : h.consecutive_failures > 0
-        ? `${h.consecutive_failures} backup${h.consecutive_failures === 1 ? '' : 's'} in a row failed.`
+        ? `${plural(h.consecutive_failures, 'backup')} in a row failed.`
         : null;
   const totalBytes = files?.reduce((sum, f) => sum + f.size_bytes, 0) ?? 0;
   // "Checked" is the proof of life for a change-gated scheduler: on an idle
@@ -180,8 +181,8 @@ function DownloadIcon() {
 
 export function BackupsCard() {
   const toast = useToast();
-  const backups = useQuery({ queryKey: ['admin', 'backups'], queryFn: listBackups });
-  const health = useQuery({ queryKey: ['admin', 'backup-health'], queryFn: getBackupHealth });
+  const backups = useQuery({ queryKey: qk.admin.backups(), queryFn: listBackups });
+  const health = useQuery({ queryKey: qk.admin.backupHealth(), queryFn: getBackupHealth });
   const loading = health.isPending || backups.isPending;
 
   // A download is a plain navigation the browser turns into a file, so the
@@ -207,15 +208,59 @@ export function BackupsCard() {
           </p>
           <p>
             <strong>Full</strong> = SQLite DB + every uploaded photo (hats and
-            the site logo). Restore by dropping the extracted <code>data/</code>{' '}
-            back into <code>/data/</code>.
+            the site logo) + — on the LAN-HTTPS setup — this server&rsquo;s
+            certificate authority, <strong>private keys included</strong>
+            (<code>HEADROOM_BACKUP_INCLUDE_CA=false</code> leaves it out). Keep
+            full archives where you would keep a password vault.
           </p>
           <p>
             <strong>Database only</strong> = just <code>headroom.db</code>. All
-            hat metadata, cases, colors, prices — but no photos. Faster to
-            download. Use it when the photo tree is large and you only need the
-            metadata captured (photos are JPEG/PNG, so they barely compress
-            anyway).
+            hat metadata, cases, colors, prices — but no photos, and no
+            certificate authority. Faster to download. Use it when the photo
+            tree is large and you only need the metadata captured (photos are
+            JPEG/PNG, so they barely compress anyway). The database still holds
+            your API keys and sessions, so it is not safe to share either.
+          </p>
+          {/* The restore, step by step, because the one-line version this
+              replaced ("drop data/ back into /data/") skipped the step that
+              matters: SQLite replays whatever -wal file sits beside a
+              database when it opens, with no check that it belongs to it.
+              After an unclean stop, following that line folded every change
+              made since the backup straight back into the "restored" copy —
+              the restore did not restore. docs/OPERATIONS.md §4 carries the
+              same steps with the reasoning. */}
+          <p className="mb-1"><strong>Restoring</strong> (Docker):</p>
+          <ol className="hr-upkeep-restore">
+            <li>
+              Stop the stack — <code>docker compose down</code>, with the same{' '}
+              <code>-f</code> files you deploy with.
+            </li>
+            <li>
+              <strong>Delete any leftover WAL first.</strong> An unclean stop
+              leaves one, and SQLite would replay it onto the restored file:{' '}
+              <code>
+                docker run --rm -v headroom_headroom-data:/data alpine sh -c
+                &apos;rm -f /data/headroom.db-wal /data/headroom.db-shm&apos;
+              </code>
+            </li>
+            <li>
+              Extract the archive over the volume, leaving the certificate
+              authority out unless you mean to restore it too:{' '}
+              <code>
+                docker run --rm -v headroom_headroom-data:/data -v
+                &quot;$PWD&quot;:/backup alpine tar xzf
+                /backup/headroom-backup-&lt;timestamp&gt;.tar.gz -C /
+                --exclude=&apos;data/caddy-pki&apos;
+              </code>
+            </li>
+            <li>Start it again with the same <code>-f</code> files.</li>
+          </ol>
+          <p>
+            Bare metal: stop the server, <code>rm -f headroom.db-wal
+            headroom.db-shm</code> in the project root, then{' '}
+            <code>tar xzf headroom-backup-&lt;timestamp&gt;.tar.gz
+            --strip-components=1</code>. Details, and restoring the certificate
+            authority: OPERATIONS §4.
           </p>
         </>
       }

@@ -47,18 +47,26 @@ services:
       # Optional: Google Cloud Vision key for fallback brand detection when
       # Claude is unavailable (colors always fall back locally, no key needed).
       # HEADROOM_GOOGLE_VISION_API_KEY: "AIzaSy..."
-      # NOT pinned here on purpose: a value in `environment:` beats the image's
-      # ENV, which would override the model baked in by the REMBG_MODEL build
-      # arg above. Set it here only to force a model that is NOT in the image
-      # (the Pi will then download it on first use).
-      # The base install's own origin, unless `.env` says otherwise. Anyone
-      # fronting THIS file with their own TLS (Tailscale Serve, a NAS reverse
-      # proxy, a tunnel) needs these four to reach the container — they used
-      # to be set only by the shipped HTTPS overlays, so a `.env` value for
-      # them reached nothing: passkeys could never work and `tls_health` went
-      # on probing `http://localhost:8000`. An overlay's explicit value still
-      # wins the merge over a passthrough.
-      HEADROOM_CORS_ORIGINS: ${HEADROOM_CORS_ORIGINS:-["http://localhost:8000"]}
+      # `HEADROOM_REMBG_MODEL` is NOT set or forwarded here, on purpose: a value
+      # in `environment:` beats the image's ENV, and the model it names has to
+      # be IN the image. The weights live in a root-owned directory on a
+      # read-only root filesystem, so a model that was not baked in cannot be
+      # downloaded at runtime — background removal would simply fail. Choose
+      # the model with the REMBG_MODEL build arg above and rebuild.
+      # Forwarded from `.env`, empty (= unset) otherwise. Anyone fronting THIS
+      # file with their own TLS (Tailscale Serve, a NAS reverse proxy, a
+      # tunnel) needs these four to reach the container — they used to be set
+      # only by the shipped HTTPS overlays, so a `.env` value for them reached
+      # nothing: passkeys could never work and `tls_health` went on probing
+      # `http://localhost:8000`. An overlay's explicit value still wins the
+      # merge over a passthrough.
+      #
+      # CORS is empty by default and off when empty: the SPA is served from
+      # the app's own origin, which is never cross-origin, so no default here
+      # names one. It used to default to `http://localhost:8000` — the app
+      # granting credentialed CORS to itself, which does nothing but install
+      # the middleware. Set it only if a page on ANOTHER origin must call the API.
+      HEADROOM_CORS_ORIGINS: "${HEADROOM_CORS_ORIGINS:-}"
       HEADROOM_RP_ID: "${HEADROOM_RP_ID:-}"
       HEADROOM_ORIGIN: "${HEADROOM_ORIGIN:-}"
       HEADROOM_MDNS_PORT: "${HEADROOM_MDNS_PORT:-}"
@@ -71,7 +79,17 @@ services:
       # certificate while the app kept advertising `headroom.local`. Empty
       # (`${VAR:-}`) means "unset" to every reader, so an untouched `.env`
       # changes nothing. `HEADROOM_REMBG_MODEL` is deliberately NOT here — see
-      # the note above about the baked-in model.
+      # the note above about the baked-in model. Nor are the image-owned
+      # `HEADROOM_DATABASE_URL` / `HEADROOM_UPLOAD_DIR` (the `/data` layout),
+      # the Caddy-only `HEADROOM_SITE_ADDRESSES`, or `HEADROOM_MEM_LIMIT` and
+      # `HEADROOM_BUILD_SHA`, which Compose itself reads above.
+      # The host's time zone (an IANA name, `TZ=America/Los_Angeles` in `.env`).
+      # Not a HEADROOM_ knob, but the app reads it: a "Wearing this today" tap
+      # from a client that sends no date (the iOS Shortcut, a script) lands on
+      # the SERVER's calendar day (`hat_service.owner_today`), and a container
+      # has no zone of its own — unset, that day is UTC's, which in California
+      # turns over at 5 pm. Empty means unset, which is UTC.
+      TZ: "${TZ:-}"
       HEADROOM_SETUP_TOKEN: "${HEADROOM_SETUP_TOKEN:-}"
       HEADROOM_LOG_LEVEL: "${HEADROOM_LOG_LEVEL:-}"
       HEADROOM_ANTHROPIC_API_KEY: "${HEADROOM_ANTHROPIC_API_KEY:-}"

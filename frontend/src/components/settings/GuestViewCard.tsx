@@ -1,14 +1,16 @@
 import type { ReactNode } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getGuestView, setGuestView } from '../../api/settings';
+import { qk } from '../../lib/queryKeys';
+import type { GuestViewStatus } from '../../types';
 import { ErrorNote } from '../common/ErrorNote';
 import { Panel } from '../ui/Panel';
+import { SaveState, mutationSaveStatus } from '../ui/SaveState';
 import { StatusPill } from '../ui/StatusPill';
 import { Switch } from '../ui/Switch';
 import { Skeleton } from '../ui/Skeleton';
-import { useToast } from '../ui/Toast';
 
-const QUERY_KEY = ['settings', 'guest-view'] as const;
+const QUERY_KEY = qk.settings.guestView();
 
 /**
  * The switch that decides whether the collection is readable without an
@@ -23,7 +25,6 @@ const QUERY_KEY = ['settings', 'guest-view'] as const;
  */
 export function GuestViewCard() {
   const qc = useQueryClient();
-  const toast = useToast();
   const status = useQuery({ queryKey: QUERY_KEY, queryFn: getGuestView });
   const data = status.data;
 
@@ -34,12 +35,16 @@ export function GuestViewCard() {
   // had, with the reason in the ErrorNote under it. A security switch that
   // stayed ON on screen after the server refused to turn it on would be
   // asserting exposure that is not there (or, the other way, safety).
+  //
+  // Acknowledged the way every other save-on-change control is — a "Saving… /
+  // Saved" note beside it (`SaveState`) — rather than a toast: the switch's
+  // own hint already says which way it now stands.
   const toggle = useMutation({
     mutationFn: (enabled: boolean) => setGuestView(enabled),
     onMutate: async (enabled: boolean) => {
       await qc.cancelQueries({ queryKey: QUERY_KEY });
-      const prev = qc.getQueryData<{ enabled: boolean }>(QUERY_KEY);
-      qc.setQueryData(QUERY_KEY, { enabled });
+      const prev = qc.getQueryData<GuestViewStatus>(QUERY_KEY);
+      qc.setQueryData<GuestViewStatus>(QUERY_KEY, { enabled });
       return { prev };
     },
     onError: (_err, _enabled, ctx) => {
@@ -47,14 +52,13 @@ export function GuestViewCard() {
     },
     onSuccess: result => {
       qc.setQueryData(QUERY_KEY, result);
-      toast.success(result.enabled ? 'Guest browsing on' : 'Guest browsing off');
     },
     // Not awaited, so the failure note and the rollback show at once rather
     // than after the confirming refetch.
     onSettled: () => {
       qc.invalidateQueries({ queryKey: QUERY_KEY });
       // The login screen's "browse as a guest" link reads this.
-      qc.invalidateQueries({ queryKey: ['auth', 'status'] });
+      qc.invalidateQueries({ queryKey: qk.auth.status() });
     },
   });
 
@@ -84,6 +88,18 @@ export function GuestViewCard() {
       // appear only in the "on" hint, so the reader deciding whether to turn
       // it on was the one reader who never saw it.
       description="Adds a “browse as a guest” link to the login screen, so anyone who can reach Headroom can look through and search the collection."
+      // Background only. What guests see and what is never sent stays printed
+      // below, unfolded: that is the decision itself, not background to it.
+      help={(
+        <p>
+          &ldquo;Anyone who can reach Headroom&rdquo; means anyone on your
+          network — or on the internet, if you have exposed it. A guest gets no
+          session and no way to change anything; turning this off takes the
+          link away and refuses guest requests from the next one on. To show
+          the collection to one person instead, a share link on this tab can
+          expire and be revoked.
+        </p>
+      )}
     >
       {status.isPending ? (
         <Skeleton lines={2} />
@@ -105,6 +121,7 @@ export function GuestViewCard() {
             // ignored here rather than racing the first to the server.
             onChange={next => { if (!toggle.isPending) toggle.mutate(next); }}
           />
+          <SaveState status={mutationSaveStatus(toggle)} savedKey={toggle.submittedAt} />
           {!known && (
             <button
               type="button"

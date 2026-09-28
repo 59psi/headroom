@@ -10,42 +10,36 @@ should be added: a guest reads.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from headroom.config import settings
 from headroom.database import get_db
+from headroom.routes import _shared
+from headroom.routes._api import DomainErrorRoute
+from headroom.schemas.search import MAX_QUERY_LENGTH, ColorScope
 from headroom.schemas.share import SharedCollection, SharedHat
 from headroom.services import guest_view_service, share_link_service
-from headroom.utils.paths import safe_file
 
-router = APIRouter(prefix="/api/public/guest", tags=["guest"])
+router = APIRouter(prefix="/api/public/guest", tags=["guest"], route_class=DomainErrorRoute)
 
-def _not_found() -> HTTPException:
-    """One answer for every route in this module when guest view is off, so a
-    guest cannot tell a disabled feature from an unrouted path.
+#: Where this surface serves photos; `_shared` appends the id.
+_PHOTO_BASE = "/api/public/guest/photo"
 
-    A FACTORY, not a module-level instance. This was `_NOT_FOUND =
-    HTTPException(...)` re-raised on every request, and CPython prepends each
-    raise's frames onto the exception's existing `__traceback__` — so one
-    shared object grew a traceback chain for the life of the process, pinning
-    every request's locals (`Request`, `AsyncSession`, the response) with it.
-    Measured: 0 → 30 retained frames after five anonymous requests. On an
-    unauthenticated route, that is a slow leak anyone on the network can drive.
-    """
-    return HTTPException(status_code=404, detail="Not found")
+#: One answer for every route in this module when guest view is off, so a
+#: guest cannot tell a disabled feature from an unrouted path.
+_NOT_FOUND = "Not found"
 
 
 async def _require_enabled(db: AsyncSession) -> None:
     if not await guest_view_service.is_enabled(db):
-        raise _not_found()
+        raise _shared.not_found(_NOT_FOUND)
 
 
 @router.get("/collection", response_model=SharedCollection)
 async def guest_collection(
-    q: str | None = Query(None, max_length=200),
-    color_scope: str = Query("major", max_length=10),
+    q: str | None = Query(None, max_length=MAX_QUERY_LENGTH),
+    color_scope: ColorScope = Query(ColorScope.major),
     db: AsyncSession = Depends(get_db),
 ):
     """Browse, or search with `?q=`.
@@ -60,34 +54,14 @@ async def guest_collection(
     return SharedCollection(
         label="The collection",
         hat_count=len(hats),
-        hats=[
-            share_link_service.to_shared_hat(
-                h,
-                f"/api/public/guest/photo/{h.id}" if h.photo_path else None,
-                f"/api/public/guest/photo/{h.id}?variant=thumb" if h.thumb_path else None,
-            )
-            for h in hats
-        ],
+        hats=_shared.shared_hats(hats, _PHOTO_BASE),
     )
 
 
 @router.get("/photo/{hat_id}", response_class=FileResponse)
 async def guest_photo(hat_id: int, variant: str | None = None, db: AsyncSession = Depends(get_db)):
     await _require_enabled(db)
-
-    # `shared_hat` re-checks `disposed_at` rather than trusting the caller —
-    # the id arrives straight from the URL, and a disposed hat is not on show.
-    hat = await share_link_service.shared_hat(db, hat_id)
-    if hat is None or not hat.photo_path:
-        raise _not_found()
-
-    # `photo_path` is app-generated, but this is an unauthenticated route
-    # reaching the filesystem, so it goes through the same containment check as
-    # every other client-influenced path rather than a local copy of one.
-    photo = safe_file(settings.upload_dir, share_link_service.photo_variant(hat, variant))
-    if photo is None:
-        raise _not_found()
-    return FileResponse(photo)
+    return await _shared.photo_response(db, hat_id, variant, missing=_NOT_FOUND)
 
 
 @router.get("/hat/{hat_id}", response_model=SharedHat)
@@ -107,10 +81,5 @@ async def guest_hat(hat_id: int, db: AsyncSession = Depends(get_db)):
 
     hat = await share_link_service.shared_hat(db, hat_id)
     if hat is None:
-        raise _not_found()
-
-    return share_link_service.to_shared_hat(
-        hat,
-        f"/api/public/guest/photo/{hat.id}" if hat.photo_path else None,
-        f"/api/public/guest/photo/{hat.id}?variant=thumb" if hat.thumb_path else None,
-    )
+        raise _shared.not_found(_NOT_FOUND)
+    return _shared.shared_hat(hat, _PHOTO_BASE)

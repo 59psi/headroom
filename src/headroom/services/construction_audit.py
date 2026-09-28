@@ -5,14 +5,19 @@ using Claude's read of the photo. That read is unreliable for exactly the
 distinction that matters — HYDRO vs HYDROLite turns on bonded seams, a
 gel-welded logo and a sweatband, none of which survive a front-on shot — and it
 skewed toward HYDROLite. Analysis no longer writes the field at all, but the
-values it already wrote are still in the database, and nothing recorded which
-came from a person and which from a guess.
+values it already wrote are still in the database, and for years nothing
+recorded which came from a person and which from a guess.
 
-**There is no way to tell them apart retroactively**, so this module does not
-try. It reports what is on record, and clears a value the owner names. That is
-a decision only the person holding the hats can make, and the honest shape for
-it is a preview plus an explicit action — not a startup backfill that silently
-rewrites rows on the reasoning that most of them were probably wrong.
+Now every person-made write records it: `Hat.construction_source` is
+`OWNER_SOURCE` when the owner typed the value (Add form, Edit form) or chose it
+as the replacement here. A NULL source means "not recorded" — the pre-provenance
+rows, which is exactly the set that may hold a guess.
+
+**Those older rows cannot be told apart retroactively**, so this module does
+not try. It reports what is on record, and clears a value the owner names. That
+is a decision only the person holding the hats can make, and the honest shape
+for it is a preview plus an explicit action — not a startup backfill that
+silently rewrites rows on the reasoning that most of them were probably wrong.
 
 Clearing a construction also clears what was derived FROM it:
 
@@ -33,12 +38,19 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from headroom.models.activity_log import ActivityLog
 from headroom.models.hat import Hat
 from headroom.schemas.hat import KNOWN_CONSTRUCTIONS, strip_constructions
 from headroom.services import retail_pricing, vocabulary
 
+#: `Hat.construction_source` for a value a PERSON set: typed on the Add or Edit
+#: form (`hat_service`), or picked as the replacement in `clear_construction`.
+#: The value a bulk reassignment skips on. Owned here, beside the one reader
+#: that decides anything with it, the way `retail_pricing` owns the price
+#: sources its writers stamp.
+OWNER_SOURCE = "owner"
 
-from headroom.models.activity_log import ActivityLog
+
 @dataclass
 class ConstructionCount:
     construction: str
@@ -60,33 +72,38 @@ class ClearReport:
     model_names_corrected: int = 0
     prices_cleared: int = 0
     manual_prices_kept: int = 0
-    #: Hats skipped because the activity log proves the OWNER set this value.
+    #: Hats skipped because the record proves the OWNER set this value — see
+    #: `owner_set_hat_ids`.
     owner_set_skipped: int = 0
     #: Display ids (or "#id" when unassigned), for the confirmation screen.
     samples: list[str] = field(default_factory=list)
 
 
 async def owner_set_hat_ids(db: AsyncSession) -> set[int]:
-    """Hats whose construction the OWNER demonstrably set, per the audit log.
+    """Hats whose construction the OWNER demonstrably set.
 
-    `hat_service.update_hat` writes a `hat.updated` row listing the fields a
-    client PUT changed, so a row naming `construction` is proof a person typed
-    it. That is the only durable evidence in the database: nothing else records
-    where a construction came from, and analysis wrote the column directly.
+    Two kinds of evidence, unioned:
 
-    Two limits worth stating plainly, because this decides what a bulk
-    reassignment leaves alone:
+    * **`Hat.construction_source == OWNER_SOURCE`** — stamped by every
+      person-made write. The durable proof, and the one that covers the Add
+      form. This used to be the audit log alone, which missed exactly the two
+      cases that matter most: a construction typed on the Add form (`hat.created`
+      never logged it), and any edit older than the log's retention window —
+      so "Clear" wiped values the owner had typed, while the card promised
+      they were left alone.
+    * **A `hat.updated` activity row naming `construction`** — for values set
+      before the source column existed. `hat_service.update_hat` logs the
+      fields a PUT changed, so such a row is proof a person typed it, for as
+      long as the row survives the retention prune.
 
-    * **Activity rows are pruned** (`HEADROOM_ACTIVITY_LOG_RETENTION_DAYS`,
-      90 by default), so an edit older than the window is no longer provable.
-    * **Creation-time values are not recorded.** `hat.created` logs style and
-      size, not construction, so a construction typed into the Add form does
-      not appear here.
-
-    So this is a *proof of ownership*, not a complete one: it can say "this one
-    is definitely yours", never "this one is definitely not". Which is exactly
-    the right asymmetry for skipping — it only ever protects more, never less.
+    Still a *proof of ownership*, not a complete one, for the older rows: it
+    can say "this one is definitely yours", never "this one is definitely not".
+    Which is exactly the right asymmetry for skipping — it only ever protects
+    more, never less.
     """
+    recorded = (
+        await db.execute(select(Hat.id).where(Hat.construction_source == OWNER_SOURCE))
+    ).scalars().all()
 
     rows = (
         await db.execute(
@@ -100,7 +117,7 @@ async def owner_set_hat_ids(db: AsyncSession) -> set[int]:
             )
         )
     ).scalars().all()
-    return {r for r in rows if r is not None}
+    return set(recorded) | {r for r in rows if r is not None}
 
 
 async def audit(db: AsyncSession) -> list[ConstructionCount]:
@@ -157,10 +174,11 @@ async def clear_construction(
         return report
 
     # A typed replacement goes through the vocabulary like every other
-    # construction write (`hat_service`, the pipeline): `to="hydro"` stamped
-    # dozens of rows with a spelling the record already held as `HYDRO`, which
-    # is exactly the five-spellings-of-one-thing split `canonicalize` exists
-    # to prevent — and this is the one writer that touches a whole shelf.
+    # construction write (`hat_service`, the pipeline's spelling snap):
+    # `to="hydro"` stamped dozens of rows with a spelling the record already
+    # held as `HYDRO`, which is exactly the five-spellings-of-one-thing split
+    # `canonicalize` exists to prevent — and this is the one writer that
+    # touches a whole shelf.
     if to:
         to = await vocabulary.canonicalize(db, Hat.construction, to, known=KNOWN_CONSTRUCTIONS)
         report.to = to
@@ -200,7 +218,10 @@ async def clear_construction(
         if dry_run:
             continue
 
-        hat.set_construction(to)
+        # A replacement the owner picked here is the owner's value, so it is
+        # recorded as theirs and a later sweep leaves it alone. A clear leaves
+        # no value, and the setter drops the source with it.
+        hat.set_construction(to, source=OWNER_SOURCE)
         hat.model_name = corrected
         if from_table:
             # The old price was looked up FROM the construction being replaced,

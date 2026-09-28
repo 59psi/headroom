@@ -33,10 +33,15 @@ result, and three independent price signals per hat.
 
 **🧠 Identify**
 - **Claude Vision analysis** — brand, specific model, colorway, tiered colors
-  with hex, design notes. One tool-use call per photo, prompt caching enabled.
+  with hex, design notes. One tool-use call per photo; the ~2.5k-token prompt
+  is cached on models whose minimum cacheable prefix is below that (Sonnet 5,
+  Opus 5, Opus 4.8, Fable) — not on Haiku 4.5 or Opus 4.6. Each analysis logs
+  `cache_read=`/`cache_write=` token counts.
   Retail price is **looked up**, not guessed: a table of melin's real list
   prices by construction (cross-checked against order history) answers first,
-  and Claude's estimate only fills in where the table has no row.
+  and Claude's estimate fills in where the table has no row. The table never
+  pulls a *higher* estimate down (collabs and premium colorways cost more than
+  the base), and a price you typed is never replaced.
 - **Works without any keys** — background removal and dominant-color detection
   run locally (colors are read *only* from the hat's cutout mask, so the
   background can never contaminate them). Add a Google Vision key for
@@ -55,10 +60,12 @@ result, and three independent price signals per hat.
   out of a purple search: the hue question is settled before distance is
   measured, because a distance metric alone will happily call charcoal
   "nearly purple". "Light blue" works no matter what the analyzer called it.
-- **Text search** — multi-term AND over name, brand, model, style, condition,
-  size, colors, and room.
+- **Text search** — multi-term AND over brand, model, colorway, style,
+  construction, condition, size, collection, colors, and room. Color words
+  match a hat's main colors by default (a black cap with a pink logo is not
+  "pink"); switch to accents or any swatch when that is the question.
 - **Find-it cards** — every result shows the photo, the name, and where it
-  physically lives: `📍 Case A-012 · Office`.
+  physically lives: `Case A-012 · Office`.
 - **QR & NFC tags** — print label sheets for cases *and* hats, or write the
   same URL to an NFC sticker. Scanning a hat opens a one-tap "wore it today"
   screen; scanning a case opens its contents.
@@ -99,16 +106,20 @@ result, and three independent price signals per hat.
 - **Accounts** — first-run owner setup, argon2id passwords, revocable
   sessions, login rate limiting.
 - **Passkeys** — sign in with Face ID / Touch ID (WebAuthn).
-- **Everything gated** — the API *and* the photo files require login; raw API
-  keys never leave the server (masked reads only).
+- **Everything gated** — the API *and* the photo files require login; the API
+  never returns a raw API key (masked reads only). Backups are the exception by
+  design: an archive holds the whole database, stored keys included, so treat
+  every backup as a secret ([OPERATIONS §4](docs/OPERATIONS.md#off-site--remote-backups)).
 - **Read-only share links** — show off the collection without handing out a
   login; revocable, expiring after 30 days unless you say otherwise.
-- **Guest browsing** — optionally let anyone on the LAN browse read-only
-  (no prices, no notes) without a link at all. Off by default.
+- **Guest browsing** — optionally let anyone who can reach the app browse
+  read-only (no prices, no notes) without a link at all — your LAN, or the
+  whole internet on the Let's Encrypt overlay. Off by default.
 - **Download the collection as a zip** — `index.html` plus an images folder.
   Opens in any browser, works offline, nothing to host, no login. For when the
   person you're showing it to can't reach the app: a share link only resolves
-  on your own network. Prices are opt-in and off by default.
+  where the app does, which on a LAN install means your own network. Prices
+  are opt-in and off by default.
 - **One-command HTTPS** — a Caddy overlay with automatic Let's Encrypt certs.
 - **Backups** — scheduled rolling tarballs + one-click download; documented
   restore.
@@ -219,7 +230,9 @@ docker compose up --build
 Step 2 installs a complete, Docker-Desktop-free engine:
 [colima](https://github.com/abiosoft/colima) + docker CLI + compose/buildx
 via Homebrew on macOS, native Docker Engine via apt/dnf on Linux. If
-`docker info` already works on your machine it changes nothing. **Linux:**
+`docker info` already works on your machine it changes nothing. It only
+reports the engine ready once `docker info` answers; if it still can't reach
+the engine when it finishes, it says why and exits non-zero. **Linux:**
 the script adds you to the `docker` group — log out/in (or `newgrp docker`)
 before step 3.
 
@@ -273,9 +286,11 @@ their own ports.
 > host-net container the responder binds the **detected LAN interface only**, so
 > it can't leak onto `docker0`/`veth` and lose multicast (that leak is the usual
 > cause). On a multi-homed host where auto-detection picks the wrong NIC, pin it
-> with `HEADROOM_MDNS_INTERFACE=<lan-ip>`; set `HEADROOM_MDNS_INTERFACE=all` to
-> fall back to advertising on every interface. `GET /api/settings/mdns` reports
-> the advertised IP and any registration error.
+> with `HEADROOM_MDNS_INTERFACE=<lan-ipv4>` (an IPv4 address, which is then the
+> one address advertised); set `HEADROOM_MDNS_INTERFACE=all` to fall back to
+> advertising on every interface. Anything else is refused rather than guessed
+> at. `GET /api/settings/mdns` (and the *LAN discovery* card) reports the
+> advertised IP and any error.
 
 **Prefer a clean port 80, no HTTPS?** Stack the plain-HTTP overlay instead — a
 Caddy sidecar serves **http://headroom.local** (and `http://<host-ip>`) on
@@ -366,8 +381,8 @@ not just any TLS):
 
 **4. Verify**: open **https://headroom.local** — you should see a padlock
 and no warning. The Settings page's **LAN discovery (mDNS)** card shows the exact
-URL being advertised. Then add a passkey under **Settings → Account** and
-sign in with Face ID.
+URL being advertised. Then add a passkey under **Settings → Device →
+Account** and sign in with Face ID.
 
 **Reaching it from off the LAN** (Teleport, Tailscale, WireGuard, another
 subnet): `headroom.local` will not resolve out there. `.local` is mDNS, which
@@ -432,9 +447,9 @@ uvicorn directly, bypassing Caddy. Plain HTTP, so no padlock and no passkeys.
 - *Port conflict on 80/443* — something else on the host owns them; stop it
   or fall back to the plain mDNS overlay (password login, no padlock).
 
-Renaming the host (`HEADROOM_MDNS_HOSTNAME=hats`) carries through everything
-— cert, mDNS name, and passkey identity become `hats.local` on the next
-`up --build`.
+Renaming the host (`HEADROOM_MDNS_HOSTNAME=hats` — a bare label, never
+`hats.local`) carries through everything — cert, mDNS name, and passkey
+identity become `hats.local` on the next `up --build`.
 
 ### Local (no Docker)
 
@@ -442,12 +457,27 @@ Prereqs: git + curl. The setup script installs everything else it needs —
 uv, Python, Node, backend and frontend deps — via Homebrew on macOS and
 apt/dnf on Linux. It pulls the same versions the Docker image runs
 (**Python 3.14** via the `.python-version` pin, **Node 26** on a fresh
-install), so bare metal doesn't drift from production. An existing **Node
-22.22+** is accepted as-is — that's react-router 8's `engines` floor, the
-highest any dependency declares, and the Node 20 line went EOL 2026-04-30 —
-and the package itself still supports Python 3.12+ if you bring your own
-interpreter. npm is upgraded to 12 to match the version the image builds the
-SPA with.
+install), so bare metal doesn't drift from production. The package itself
+still supports Python 3.12+ if you bring your own interpreter.
+
+An existing Node is kept only if `npm ci` will actually run on it:
+**22.22.2+ on the 22 line, 24.15+ on the 24 line, or 26+**. That is the
+range every locked frontend package accepts at once (jsdom 30's `engines`
+is the narrowest), and `frontend/.npmrc` makes a mismatch a hard error — so
+Node 23, Node 25 and 24.0–24.14 are replaced with 26 rather than accepted
+and left to fail at `npm ci`. A test derives the range from
+`package-lock.json` and holds the script and `package.json` to it.
+
+npm is upgraded to 12, the version the image builds the SPA with — except on
+macOS with Homebrew's node, whose formula owns the `npm` binary, so an
+upgrade would not stick. There the script says so and carries on with the
+formula's npm. That only matters if you build the SPA on that machine; the
+Docker image always builds it with its own pinned npm.
+
+In a git checkout, setup also writes the build stamp into `.env` and
+installs three git hooks (post-merge, post-checkout, post-rewrite) that
+refresh it after every pull — see
+[OPERATIONS.md §5](docs/OPERATIONS.md#the-build-stamp-in-the-footer).
 
 ```bash
 git clone https://github.com/59psi/headroom.git && cd headroom
@@ -474,10 +504,19 @@ cd frontend && npm run dev
 
 ```bash
 git pull
-docker compose up --build -d     # Docker
+# Docker — with the SAME -f flags you deploy with (here, the LAN-HTTPS overlay):
+docker compose -f docker-compose.yml -f docker-compose.https-lan.yml up --build -d
 # — or —
 ./scripts/setup.sh --no-docker   # bare metal: re-sync deps + rebuild SPA, then restart uvicorn
 ```
+
+Only the default single-host setup upgrades with a bare
+`docker compose up --build -d`. On any overlay host that command is a switch
+back to the base config, not an upgrade (see the note under
+[Run it](#run-it)): the app is recreated without the overlay's settings —
+back on Docker's bridge network at `:8000`, and on the HTTPS overlays with the
+passkey identity reverted to `localhost`, so Face ID stops offering your
+passkey until you run the full command again.
 
 **Schema changes are handled automatically** — on every boot, `init_db()`
 applies inline SQLite migrations (`ALTER TABLE` for new columns, `CREATE
@@ -537,8 +576,11 @@ a basic fallback runs instead and the hat gets `analysis_status = "fallback"`:
   paste it in **Settings → Analysis → Google Vision key**. Free tier is 1,000
   requests/month — plenty.
 
-Model name, price estimate, and design notes stay empty in fallback mode —
-drop a Claude key in later and hit **Reanalyze** on any hat to upgrade.
+Model name, price estimate, and design notes stay empty in fallback mode, and
+so does the resale price: a brand read off a logo is not enough to price a
+hat, so a Melin logo gets only the link to browse Melin Recap (a price already
+on the hat is left alone). Colors you edited by hand are never replaced. Drop
+a Claude key in later and hit **Reanalyze** on any hat to upgrade.
 
 ### Resale prices (Melin)
 
@@ -559,7 +601,8 @@ Data → Re-pricing; neither spends a Claude call.
 |---|---|---|
 | `HEADROOM_DATABASE_URL` | `sqlite+aiosqlite:///./headroom.db` | DB connection string |
 | `HEADROOM_UPLOAD_DIR` | `uploads` | Where photos live on disk |
-| `HEADROOM_CORS_ORIGINS` | `["http://localhost:5173"]` | Allowed CORS origins (JSON list) |
+| `HEADROOM_CORS_ORIGINS` | `[]` (off) | Origins allowed credentialed cross-origin access (JSON list or comma-separated). Off by default — the SPA is same-origin, including behind the Vite dev proxy; set only if a page on another origin must call the API |
+| `TZ` | _(unset = UTC)_ | The host's time zone (`America/Los_Angeles`) — the calendar day a date-less *Wearing this today* tap (the iOS Shortcut, a script) lands on. `docker-compose.yml` forwards it |
 | `HEADROOM_ANTHROPIC_API_KEY` | _(unset)_ | Default API key (overridden by DB value) |
 | `HEADROOM_ANTHROPIC_MODEL` | `claude-sonnet-5` | Claude model for vision analysis |
 | `HEADROOM_GOOGLE_VISION_API_KEY` | _(unset)_ | Fallback brand (logo) detection. DB value wins |
@@ -568,7 +611,7 @@ Data → Re-pricing; neither spends a Claude call.
 | `HEADROOM_SETUP_TOKEN` | _(unset)_ | When set, first-run setup also requires this token (the setup form's *Setup token* field). Closes the window where whoever reaches the host first can claim the owner account — worth setting on an internet-facing deployment, unnecessary on a LAN. See [security posture](docs/OPERATIONS.md#6-security-posture-v10) |
 | `HEADROOM_RP_ID` | `localhost` | Passkey relying-party id — must equal the serving domain (HTTPS overlay sets it) |
 | `HEADROOM_ORIGIN` | `http://localhost:8000` | Full origin for passkey verification (HTTPS overlay sets it) |
-| `HEADROOM_REMBG_MODEL` | `isnet-general-use` | rembg model (~179MB; keeps hat bills. `u2netp` is 4.7MB and far faster but trims thin brims) |
+| `HEADROOM_REMBG_MODEL` | `isnet-general-use` | rembg model (~179MB; keeps hat bills. `u2netp` is 4.7MB and far faster but trims thin brims) (Docker: the `REMBG_MODEL` build arg) |
 | `HEADROOM_HTTP_TIMEOUT` | `30.0` | Outbound HTTP timeout in seconds (Claude, Google Vision, Melin Recap; eBay has its own fixed timeouts) |
 | `HEADROOM_REMBG_CONCURRENCY` | `1` | Concurrent background-removal inferences — the app's largest allocation, so one at a time in a 1 GB container |
 | `HEADROOM_LOG_LEVEL` | `INFO` | Log level when running uvicorn directly |
@@ -577,7 +620,7 @@ Data → Re-pricing; neither spends a Claude call.
 | `HEADROOM_BACKUP_INCLUDE_CA` | `true` | Fold Caddy's local CA — **including its private keys** — into each backup, under `data/caddy-pki/`. On by default because the root is installed by hand on every device and nothing can vouch for a replacement, so losing it means visiting them all. Set `false` if you would rather not have a key that can sign for *any* host sitting in an archive you upload off-box. See [backups](docs/OPERATIONS.md#4-backups--restore) |
 | `HEADROOM_BACKUP_KEEP` | `5` | How many rolling local backups to keep (a **count**, not days). `HEADROOM_BACKUP_RETENTION_DAYS` is still read, as a count, for older `.env` files |
 | `HEADROOM_SQLITE_SYNCHRONOUS` | `FULL` | SQLite durability — `FULL` fsyncs every commit, so committed means committed through a power cut. `NORMAL`/`EXTRA`/`OFF` accepted; anything else falls back to `FULL` |
-| `HEADROOM_MAX_BODY_BYTES` | `2097152` | Cap on non-multipart request bodies (uploads have their own, larger caps) |
+| `HEADROOM_MAX_BODY_BYTES` | `2097152` | Cap on the request body of every endpoint that does not take a file upload, chosen by endpoint, not by Content-Type (a multipart-labeled body sent to a JSON route gets this cap). Upload endpoints use the bulk-import ceiling instead, which this does not change. Values below 1024, or unparseable ones, are ignored and the default applies |
 | `HEADROOM_DISK_MIN_FREE_MB` | `500` | Below this free space, `/health/ready` fails |
 | `HEADROOM_DISK_WARN_PCT` | `15` | Below this share of the volume, log a warning |
 | `HEADROOM_BACKUP_UPLOAD_CMD` | _(unset)_ | Ship each scheduled backup off-box; `{path}`/`{dir}`/`{name}` substituted. Overrides the provider chosen in the Settings UI — host access only, on purpose. See [off-site backups](docs/OPERATIONS.md#off-site--remote-backups) + `docker-compose.backup-rclone.yml` / `docker-compose.backup-rsync.yml` |
@@ -585,22 +628,38 @@ Data → Re-pricing; neither spends a Claude call.
 | `HEADROOM_BACKUP_RSYNC_PASSWORD` | _(unset)_ | Password for the Synology / rsync-daemon provider; read from the host, never stored |
 | `HEADROOM_REPRICING_ENABLED` | `true` | Nightly re-pricing of melin hats against live Melin Recap asks (no Claude call) |
 | `HEADROOM_REPRICING_INTERVAL_HOURS` / `_DELAY_SECONDS` / `_BATCH_LIMIT` | `24` / `1.0` / `0` | Sweep cadence, pause between hats, cap per sweep (`0` = all) |
-| `HEADROOM_MDNS_INTERFACE` | _(detected LAN IP)_ | Interface the mDNS responder binds; an IP pins one NIC, `all` restores all-interfaces |
+| `HEADROOM_MDNS_INTERFACE` | _(detected LAN IP)_ | Interface the mDNS responder binds; an IPv4 address pins one NIC and is the address advertised (no AAAA then); `all` restores all-interfaces |
 | `HEADROOM_IMPORT_WORKER_ENABLED` | `true` | Bulk-import background worker |
 | `HEADROOM_ANALYSIS_WORKER_ENABLED` | `true` | Photo-analysis background worker (off ⇒ the upload route runs the pipeline inline) |
 | `HEADROOM_ACTIVITY_LOG_RETENTION_DAYS` | `90` | Audit rows kept (pruned daily) |
 | `HEADROOM_MDNS_ENABLED` | `true` | Advertise `headroom.local` on the LAN (Docker: stack `docker-compose.mdns.yml`, or `docker-compose.https-lan.yml` for passkey-grade HTTPS) |
-| `HEADROOM_MDNS_HOSTNAME` | `headroom` | mDNS host label — resolves as `<label>.local` |
+| `HEADROOM_MDNS_HOSTNAME` | `headroom` | A bare host label (`hats`, never `hats.local`) — resolves as `<label>.local`; anything else is refused at startup and shown on Settings |
 | `HEADROOM_MDNS_PORT` | `8000` | Port the mDNS advertisement points at |
 | `HEADROOM_SITE_ADDRESSES` | `<HEADROOM_MDNS_HOSTNAME>.local` | LAN HTTPS overlay only. Every name/address Caddy answers on **and** puts in the certificate, space-separated (Caddy refuses a bare comma). Add the LAN IP to reach it where `.local` can't resolve — a VPN, a tunnel, another subnet |
 | `HEADROOM_MEM_LIMIT` | `1g` | Container memory ceiling (compose `mem_limit`) |
 | `HEADROOM_BUILD_SHA` | _(local git SHA)_ | Build stamp shown in the footer; `scripts/stamp-build.sh` writes it into `.env` |
 | `FORWARDED_ALLOW_IPS` | `127.0.0.1` | Which peers uvicorn trusts for `X-Forwarded-*`; the Let's Encrypt overlay pins the compose subnet |
 
-Under Docker every `HEADROOM_*` row above is forwarded into the container by
-`docker-compose.yml` — a `.env` beside the compose file is interpolation for
-Compose, not the container's environment, and a variable Compose does not
-forward reaches nothing. The full table, with the operational reasoning, is in
+Under Docker, `docker-compose.yml` forwards every operator knob above into the
+container — a `.env` beside the compose file is interpolation for Compose, not
+the container's environment, and a variable Compose does not forward reaches
+nothing. The exceptions are deliberate: `HEADROOM_DATABASE_URL` and
+`HEADROOM_UPLOAD_DIR` are fixed by the image (the `/data` volume);
+`HEADROOM_REMBG_MODEL` is baked in at build time — choose it with the
+`REMBG_MODEL` build arg (`REMBG_MODEL=u2netp docker compose up -d --build`),
+since the image cannot download a different model at runtime;
+`HEADROOM_SITE_ADDRESSES` goes to Caddy, not the app; `HEADROOM_MEM_LIMIT` and
+`HEADROOM_BUILD_SHA` are read by Compose itself; and `FORWARDED_ALLOW_IPS` is
+set only by the overlays that put a proxy in front of the app, each pinned to
+where that proxy connects from, and never from `.env`. `HEADROOM_CORS_ORIGINS` is off
+under Docker too: the app's own origin is never cross-origin, so nothing needs
+it unless a page on another origin calls the API.
+
+**A bad value never stops the boot.** Boolean knobs accept `1`/`true`/`yes`/`on`
+and `0`/`false`/`no`/`off`; any other value — like an unparseable number or
+setting — falls back to that knob's default with a logged warning.
+
+The full table, with the operational reasoning, is in
 [OPERATIONS §2](docs/OPERATIONS.md#2-configuration).
 
 ---
@@ -611,7 +670,8 @@ The Docker image is multi-arch (amd64 + arm64). On a Pi 4/5 running 64-bit
 Raspberry Pi OS or Ubuntu Server:
 
 ```bash
-# Build on the Pi (slow first build, fine after)
+# Build on the Pi (slow first build, fine after) — add your front-door
+# overlay's -f flags, as in "Run it"; a bare command is the default mode only
 docker compose up --build -d
 
 # Or build on a beefier machine and push:
@@ -638,6 +698,8 @@ uv run uvicorn headroom.app:app --reload     # Backend (port 8000)
 cd frontend && npm run dev                   # Frontend (port 5173)
 cd frontend && npm run build                 # Type-check + production SPA build
 cd frontend && npm run typecheck             # Type-check only
+cd frontend && npm run lint                  # Rules of Hooks / exhaustive-deps / no-explicit-any (oxlint)
+uv run ruff check .                          # Backend lint
 uv run pytest                                # Backend tests
 uv run pytest tests/test_search.py -k color  # Single backend test
 cd frontend && npm test                      # Frontend tests
@@ -650,8 +712,10 @@ APIs — every external boundary has a test seam.
 
 **Frontend** tests run under Vitest + Testing Library in jsdom, with the API
 modules mocked at the module boundary. Test files live beside the components
-inside `src/`, so `npm run typecheck` covers them too. CI runs typecheck →
-tests → production build on every PR.
+inside `src/`, so `npm run typecheck` covers them too. CI runs lint →
+typecheck → tests → production build on every PR, beside the backend's
+ruff → pytest → lockfile check and a Docker build that must run as non-root
+and load the baked rembg model with no network.
 
 ## Architecture
 
@@ -667,43 +731,59 @@ src/headroom/
 │                                #  ColorwayEntry, ShareLink, ImportJob, …
 ├── routes/                      # health, public, auth, hats, cases, rooms,
 │   │                            #  search, meta, settings, import_jobs, share,
-│   │                            #  share_links, guest, ca_cert
+│   │                            #  share_links, guest, ca_cert — plus _api
+│   │                            #  (domain error → HTTP), _uploads (spooling),
+│   │                            #  _shared, _background helpers
 │   └── admin/                   # errors, backups, activity, reports, ebay,
 │                                #  catalog, analysis, construction, prices,
 │                                #  repricing, config — prefix + auth once
 ├── schemas/                     # Pydantic I/O, one module per route area
-└── services/
+└── services/                    # the domain logic — 44 modules, among them:
+    ├── hat_service.py           # every hat write (and its audit row)
+    ├── errors.py                # NotFound / Conflict / Invalid, not HTTP codes
     ├── claude_analysis.py       # Claude Vision tool-use → structured result
     ├── background_removal.py    # rembg (ONNX) → transparent PNG
-    ├── color_extraction.py      # mask-only colors + LAB distance + palette
+    ├── color_extraction.py      # mask-only colors + CIEDE2000 + palette
     ├── google_vision.py         # fallback brand via logo detection
     ├── melin_recap.py           # live resale median (Sharetribe public API)
+    ├── repricing.py             # nightly re-price sweep, no Claude call
     ├── catalog_service.py       # colorway harvest + purchase matching
+    ├── search_service.py        # text search + color-family search
     ├── auth_service.py          # argon2, sessions, rate limiting
     ├── passkey_service.py       # WebAuthn ceremonies
     ├── label_service.py         # QR label sheets, cases + hats (inline SVG)
     ├── tag_service.py           # What a QR/NFC tag points at, and the host in it
+    ├── analysis_queue.py        # the one worker that drains photo analysis
     ├── hat_analysis_pipeline.py # upload → bg-removal → analyze → price
     ├── import_service.py        # restart-surviving bulk-import worker
     └── backup_service.py        # scheduled + on-demand tar.gz
 ```
 
 **Frontend** — React 19, Vite, TypeScript, TanStack Query, react-router 8,
-Vitest + Testing Library, zero UI framework: hand-rolled synthwave design
-system in two CSS files, PWA-installable, native `<datalist>` autocomplete,
-hand-rolled WebAuthn plumbing. No component library, no CSS framework, no
-state-management dependency.
+Vitest + Testing Library, oxlint, zero UI framework: a hand-rolled synthwave
+design system (tokens, base styles, shared primitives, then one stylesheet
+per area of the app), PWA-installable, a custom touch-friendly Combobox for
+autocomplete, hand-rolled WebAuthn plumbing. No component library, no CSS
+framework, no state-management dependency.
 
 ```
 frontend/src/
 ├── pages/                       # one per route (SettingsPage is a composition
 │                                #  root over components/settings/)
 ├── components/
+│   ├── ui/                      # primitives: PageHeader, Panel, Switch,
+│   │                            #  Segmented, StatusPill, Toast, Dialogs, …
 │   ├── layout/                  # AppShell, TopNav, BottomNav, Footer
-│   ├── common/                  # spinner, badges, swatches, modals
+│   ├── common/                  # badges, swatches, modals, Combobox, errors
+│   ├── cases/                   # case tile, collage, case form fields
+│   ├── hats/                    # filter bar, hat rows, hat-form fields
 │   ├── photos/                  # capture + cropper
-│   ├── hats/                    # filter bar + hat-form fields shared by pages
+│   ├── charts/                  # bar lists, donuts, time series, stat tiles
+│   ├── share/                   # the signed-out share + guest views
 │   └── settings/                # one card per Settings concern
+├── lib/                         # query keys, cache invalidation, labels,
+│                                #  formatting, hooks shared across pages
+├── styles/                      # tokens.css, app.css, ui.css + areas/*.css
 ├── api/                         # typed fetch clients
 ├── types/                       # interfaces mirroring the Pydantic schemas
 └── test/                        # Vitest setup + renderWithProviders

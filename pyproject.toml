@@ -2,7 +2,7 @@
 license = "AGPL-3.0-or-later"
 license-files = ["LICENSE"]
 name = "headroom"
-version = "2.80.0"
+version = "2.81.0"
 description = "Headroom — AI-powered hat collection tracker"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -34,8 +34,13 @@ dependencies = [
     # keep carrying it.
     "cryptography",
     "starlette",        # middleware + Response types, via fastapi
-    "numpy",            # color_extraction's LAB math, via rembg
-    "pydantic",         # schemas, via fastapi/pydantic-settings
+    "numpy",            # background_removal's alpha hardening, via rembg
+    # Schemas, via fastapi/pydantic-settings. The floor is load-bearing: from
+    # 2.10 pydantic reserves only `model_validate`/`model_dump`-style names in
+    # the `model_` namespace, which is what lets the schemas carry fields like
+    # `model_name` with no `protected_namespaces=()` opt-out
+    # (`tests/test_route_layer.py::test_no_schema_trips_pydantics_protected_namespace`).
+    "pydantic>=2.10",
     "rembg[cpu]>=2.0.78",
     "onnxruntime",
     "argon2-cffi>=25.1.0",
@@ -106,7 +111,7 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
-# `src/` layout, so first-party imports resolve for isort-style rules.
+# `src/` layout, so `I` (below) sorts `headroom` and `tests` as first-party.
 src = ["src", "tests"]
 
 [tool.ruff.lint]
@@ -125,7 +130,17 @@ select = [
                      # existing suppressions were checked by nothing.
     "RUF100",        # unused-noqa — so a suppression that stops suppressing is removed
     "S105", "S106",  # hardcoded credentials
+    "I",             # import sorting. `src` above said "for isort-style rules"
+                     # while none was selected, and the tree grew imports
+                     # appended below the block, a second `from sqlalchemy`
+                     # line, and an import pressed against `logger =`.
 ]
+# The blank-line rules (E301-E306) are still preview-only in ruff. Named
+# exactly, with `explicit-preview-rules`, so preview turns on THESE and not
+# every other preview rule under the families selected above.
+preview = true
+explicit-preview-rules = true
+extend-select = ["E301", "E302", "E303", "E304", "E305", "E306"]
 ignore = [
     "E501",     # line length: prose-heavy comments are deliberate here
     "B008",     # FastAPI's `Depends()` in a default IS the framework's idiom
@@ -136,7 +151,7 @@ ignore = [
 ]
 # Deliberately NOT enabling `UP` or the rest of `PL`. `UP017` alone would
 # rewrite ~90 call sites from `datetime.now(timezone.utc)` to `datetime.UTC`,
-# against a convention this repo documents in CLAUDE.md — a linter's job here
+# against a deliberate house convention — a linter's job here
 # is to find the mistakes nobody checked for, not to relitigate a house style.
 
 [tool.ruff.lint.per-file-ignores]

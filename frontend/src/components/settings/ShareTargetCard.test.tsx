@@ -6,6 +6,11 @@ import { ShareTargetCard } from './ShareTargetCard';
 import * as clipboard from '../../lib/clipboard';
 
 vi.mock('../../lib/clipboard', () => ({ copyText: vi.fn(async () => true) }));
+vi.mock('../../api/hats', () => ({
+  getStyles: vi.fn(async () => [{ value: 'a_game', label: 'A-Game', is_beanie: false }]),
+  getSizes: vi.fn(async () => [{ value: 'classic', label: 'Classic' }]),
+  getConditions: vi.fn(async () => [{ value: 'new', label: 'New' }]),
+}));
 
 const copyText = vi.mocked(clipboard.copyText);
 
@@ -57,21 +62,28 @@ describe('ShareTargetCard', () => {
     const user = userEvent.setup();
     renderWithProviders(<ShareTargetCard />);
 
-    await user.click(screen.getByRole('button', { name: 'Copy' }));
+    await user.click(screen.getByRole('button', { name: 'Copy the import URL' }));
 
+    // The field goes along as the plain-http fallback.
     expect(copyText).toHaveBeenCalledWith(
       `${window.location.origin}/api/hats/import`,
       screen.getByRole('textbox', { name: 'Import URL' }),
     );
-    expect(await screen.findByText('URL copied')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Copied the import URL' })).toBeInTheDocument();
   });
 
-  it('states the bulk-import defaults on either platform', async () => {
+  it('states the bulk-import defaults in words, not stored values, on either platform', async () => {
     const user = userEvent.setup();
     renderWithProviders(<ShareTargetCard />);
-    expect(screen.getByText(/style: a_game · size: classic ·/)).toBeInTheDocument();
+    expect(await screen.findByText(/style: A-Game · size: Classic · condition: New\b/)).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Android' }));
-    expect(screen.getByText(/style: a_game · size: classic ·/)).toBeInTheDocument();
+    expect(screen.getByText(/style: A-Game · size: Classic ·/)).toBeInTheDocument();
+  });
+
+  it('leads with a status and folds the background under "How this works"', () => {
+    renderWithProviders(<ShareTargetCard />);
+    expect(screen.getByText('Per phone', { selector: '.hr-pill' })).toBeInTheDocument();
+    expect(screen.getByText('How this works')).toBeInTheDocument();
   });
 });

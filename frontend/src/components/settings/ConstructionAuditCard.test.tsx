@@ -67,6 +67,39 @@ describe('ConstructionAuditCard', () => {
     expect(await screen.findByText('Cleared “HYDROLite” from 10 hats')).toBeInTheDocument();
   });
 
+  it('refreshes every hat view once applied — a construction change moves prices on cases, rooms and search too', async () => {
+    const user = userEvent.setup();
+    mocked.auditConstructions.mockResolvedValue(ROWS);
+    mocked.clearConstruction.mockImplementation(async (value, dryRun, to) =>
+      result({ construction: value, dry_run: dryRun, to: to ?? null }));
+    const { client } = renderWithProviders(<ConstructionAuditCard />);
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+
+    await user.click(await screen.findByRole('button', { name: 'Clear HYDROLite…' }));
+    await user.click(await screen.findByRole('button', { name: 'Clear them' }));
+    await screen.findByText('Cleared “HYDROLite” from 10 hats');
+
+    const keys = invalidate.mock.calls.map(([f]) => JSON.stringify(f?.queryKey));
+    for (const k of [['hats'], ['hat'], ['case'], ['room'], ['rooms'], ['search'], ['meta', 'constructions']]) {
+      expect(keys).toContain(JSON.stringify(k));
+    }
+  });
+
+  it('agrees in number in the preview', async () => {
+    const user = userEvent.setup();
+    mocked.auditConstructions.mockResolvedValue(ROWS);
+    mocked.clearConstruction.mockResolvedValue(result({
+      hats_cleared: 1, model_names_corrected: 1, prices_cleared: 1, manual_prices_kept: 1,
+    }));
+    renderWithProviders(<ConstructionAuditCard />);
+
+    await user.click(await screen.findByRole('button', { name: 'Clear HYDROLite…' }));
+
+    expect(await screen.findByText(/from 1 hat\?/)).toBeInTheDocument();
+    expect(screen.getByText('1 model name loses the suffix')).toBeInTheDocument();
+    expect(screen.getByText('1 price you entered is kept')).toBeInTheDocument();
+  });
+
   it('applies the target it previewed, and a new target retires the old preview', async () => {
     // The apply used to re-read the text box, so a value typed after the
     // preview was applied without ever being previewed. Editing the box now

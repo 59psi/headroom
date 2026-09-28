@@ -6,10 +6,11 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.database import get_db
+from headroom.routes._api import DomainErrorRoute
 from headroom.schemas.admin import ActivityRow, CountRead, RetentionStatus
 from headroom.services import activity_service
 
-router = APIRouter()
+router = APIRouter(route_class=DomainErrorRoute)
 
 
 @router.get("/activity-log", response_model=list[ActivityRow])

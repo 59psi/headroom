@@ -28,12 +28,14 @@ const OVERLOADED: RecentError = {
   analysis_error: 'Claude analysis failed: overloaded_error',
   analyzed_at: new Date(Date.now() - 3_600_000).toISOString(),
   photo_path: 'hats/63.png',
+  thumb_path: 'hats/63.thumb.webp',
 };
 const NO_PHOTO: RecentError = {
   hat_id: 64, display_id: 'A1-3',
   analysis_error: 'Photo missing before analysis could run.',
   analyzed_at: null,
   photo_path: null,
+  thumb_path: null,
 };
 
 beforeEach(() => {
@@ -135,6 +137,34 @@ describe('RecentErrorsCard', () => {
 
     expect(await screen.findByText('A1-3')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Retry analysis/ })).not.toBeInTheDocument();
+  });
+
+  it('shows the small tile, not the full cutout, and names a caseless hat the way other screens do', async () => {
+    vi.mocked(settingsApi.getRecentErrors).mockResolvedValue([
+      OVERLOADED, { ...NO_PHOTO, hat_id: 70, display_id: null },
+    ]);
+
+    const { container } = renderWithProviders(<RecentErrorsCard />);
+
+    expect(await screen.findByText('Hat #70')).toBeInTheDocument();
+    expect(container.querySelector('img.hr-an-err-thumb')).toHaveAttribute('src', '/uploads/hats/63.thumb.webp');
+  });
+
+  it("a row's retry refreshes the nav badge and the queue card, not only this list", async () => {
+    const user = userEvent.setup();
+    vi.mocked(settingsApi.getRecentErrors).mockResolvedValue([OVERLOADED]);
+    vi.mocked(hatsApi.reanalyzeHat).mockResolvedValue(hatFixture({ id: 63, analysis_status: 'pending' }));
+
+    const { client } = renderWithProviders(<RecentErrorsCard />);
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+    await user.click(await screen.findByRole('button', { name: 'Retry analysis for A1-2' }));
+    await screen.findByText('A1-2 queued for re-analysis');
+
+    const keys = invalidate.mock.calls.map(([f]) => JSON.stringify(f?.queryKey));
+    for (const k of [
+      ['admin', 'recent-errors'], ['admin', 'recent-errors-count'],
+      ['admin', 'analysis-queue'], ['admin', 'analysis-failures'], ['hat', 63],
+    ]) expect(keys).toContain(JSON.stringify(k));
   });
 
   it('refreshes the list and the nav badge together', async () => {

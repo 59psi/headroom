@@ -2,14 +2,14 @@ import { useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { auditConstructions, clearConstruction } from '../../api/settings';
 import type { ConstructionClearResult } from '../../types';
-import { invalidateHatVocabulary } from '../../lib/invalidate';
+import { noun, plural } from '../../lib/format';
+import { invalidateHatViews, invalidateHatVocabulary } from '../../lib/invalidate';
+import { qk } from '../../lib/queryKeys';
 import { ErrorNote } from '../common/ErrorNote';
 import { Panel } from '../ui/Panel';
 import { StatusPill } from '../ui/StatusPill';
 import { Skeleton } from '../ui/Skeleton';
 import { useToast } from '../ui/Toast';
-
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /**
  * Review constructions and undo ones analysis guessed.
@@ -25,7 +25,7 @@ export function ConstructionAuditCard() {
   const qc = useQueryClient();
   const toast = useToast();
   const audit = useQuery({
-    queryKey: ['admin', 'construction-audit'],
+    queryKey: qk.admin.constructionAudit(),
     queryFn: auditConstructions,
   });
   const data = audit.data;
@@ -64,9 +64,13 @@ export function ConstructionAuditCard() {
       toast.success(result.to
         ? `Changed “${result.construction}” to “${result.to}” on ${plural(result.hats_cleared, 'hat')}`
         : `Cleared “${result.construction}” from ${plural(result.hats_cleared, 'hat')}`);
-      qc.invalidateQueries({ queryKey: ['admin', 'construction-audit'] });
-      qc.invalidateQueries({ queryKey: ['hats'] });
-      qc.invalidateQueries({ queryKey: ['hat'] });
+      qc.invalidateQueries({ queryKey: qk.admin.constructionAudit() });
+      // A construction change rewrites HYDRO / HYDROLite flags and table
+      // prices on every hat carrying it — including the loose hats a room
+      // page lists and the values the valuation totals. This used to refresh
+      // `['hats']` and `['hat']` by hand, the pair RepricingCard's history
+      // records as missing the case, room and search views.
+      void invalidateHatViews(qc);
       // A cleared or renamed construction changes what the picker suggests.
       invalidateHatVocabulary(qc);
     },
@@ -171,15 +175,21 @@ export function ConstructionAuditCard() {
             {preview.to
               ? <>Change “{preview.construction}” to “{preview.to}” on </>
               : <>Clear “{preview.construction}” from </>}
-            {preview.hats_cleared} hat{preview.hats_cleared === 1 ? '' : 's'}?
+            {plural(preview.hats_cleared, 'hat')}?
           </div>
           <ul className="hr-sd-preview-list">
-            <li>{preview.model_names_corrected} model name(s) lose the suffix</li>
             <li>
-              {preview.prices_cleared} price(s){' '}
+              {plural(preview.model_names_corrected, 'model name')}{' '}
+              {noun(preview.model_names_corrected, 'loses', 'lose')} the suffix
+            </li>
+            <li>
+              {plural(preview.prices_cleared, 'price')}{' '}
               {preview.to ? 're-looked-up from the new value' : 'cleared'}
             </li>
-            <li>{preview.manual_prices_kept} price(s) you entered are kept</li>
+            <li>
+              {plural(preview.manual_prices_kept, 'price')} you entered{' '}
+              {noun(preview.manual_prices_kept, 'is', 'are')} kept
+            </li>
             <li>
               <strong>{preview.owner_set_skipped}</strong> left alone because
               you set them yourself

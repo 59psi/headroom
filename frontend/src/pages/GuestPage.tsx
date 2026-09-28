@@ -2,9 +2,13 @@ import { useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router';
 import { getGuestCollection } from '../api/guest';
+import { isNotFound } from '../api/client';
 import { SharedCollectionGrid, SharedCollectionSkeleton } from '../components/share/SharedCollectionGrid';
 import { PublicNotice, PublicPage } from '../components/share/PublicPage';
+import { PublicLoadError } from '../components/share/PublicLoadError';
 import { ColorScopePicker } from '../components/common/ColorScopePicker';
+import { plural } from '../lib/format';
+import { qk } from '../lib/queryKeys';
 
 /**
  * Browsing the collection without an account.
@@ -31,8 +35,11 @@ export function GuestPage() {
   // not.
   const [query, setQuery] = useState(submitted);
 
-  const { data, isLoading, isPlaceholderData, error } = useQuery({
-    queryKey: ['guest-collection', submitted, scope],
+  const guestQ = useQuery({
+    // Under `qk.guest.all()`, so a hat change refreshes what a guest sees
+    // (`invalidateHatViews`) — the old `['guest-collection', …]` key was
+    // under nothing.
+    queryKey: qk.guest.collection(submitted, scope),
     queryFn: () => getGuestCollection(submitted || undefined, scope),
     retry: false,
     // Serve the cached page instantly on Back. Without this the list is empty
@@ -47,7 +54,14 @@ export function GuestPage() {
     // the page visibly reloading for what is one field changing.
     placeholderData: keepPreviousData,
   });
+  const { data, isLoading, isPlaceholderData, error } = guestQ;
 
+  // Guest browsing switched off answers 404 — indistinguishable, on purpose,
+  // from a path that does not exist. Anything else is the server failing,
+  // and "isn't available" would be the wrong thing to tell a guest.
+  if (error && !isNotFound(error)) {
+    return <PublicPage><PublicLoadError query={guestQ} /></PublicPage>;
+  }
   if (error) {
     return (
       <PublicPage>
@@ -127,7 +141,7 @@ export function GuestPage() {
           <p className="hr-result-count" role="status">
             {isPlaceholderData ? 'Searching…' : (
               <>
-                {count} hat{count !== 1 ? 's' : ''}
+                {plural(count, 'hat')}
                 {submitted && <> matching “{submitted}”</>}
               </>
             )}

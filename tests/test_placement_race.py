@@ -9,7 +9,7 @@ creates with a `case_id` were all accepted, five of them as `D-001-01`.
 `display_id` is derived from case + position, so those are five hats with
 one label — and the picker, the labels sheet and every tag read that label.
 
-The app is single-process by design (CLAUDE.md), so an `asyncio.Lock` around
+The app is single-process by design (`services/locks.py`), so an `asyncio.Lock` around
 every placement writer is the right serialization, and a partial unique index
 on `(case_id, position_in_case)` for active hats is the backstop that turns
 any future gap into a loud failure instead of a quiet duplicate.
@@ -83,6 +83,24 @@ async def test_concurrent_case_creation_gets_distinct_display_ids(file_client):
     assert ids == [f"A-00{i}" for i in range(1, 7)], ids
 
 
+async def test_a_retype_racing_a_create_gets_its_own_display_id(file_client):
+    """Retyping a case numbers it in its new type — the same read-then-write
+    `get_next_sequence` a create does. Unlocked, a retype to daily wear and a
+    daily-wear create both read "next is D-001", and the second commit hit the
+    unique `display_id` as a 500. Both now run under the placement lock."""
+    created = await file_client.post("/api/cases", json={"case_type": "archive"})
+    assert created.json()["display_id"] == "A-001"
+
+    retyped, fresh = await asyncio.gather(
+        file_client.put("/api/cases/A-001", json={"case_type": "daily_wear"}),
+        file_client.post("/api/cases", json={"case_type": "daily_wear"}),
+    )
+
+    assert (retyped.status_code, fresh.status_code) == (200, 201), (retyped.text, fresh.text)
+    ids = {retyped.json()["display_id"], fresh.json()["display_id"]}
+    assert len(ids) == 2 and all(i.startswith("D-") for i in ids), ids
+
+
 async def test_the_schema_forbids_two_active_hats_at_one_position(file_engine):
     """The backstop under the lock: whatever path forgets to serialize, the
     database refuses the duplicate. Disposed hats keep their old position and
@@ -99,21 +117,21 @@ async def test_the_schema_forbids_two_active_hats_at_one_position(file_engine):
             "VALUES ('archive', 1, 'A-001', 1)"
         ))
         await db.execute(text(
-            "INSERT INTO hats (case_id, position_in_case, condition, size, style, is_beanie, limited_edition, hydro, hydrolite) "
-            "VALUES (1, 1, 'new', 'classic', 'a_game', 0, 0, 0, 0)"
+            "INSERT INTO hats (case_id, position_in_case, condition, size, style, is_beanie) "
+            "VALUES (1, 1, 'new', 'classic', 'a_game', 0)"
         ))
         await db.commit()
         with pytest.raises(IntegrityError):
             await db.execute(text(
-                "INSERT INTO hats (case_id, position_in_case, condition, size, style, is_beanie, limited_edition, hydro, hydrolite) "
-                "VALUES (1, 1, 'new', 'classic', 'a_game', 0, 0, 0, 0)"
+                "INSERT INTO hats (case_id, position_in_case, condition, size, style, is_beanie) "
+                "VALUES (1, 1, 'new', 'classic', 'a_game', 0)"
             ))
             await db.commit()
         await db.rollback()
         # A disposed hat at that position is history, not occupancy.
         await db.execute(text(
-            "INSERT INTO hats (case_id, position_in_case, condition, size, style, is_beanie, limited_edition, hydro, hydrolite, disposed_at) "
-            "VALUES (1, 1, 'new', 'classic', 'a_game', 0, 0, 0, 0, '2026-01-01 00:00:00')"
+            "INSERT INTO hats (case_id, position_in_case, condition, size, style, is_beanie, disposed_at) "
+            "VALUES (1, 1, 'new', 'classic', 'a_game', 0, '2026-01-01 00:00:00')"
         ))
         await db.commit()
 
@@ -139,12 +157,12 @@ async def test_existing_duplicate_positions_are_repaired_before_the_index_lands(
         ))
         for _ in range(3):
             await db.execute(text(
-                "INSERT INTO hats (case_id, position_in_case, condition, size, style, is_beanie, limited_edition, hydro, hydrolite) "
-                "VALUES (1, 1, 'new', 'classic', 'a_game', 0, 0, 0, 0)"
+                "INSERT INTO hats (case_id, position_in_case, condition, size, style, is_beanie) "
+                "VALUES (1, 1, 'new', 'classic', 'a_game', 0)"
             ))
         await db.execute(text(
-            "INSERT INTO hats (case_id, position_in_case, condition, size, style, is_beanie, limited_edition, hydro, hydrolite) "
-            "VALUES (1, 2, 'new', 'classic', 'a_game', 0, 0, 0, 0)"
+            "INSERT INTO hats (case_id, position_in_case, condition, size, style, is_beanie) "
+            "VALUES (1, 2, 'new', 'classic', 'a_game', 0)"
         ))
         await db.commit()
 

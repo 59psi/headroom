@@ -5,8 +5,14 @@ module, which put half the admin schemas here and half there.
 """
 
 from datetime import datetime
+from enum import StrEnum
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from headroom.schemas.common import Colorway, Money, api_key_text, clean_text
+from headroom.schemas.hat import AnalysisStage, AnalysisStatus
+from headroom.services import backup_service
 
 
 class RecentError(BaseModel):
@@ -15,6 +21,10 @@ class RecentError(BaseModel):
     analysis_error: str | None
     analyzed_at: datetime | None
     photo_path: str | None
+    #: The 320 px WebP. The card shows a small tile per failure, and without
+    #: this it loaded each full-size cutout to draw it — the cost the
+    #: thumbnail exists to avoid everywhere else a hat is a tile.
+    thumb_path: str | None = None
 
 
 class BackupInfo(BaseModel):
@@ -121,8 +131,17 @@ class BackupUploadStatus(BaseModel):
     upload_failures: int = 0
 
 
+#: The upload transports this app knows, as a closed vocabulary — generated
+#: from `backup_service.UPLOAD_PROVIDERS`, the one registry, so adding a
+#: provider there is the whole change. Published as an enum in the OpenAPI
+#: document, and an unknown name is refused at the schema like any other enum.
+BackupProviderName = StrEnum(
+    "BackupProviderName", {name: name for name in sorted(backup_service.UPLOAD_PROVIDERS)}
+)
+
+
 class BackupUploadUpdate(BaseModel):
-    provider: str
+    provider: BackupProviderName
     destination: str = Field(min_length=1, max_length=200)
 
 
@@ -144,14 +163,76 @@ class ActivityRow(BaseModel):
 class EbayCredsStatus(BaseModel):
     configured: bool
     app_id_masked: str | None = None
+    # Read back as stored — a value saved before the vocabulary below existed
+    # must still render rather than 500 the card.
     marketplace: str = "EBAY_US"
-    detected_env: str | None = None  # "production" | "sandbox" | "unknown"
+    detected_env: Literal["production", "sandbox", "unknown"] | None = None
+
+
+class EbayMarketplace(StrEnum):
+    """The marketplace ids eBay's REST APIs accept (`X-EBAY-C-MARKETPLACE-ID`),
+    per eBay's developer guide. A free `str` stored `<b>NOPE</b>` as a
+    marketplace and sent it on every Browse call."""
+
+    EBAY_US = "EBAY_US"
+    EBAY_AT = "EBAY_AT"
+    EBAY_AU = "EBAY_AU"
+    EBAY_BE = "EBAY_BE"
+    EBAY_CA = "EBAY_CA"
+    EBAY_CH = "EBAY_CH"
+    EBAY_DE = "EBAY_DE"
+    EBAY_ES = "EBAY_ES"
+    EBAY_FR = "EBAY_FR"
+    EBAY_GB = "EBAY_GB"
+    EBAY_HK = "EBAY_HK"
+    EBAY_IE = "EBAY_IE"
+    EBAY_IT = "EBAY_IT"
+    EBAY_MY = "EBAY_MY"
+    EBAY_NL = "EBAY_NL"
+    EBAY_PH = "EBAY_PH"
+    EBAY_PL = "EBAY_PL"
+    EBAY_SG = "EBAY_SG"
+    EBAY_TW = "EBAY_TW"
+    EBAY_MOTORS_US = "EBAY_MOTORS_US"
+
+
+def _unwrap_pasted(value: object) -> object:
+    """Strip whitespace AND any quotes copied along with a pasted value.
+
+    Very common when pasting from a code snippet or env-var docs. Repeated
+    until nothing changes, because the two nest: `' KEY '` is quotes around
+    spaces, and stripping them in one fixed order left `"    "` behind as a
+    four-character credential that read back as configured. Here rather than
+    in the route, so the length check below runs on what is actually stored.
+    """
+    if not isinstance(value, str):
+        return value
+    previous = None
+    while previous != value:
+        previous = value
+        value = value.strip().strip("'\"`")
+    return value
 
 
 class EbayCredsUpdate(BaseModel):
-    app_id: str = Field(min_length=4, max_length=120)
-    cert_id: str = Field(min_length=4, max_length=200)
-    marketplace: str = "EBAY_US"
+    # Unwrapped of pasted quotes, then held to the same header-safe rule as
+    # every other key (`common.header_safe_key`): both halves travel in the
+    # OAuth request's Basic authorization header.
+    app_id: api_key_text(4, 120, unwrap=_unwrap_pasted)
+    cert_id: api_key_text(4, 200, unwrap=_unwrap_pasted)
+    marketplace: EbayMarketplace = EbayMarketplace.EBAY_US
+
+    @field_validator("marketplace", mode="before")
+    @classmethod
+    def _marketplace_is_an_id(cls, v: object) -> object:
+        # Trim and upper-case: `ebay_us ` is the same marketplace as EBAY_US.
+        # Blank is "not stated", as a blank is everywhere else on the wire, and
+        # takes the default — what the route's `.strip() or "EBAY_US"` did
+        # before the enum, so a client sending "" keeps getting EBAY_US rather
+        # than a new 422.
+        if isinstance(v, str):
+            return v.strip().upper() or EbayMarketplace.EBAY_US
+        return v
 
 
 #: One order line may stand for this many units. A hat is one unit and the
@@ -183,19 +264,34 @@ class PurchaseLine(BaseModel):
     onto the matched hat — `PAID $-5`, `$-5.00/wear`. `order_date` used to be
     silently dropped to NULL when unparseable; a bad date is now the caller's
     422, naming the line.
+
+    `price` is the shared `Money`, not a local restatement of it: the copy
+    here had drifted (no upper bound), and a `1e308` line wrote `$1e+308` onto
+    the matched hat as its cost basis. The text fields are cleaned and capped
+    at the `purchases` columns like every other name on the wire — the title
+    and colorway reach the hat and the purchases list verbatim.
     """
 
     model_config = ConfigDict(extra="ignore")
 
-    item_title: str = Field("", max_length=300)
-    colorway: str | None = Field(None, max_length=120)
-    size: str | None = Field(None, max_length=40)
+    #: Blank is kept as "" rather than refused: a line with no title is one the
+    #: preview reports as unusable, not a reason to reject the whole file.
+    item_title: clean_text(200) = ""
+    colorway: Colorway = None
+    #: The line's own spelling ("X-Large", "Small/Medium"); normalized to the
+    #: hat vocabulary before it is stored, so capped looser than the column.
+    size: clean_text(40) = None
     quantity: int = Field(1, ge=1, le=MAX_UNITS_PER_LINE)
-    price: float | None = Field(None, ge=0, allow_inf_nan=False)
-    order_ref: str | None = Field(None, max_length=120)
+    price: Money | None = None
+    order_ref: clean_text(80) = None
     order_date: datetime | None = None
-    source: str | None = Field(None, max_length=40)
-    raw: str | None = Field(None, max_length=4000)
+    source: clean_text(20) = None
+    raw: clean_text(4000, multiline=True) = None
+
+    @field_validator("item_title", mode="after")
+    @classmethod
+    def _blank_title_is_empty(cls, v: str | None) -> str:
+        return v or ""
 
 
 class PurchaseImport(BaseModel):
@@ -211,7 +307,15 @@ class PendingHat(BaseModel):
     photo_path: str | None = None
     # Set only while a hat is actually being worked on, which is what separates
     # the one in progress from the ones merely queued behind it.
-    stage: str | None = None
+    stage: AnalysisStage | None = None
+
+
+class AnalysisJobStatus(StrEnum):
+    """`analysis_job_service.RUNNING` / `DONE` — held equal by
+    `tests/test_wire_vocabulary.py`."""
+
+    running = "running"
+    done = "done"
 
 
 class AnalysisJobRead(BaseModel):
@@ -221,7 +325,7 @@ class AnalysisJobRead(BaseModel):
     total: int
     done: int
     failed: int
-    status: str
+    status: AnalysisJobStatus
     started_at: datetime
     finished_at: datetime | None = None
 
@@ -233,7 +337,7 @@ class AnalysisJobHat(BaseModel):
     display_id: str | None = None
     label: str | None = None
     photo_path: str | None = None
-    analysis_status: str | None = None
+    analysis_status: AnalysisStatus | None = None
     #: The failure text, verbatim and untruncated. The failures CARD groups on a
     #: cleaned key so one problem reads as one; here the point is the opposite —
     #: this is the log for a single hat, so the whole string is what you came for.
@@ -338,7 +442,9 @@ class CatalogStatus(BaseModel):
     entries: int
     models: int
     colorways: int
-    last_harvest: str | None
+    #: A timestamp, published as one — it was a `str`, so the OpenAPI document
+    #: could not say what shape of string to expect.
+    last_harvest: datetime | None
     #: The harvest returns 202 and runs in the background, so without this the
     #: card cannot tell a running sweep from a button that did nothing.
     progress: SweepProgressRead = SweepProgressRead()
@@ -435,6 +541,12 @@ class AnalysisFailureGroup(BaseModel):
     #: re-analyze, which is its own failure ("Photo missing before analysis
     #: could run.") and is worth showing precisely because it cannot be retried.
     retryable_count: int = 0
+    #: Why the rest of the group cannot be retried, for the card to SAY rather
+    #: than show a dead button: `no_photo` (nothing on disk to analyze — only
+    #: a new photo helps) or `no_api_key` (it failed for want of a Claude key,
+    #: and there still is none — the card's one "Add a key" nudge). The service
+    #: always computed it; without the field pydantic dropped it on the way out.
+    unretryable_reason: Literal["no_photo", "no_api_key"] | None = None
     #: A few hat ids, so you can open one and see it for yourself.
     sample_hat_ids: list[int] = []
     #: Most recent time a hat hit this.
@@ -618,8 +730,8 @@ class TaskHealthRead(BaseModel):
     """`services/task_health.TaskHealth.snapshot()` — the prune's health record."""
 
     name: str
-    last_attempt_at: str | None
-    last_success_at: str | None
+    last_attempt_at: datetime | None
+    last_success_at: datetime | None
     last_error: str | None
     consecutive_failures: int
     last_result: int | None
@@ -634,16 +746,6 @@ class EbayTestResult(BaseModel):
     ok: bool
     stage: str
     detail: str
-
-
-class EbayComps(BaseModel):
-    """The price block `find_comps` writes onto a hat, echoed to the caller."""
-
-    ebay_avg_price: float | None
-    ebay_median_price: float | None
-    ebay_listing_count: int | None
-    ebay_search_url: str | None
-    ebay_checked_at: datetime | None
 
 
 class MatchProposal(BaseModel):

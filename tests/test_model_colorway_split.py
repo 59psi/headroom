@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import pytest
 
-from headroom.services.hat_analysis_pipeline import _split_model_and_colorway
+# The analyzer's repair and the backfill both call `naming.split_model_colorway`
+# directly; the pipeline's own wrapper around it added nothing and is gone.
+from headroom.services.naming import split_model_colorway
 
 pytestmark = pytest.mark.anyio
 
@@ -46,7 +48,7 @@ pytestmark = pytest.mark.anyio
     ],
 )
 async def test_a_leaked_colorway_is_split_off_the_model(stored, model, colorway):
-    assert _split_model_and_colorway(stored) == (model, colorway)
+    assert split_model_colorway(stored) == (model, colorway)
 
 
 async def test_the_hyphen_in_a_game_is_not_a_separator():
@@ -57,8 +59,8 @@ async def test_the_hyphen_in_a_game_is_not_a_separator():
     product and would break every A-Game hat — trading 35 broken names for a
     larger number of newly broken ones. Only a SPACED separator counts.
     """
-    assert _split_model_and_colorway("A-Game Hydro") == ("A-Game Hydro", None)
-    assert _split_model_and_colorway("A-Game HYDROLite") == ("A-Game HYDROLite", None)
+    assert split_model_colorway("A-Game Hydro") == ("A-Game Hydro", None)
+    assert split_model_colorway("A-Game HYDROLite") == ("A-Game HYDROLite", None)
 
 
 async def test_the_backfill_repairs_stored_names_without_an_api_call(client, db_session):

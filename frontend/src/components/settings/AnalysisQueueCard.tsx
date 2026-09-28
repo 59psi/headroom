@@ -5,14 +5,17 @@ import {
   getAnalysisFailures, getAnalysisJob, getAnalysisQueue, reanalyzeAll, retryFailedAnalysis,
 } from '../../api/settings';
 import { STAGE_SHORT } from '../hats/AnalysisStatus';
-import { timeAgo } from '../../lib/format';
+import { noun, plural, timeAgo } from '../../lib/format';
+import { analysisViewKeys, hatViewKeys, invalidateAll } from '../../lib/invalidate';
+import { hatName } from '../../lib/placement';
+import { qk } from '../../lib/queryKeys';
 import { ErrorNote } from '../common/ErrorNote';
 import { Panel } from '../ui/Panel';
 import { StatusPill, type PillTone } from '../ui/StatusPill';
 import { Skeleton } from '../ui/Skeleton';
 import { useToast } from '../ui/Toast';
 import { useConfirm } from '../ui/Dialogs';
-import type { AnalysisQueueStatus } from '../../types';
+import type { AnalysisFailureGroup, AnalysisQueueStatus } from '../../types';
 
 /** The hat page's stage labels, lower-cased for mid-sentence use ("· identifying").
  *  Imported rather than restated: a second table had already drifted in casing. */
@@ -24,8 +27,29 @@ function pct(job: { done: number; total: number }): number {
   return job.total > 0 ? Math.round((job.done / job.total) * 100) : 0;
 }
 
-function plural(n: number, word = 'hat'): string {
-  return `${n} ${word}${n === 1 ? '' : 's'}`;
+/**
+ * Why some (or all) of a group cannot be retried, in words — by the reason
+ * the server gives, not a guess.
+ *
+ * Every non-retryable group used to read "no photo left to analyze". A group
+ * of keyless failures read that too, while its photos were all there: the
+ * thing standing between them and a retry was a Claude key, and the card was
+ * telling the owner to go and find photos.
+ */
+function unretryableNote(f: AnalysisFailureGroup): string {
+  const stuck = f.hat_count - f.retryable_count;
+  switch (f.unretryable_reason) {
+    case 'no_api_key':
+      return 'Add a Claude API key in the Claude API key card — then these can be retried.';
+    case 'no_photo':
+      return f.retryable_count > 0
+        ? `${stuck} of these ${noun(stuck, 'has', 'have')} no photo left to analyze and can’t be retried.`
+        : 'Nothing to retry — no photo left to analyze.';
+    default:
+      return f.retryable_count > 0
+        ? `${stuck} of these can’t be retried right now.`
+        : 'Nothing to retry right now.';
+  }
 }
 
 /**
@@ -39,7 +63,7 @@ function plural(n: number, word = 'hat'): string {
 function queueState(d: AnalysisQueueStatus): { tone: PillTone; label: string; title?: string } {
   const backlog = d.pending_count;
   if (backlog > 0 && !d.worker_alive) {
-    return { tone: 'error', label: 'Stalled', title: `${plural(backlog)} waiting, no worker running` };
+    return { tone: 'error', label: 'Stalled', title: `${plural(backlog, 'hat')} waiting, no worker running` };
   }
   if (d.current_job) return { tone: 'busy', label: 'Running', title: 'Re-analyzing all hats' };
   if (backlog > 0) return { tone: 'busy', label: `${backlog} waiting`, title: 'Worker running' };
@@ -56,7 +80,7 @@ function queueState(d: AnalysisQueueStatus): { tone: PillTone; label: string; ti
  */
 function RunLog({ jobId }: { jobId: number }) {
   const q = useQuery({
-    queryKey: ['admin', 'analysis-job', jobId],
+    queryKey: qk.admin.analysisJob(jobId),
     queryFn: () => getAnalysisJob(jobId),
   });
 
@@ -93,9 +117,7 @@ function RunLog({ jobId }: { jobId: number }) {
         <ul className="hr-plain-list">
           {d.hats.map(h => (
             <li key={h.id} className="mb-2 small">
-              <Link to={`/hats/${h.id}`}>
-                {h.display_id ?? h.label ?? `Hat #${h.id}`}
-              </Link>
+              <Link to={`/hats/${h.id}`}>{hatName(h)}</Link>
               <span className="text-secondary"> · {h.analysis_status ?? 'unknown'}</span>
               {h.analysis_error && (
                 <div className="hr-an-verbatim">{h.analysis_error}</div>
@@ -138,12 +160,12 @@ export function AnalysisQueueCard() {
   // down all 235 hats read everywhere as "add an API key", on a key that was
   // set and valid. Three days.
   const failures = useQuery({
-    queryKey: ['admin', 'analysis-failures'],
+    queryKey: qk.admin.analysisFailures(),
     queryFn: getAnalysisFailures,
   });
 
   const queue = useQuery({
-    queryKey: ['admin', 'analysis-queue'],
+    queryKey: qk.admin.analysisQueue(),
     queryFn: getAnalysisQueue,
     // Poll only while there is something to watch, so an idle Settings page
     // isn't hitting the API every few seconds forever.
@@ -156,16 +178,13 @@ export function AnalysisQueueCard() {
   });
 
   // Both runs move hats to 'pending' and CLEAR their failure text, so the
-  // failures list above is stale the moment either succeeds. It was not being
-  // invalidated at all: after "Re-analyze every hat" the card went on listing
-  // failures the run had just wiped, for the whole 30s staleTime.
+  // failures list above is stale the moment either succeeds — and so are the
+  // recent-errors card, the nav badge and every hat view that shows a status.
+  // This used to hand-roll four keys and miss the badge and the hat pages;
+  // the recent-errors card's retry of the same operation named them all. Both
+  // go through the same two helpers now.
   const afterQueueing = () => {
-    qc.invalidateQueries({ queryKey: ['admin', 'analysis-queue'] });
-    qc.invalidateQueries({ queryKey: ['admin', 'analysis-failures'] });
-    // Sibling key, not covered by the two above. A retry re-tags the hats it
-    // queues, so any run log left open is describing a set that just changed.
-    qc.invalidateQueries({ queryKey: ['admin', 'analysis-job'] });
-    qc.invalidateQueries({ queryKey: ['hats'] });
+    void invalidateAll(qc, analysisViewKeys(), hatViewKeys());
   };
 
   // Acknowledged by toast rather than a banner in the card. A banner here was
@@ -177,7 +196,7 @@ export function AnalysisQueueCard() {
     mutationFn: () => reanalyzeAll(),
     onSuccess: (r) => {
       afterQueueing();
-      toast.success(`Queued ${plural(r.queued)}.`);
+      toast.success(`Queued ${plural(r.queued, 'hat')}.`);
     },
   });
 
@@ -191,7 +210,7 @@ export function AnalysisQueueCard() {
       // Pressing twice is the normal way to get a zero: the first press
       // cleared the failures and moved the hats to pending. Reported as its
       // own outcome, because "Queued 0 hats" reads as a silent no-op.
-      if (r.queued > 0) toast.success(`Queued ${plural(r.queued)} to retry.`);
+      if (r.queued > 0) toast.success(`Queued ${plural(r.queued, 'hat')} to retry.`);
       else toast.info('Nothing left to retry — those hats are already queued.');
     },
   });
@@ -206,7 +225,14 @@ export function AnalysisQueueCard() {
             and it costs an API call each. Background removal is skipped, so
             your cutouts are not touched.
           </p>
-          <p>Prices you entered by hand are kept — nothing here can overwrite them.</p>
+          {/* Both halves are true by construction, not by care: a Manual
+              price is never repriced, and a palette the owner edited is
+              `colors_source = 'owner'`, which every analysis color write
+              (`hat_service.replace_analysis_colors`) leaves alone. */}
+          <p>
+            Prices you entered by hand and colors you edited are kept. Model
+            names and design notes are rewritten from each photo.
+          </p>
         </>
       ),
       confirmLabel: 'Yes, re-analyze',
@@ -260,7 +286,7 @@ export function AnalysisQueueCard() {
 
         {stalled && (
           <div className="alert alert-warning small mb-3">
-            {plural(backlog)} waiting, but no worker is
+            {plural(backlog, 'hat')} waiting, but no worker is
             draining the queue. They&rsquo;ll be picked up on the next restart.
           </div>
         )}
@@ -279,9 +305,7 @@ export function AnalysisQueueCard() {
                 {data.pending.map(h => (
                   <li key={h.id}>
                     <span className="hr-analysis-spinner" aria-hidden="true" />
-                    <Link to={`/hats/${h.id}`}>
-                      {h.display_id ?? h.label ?? `Hat #${h.id}`}
-                    </Link>
+                    <Link to={`/hats/${h.id}`}>{hatName(h)}</Link>
                     <span className="text-secondary small">
                       {h.stage ? (STAGE_LABELS[h.stage] ?? h.stage) : 'waiting'}
                     </span>
@@ -344,8 +368,8 @@ export function AnalysisQueueCard() {
               cut the run to a fraction, under a button reading "Re-analyze
               every hat". */}
           <p className="hr-an-rerun-text">
-            Covers every hat with a photo. Prices you entered by hand are kept —
-            nothing here can overwrite them.
+            Covers every hat with a photo. Prices you entered by hand and colors
+            you edited are kept — nothing here can overwrite them.
           </p>
           {/* Outline, not primary, on purpose: see the failures comment below.
               The expensive button is the one people reached for while it was
@@ -380,7 +404,7 @@ export function AnalysisQueueCard() {
               className={`hr-an-failure${f.is_billing ? ' is-billing' : ''}`}
             >
               <div className="hr-an-failure-count">
-                {f.hat_count} hat{f.hat_count === 1 ? '' : 's'}
+                {plural(f.hat_count, 'hat')}
                 {f.is_billing && ' · your Anthropic account, not your key'}
               </div>
               <div className="hr-an-failure-reason">{f.reason}</div>
@@ -392,7 +416,7 @@ export function AnalysisQueueCard() {
                 </div>
               )}
               <div className="hr-an-fine">
-                e.g. hat{f.sample_hat_ids.length === 1 ? '' : 's'}{' '}
+                e.g. {noun(f.sample_hat_ids.length, 'hat')}{' '}
                 {f.sample_hat_ids.map(id => `#${id}`).join(', ')}
               </div>
 
@@ -406,20 +430,14 @@ export function AnalysisQueueCard() {
                   >
                     {retry.isPending && retry.variables === f.reason
                       ? 'Queueing…'
-                      : `Retry ${f.retryable_count} hat${f.retryable_count === 1 ? '' : 's'}`}
+                      : `Retry ${plural(f.retryable_count, 'hat')}`}
                   </button>
                   {f.retryable_count < f.hat_count && (
-                    <span className="hr-an-fine">
-                      {f.hat_count - f.retryable_count} of these{' '}
-                      {f.hat_count - f.retryable_count === 1 ? 'has' : 'have'} no
-                      photo left to analyze and can&rsquo;t be retried.
-                    </span>
+                    <span className="hr-an-fine">{unretryableNote(f)}</span>
                   )}
                 </div>
               ) : (
-                <div className="hr-an-fine mt-2">
-                  Nothing to retry — no photo left to analyze.
-                </div>
+                <div className="hr-an-fine mt-2">{unretryableNote(f)}</div>
               )}
             </div>
           ))}
@@ -435,7 +453,7 @@ export function AnalysisQueueCard() {
             >
               {retry.isPending && retry.variables === undefined
                 ? 'Queueing…'
-                : `Retry all ${totalRetryable} failed hats`}
+                : `Retry all ${plural(totalRetryable, 'failed hat')}`}
             </button>
           )}
         </section>

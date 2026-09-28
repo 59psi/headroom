@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import shutil
 import tempfile
 from pathlib import Path
@@ -12,24 +11,27 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.database import get_db
-from headroom.schemas.hat import HAT_DEFAULTS
+from headroom.routes import _uploads
+from headroom.routes._api import DomainErrorRoute
+from headroom.schemas.hat import HAT_DEFAULTS, HatCondition, HatSize, HatStyle
 from headroom.schemas.import_job import ImportJobCreated, ImportJobRead
-from headroom.services import import_service
-from headroom.utils.photo import validate_image_content_type
-from headroom.utils.upload import copy_upload_truncating
+from headroom.services import hat_service, import_service
 
-router = APIRouter(prefix="/api/hats/import", tags=["bulk-import"])
-
-
+router = APIRouter(
+    prefix="/api/hats/import", tags=["bulk-import"], route_class=DomainErrorRoute
+)
 
 
 @router.post("", status_code=202, response_model=ImportJobCreated)
 async def create_import_job(
     photos: list[UploadFile],
     case_id: Annotated[int | None, Form()] = None,
-    condition: Annotated[str, Form()] = HAT_DEFAULTS["condition"],
-    size: Annotated[str, Form()] = HAT_DEFAULTS["size"],
-    style: Annotated[str, Form()] = HAT_DEFAULTS["style"],
+    # Typed with the enums `HatCreate` validates against. As bare `str` a typo
+    # was accepted with a 202, the whole batch was spooled, and then every
+    # item failed in the worker with "3 validation errors for HatCreate".
+    condition: Annotated[HatCondition, Form()] = HatCondition(HAT_DEFAULTS["condition"]),
+    size: Annotated[HatSize, Form()] = HatSize(HAT_DEFAULTS["size"]),
+    style: Annotated[HatStyle, Form()] = HatStyle(HAT_DEFAULTS["style"]),
     db: AsyncSession = Depends(get_db),
 ):
     """Multipart upload of N photo files. Returns the job ID immediately."""
@@ -42,6 +44,10 @@ async def create_import_job(
             status_code=413,
             detail=f"Max {import_service.MAX_FILES_PER_JOB} files per job",
         )
+    # The case too, for the same reason: a missing or full case is known now,
+    # and finding it out in the worker costs the whole upload first.
+    if case_id is not None:
+        await hat_service.ensure_case_accepts(db, case_id, style)
 
     # Each file goes to disk as it arrives, and only its path is kept. This
     # used to accumulate every blob in a list and check the total AFTER the
@@ -49,36 +55,13 @@ async def create_import_job(
     # is well over the container's memory limit, on the box whose OOM kill this
     # release exists to prevent. Peak is now one file (20MB), not the batch.
     staging = Path(tempfile.mkdtemp(prefix="upload-", dir=import_service.spool_dir()))
-    files: list[tuple[str, Path]] = []
-    total = 0
     try:
-        for index, p in enumerate(photos):
-            if not validate_image_content_type(p.content_type):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Invalid content type for {p.filename}: {p.content_type}",
-                )
-            dest = staging / f"{index:04d}"
-            with dest.open("wb") as fh:
-                written = await asyncio.to_thread(
-                    copy_upload_truncating, p, fh, import_service.MAX_BYTES_PER_FILE
-                )
-            total += written
-            if total > import_service.MAX_TOTAL_UPLOAD_BYTES:
-                raise HTTPException(
-                    status_code=413,
-                    detail=(
-                        f"Upload batch exceeds {import_service.MAX_TOTAL_UPLOAD_BYTES // 1024 // 1024} MB "
-                        "in total — split it into smaller batches."
-                    ),
-                )
-            files.append((p.filename or "photo.jpg", dest))
-
+        files = await _uploads.spool_batch(photos, staging, strict=True, default_name="photo.jpg")
         defaults = {
             "case_id": case_id,
-            "condition": condition,
-            "size": size,
-            "style": style,
+            "condition": condition.value,
+            "size": size.value,
+            "style": style.value,
         }
         job = await import_service.create_job(db, files=files, defaults=defaults)
         return ImportJobCreated(id=job.id, total=job.total, status=job.status)

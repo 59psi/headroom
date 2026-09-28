@@ -105,11 +105,13 @@ updates:
       images:
         patterns: ["*"]
 
-  # --- The workflows themselves -------------------------------------------- #
   # --- Images the compose overlays pull ------------------------------------ #
-  # `caddy:2-alpine`, `willfarrell/autoheal:1.2.0` (a 2021 build holding a
-  # root-equivalent socket) and the rclone image are pulled by the compose
-  # files, which the docker ecosystem above does not read.
+  # `caddy:2-alpine` and the autoheal sidecar are pulled by the compose files,
+  # which the docker ecosystem above does not read. Autoheal publishes no
+  # semver tag newer than a 2021 build, so it is pinned as `latest@sha256:…`:
+  # this ecosystem bumps the DIGEST when `latest` moves, which a bare version
+  # tag that never changes could not give it. (rclone is a host binary
+  # bind-mounted by its overlay, not an image; nothing here tracks it.)
   - package-ecosystem: docker-compose
     directory: /
     schedule:
@@ -120,6 +122,9 @@ updates:
       minor-and-patch:
         update-types: [minor, patch]
 
+  # --- The workflows themselves -------------------------------------------- #
+  # Every action is pinned to a commit SHA with its release in a comment;
+  # this moves both together.
   - package-ecosystem: github-actions
     directory: /
     schedule:

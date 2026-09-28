@@ -5,12 +5,16 @@
  * one was actually added.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Route, Routes, useNavigate } from 'react-router';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router';
 import { renderWithProviders } from '../test/utils';
 import { hatFixture } from '../test/fixtures';
 import { HatDetailPage } from './HatDetailPage';
+import { ToastProvider } from '../components/ui/Toast';
+import { DialogProvider } from '../components/ui/Dialogs';
+import { ApiError } from '../api/client';
 import * as hatsApi from '../api/hats';
 import type { ColorTag, HatRead } from '../types';
 
@@ -73,6 +77,122 @@ describe('HatDetailPage — delete', () => {
     await waitFor(() => expect(mocked.deleteHat).toHaveBeenCalledWith(5));
     expect(await screen.findByText('hats list')).toBeInTheDocument();
     expect(screen.getByText('Hat deleted')).toBeInTheDocument();
+  });
+
+  it('drops the deleted hat’s row instead of refetching a hat that is gone', async () => {
+    // Invalidating `['hat', 5]` while the page was still mounted asked the
+    // server for the hat it had just deleted — a 404 after every delete.
+    const user = userEvent.setup();
+    mocked.deleteHat.mockResolvedValue(undefined);
+    const { client } = renderPage(hatFixture());
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+
+    await user.click(await screen.findByRole('button', { name: 'Delete' }));
+    await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Delete hat' }));
+    expect(await screen.findByText('hats list')).toBeInTheDocument();
+
+    await new Promise(r => setTimeout(r, 50));
+    expect(mocked.getHat).toHaveBeenCalledTimes(1);
+    expect(client.getQueryData(['hat', 5])).toBeUndefined();
+    // …while every list the hat was in refreshes — search results and
+    // duplicate groups included, which kept a deleted hat on Back.
+    const keys = invalidate.mock.calls.map(c => JSON.stringify((c[0] as { queryKey: unknown }).queryKey));
+    expect(keys).toEqual(expect.arrayContaining(['["hats"]', '["search"]', '["duplicates"]', '["case"]']));
+  });
+
+  it('does not bring a deleted hat back from the cache on Back', async () => {
+    // With the app's own cache settings — a 30s staleTime and the default
+    // gcTime — a row left behind would be served FRESH to a Back press
+    // within half a minute: the deleted hat, as if it still existed.
+    const user = userEvent.setup();
+    mocked.deleteHat.mockResolvedValue(undefined);
+    mocked.getHat.mockResolvedValue(hatFixture());
+    const client = new QueryClient({ defaultOptions: { queries: { staleTime: 30_000, retry: false } } });
+    function BackToHat5() {
+      const navigate = useNavigate();
+      return <button type="button" onClick={() => navigate('/hats/5')}>back to hat 5</button>;
+    }
+    render(
+      <QueryClientProvider client={client}>
+        <ToastProvider>
+          <DialogProvider>
+            <MemoryRouter initialEntries={['/hats/5']}>
+              <BackToHat5 />
+              <Routes>
+                <Route path="/hats/:hatId" element={<HatDetailPage />} />
+                <Route path="/hats" element={<div>hats list</div>} />
+              </Routes>
+            </MemoryRouter>
+          </DialogProvider>
+        </ToastProvider>
+      </QueryClientProvider>,
+    );
+
+    await user.click(await screen.findByRole('button', { name: 'Delete' }));
+    await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Delete hat' }));
+    expect(await screen.findByText('hats list')).toBeInTheDocument();
+    expect(client.getQueryData(['hat', 5])).toBeUndefined();
+
+    mocked.getHat.mockRejectedValue(new ApiError('Hat not found', 404));
+    await user.click(screen.getByRole('button', { name: 'back to hat 5' }));
+    expect(await screen.findByText('Hat not found')).toBeInTheDocument();
+    client.clear();
+  });
+});
+
+describe('HatDetailPage — a write lands on the hat it was started for', () => {
+  // React Router keeps this page mounted from one hat to the next, and
+  // TanStack hands a running mutation the LATEST render's options — so a
+  // write that closed over the route's id settled against whichever hat was
+  // on screen when its answer arrived.
+  function GoToHat13() {
+    const navigate = useNavigate();
+    return <button type="button" onClick={() => navigate('/hats/13')}>go to hat 13</button>;
+  }
+
+  function renderTwoHats() {
+    mocked.getHat.mockImplementation(async id =>
+      hatFixture({ id, display_id: `A-001-${id}`, original_path: 'orig.jpg', photo_path: 'p.png' }));
+    return renderWithProviders(
+      <>
+        <GoToHat13 />
+        <Routes><Route path="/hats/:hatId" element={<HatDetailPage />} /></Routes>
+      </>,
+      { route: '/hats/12' },
+    );
+  }
+
+  it('puts a re-cut’s answer into the cache of the hat it re-cut', async () => {
+    const user = userEvent.setup();
+    let answer: (h: HatRead) => void = () => {};
+    mocked.recutHat.mockImplementation(() => new Promise(r => { answer = r; }));
+    const { client } = renderTwoHats();
+
+    await user.click(await screen.findByRole('button', { name: /Redo cutout/ }));
+    await user.click(screen.getByRole('button', { name: 'go to hat 13' }));
+    expect(await screen.findByRole('heading', { level: 1, name: 'A-001-13' })).toBeInTheDocument();
+
+    const recut = hatFixture({ id: 12, display_id: 'A-001-12', analysis_stage: 'cutout', photo_path: 'fresh.png' });
+    answer(recut);
+
+    await waitFor(() => expect(client.getQueryData<HatRead>(['hat', 12])?.photo_path).toBe('fresh.png'));
+    expect(client.getQueryData<HatRead>(['hat', 13])?.display_id).toBe('A-001-13');
+    expect(mocked.recutHat).toHaveBeenCalledWith(12);
+  });
+
+  it('reports a reanalysis as started when ITS hat is pending, from another hat’s page', async () => {
+    const user = userEvent.setup();
+    let answer: (h: HatRead) => void = () => {};
+    mocked.reanalyzeHat.mockImplementation(() => new Promise(r => { answer = r; }));
+    renderTwoHats();
+
+    await user.click(await screen.findByRole('button', { name: /Reanalyze/ }));
+    await user.click(screen.getByRole('button', { name: 'go to hat 13' }));
+    expect(await screen.findByRole('heading', { level: 1, name: 'A-001-13' })).toBeInTheDocument();
+
+    answer(hatFixture({ id: 12, analysis_status: 'pending' }));
+    expect(await screen.findByText('Reanalysis started')).toBeInTheDocument();
+    expect(mocked.reanalyzeHat).toHaveBeenCalledWith(12);
   });
 });
 
@@ -211,6 +331,17 @@ describe('HatDetailPage — wearing it today', () => {
     await user.click(screen.getByRole('button', { name: 'Undo' }));
     await new Promise(r => setTimeout(r, 50));
     expect(mocked.undoLatestWear).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the wear the moment it is tapped, before the server answers', async () => {
+    // One wear model for the hat page and the tag page (`useWearLog`): the
+    // answer is predictable, so the count moves on the tap.
+    const user = userEvent.setup();
+    mocked.logWear.mockReturnValue(new Promise(() => {}));
+    renderPage(hatFixture({ wear_count: 4 }));
+
+    await user.click(await screen.findByRole('button', { name: /Wearing this today/ }));
+    expect(screen.getByText('5×')).toBeInTheDocument();
   });
 
   it('says a second tap the same day changed nothing — and offers no Undo', async () => {

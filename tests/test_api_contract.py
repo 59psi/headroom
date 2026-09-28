@@ -1,13 +1,14 @@
 """Every JSON response this API returns has a declared shape.
 
-CLAUDE.md states one convention outright — "no schema is declared inline in a
-route" — and the schema modules' own docstrings describe the failure it
-prevents: a hand-built dict is a response nobody can type a client against,
-and `frontend/src/types/index.ts` mirrors "backend Pydantic schemas", so a
-dict has nothing to mirror. Eleven endpoints returned bare dicts at 2.77.3,
-including the one that writes purchase prices onto hats. This enumerates the
-OpenAPI document the way `test_security` does for the auth gate, so the next
-`return {...}` fails here instead of surviving until a review reads the route.
+This test IS the rule — no schema is declared inline in a route, and no route
+returns a hand-built dict — and the schema modules' own docstrings describe the
+failure it prevents: a hand-built dict is a response nobody can type a client
+against, and `frontend/src/types/index.ts` mirrors the backend's Pydantic
+schemas, so a dict has nothing to mirror. Eleven endpoints returned bare dicts
+at 2.77.3, including the one that writes purchase prices onto hats. This
+enumerates the OpenAPI document the way `test_security` does for the auth gate,
+so the next `return {...}` fails here instead of surviving until a review reads
+the route.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ import pytest
 from headroom.app import create_app
 
 pytestmark = pytest.mark.anyio
+
 
 def _json_schema(response: dict) -> dict | None:
     content = response.get("content") or {}

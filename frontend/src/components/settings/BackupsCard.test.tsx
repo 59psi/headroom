@@ -8,7 +8,7 @@ import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../../test/utils';
 import { BackupsCard } from './BackupsCard';
 import * as api from '../../api/settings';
-import type { BackupHealth, BackupInfo } from '../../types';
+import type { BackupHealthRead, BackupInfo } from '../../types';
 
 vi.mock('../../api/settings', async (importOriginal) => {
   const { stubAll } = await import('../../test/stubModule');
@@ -25,7 +25,7 @@ vi.mock('../../api/settings', async (importOriginal) => {
 const mocked = vi.mocked(api);
 
 /** The real payload shape — pydantic serializes every field, defaults too. */
-function health(over: Partial<BackupHealth> = {}): BackupHealth {
+function health(over: Partial<BackupHealthRead> = {}): BackupHealthRead {
   return {
     enabled: true, running: true,
     last_attempt_at: null, last_success_at: null, last_success_derived: false,
@@ -64,7 +64,7 @@ describe('BackupsCard', () => {
     expect(db).not.toHaveClass('btn-primary');
   });
 
-  it.each<[string, Partial<BackupHealth>]>([
+  it.each<[string, Partial<BackupHealthRead>]>([
     ['Healthy', {}],
     ['Stopped', { running: false }],
     ['Failing', { consecutive_failures: 2 }],
@@ -169,5 +169,34 @@ describe('BackupsCard', () => {
     await user.click(db);
 
     expect(await screen.findByText(/Preparing the download/)).toBeInTheDocument();
+  });
+});
+
+describe('BackupsCard — what the help promises', () => {
+  it('restores with the stale WAL removed first, not by copying data/ over /data', async () => {
+    // Following the old one-liner after an unclean stop folded every change
+    // made since the backup back into the "restored" database: SQLite replays
+    // whatever -wal sits beside the file. The step has to be there, and it
+    // has to come BEFORE the extraction.
+    renderWithProviders(<BackupsCard />);
+    await screen.findByText('Backups');
+
+    const steps = document.querySelectorAll('.hr-upkeep-restore > li');
+    const text = Array.from(steps, li => li.textContent ?? '');
+    const walStep = text.findIndex(t => /rm -f \/data\/headroom\.db-wal \/data\/headroom\.db-shm/.test(t));
+    const extractStep = text.findIndex(t => /tar xzf/.test(t));
+    expect(walStep).toBeGreaterThanOrEqual(0);
+    expect(extractStep).toBeGreaterThan(walStep);
+    expect(text[extractStep]).toMatch(/--exclude='data\/caddy-pki'/);
+    expect(screen.queryByText(/dropping the extracted/)).not.toBeInTheDocument();
+  });
+
+  it('says the full archive carries the CA keys and the database-only one does not', async () => {
+    renderWithProviders(<BackupsCard />);
+    await screen.findByText('Backups');
+
+    const help = document.querySelector('.hr-panel-help-body')?.textContent ?? '';
+    expect(help).toMatch(/private keys included/);
+    expect(help).toMatch(/but no photos, and no\s+certificate authority/);
   });
 });

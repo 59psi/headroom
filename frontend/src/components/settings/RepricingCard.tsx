@@ -3,7 +3,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getRepricing, runRepricing, runRepricingAll } from '../../api/settings';
 import type { RepricingStatus } from '../../types';
 import { ErrorNote } from '../common/ErrorNote';
+import { plural } from '../../lib/format';
 import { invalidateHatViews } from '../../lib/invalidate';
+import { qk } from '../../lib/queryKeys';
 import { SweepProgressBar } from '../common/SweepProgressBar';
 import { Panel } from '../ui/Panel';
 import { StatusPill } from '../ui/StatusPill';
@@ -17,11 +19,20 @@ import { useToast } from '../ui/Toast';
  * answer), and a FAILING schedule outranks "Scheduled" — `consecutive_failures`
  * is the scheduler's own alarm, which a manual run deliberately does not
  * clear, so a dead background loop cannot hide behind one good button press.
+ * A sweep that finished but could not reach the marketplace for some hats is
+ * a partial outage, not a quiet market, and says so.
  */
 function statusPill(s: RepricingStatus) {
   if (s.progress?.running) return <StatusPill tone="busy">Sweeping</StatusPill>;
   if (s.consecutive_failures > 0) {
     return <StatusPill tone="error" title={s.last_error ?? undefined}>Failing</StatusPill>;
+  }
+  if (s.last_unreachable > 0) {
+    return (
+      <StatusPill tone="warn" title={`${plural(s.last_unreachable, 'hat')} couldn’t be priced last sweep`}>
+        Partial
+      </StatusPill>
+    );
   }
   if (s.enabled) return <StatusPill tone="ok">Scheduled</StatusPill>;
   return <StatusPill tone="off">Off</StatusPill>;
@@ -43,7 +54,7 @@ export function RepricingCard() {
   const toast = useToast();
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const status = useQuery({
-    queryKey: ['admin', 'repricing'],
+    queryKey: qk.admin.repricing(),
     queryFn: getRepricing,
     // Poll only while a sweep is actually in flight, so an idle Settings page
     // isn't hitting the API forever. The scheduled sweep runs at boot and for
@@ -73,7 +84,7 @@ export function RepricingCard() {
         setStartedAt(Date.now());
         toast.success('Sweep started');
       }
-      qc.invalidateQueries({ queryKey: ['admin', 'repricing'] });
+      qc.invalidateQueries({ queryKey: qk.admin.repricing() });
     },
   });
 
@@ -83,22 +94,20 @@ export function RepricingCard() {
       // Opens the grace window above. A single invalidate here is not enough
       // on its own: it races the POST and resolves `running: false`.
       setStartedAt(Date.now());
-      qc.invalidateQueries({ queryKey: ['admin', 'repricing'] });
+      qc.invalidateQueries({ queryKey: qk.admin.repricing() });
     },
     onSuccess: () => {
-      // The acknowledgement only. The numbers ("12 of 50 changed, 30 still to
+      // The acknowledgment only. The numbers ("12 of 50 changed, 30 still to
       // sweep") stay in the footer, because "press again" is an instruction
       // that must outlive a toast.
       toast.success('Re-price finished');
-      qc.invalidateQueries({ queryKey: ['admin', 'repricing'] });
-      // A SIBLING key, not covered by the one above: a sweep rewrites the very
-      // (price, source) pairs the shared-price report groups on, so leaving it
-      // alone left that card asserting a grouping this run just replaced.
-      qc.invalidateQueries({ queryKey: ['admin', 'shared-prices'] });
-      // Prices changed underneath every hat view. Hand-rolling ['hats']/['hat']
-      // here missed the case, room and valuation keys that carry hat data —
-      // CLAUDE.md names this helper as the single place that knows them all.
-      invalidateHatViews(qc);
+      qc.invalidateQueries({ queryKey: qk.admin.repricing() });
+      // Prices changed underneath every hat view — and under the shared-price
+      // report, which groups on the very (price, source) pairs a sweep
+      // rewrites. Hand-rolling ['hats']/['hat'] here missed the case, room
+      // and valuation keys that carry hat data; the helper is the single
+      // place that knows them all, the shared-price report included.
+      void invalidateHatViews(qc);
     },
   });
 
@@ -115,10 +124,7 @@ export function RepricingCard() {
   // done and is also reached when the SCHEDULED sweep finishes under us.
   const wasSweeping = useRef(false);
   useEffect(() => {
-    if (wasSweeping.current && !sweeping) {
-      qc.invalidateQueries({ queryKey: ['admin', 'shared-prices'] });
-      invalidateHatViews(qc);
-    }
+    if (wasSweeping.current && !sweeping) void invalidateHatViews(qc);
     wasSweeping.current = sweeping;
   }, [sweeping, qc]);
 
@@ -172,7 +178,7 @@ export function RepricingCard() {
           )}
           {run.isSuccess && (
             <p className="hr-sd-foot-note">
-              {run.data.repriced} of {run.data.considered} hats changed price.
+              {run.data.repriced} of {plural(run.data.considered, 'hat')} changed price.
               {/* `remaining` is what is still DUE after this run (2.76.0), not
                   "eligible at all" — so the test is "any left", never a comparison
                   with `considered`. Under the old `remaining > considered` the last
@@ -219,12 +225,19 @@ export function RepricingCard() {
                   Last swept {new Date(s.last_success_at).toLocaleString()}
                 </dd>
               )}
+              {/* Without this a sweep that could reach no marketplace read
+                  "0 of 235 changed" — a flat market, when it was a dead one. */}
+              {s.last_unreachable > 0 && (
+                <dd className="hr-sd-metric-note is-warn">
+                  {plural(s.last_unreachable, 'hat')} couldn&rsquo;t reach the marketplace
+                </dd>
+              )}
             </div>
           </dl>
           {s.last_error && (
             <p className="hr-sd-error-line">
               {s.consecutive_failures > 0 && (
-                <>Scheduled sweep failed {s.consecutive_failures} time{s.consecutive_failures === 1 ? '' : 's'} in a row:{' '}</>
+                <>Scheduled sweep failed {plural(s.consecutive_failures, 'time')} in a row:{' '}</>
               )}
               <span className="font-mono">{s.last_error}</span>
             </p>

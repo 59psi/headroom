@@ -65,6 +65,40 @@ describe('ClaudeModelCard — picking a model', () => {
     expect(settingsApi.testApiKey).toHaveBeenCalledTimes(1);
   });
 
+  it('says "Connected" only after Claude answers with the model, and "Failing" when it refuses', async () => {
+    const user = userEvent.setup();
+    vi.mocked(settingsApi.getModel).mockResolvedValueOnce(SONNET).mockResolvedValue(OPUS);
+    vi.mocked(settingsApi.setModel).mockResolvedValue(OPUS);
+
+    const { select } = await renderCard();
+    // Before any check the pill can only say where the choice came from.
+    expect(screen.getByText('Default', { selector: '.hr-pill' })).toBeInTheDocument();
+    expect(screen.queryByText('Connected')).not.toBeInTheDocument();
+
+    await user.selectOptions(select, 'claude-opus-5');
+    expect(await screen.findByText('Connected', { selector: '.hr-pill' })).toBeInTheDocument();
+  });
+
+  it('reads "Failing" when the check against the new model is refused', async () => {
+    const user = userEvent.setup();
+    vi.mocked(settingsApi.getModel).mockResolvedValueOnce(SONNET).mockResolvedValue(OPUS);
+    vi.mocked(settingsApi.setModel).mockResolvedValue(OPUS);
+    vi.mocked(settingsApi.testApiKey).mockResolvedValue({ ok: false, detail: 'model not found' });
+
+    const { select } = await renderCard();
+    await user.selectOptions(select, 'claude-opus-5');
+
+    expect(await screen.findByText('Failing', { selector: '.hr-pill' })).toBeInTheDocument();
+  });
+
+  it('does not call Haiku the cheapest — its cache minimum is longer than the prompt', async () => {
+    vi.mocked(settingsApi.getModel).mockResolvedValue(SONNET);
+    await renderCard();
+    const haiku = screen.getByRole('option', { name: /Haiku 4\.5/ });
+    expect(haiku).not.toHaveTextContent(/cheapest/);
+    expect(haiku).toHaveTextContent(/too short to cache/);
+  });
+
   it('does not run the check with no key to run it with', async () => {
     const user = userEvent.setup();
     vi.mocked(settingsApi.getApiKeyStatus).mockResolvedValue({ configured: false, source: null, masked: null });

@@ -5,6 +5,7 @@ import {
 } from '../../api/settings';
 import type { BackupUploadProvider, BackupUploadStatus } from '../../types';
 import { timeAgo } from '../../lib/format';
+import { qk } from '../../lib/queryKeys';
 import { ErrorNote } from '../common/ErrorNote';
 import { Panel } from '../ui/Panel';
 import { StatusPill } from '../ui/StatusPill';
@@ -12,7 +13,7 @@ import { Skeleton } from '../ui/Skeleton';
 import { useToast } from '../ui/Toast';
 import { useConfirm } from '../ui/Dialogs';
 
-const STATUS_KEY = ['admin', 'backup-upload'] as const;
+const STATUS_KEY = qk.admin.backupUpload();
 
 /**
  * The off-box copy's state in one word.
@@ -141,7 +142,7 @@ export function OffsiteBackupCard() {
   const applyStatus = (next: BackupUploadStatus) => {
     qc.setQueryData(STATUS_KEY, next);
     qc.invalidateQueries({ queryKey: STATUS_KEY });
-    qc.invalidateQueries({ queryKey: ['admin', 'activity'] });
+    qc.invalidateQueries({ queryKey: qk.admin.activity() });
   };
 
   const save = useMutation({

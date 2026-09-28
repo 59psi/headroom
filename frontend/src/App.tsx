@@ -1,3 +1,4 @@
+import { lazy } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AppShell } from './components/layout/AppShell';
@@ -13,11 +14,6 @@ import { EditHatPage } from './pages/EditHatPage';
 import { RoomsPage } from './pages/RoomsPage';
 import { RoomDetailPage } from './pages/RoomDetailPage';
 import { SearchPage } from './pages/SearchPage';
-import { DuplicatesPage } from './pages/DuplicatesPage';
-import { SettingsPage } from './pages/SettingsPage';
-import { ValuationPage } from './pages/ValuationPage';
-import { StatsPage } from './pages/StatsPage';
-import { BulkImportPage } from './pages/BulkImportPage';
 import { LoginPage } from './pages/LoginPage';
 import { SharePage } from './pages/SharePage';
 import { GuestPage } from './pages/GuestPage';
@@ -25,6 +21,23 @@ import { GuestHatPage } from './pages/GuestHatPage';
 import { TagLandingPage } from './pages/TagLandingPage';
 import { ToastProvider } from './components/ui/Toast';
 import { DialogProvider } from './components/ui/Dialogs';
+
+/**
+ * The heavy, occasional pages, loaded when first opened rather than with the
+ * app. The bundle was one 652 KB script a phone fetched whole before its first
+ * paint; Settings (two dozen cards), the charts behind Stats and Valuation,
+ * bulk import and the duplicate report are most of the weight and none of the
+ * daily path — a tag scan, a wear, a search. The daily pages stay in the main
+ * chunk, so the common navigation never waits on a fetch.
+ *
+ * `AppShell` holds the `Suspense` boundary, inside `<main>`: while a page's
+ * code arrives the nav stays up and only the page area waits.
+ */
+const SettingsPage = lazy(() => import('./pages/SettingsPage').then(m => ({ default: m.SettingsPage })));
+const StatsPage = lazy(() => import('./pages/StatsPage').then(m => ({ default: m.StatsPage })));
+const ValuationPage = lazy(() => import('./pages/ValuationPage').then(m => ({ default: m.ValuationPage })));
+const BulkImportPage = lazy(() => import('./pages/BulkImportPage').then(m => ({ default: m.BulkImportPage })));
+const DuplicatesPage = lazy(() => import('./pages/DuplicatesPage').then(m => ({ default: m.DuplicatesPage })));
 
 const queryClient = new QueryClient({
   defaultOptions: {

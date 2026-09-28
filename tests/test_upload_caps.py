@@ -161,21 +161,35 @@ async def test_every_upload_route_uses_the_shared_helpers():
     """
     import inspect
 
-    from headroom.routes import hats, import_jobs, settings, share
+    from headroom.routes import _uploads, hats, import_jobs, settings, share
 
-    for module in (import_jobs, share):
-        assert module.copy_upload_truncating is up.copy_upload_truncating, (
-            f"{module.__name__} is not using the shared lenient helper"
+    # The routes spool through `routes/_uploads` — one module owning the temp
+    # files and the batch loop — and it calls BOTH helpers here, through the
+    # module (the seam), never a copy of its own.
+    spool_src = inspect.getsource(_uploads)
+    assert "upload_utils.copy_upload_capped" in spool_src
+    assert "upload_utils.copy_upload_truncating" in spool_src
+    assert _uploads.upload_utils is up
+    for module, helper in (
+        (hats, "spooled_upload"),
+        (settings, "spooled_upload"),
+        (import_jobs, "spool_batch"),
+        (share, "spool_batch"),
+    ):
+        assert module._uploads is _uploads
+        assert f"_uploads.{helper}(" in inspect.getsource(module), (
+            f"{module.__name__} is not spooling through routes/_uploads"
         )
-    for module in (hats, settings):
-        assert module.copy_upload_capped is up.copy_upload_capped
 
     # And no route may grow a replacement: a `while True` reading fixed-size
     # chunks off an upload is this loop, whatever it gets called.
-    for module in (hats, settings, import_jobs, share):
+    for module in (hats, settings, import_jobs, share, _uploads):
         src = inspect.getsource(module)
         assert ".read(1024 * 1024)" not in src, (
             f"{module.__name__} has grown a private chunk loop again"
+        )
+        assert "NamedTemporaryFile" not in src or module is _uploads, (
+            f"{module.__name__} manages its own upload temp file again"
         )
 
 

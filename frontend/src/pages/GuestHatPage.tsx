@@ -1,10 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { getGuestHat } from '../api/guest';
+import { isNotFound } from '../api/client';
 import { CapGlyph, PublicNotice, PublicPage } from '../components/share/PublicPage';
+import { PublicLoadError } from '../components/share/PublicLoadError';
 import { ImageLightbox } from '../components/common/ImageLightbox';
 import { Panel } from '../components/ui/Panel';
-import { readableValue } from '../lib/labels';
+import { qk } from '../lib/queryKeys';
 
 /**
  * One hat, as a guest sees it.
@@ -18,15 +20,26 @@ export function GuestHatPage() {
   const { hatId } = useParams();
   const id = Number(hatId);
 
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['guest-hat', id],
+  const hatQ = useQuery({
+    queryKey: qk.guest.hat(id),
     queryFn: () => getGuestHat(id),
     enabled: Number.isFinite(id),
     retry: false,
   });
+  const { data, isLoading, error } = hatQ;
 
   const back = <Link to="/guest" className="btn btn-outline-secondary btn-sm">← Collection</Link>;
 
+  // "Isn't available" is a 404's answer (the hat is gone, or guest browsing
+  // is off). A server failure says so, with a retry, and the way back.
+  if (error && !isNotFound(error)) {
+    return (
+      <PublicPage narrow>
+        <div className="hr-public-back">{back}</div>
+        <PublicLoadError query={hatQ} />
+      </PublicPage>
+    );
+  }
   if (!Number.isFinite(id) || error) {
     // Spelled out here, not the "← Collection" chip: on this page the link is
     // the only thing to do, and it was always worded as where it goes.
@@ -56,8 +69,9 @@ export function GuestHatPage() {
     );
   }
 
-  const title = [data.brand, data.model_name].filter(Boolean).join(' ')
-    || readableValue(data.style);
+  // `style_label` is the server's word for the style ("A-Game") — the same
+  // one every owner screen shows; a guest cannot fetch `/api/meta` for it.
+  const title = [data.brand, data.model_name].filter(Boolean).join(' ') || data.style_label;
 
   return (
     <PublicPage narrow>
@@ -76,7 +90,7 @@ export function GuestHatPage() {
       <div className="hr-public-head">
         <h1>{title}</h1>
         <p className="hr-public-sub">
-          {readableValue(data.style)}
+          {data.style_label}
           {data.display_id && <> · <span className="font-mono">{data.display_id}</span></>}
         </p>
       </div>
@@ -102,7 +116,7 @@ export function GuestHatPage() {
           <ul className="hr-color-chips">
             {data.colors.map((c, i) => (
               <li key={i} className="hr-color-chip">
-                <span className="hr-color-dot" style={{ background: c.hex || '#444' }} aria-hidden="true" />
+                <span className="hr-color-dot" style={{ background: c.hex }} aria-hidden="true" />
                 {c.name}
               </li>
             ))}

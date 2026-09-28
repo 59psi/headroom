@@ -17,8 +17,7 @@ from __future__ import annotations
 import pytest
 
 from headroom.schemas.hat import BEANIE_STYLES, HatStyle, is_beanie_style
-from headroom.services import retail_pricing
-from headroom.services import capacity
+from headroom.services import capacity, retail_pricing
 
 pytestmark = pytest.mark.anyio
 

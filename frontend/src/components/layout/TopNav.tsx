@@ -2,11 +2,14 @@ import { NavLink } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { getLogo } from '../../api/settings';
 import { logoSrc } from '../../lib/photo';
+import { qk } from '../../lib/queryKeys';
 import { AnalysisErrorBadge, analysisErrorLabel, useAnalysisErrorCount } from './AnalysisErrorBadge';
 
-/** The desktop tabs, in the bottom nav's order. Settings is the gear after them. */
-const LINKS: { to: string; label: string; end?: boolean }[] = [
-  { to: '/', label: 'Home', end: true },
+/** The desktop tabs, in the bottom nav's order. Settings is the gear after them.
+ *  No `end` on Home — see BottomNav: the router only ever lights a root link
+ *  at "/". */
+const LINKS: { to: string; label: string }[] = [
+  { to: '/', label: 'Home' },
   { to: '/cases', label: 'Cases' },
   { to: '/rooms', label: 'Rooms' },
   { to: '/hats', label: 'Hats' },
@@ -16,7 +19,7 @@ const LINKS: { to: string; label: string; end?: boolean }[] = [
 const linkClass = ({ isActive }: { isActive: boolean }) => `nav-link${isActive ? ' active' : ''}`;
 
 export function TopNav() {
-  const logo = useQuery({ queryKey: ['settings', 'logo'], queryFn: getLogo });
+  const logo = useQuery({ queryKey: qk.settings.logo(), queryFn: getLogo });
   const errors = useAnalysisErrorCount();
 
   return (
@@ -30,7 +33,7 @@ export function TopNav() {
         </NavLink>
         <div className="navbar-nav">
           {LINKS.map(link => (
-            <NavLink key={link.to} to={link.to} end={link.end} className={linkClass}>
+            <NavLink key={link.to} to={link.to} className={linkClass}>
               {link.label}
             </NavLink>
           ))}

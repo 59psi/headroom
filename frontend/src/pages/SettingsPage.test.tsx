@@ -50,7 +50,7 @@ function explicit() {
     applicable: true, host: 'headroom.local', port: 443,
     not_before: '2026-08-23T22:44:33Z', not_after: '2026-08-24T10:44:33Z',
     days_remaining: 0.5, expired: false, needs_attention: false,
-    hostname_ok: true, ca_sha256: 'CB:08:88:5B:FD:B7:F7:DD', error: null,
+    hostname_ok: true, ca_sha256: 'CB:08:88:5B:FD:B7:F7:DD', chain_matches_ca: true, error: null,
     ca_changed: false, ca_expected_sha256: 'CB:08:88:5B:FD:B7:F7:DD',
     issuer_not_after: '2034-11-12T00:00:00Z', clamped_by_issuer: false,
   })),
@@ -105,6 +105,7 @@ function explicit() {
   collectionExportUrl: vi.fn(() => '/api/admin/collection-export'),
   getColorwayStatus: vi.fn<typeof S.getColorwayStatus>(async () => ({
     entries: 988, models: 146, colorways: 402, last_harvest: null, in_flight: false,
+    failed_categories: [],
     progress: sweepProgressFixture(),
   })),
   // Mock the real payload shape: pydantic serializes every field, defaults
@@ -112,6 +113,7 @@ function explicit() {
   getRepricing: vi.fn<typeof S.getRepricing>(async () => ({
     enabled: true, interval_hours: 24, last_run_at: null, last_success_at: null,
     last_error: null, consecutive_failures: 0, last_repriced: 0, last_considered: 0,
+    last_unreachable: 0,
     progress: sweepProgressFixture(),
   })),
   runRepricing: vi.fn(),
@@ -208,7 +210,7 @@ const SECTION_CARDS: Record<string, string[]> = {
     'Share photos to Headroom',
   ],
   device: ['Account', 'LAN discovery (mDNS)', 'Site logo'],
-  maintenance: ['Backups', 'Off-site backup', 'Recent activity'],
+  upkeep: ['Backups', 'Off-site backup', 'Recent activity'],
 };
 
 /**
@@ -307,7 +309,7 @@ describe('SettingsPage', () => {
     expect(await screen.findByRole('heading', { name: 'Upkeep' })).toBeInTheDocument();
     expect(renderedCards(container)).toEqual(['Backups']);
     // No tab claims to be selected while results from any section are shown.
-    expect(screen.queryByRole('tab', { selected: true })).not.toBeInTheDocument();
+    expect(document.querySelector('[aria-current]')).toBeNull();
   });
 
   it('a link to another section, followed from search results, ends the search', async () => {
@@ -325,7 +327,7 @@ describe('SettingsPage', () => {
     await user.click(screen.getByRole('link', { name: 'Account' }));
 
     expect(screen.getByRole('searchbox', { name: 'Search settings' })).toHaveValue('');
-    expect(screen.getByRole('tab', { name: 'Device' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('button', { name: 'Device' })).toHaveAttribute('aria-current', 'page');
     await waitFor(() => expect(renderedCards(container)).toEqual(SECTION_CARDS.device));
   });
 
@@ -348,9 +350,58 @@ describe('SettingsPage', () => {
     const { container } = renderWithProviders(<SettingsPage />);
     await screen.findByText('Claude API key');
 
-    await user.click(screen.getByRole('tab', { name: 'Upkeep' }));
+    await user.click(screen.getByRole('button', { name: 'Upkeep' }));
 
-    expect(renderedCards(container)).toEqual(SECTION_CARDS.maintenance);
+    expect(renderedCards(container)).toEqual(SECTION_CARDS.upkeep);
+  });
+
+  it('opens Upkeep from ?tab=upkeep — the name on the tab — and from its old id', async () => {
+    const first = renderWithProviders(<SettingsPage />, { route: '/settings?tab=upkeep' });
+    await screen.findByText('Backups');
+    expect(renderedCards(first.container)).toEqual(SECTION_CARDS.upkeep);
+    first.unmount();
+
+    const old = renderWithProviders(<SettingsPage />, { route: '/settings?tab=maintenance' });
+    await screen.findByText('Backups');
+    expect(renderedCards(old.container)).toEqual(SECTION_CARDS.upkeep);
+  });
+
+  it('is navigation: one current section, no tab roles promising arrow keys and absent panels', async () => {
+    renderWithProviders(<SettingsPage />, { route: '/settings?tab=device' });
+    await screen.findByText('Account');
+
+    expect(screen.queryByRole('tablist')).toBeNull();
+    expect(screen.queryByRole('tab')).toBeNull();
+    const nav = screen.getByRole('navigation', { name: 'Settings sections' });
+    const current = nav.querySelectorAll('[aria-current="page"]');
+    expect(current).toHaveLength(1);
+    expect(current[0]).toHaveTextContent('Device');
+    // The shown section is named by its heading.
+    expect(screen.getByRole('region', { name: 'Device' })).toBeInTheDocument();
+  });
+
+  it.each([
+    ['zip', 'Share the collection'],
+    ['offline', 'Share the collection'],
+    ['retention', 'Recent activity'],
+    ['prune', 'Recent activity'],
+  ])('finds a card by a word on it: "%s" → %s', async (word, card) => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<SettingsPage />);
+    await screen.findByText('Claude API key');
+
+    await user.type(screen.getByRole('searchbox', { name: 'Search settings' }), word);
+    await waitFor(() => expect(renderedCards(container)).toContain(card));
+  });
+
+  it('does not offer the export card for a format it never makes', async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<SettingsPage />);
+    await screen.findByText('Claude API key');
+
+    await user.type(screen.getByRole('searchbox', { name: 'Search settings' }), 'csv');
+    expect(await screen.findByText(/No settings match/)).toBeInTheDocument();
+    expect(renderedCards(container)).not.toContain('Share the collection');
   });
 
   it("surfaces data from each card's own query rather than a page-level fetch", async () => {
@@ -369,7 +420,7 @@ describe('SettingsPage', () => {
     // The point of mounting one section: the flat page fired every card's
     // query on open, most for cards you were never going to look at.
     const settingsApi = await import('../api/settings');
-    renderWithProviders(<SettingsPage />, { route: '/settings?tab=maintenance' });
+    renderWithProviders(<SettingsPage />, { route: '/settings?tab=upkeep' });
     await screen.findByText('Backups');
 
     expect(settingsApi.getApiKeyStatus).not.toHaveBeenCalled();

@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from pydantic import BeforeValidator, Field
+from pydantic import AfterValidator, BeforeValidator, Field
 
 #: Non-negative, finite, and under a million — no hat has ever cost more, and
 #: `1e308` rendered as `$1e+308` in the purchases list. `allow_inf_nan=False` is what refuses the
@@ -55,6 +55,59 @@ def _cleaner(multiline: bool):
         return kept or None
 
     return clean
+
+
+def _strip(value: object) -> object:
+    return value.strip() if isinstance(value, str) else value
+
+
+def header_safe_key(value: str) -> str:
+    """Refuse a credential that cannot be sent as an HTTP header value.
+
+    Every externally issued key here travels in a header (`x-api-key`,
+    `Authorization`, `X-Goog-Api-Key`), and a header value is printable ASCII.
+    A key pasted with a zero-width space, a bidi override or a NUL (`AIza<U+202E>Sy`
+    and `\\x00` both saved with a 200) was stored and then failed every call
+    it was used for — the services degrade on it, but the owner only learned
+    that from a broken analysis, not from the Save that stored it. Checked
+    after trimming, so the ends a paste adds are not the problem it reports.
+    """
+    if not (value.isascii() and value.isprintable() and not any(c.isspace() for c in value)):
+        raise ValueError("API keys are printable ASCII with no spaces — re-copy the key")
+    return value
+
+
+#: An externally issued API key on the wire: trimmed, sized, header-safe.
+def api_key_text(min_length: int, max_length: int, *, unwrap=_strip):
+    return Annotated[
+        str,
+        BeforeValidator(unwrap),
+        Field(min_length=min_length, max_length=max_length),
+        AfterValidator(header_safe_key),
+    ]
+
+
+def label_text(max_length: int, default: str):
+    """A short name the server must accept whatever arrives.
+
+    Cleaned like `clean_text`, but CUT to `max_length` rather than refused,
+    and `default` when nothing is left. For a value that arrives at the end of
+    a ceremony that cannot be taken back: a passkey's name is sent after the
+    authenticator has already created the credential, so a 422 on it would
+    leave a passkey on the device that the server never heard of — the one
+    outcome the client goes out of its way to avoid.
+    """
+    clean = _cleaner(multiline=False)
+
+    def to_label(value: object) -> object:
+        cleaned = clean(value)
+        if cleaned is None:
+            return default
+        if isinstance(cleaned, str):
+            return cleaned[:max_length].rstrip() or default
+        return cleaned
+
+    return Annotated[str, BeforeValidator(to_label), Field(max_length=max_length)]
 
 
 def clean_text(max_length: int, *, multiline: bool = False, required: bool = False):

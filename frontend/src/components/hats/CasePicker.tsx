@@ -1,5 +1,7 @@
 import { useState, useRef, useId, useMemo } from 'react';
 import type { CaseRead } from '../../types';
+import { caseTypeName } from '../../lib/caseTypes';
+import { caseRoomName } from '../cases/CaseTile';
 import { usePickerOpen } from '../common/usePickerOpen';
 import { AnchoredList } from '../common/AnchoredList';
 import { useClickOutside } from '../common/useClickOutside';
@@ -62,11 +64,14 @@ export function CasePicker({
 
   const { recent, groups } = useMemo(() => {
     const q = query.trim().toLowerCase();
+    // Matched against the SAME words the rows print. A private copy of the
+    // type label here said "Daily" while every other screen says "Daily
+    // wear", so typing what the case tile reads found nothing.
     const matches = (c: CaseRead) =>
       !q
       || c.display_id.toLowerCase().includes(q)
-      || c.room_name.toLowerCase().includes(q)
-      || caseTypeLabel(c).toLowerCase().includes(q);
+      || caseRoomName(c).toLowerCase().includes(q)
+      || caseTypeName(c.case_type).toLowerCase().includes(q);
 
     // The three newest, pinned to the top — a hat being added right now
     // usually belongs in a case made minutes ago, and hunting for it in a
@@ -84,9 +89,10 @@ export function CasePicker({
     // the same order they appear on the Rooms page, so the two read the same.
     const byRoom = new Map<string, CaseRead[]>();
     for (const c of cases.filter(c => matches(c) && !pinned.has(c.id))) {
-      const list = byRoom.get(c.room_name) ?? [];
+      const room = caseRoomName(c);
+      const list = byRoom.get(room) ?? [];
       list.push(c);
-      byRoom.set(c.room_name, list);
+      byRoom.set(room, list);
     }
     const groups = [...byRoom.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
@@ -131,9 +137,9 @@ export function CasePicker({
             {/* `nominal_capacity`, not `used + free`: free hits 0 at full AND
                 stays 0 when overfull, so the old sum rendered a 4th hat in a
                 3-hat case as "4/4" — the one case where the number matters. */}
-            {caseTypeLabel(c)} · {c.nominal_capacity > 0 ? `${used}/${c.nominal_capacity}` : used}
+            {caseTypeName(c.case_type)} · {c.nominal_capacity > 0 ? `${used}/${c.nominal_capacity}` : used}
             {c.overfull && <span className="hr-case-overfull"> overfull</span>}
-            {' · '}{c.room_name}
+            {' · '}{caseRoomName(c)}
           </span>
           {!ok && <span className="hr-case-why">{unavailableReason(c, isBeanie)}</span>}
         </button>
@@ -142,7 +148,7 @@ export function CasePicker({
   }
 
   const summary = selected
-    ? `${selected.display_id} · ${selected.room_name}`
+    ? `${selected.display_id} · ${caseRoomName(selected)}`
     : 'Unassigned';
 
   return (
@@ -224,10 +230,6 @@ export function CasePicker({
       </AnchoredList>
     </div>
   );
-}
-
-function caseTypeLabel(c: CaseRead): string {
-  return c.case_type === 'archive' ? 'Archive' : 'Daily';
 }
 
 /** Why this case can't take the hat — the thing a bare 409 never told you. */

@@ -2,59 +2,28 @@
  * What the collection cost, what it's worth, and — the part that used to be
  * missing — how that second number is arrived at.
  *
- * The arithmetic lives in `lib/valuation`; this page is presentation plus the
- * explanation of the method. See that module for why the old "Est. resale"
- * figure was overstated and why its caption described a calculation that was
- * mostly not running.
+ * The arithmetic lives in `lib/valuation` and the roll-ups over it in
+ * `lib/collectionViews`, shared with the Stats page; this page is
+ * presentation plus the explanation of the method. See `lib/valuation` for why
+ * the old "Est. resale" figure was overstated and why its caption described a
+ * calculation that was mostly not running.
  */
 import { useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
-import { listAllHats, listDisposedHats } from '../api/hats';
-import { listCases } from '../api/cases';
-import { BarList, ChartCard, StatTiles, StatTilesSkeleton } from '../components/charts/Charts';
+import { BarList, StatTiles, StatTilesSkeleton } from '../components/charts/Charts';
+import { LoadError } from '../components/common/LoadError';
 import { PageHeader } from '../components/ui/PageHeader';
 import { Panel } from '../components/ui/Panel';
 import { Skeleton } from '../components/ui/Skeleton';
 import {
   BASIS_LABEL, CASH_PAYOUT, CREDIT_PAYOUT, RETAIL_RETENTION,
   costOf, money, realizedTotals, valueCases, valueCollection, valueHat,
-  type ValueBasis, CONDITION_LABEL,
 } from '../lib/valuation';
-import type { HatRead } from '../types';
+import { basisRows, bucketize, topValued, type Bucket } from '../lib/collectionViews';
+import { useCollection } from '../lib/useCollection';
+import { useHatLabels } from '../lib/labels';
+import { plural } from '../lib/format';
 import { RankedHatList } from '../components/hats/RankedHatList';
-
-interface Bucket {
-  key: string;
-  label: string;
-  count: number;
-  paid: number;
-  paidCount: number;
-  value: number;
-  valuedCount: number;
-}
-
-function bucketize(
-  hats: HatRead[],
-  keyFn: (h: HatRead) => string | null,
-  labelFn: (k: string) => string = k => k,
-): Bucket[] {
-  const map = new Map<string, Bucket>();
-  for (const h of hats) {
-    const k = keyFn(h);
-    if (!k) continue;
-    const bucket = map.get(k) ?? {
-      key: k, label: labelFn(k), count: 0, paid: 0, paidCount: 0, value: 0, valuedCount: 0,
-    };
-    bucket.count += 1;
-    const paid = costOf(h);
-    if (paid != null) { bucket.paid += paid; bucket.paidCount += 1; }
-    const { value } = valueHat(h);
-    if (value != null) { bucket.value += value; bucket.valuedCount += 1; }
-    map.set(k, bucket);
-  }
-  return Array.from(map.values()).sort((a, b) => b.value - a.value || b.count - a.count);
-}
 
 /**
  * One breakdown as a small table: what, how many, paid, worth.
@@ -67,7 +36,7 @@ function bucketize(
 function BucketTable({ title, column, buckets }: { title: string; column: string; buckets: Bucket[] }) {
   if (buckets.length === 0) return null;
   return (
-    <ChartCard title={title}>
+    <Panel title={title}>
       <table className="hr-cp-table">
         <thead>
           <tr>
@@ -88,7 +57,7 @@ function BucketTable({ title, column, buckets }: { title: string; column: string
           ))}
         </tbody>
       </table>
-    </ChartCard>
+    </Panel>
   );
 }
 
@@ -107,52 +76,24 @@ function PageHead() {
 }
 
 export function ValuationPage() {
-  const hatsQ = useQuery({ queryKey: ['hats'], queryFn: listAllHats });
-  const disposedQ = useQuery({ queryKey: ['hats', 'disposed'], queryFn: listDisposedHats });
-
-  const hats = useMemo(() => hatsQ.data ?? [], [hatsQ.data]);
-  const disposed = useMemo(() => disposedQ.data ?? [], [disposedQ.data]);
+  const collection = useCollection();
+  const { hats, disposed, cases } = collection;
+  const labels = useHatLabels();
 
   const totals = useMemo(() => valueCollection(hats), [hats]);
   // The cases are part of the collection too — a melin travel case is $49 and
   // there are dozens, so leaving them out understated the total by four
   // figures, silently.
-  const casesQ = useQuery({ queryKey: ['cases'], queryFn: listCases });
-  const caseValue = useMemo(() => valueCases(casesQ.data ?? []), [casesQ.data]);
+  const caseValue = useMemo(() => valueCases(cases), [cases]);
   const realized = useMemo(() => realizedTotals(disposed), [disposed]);
-
-  const basisRows = useMemo(() => {
-    const order: ValueBasis[] = ['manual', 'comp', 'retail', 'category', 'none'];
-    return order
-      .map(b => ({
-        label: BASIS_LABEL[b],
-        value: totals.byBasis[b].count,
-        display: b === 'none'
-          ? `${totals.byBasis[b].count} hats · not counted`
-          : `${totals.byBasis[b].count} hats · ${money(totals.byBasis[b].total)}`,
-      }))
-      .filter(r => r.value > 0);
-  }, [totals]);
+  const bases = useMemo(() => basisRows(totals), [totals]);
 
   const missingCost = useMemo(
     () => hats.filter(h => costOf(h) == null).slice(0, 10),
     [hats],
   );
 
-  const buckets = useMemo(() => ({
-    condition: bucketize(hats, h => h.condition, k => CONDITION_LABEL[k] ?? k),
-    brand: bucketize(hats, h => h.brand),
-    style: bucketize(hats, h => h.style, k => k.replace(/_/g, ' ')),
-    room: bucketize(hats, h => h.room_name),
-  }), [hats]);
-
-  const topValued = useMemo(
-    () => [...hats]
-      .filter(h => valueHat(h).value != null)
-      .sort((a, b) => (valueHat(b).value ?? 0) - (valueHat(a).value ?? 0))
-      .slice(0, 10),
-    [hats],
-  );
+  const mostValuable = useMemo(() => topValued(hats), [hats]);
 
   const neglected = useMemo(
     () => [...hats]
@@ -161,27 +102,16 @@ export function ValuationPage() {
     [hats],
   );
 
-  // A failed fetch must not render as an empty collection. `?? []` turns a
-  // 500 or a dropped connection into "$0 across 0 hats", which is a confident
-  // wrong answer — the exact thing `valueHat` returns `null` rather than 0 to
-  // avoid. Errors are shown, not averaged in.
-  if (hatsQ.isError || disposedQ.isError || casesQ.isError) {
-    const retrying = hatsQ.isFetching || disposedQ.isFetching || casesQ.isFetching;
+  // A failed fetch must not render as an empty collection — see
+  // `useCollection`. Errors are shown, not averaged in.
+  if (collection.failed) {
     return (
       <>
         <PageHead />
-        <div className="alert alert-danger hr-cp-error" role="alert">
-          <span>
-            Couldn&rsquo;t load the collection, so no totals are shown — a partial
-            valuation would be worse than none.
-          </span>
-          <button
-            type="button"
-            className="btn btn-sm btn-outline-secondary"
-            onClick={() => { void hatsQ.refetch(); void disposedQ.refetch(); void casesQ.refetch(); }}
-            disabled={retrying}
-          >{retrying ? 'Retrying…' : 'Try again'}</button>
-        </div>
+        <LoadError
+          what="Couldn’t load the collection, so no totals are shown — a partial valuation would be worse than none."
+          queries={collection.queries}
+        />
       </>
     );
   }
@@ -189,7 +119,7 @@ export function ValuationPage() {
   // hats arrive showed a total without its cases line, then grew one — a
   // figure that changes under you is the same confident wrong answer as the
   // error case above, only briefer.
-  if (hatsQ.isLoading || disposedQ.isLoading || casesQ.isLoading) {
+  if (collection.loading) {
     return (
       <>
         <PageHead />
@@ -204,6 +134,16 @@ export function ValuationPage() {
   }
 
   const avgPaid = totals.spentCount > 0 ? totals.spentTotal / totals.spentCount : 0;
+  // Style and condition by the server's labels ("A-Game"), the words every
+  // other screen uses — the style column printed "a game". A plain
+  // computation rather than a memo: the label functions are new each render,
+  // so a memo keyed on them would recompute anyway.
+  const buckets = {
+    condition: bucketize(hats, h => h.condition, labels.condition),
+    brand: bucketize(hats, h => h.brand),
+    style: bucketize(hats, h => h.style, labels.style),
+    room: bucketize(hats, h => h.room_name),
+  };
 
   return (
     <>
@@ -215,7 +155,7 @@ export function ValuationPage() {
             label: 'Paid',
             value: money(totals.spentTotal),
             tone: 'purple',
-            sub: `${totals.spentCount} of ${totals.total} hats priced`,
+            sub: `${totals.spentCount} of ${plural(totals.total, 'hat')} priced`,
           },
           {
             label: 'Retail value',
@@ -257,8 +197,7 @@ export function ValuationPage() {
           <div className="hr-case-total mt-3">
             <div className="hr-cp-case-line">
               <span className="text-secondary small">
-                + {caseValue.count} case{caseValue.count === 1 ? '' : 's'} at
-                replacement cost
+                + {plural(caseValue.count, 'case')} at replacement cost
               </span>
               <span className="font-mono">{money(caseValue.retailTotal)}</span>
             </div>
@@ -281,9 +220,9 @@ export function ValuationPage() {
           one tap away rather than a wall of text between the totals and the
           rest of the page. Nothing was cut — this is the only place the
           method is written down. */}
-      <ChartCard
+      <Panel
         title="How the sale estimate is worked out"
-        subtitle="Each hat uses the best signal it has. Stronger bases first."
+        description="Each hat uses the best signal it has. Stronger bases first."
         helpLabel="The method in detail"
         help={
           <>
@@ -306,7 +245,7 @@ export function ValuationPage() {
             <p className="mb-2">
               With no listings to compare against, the estimate falls back to a
               share of new retail: {Object.entries(RETAIL_RETENTION)
-                .map(([k, v]) => `${CONDITION_LABEL[k] ?? k} ${Math.round(v * 100)}%`)
+                .map(([k, v]) => `${labels.condition(k)} ${Math.round(v * 100)}%`)
                 .join(' · ')}.
             </p>
             <p className="mb-0">
@@ -318,12 +257,12 @@ export function ValuationPage() {
           </>
         }
       >
-        <BarList data={basisRows} colorize />
-      </ChartCard>
+        <BarList data={bases} colorize />
+      </Panel>
 
-      <ChartCard
+      <Panel
         title="If you sold it all on melinrecap"
-        subtitle="The market value above is gross. This is what would actually reach you."
+        description="The market value above is gross. This is what would actually reach you."
       >
         <StatTiles tiles={[
           {
@@ -356,19 +295,20 @@ export function ValuationPage() {
           Selling the whole collection at once is not a realistic event; this is
           a scale, not a plan.
         </p>
-      </ChartCard>
+      </Panel>
 
       {/* ===== Price paid ===== */}
-      <ChartCard
+      <Panel
         title="What you've paid"
-        subtitle={
+        description={
           totals.costUnknown > 0
-            ? <>{totals.costUnknown} hat{totals.costUnknown === 1 ? '' : 's'} still
-               have no purchase price. Import your order history from Settings, or
-               set one on a hat's edit page.</>
+            ? <>{plural(totals.costUnknown, 'hat')} still{' '}
+               {totals.costUnknown === 1 ? 'has' : 'have'} no purchase price.
+               Import your order history from Settings, or set one on a hat's
+               edit page.</>
             : <>Every hat has a purchase price on record.</>
         }
-        action={
+        actions={
           totals.costUnknown > 0
             ? <Link to="/settings?tab=data" className="btn btn-outline-secondary btn-sm">Import prices</Link>
             : undefined
@@ -403,7 +343,7 @@ export function ValuationPage() {
             )}
           </>
         )}
-      </ChartCard>
+      </Panel>
 
       <div className="hr-cp-grid">
         <BucketTable title="By condition" column="Condition" buckets={buckets.condition} />
@@ -411,9 +351,9 @@ export function ValuationPage() {
         <BucketTable title="By style" column="Style" buckets={buckets.style} />
         <BucketTable title="By room" column="Room" buckets={buckets.room} />
 
-        <ChartCard title="Most valuable">
+        <Panel title="Most valuable">
           <RankedHatList
-            hats={topValued}
+            hats={mostValuable}
             valueFor={h => money(valueHat(h).value ?? 0)}
             empty={(
               <p className="text-muted small mb-0">
@@ -423,16 +363,16 @@ export function ValuationPage() {
               </p>
             )}
           />
-        </ChartCard>
+        </Panel>
 
-        <ChartCard title="Wear rotation" subtitle="Longest since last worn — give these some sun.">
+        <Panel title="Wear rotation" description="Longest since last worn — give these some sun.">
           <RankedHatList
             hats={neglected}
             numbered={false}
             valueTone="muted"
             valueFor={h => h.date_last_worn ?? 'never worn'}
           />
-        </ChartCard>
+        </Panel>
       </div>
     </>
   );

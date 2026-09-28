@@ -53,7 +53,7 @@ describe('ColorEditModal — remove', () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it('removes once confirmed, re-ranking the colors after it', async () => {
+  it('removes once confirmed, keeping the rest in order — their position is their rank', async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();
     mocked.updateHatColors.mockResolvedValue(hatFixture());
@@ -64,9 +64,8 @@ describe('ColorEditModal — remove', () => {
     await user.click(within(confirm).getByRole('button', { name: 'Remove color' }));
 
     await waitFor(() => expect(mocked.updateHatColors).toHaveBeenCalledTimes(1));
-    expect(mocked.updateHatColors.mock.calls[0][1]).toEqual([
-      { ...COLORS[1], dominance_rank: 1 },
-      { ...COLORS[2], dominance_rank: 2 },
+    expect(mocked.updateHatColors.mock.calls[0][1].map(c => c.hex_value)).toEqual([
+      COLORS[1].hex_value, COLORS[2].hex_value,
     ]);
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(screen.getByText('Color removed')).toBeInTheDocument();
@@ -111,7 +110,39 @@ describe('ColorEditModal — save', () => {
     await waitFor(() => expect(mocked.updateHatColors).toHaveBeenCalled());
     const sent = mocked.updateHatColors.mock.calls[0][1];
     expect(sent).toHaveLength(4);
-    expect(sent[3]).toMatchObject({ tier: 'accent', dominance_rank: 4 });
+    expect(sent[3]).toMatchObject({ tier: 'accent' });
+  });
+
+  it('starts a new color at the tier its position implies, and lets the server name a blank one', async () => {
+    const user = userEvent.setup();
+    mocked.updateHatColors.mockResolvedValue(hatFixture());
+    renderWithProviders(
+      <ColorEditModal hatId={5} colors={COLORS.slice(0, 2)} editingRank={null} onClose={vi.fn()} />,
+    );
+
+    // The third color of a palette is its tertiary, not another "primary".
+    expect(screen.getByRole('button', { name: 'Tertiary' })).toHaveAttribute('aria-pressed', 'true');
+    await user.click(screen.getByRole('button', { name: 'Add color' }));
+    await waitFor(() => expect(mocked.updateHatColors).toHaveBeenCalled());
+    // Blank is "name it from the hex" — never the literal word "unnamed".
+    expect(mocked.updateHatColors.mock.calls[0][1][2]).toMatchObject({ color_name: null, tier: 'tertiary' });
+  });
+
+  it('refreshes every view that shows the palette, not only the hat and the list', async () => {
+    const user = userEvent.setup();
+    mocked.updateHatColors.mockResolvedValue(hatFixture());
+    const { client } = renderWithProviders(
+      <ColorEditModal hatId={5} colors={COLORS} editingRank={2} onClose={vi.fn()} />,
+    );
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByText('Color saved');
+
+    const keys = invalidate.mock.calls.map(([f]) => JSON.stringify(f?.queryKey));
+    for (const k of [['hat', 5], ['hats'], ['room'], ['case'], ['search']]) {
+      expect(keys).toContain(JSON.stringify(k));
+    }
   });
 
   it('keeps the editor open and says why when the save fails', async () => {

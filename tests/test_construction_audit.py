@@ -1,9 +1,10 @@
 """Undoing constructions that analysis guessed.
 
-Nothing in the database records whether a construction came from a person or
-from a photo, so this cannot be a startup backfill that decides for the owner.
-It is a report plus an explicit, previewable action — and because it removes
-data that cannot be recomputed, the destructive form has to be asked for.
+Values written before provenance was recorded cannot be told apart, so this
+cannot be a startup backfill that decides for the owner. It is a report plus
+an explicit, previewable action — and because it removes data that cannot be
+recomputed, the destructive form has to be asked for. Values a person set
+since are recorded as theirs and left alone.
 """
 
 from __future__ import annotations
@@ -13,13 +14,31 @@ import pytest
 pytestmark = pytest.mark.anyio
 
 
-async def _hat(client, **fields):
+async def _hat(client, *, construction=None, **fields):
+    """A hat whose `construction` is in the state ANALYSIS left it in.
+
+    Written straight to the row with no source recorded — which is what the
+    pre-2.32 pipeline did, and exactly the set the audit exists for. Not sent
+    through the API: a construction POSTed or PUT is one the owner typed, and
+    those are recorded as the owner's and skipped (see the tests at the end).
+    Every test below used to create its "guessed" hats through POST, which
+    is the Add form — encoding the very bug that let Clear wipe typed values.
+    """
+    from headroom.models.hat import Hat
+    from tests.conftest import test_session_factory
+
     resp = await client.post(
         "/api/hats",
         json={"condition": "new", "size": "classic", "style": "a_game", **fields},
     )
     assert resp.status_code == 201
-    return resp.json()["id"]
+    hat_id = resp.json()["id"]
+    if construction is not None:
+        async with test_session_factory() as db:
+            hat = await db.get(Hat, hat_id)
+            hat.set_construction(construction)
+            await db.commit()
+    return hat_id
 
 
 async def _set_price(db_session, hat_id, price, source):
@@ -286,6 +305,103 @@ async def test_the_dry_run_reports_the_skip_too(client):
     assert body["owner_set_skipped"] == 1
     assert body["hats_cleared"] == 1
     assert (await client.get(f"/api/hats/{mine}")).json()["construction"] == "HYDROLite"
+
+
+async def test_a_construction_typed_on_the_add_form_is_left_alone(client):
+    """The Add form sends `construction`, and `hat.created` never logged it,
+    so the only evidence the audit used could not see it: Clear wiped a value
+    the owner typed on day one while the card promised it was left alone.
+    Provenance on the hat is what proves it now."""
+    resp = await client.post(
+        "/api/hats",
+        json={"condition": "new", "size": "classic", "style": "a_game",
+              "construction": "HYDROLite"},
+    )
+    typed = resp.json()["id"]
+    await _hat(client, construction="HYDROLite")  # a pre-provenance guess
+
+    body = (await client.post(
+        "/api/admin/constructions/clear?value=HYDROLite&dry_run=false"
+    )).json()
+
+    assert body["owner_set_skipped"] == 1
+    assert body["hats_cleared"] == 1
+    assert (await client.get(f"/api/hats/{typed}")).json()["construction"] == "HYDROLite"
+
+
+async def test_an_owner_edit_stays_protected_after_the_log_is_pruned(client, db_session):
+    """The activity log is pruned after the retention window, and it was the
+    ONLY proof — so an edit older than 90 days was fair game for Clear."""
+    from sqlalchemy import delete
+
+    from headroom.models.activity_log import ActivityLog
+
+    mine = await _hat(client)
+    await client.put(f"/api/hats/{mine}", json={"construction": "HYDROLite"})
+    await db_session.execute(delete(ActivityLog))  # what the retention prune does
+    await db_session.commit()
+
+    body = (await client.post(
+        "/api/admin/constructions/clear?value=HYDROLite&dry_run=false"
+    )).json()
+
+    assert body["owner_set_skipped"] == 1
+    assert (await client.get(f"/api/hats/{mine}")).json()["construction"] == "HYDROLite"
+
+
+async def test_a_replacement_chosen_here_is_the_owners_from_then_on(client):
+    """"These are all actually HYDRO" is the owner deciding, so a later sweep
+    over HYDRO must leave those hats alone rather than treat the owner's own
+    correction as another guess."""
+    hat_id = await _hat(client, construction="HYDROLite")
+    await client.post("/api/admin/constructions/clear?value=HYDROLite&to=HYDRO&dry_run=false")
+
+    body = (await client.post(
+        "/api/admin/constructions/clear?value=HYDRO&dry_run=false"
+    )).json()
+
+    assert body["owner_set_skipped"] == 1
+    assert body["hats_cleared"] == 0
+    assert (await client.get(f"/api/hats/{hat_id}")).json()["construction"] == "HYDRO"
+
+
+async def test_an_edit_form_resending_the_guess_does_not_make_it_the_owners(client):
+    """The Edit form PUTs every field, including the construction the owner
+    never touched. Re-sending the analyzer's value is not a new assertion, so
+    it must stay a guess the audit can clear."""
+    guessed = await _hat(client, construction="HYDROLite")
+    await client.put(
+        f"/api/hats/{guessed}", json={"construction": "HYDROLite", "owner_notes": "brim ok"}
+    )
+
+    body = (await client.post(
+        "/api/admin/constructions/clear?value=HYDROLite&dry_run=false"
+    )).json()
+
+    assert body["owner_set_skipped"] == 0
+    assert body["hats_cleared"] == 1
+
+
+async def test_rewriting_the_same_construction_keeps_whoever_wrote_it():
+    """Provenance belongs to the VALUE, in any spelling: a vocabulary snap or
+    an analysis pass re-writing the owner's answer must not demote it to a
+    guess, and clearing the value clears who wrote it."""
+    from headroom.models.hat import Hat
+    from headroom.services.construction_audit import OWNER_SOURCE
+
+    hat = Hat()
+    hat.set_construction("HYDROLite", source=OWNER_SOURCE)
+    hat.set_construction("hydrolite")  # re-spelled by a writer with no source
+    assert hat.construction == "hydrolite"
+    assert hat.construction_source == OWNER_SOURCE
+
+    hat.set_construction("HYDRO")  # a genuinely NEW value from analysis
+    assert hat.construction_source is None
+
+    hat.set_construction("Waxed Canvas", source=OWNER_SOURCE)
+    hat.set_construction(None, source=OWNER_SOURCE)
+    assert hat.construction is None
+    assert hat.construction_source is None
 
 
 # ------------------------------- the seam rule ------------------------------ #

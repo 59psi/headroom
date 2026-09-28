@@ -42,4 +42,51 @@ describe('design tokens', () => {
       .map(([token, files]) => `${token} (${[...new Set(files)].join(', ')})`);
     expect(phantoms, `tokens used but never defined:\n  ${phantoms.join('\n  ')}`).toEqual([]);
   });
+
+  it('every token defined is used', () => {
+    // The other direction. tokens.css carried seventeen tokens nothing read —
+    // a whole "aliases for legacy bootstrap overrides" block among them —
+    // beside colors that had no token at all. An unused token is a second
+    // name for a color, waiting to be picked instead of the live one.
+    const all = walk(SRC).map(f => readFileSync(f, 'utf8')).join('\n');
+    const defined = new Set<string>();
+    for (const file of walk(SRC).filter(f => f.endsWith('.css'))) {
+      for (const m of readFileSync(file, 'utf8').matchAll(/^\s*(--[a-z0-9-]+)\s*:/gm)) defined.add(m[1]);
+    }
+    const unused = [...defined].filter(t => !all.includes(`var(${t})`) && !all.includes(`var(${t},`));
+    expect(unused, `tokens defined but never used:\n  ${unused.join('\n  ')}`).toEqual([]);
+  });
+
+  it('no stylesheet restates a palette color a token names', () => {
+    // `rgb(var(--neon-pink-rgb) / 0.35)`, never `rgba(255, 46, 182, 0.35)`;
+    // `var(--tint-green)`, never `#8dff7a`. The palette was typed out ~250
+    // times across the sheets, so changing a neon meant finding every copy.
+    const tokensCss = readFileSync(join(SRC, 'styles', 'tokens.css'), 'utf8');
+    const channels = new Map<string, string>();
+    for (const m of tokensCss.matchAll(/^\s*(--[a-z-]+-rgb):\s*(\d+) (\d+) (\d+);/gm)) {
+      channels.set(`${m[2]},${m[3]},${m[4]}`, m[1]);
+    }
+    const hexes = new Map<string, string>();
+    for (const m of tokensCss.matchAll(/^\s*(--[a-z0-9-]+):\s*(#[0-9a-f]{6});/gm)) hexes.set(m[2], m[1]);
+
+    // main.tsx paints a bare diagnostic when the bundle itself fails to run,
+    // before React — the one place that must not assume a stylesheet loaded.
+    const standalone = new Set(['main.tsx']);
+    const restated: string[] = [];
+    for (const file of walk(SRC).filter(f => /\.(css|tsx)$/.test(f))) {
+      if (standalone.has(file.slice(SRC.length + 1))) continue;
+      const text = readFileSync(file, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+      const rel = file.slice(SRC.length + 1);
+      for (const m of text.matchAll(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/g)) {
+        const token = channels.get(`${m[1]},${m[2]},${m[3]}`);
+        if (token) restated.push(`${m[0]}… is ${token} (${rel})`);
+      }
+      if (rel === 'styles/tokens.css') continue;
+      for (const m of text.matchAll(/(?<![%\w-])(#[0-9a-fA-F]{6})\b/g)) {
+        const token = hexes.get(m[1].toLowerCase());
+        if (token) restated.push(`${m[1]} is ${token} (${rel})`);
+      }
+    }
+    expect(restated, `palette colors written out instead of their token:\n  ${restated.join('\n  ')}`).toEqual([]);
+  });
 });

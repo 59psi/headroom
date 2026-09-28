@@ -32,14 +32,6 @@ pytestmark = pytest.mark.anyio
 _REAL_REMOVE_BACKGROUND = background_removal.remove_background
 
 
-@pytest.fixture(autouse=True)
-def _reset_semaphore():
-    """The bound is a module-global; don't let one test's value leak."""
-    background_removal._inference_sem = None
-    yield
-    background_removal._inference_sem = None
-
-
 def _jpeg(size=(80, 80)) -> bytes:
     buf = io.BytesIO()
     Image.new("RGB", size, (40, 90, 200)).save(buf, "JPEG")
@@ -101,6 +93,27 @@ async def test_the_bound_is_configurable(monkeypatch, tmp_path):
 
     assert probe.peak > 1, "the env override did not raise the bound"
     assert probe.peak <= 3, f"{probe.peak} exceeded the configured ceiling of 3"
+
+
+async def test_the_rembg_lock_and_bound_are_per_event_loop():
+    """This test's loop, then a second one, each contending both primitives.
+
+    `_init_lock` was a module-level `asyncio.Lock()` and the inference bound a
+    lazily created module-level semaphore; each binds to the first loop that
+    makes it wait and raises "bound to a different event loop" in the next.
+    """
+
+    async def contend() -> None:
+        for primitive in (background_removal._init_lock(), background_removal._get_inference_sem()):
+            async with primitive:
+                waiter = asyncio.create_task(primitive.acquire())
+                await asyncio.sleep(0)  # the waiter parks → binds it to this loop
+            await waiter
+            primitive.release()
+
+    await contend()
+    # A second loop, on a worker thread so it cannot disturb this one.
+    await asyncio.to_thread(asyncio.run, contend())
 
 
 async def test_a_bad_concurrency_value_falls_back_rather_than_crashing(monkeypatch):
@@ -291,8 +304,8 @@ async def test_the_share_target_spools_to_disk_and_caps_each_file(client, monkey
     It read whole files into memory (`await f.read()`) and handed `create_job`
     bytes — but `create_job` takes PATHS: it calls `source.stat()` and
     `shutil.copy2(source, ...)`, so every share raised AttributeError on the
-    first file. Nothing covered the handler, so it stayed that way. CLAUDE.md
-    meanwhile claimed "every upload route streams through `utils/upload.py`".
+    first file. Nothing covered the handler, so it stayed that way, while the
+    project notes claimed "every upload route streams through `utils/upload.py`".
     """
     from headroom.utils import upload
 

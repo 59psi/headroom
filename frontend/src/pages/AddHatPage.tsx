@@ -4,7 +4,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router';
 import { createHat, uploadHatPhoto } from '../api/hats';
 import { getApiKeyStatus } from '../api/settings';
 import { NewCaseModal } from '../components/common/NewCaseModal';
-import { ErrorNote } from '../components/common/ErrorNote';
+import { ErrorNote, describeError } from '../components/common/ErrorNote';
 import { PageHeader } from '../components/ui/PageHeader';
 import { useToast } from '../components/ui/Toast';
 import {
@@ -12,6 +12,7 @@ import {
   DEFAULT_HAT_BASICS, type HatBasics,
 } from '../components/hats/HatFormFields';
 import { invalidateHatViews, invalidateHatVocabulary } from '../lib/invalidate';
+import { qk } from '../lib/queryKeys';
 
 export function AddHatPage() {
   const navigate = useNavigate();
@@ -31,7 +32,7 @@ export function AddHatPage() {
 
   const options = useHatFormOptions();
   const { photo, photoPreview, onCapture } = useHatPhoto();
-  const apiKey = useQuery({ queryKey: ['settings', 'api-key'], queryFn: getApiKeyStatus });
+  const apiKey = useQuery({ queryKey: qk.settings.apiKey(), queryFn: getApiKeyStatus });
 
   function setBasic<K extends keyof HatBasics>(key: K, value: HatBasics[K]) {
     setBasics(prev => ({ ...prev, [key]: value }));
@@ -56,22 +57,42 @@ export function AddHatPage() {
       if (basics.limitedEdition) data.limited_edition = true;
       if (basics.dateLastWorn) data.date_last_worn = basics.dateLastWorn;
       if (basics.purchasePrice) data.purchase_price = Number(basics.purchasePrice);
-      // Midnight local, matching how `date_last_worn` is sent — the column is
-      // a timestamp but only the date is ever entered or displayed.
+      // The column is a timestamp but only the day is ever entered or shown,
+      // so the day goes out as its midnight with no zone. The API reads that
+      // back as UTC midnight (`…T00:00:00Z`), which is why every reader takes
+      // the date PART of it (`lib/dates.formatDateOnly`, the Edit form's
+      // slice) — passed through a `Date`, it is the day before in any zone
+      // west of Greenwich.
       if (basics.purchasedAt) data.purchased_at = `${basics.purchasedAt}T00:00:00`;
 
       const hat = await createHat(data);
+      // Two requests, and once the first has succeeded the hat EXISTS. A
+      // failed upload used to reject the whole save, so the form said "Not
+      // saved", stayed filled in, and Save created the hat a second time. The
+      // upload's failure is reported as what it is — the hat was added, its
+      // photo was not — and the page moves on to the hat, whose own page has
+      // the photo picker to try again from. `createHat` never runs twice for
+      // one form.
+      let photoError: unknown = null;
       if (photo) {
-        await uploadHatPhoto(hat.id, photo);
+        try {
+          await uploadHatPhoto(hat.id, photo);
+        } catch (err) {
+          photoError = err;
+        }
       }
-      return hat;
+      return { hat, photoError };
     },
-    onSuccess: (hat) => {
+    onSuccess: ({ hat, photoError }) => {
       invalidateHatViews(qc);
       invalidateHatVocabulary(qc);
-      // "Processing", not "analyzing": with no key only the cutout and the
-      // fallback colors run. The hat page's status badge says which.
-      toast.success(photo ? 'Hat added — the photo is processing' : 'Hat added');
+      if (photoError) {
+        toast.error(`Hat added, but its photo didn't upload (${describeError(photoError)}). Add it again from the hat's page.`);
+      } else {
+        // "Processing", not "analyzing": with no key only the cutout and the
+        // fallback colors run. The hat page's status badge says which.
+        toast.success(photo ? 'Hat added — the photo is processing' : 'Hat added');
+      }
       navigate(`/hats/${hat.id}`);
     },
   });

@@ -16,6 +16,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { allRules, classesIn } from './stylesheetCensus';
 
 const SRC = resolve(__dirname, '..');
 
@@ -106,6 +107,66 @@ describe('stylesheet parity', () => {
       if (!ok) missing.push(`${cls}  (${[...new Set(files)].slice(0, 3).join(', ')})`);
     }
     expect(missing, `classes used in TSX with no rule in any stylesheet:\n  ${missing.join('\n  ')}`).toEqual([]);
+  });
+
+  it('applies every class a stylesheet defines — no rule styles nothing', () => {
+    // The other direction. About 75 Bootstrap-replacement utilities and
+    // several component rules (a switch, a spinner, a fill tag) sat in
+    // app.css long after the last element using them was gone, and nothing
+    // could say so: the census above only asks "used ⇒ defined". A rule that
+    // styles nothing is not free — it is a second answer waiting for the day
+    // someone applies the class, and a claim the stylesheet makes about the
+    // app that is no longer true.
+    //
+    // "Applied" is loose on purpose: ANY identifier-shaped token in the
+    // source counts, so a class built up in a helper or kept in a table
+    // passes. A dynamic prefix (`hr-badge-${…}`, `'opt-' + …`) covers every
+    // class that starts with it.
+    const code = [...walk(SRC), resolve(SRC, '..', 'index.html')]
+      .map(f => readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"])\/\/.*$/gm, '$1'))
+      .join('\n');
+    const tokens = new Set(code.match(/[A-Za-z_][A-Za-z0-9_-]*/g));
+    const prefixes = new Set<string>();
+    for (const m of code.matchAll(/([A-Za-z_][A-Za-z0-9_-]*-)\$\{/g)) prefixes.add(m[1]);
+    for (const m of code.matchAll(/['"`]([A-Za-z_][A-Za-z0-9_-]*-)['"`]\s*\+/g)) prefixes.add(m[1]);
+
+    const unused = new Map<string, string>();
+    for (const rule of allRules()) {
+      for (const sel of rule.selectors) {
+        for (const cls of classesIn(sel)) {
+          if (tokens.has(cls) || [...prefixes].some(p => cls.startsWith(p))) continue;
+          unused.set(cls, `${rule.file}:${rule.line}`);
+        }
+      }
+    }
+    const report = [...unused].map(([cls, at]) => `.${cls}  (${at})`);
+    expect(report, `classes defined in a stylesheet that nothing applies:\n  ${report.join('\n  ')}`).toEqual([]);
+  });
+
+  it('defines each selector in ONE stylesheet', () => {
+    // Twenty-eight selectors were set in two sheets with conflicting values,
+    // and which one won depended only on the import order in main.tsx — so a
+    // fix made in the losing sheet did nothing, and one wrong rule (the
+    // footer's doubled bottom-nav padding) was "fixed" by an override in the
+    // other sheet instead of being removed. One owner per selector — in any
+    // at-rule context, since that bug was exactly a media-query copy fighting
+    // the base rule in another sheet. Within one sheet a selector may repeat
+    // (a base rule plus its media variants); across sheets it may not.
+    // Selectors that name a class, i.e. a component's: a universal or bare
+    // element reset (`*`, `html`) is base-layer by nature, and the reduced-
+    // motion override of `*` in app.css is not a second owner of tokens.css's
+    // box-sizing reset.
+    const owners = new Map<string, Set<string>>();
+    for (const rule of allRules()) {
+      for (const sel of rule.selectors) {
+        if (!classesIn(sel).length) continue;
+        (owners.get(sel) ?? owners.set(sel, new Set()).get(sel)!).add(`${rule.file}:${rule.line}`);
+      }
+    }
+    const shared = [...owners]
+      .filter(([, at]) => new Set([...at].map(a => a.split(':')[0])).size > 1)
+      .map(([sel, at]) => `${sel}  (${[...at].join(', ')})`);
+    expect(shared, `selectors defined in more than one stylesheet:\n  ${shared.join('\n  ')}`).toEqual([]);
   });
 
   it('only counts stylesheets something actually imports', () => {

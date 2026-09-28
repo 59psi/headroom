@@ -68,6 +68,21 @@ describe('ActivityLogCard', () => {
     expect(screen.getAllByText('hat.updated')).toHaveLength(2);
   });
 
+  it('marks a wrong password at a re-check, and the lockout after it, as failures', async () => {
+    mocked.getActivityLog.mockResolvedValue([
+      row({ summary: 'Wrong password revealing the API token', kind: 'auth.reauth_failed', entity_type: 'user', entity_id: 1 }),
+      row({ summary: 'Password checks paused', kind: 'auth.reauth_blocked', entity_type: 'user', entity_id: 1 }),
+      row({ summary: 'Colors edited', kind: 'hat.colors_updated', entity_type: 'hat', entity_id: 2 }),
+    ]);
+    const { container } = renderWithProviders(<ActivityLogCard />);
+
+    await screen.findByText('Password checks paused');
+    const tones = [...container.querySelectorAll('.hr-upkeep-event')].map(li => li.className);
+    expect(tones[0]).toContain('is-bad');
+    expect(tones[1]).toContain('is-bad');
+    expect(tones[2]).toContain('is-neutral');
+  });
+
   it('links a row to the hat or room it is about, but not to a deleted one', async () => {
     mocked.getActivityLog.mockResolvedValue([
       row({ summary: 'Updated hat H-012', entity_type: 'hat', entity_id: 12 }),
@@ -92,7 +107,7 @@ describe('ActivityLogCard', () => {
     }));
     const { container } = renderWithProviders(<ActivityLogCard />);
 
-    expect(await screen.findByText(/Retention prune failing \(3 in a row\)/)).toHaveTextContent(
+    expect(await screen.findByText(/Retention prune failing \(3 times in a row\)/)).toHaveTextContent(
       /database is locked.*growing unbounded/,
     );
     expect(container.querySelector('.hr-panel-head .hr-pill')).toHaveTextContent('Prune failing');

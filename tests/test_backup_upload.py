@@ -76,6 +76,38 @@ async def test_upload_hook_never_raises_and_records_the_failure(
     assert health.last_upload_error, "the reason is what makes the record actionable"
 
 
+async def test_a_hanging_uploader_is_killed_at_the_timeout(tmp_path, monkeypatch):
+    """Recording "timed out" is half of it; the process itself must go. A
+    hung `rclone` left running holds the archive open and a network slot,
+    and the next night's run starts a second one beside it."""
+    import asyncio
+    import os
+
+    backup = _fake_backup(tmp_path)
+    pid_file = backup.parent / "uploader.pid"
+    monkeypatch.setenv(
+        "HEADROOM_BACKUP_UPLOAD_CMD", f'sh -c "echo $$ > {pid_file}; exec sleep 30"'
+    )
+    monkeypatch.setenv("HEADROOM_BACKUP_UPLOAD_TIMEOUT", "0.5")
+
+    await backup_service._run_upload_hook(backup)
+
+    pid = int(pid_file.read_text())
+
+    def alive() -> bool:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        return True
+
+    for _ in range(40):
+        if not alive():
+            break
+        await asyncio.sleep(0.05)
+    assert not alive(), "the timed-out uploader is still running"
+
+
 async def test_scheduled_backup_ships_off_box_and_local_survives(tmp_path, monkeypatch):
     """End-to-end: a scheduled backup is written locally AND copied off-box; an
     upload that runs does not stop the local backup from succeeding."""

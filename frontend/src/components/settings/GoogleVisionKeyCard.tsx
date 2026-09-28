@@ -1,11 +1,12 @@
 import {
   getGoogleVisionKeyStatus, setGoogleVisionKey, deleteGoogleVisionKey,
 } from '../../api/settings';
+import { qk } from '../../lib/queryKeys';
 import { KeyCard, type KeyProviderSpec } from './KeyCard';
 
 const GOOGLE_VISION: KeyProviderSpec = {
   title: 'Google Vision key',
-  queryKey: ['settings', 'google-vision-key'],
+  queryKey: qk.settings.googleVisionKey(),
   getStatus: getGoogleVisionKeyStatus,
   setKey: setGoogleVisionKey,
   deleteKey: deleteGoogleVisionKey,

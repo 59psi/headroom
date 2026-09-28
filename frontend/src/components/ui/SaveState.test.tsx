@@ -3,7 +3,7 @@ import { act, render, screen } from '@testing-library/react';
 import { SaveState, mutationSaveStatus, type SaveStatus } from './SaveState';
 
 /**
- * The acknowledgement beside a field that saves itself. "Saved" must appear
+ * The acknowledgment beside a field that saves itself. "Saved" must appear
  * after every save — including the second of two in a row — and then get out
  * of the way; a failure must stay until something replaces it.
  */

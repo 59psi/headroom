@@ -347,7 +347,157 @@ async def test_change_password(anon_client):
     ).status_code == 200
 
 
+async def test_the_password_confirmation_routes_are_not_an_unlimited_oracle(
+    client, db_session
+):
+    """Reveal, rotate and change-password each check the password — and none
+    of them used to limit or record a wrong one.
+
+    Measured before: 30 wrong passwords against each route from one session
+    answered 30 × 403 in under two seconds and wrote no audit row, while the
+    login next door locked after five. A stolen cookie could brute-force the
+    owner's password at argon2 speed, invisibly, and a hit reveals the API
+    token that outlives every session revocation.
+
+    The three routes share the LOGIN's bucket for this account and address:
+    five wrong answers across any mix of them lock all three, and the login,
+    even to the right password. Every wrong answer is audited; the lockout is
+    audited once, not once per blocked attempt.
+    """
+    from sqlalchemy import func, select
+
+    from headroom.models.activity_log import ActivityLog
+
+    async def rows(kind: str) -> int:
+        db_session.expire_all()
+        return (await db_session.execute(
+            select(func.count(ActivityLog.id)).where(ActivityLog.kind == kind)
+        )).scalar_one()
+
+    wrong = "definitely-not-it"
+    attempts = [
+        ("/api/auth/token/reveal", {"current_password": wrong}),
+        ("/api/auth/token/rotate", {"current_password": wrong}),
+        ("/api/auth/password", {"current_password": wrong, "new_password": "whatever-123"}),
+        ("/api/auth/token/reveal", {"current_password": wrong}),
+        ("/api/auth/token/rotate", {"current_password": wrong}),
+    ]
+    for path, body in attempts:
+        resp = await client.post(path, json=body)
+        assert resp.status_code == 403, f"{path}: {resp.status_code} {resp.text}"
+
+    assert await rows("auth.reauth_failed") == 5, "each wrong password must be audited"
+
+    # Locked now — on every door that checks this password, the right answer
+    # included, so a lucky sixth guess cannot land.
+    right = "test-password-123"
+    for path, body in (
+        ("/api/auth/token/reveal", {"current_password": right}),
+        ("/api/auth/token/rotate", {"current_password": right}),
+        ("/api/auth/password", {"current_password": right, "new_password": "whatever-123"}),
+    ):
+        resp = await client.post(path, json=body)
+        assert resp.status_code == 429, f"{path} was not locked: {resp.status_code}"
+        assert "api_token" not in resp.text
+    login = await client.post(
+        "/api/auth/login", json={"username": "testowner", "password": right}
+    )
+    assert login.status_code == 429, "a separate bucket doubles the guesses per window"
+
+    assert await rows("auth.reauth_blocked") == 1, (
+        "the lockout must be audited once per window, not once per blocked attempt"
+    )
+
+
+async def test_a_successful_login_clears_the_failures_before_it(anon_client):
+    """The owner who fumbles the password and then gets it right is not an
+    attacker — the next fumble must not inherit the earlier ones.
+
+    Four misses, a success, then four more misses and the right password: with
+    the success clearing the bucket, that last login is fine. Without it, the
+    fifth miss in total locks the account for fifteen minutes, one typo after
+    a login that worked.
+    """
+    await _setup_owner(anon_client)
+    anon_client.cookies.clear()
+    bad = {"username": "brandon", "password": "wrong-password"}
+
+    for _ in range(4):
+        assert (await anon_client.post("/api/auth/login", json=bad)).status_code == 401
+    assert (await anon_client.post("/api/auth/login", json=CREDS)).status_code == 200
+    for _ in range(4):
+        assert (await anon_client.post("/api/auth/login", json=bad)).status_code == 401
+
+    resp = await anon_client.post("/api/auth/login", json=CREDS)
+    assert resp.status_code == 200, "a success did not clear the failures before it"
+
+
+async def test_the_auth_routes_audit_through_the_activity_service_seam(
+    anon_client, monkeypatch
+):
+    """`activity_service.log_activity` is THE seam for audit rows — patched
+    there, every route must see the patch.
+
+    `routes/auth.py` imported the function by name, so it held its own
+    reference: with the module attribute patched, the settings routes went
+    through the patch and a failed login still wrote its row through the real
+    function. A test that relied on the seam would have been blind to exactly
+    the unauthenticated route it most needed to see.
+    """
+    from headroom.services import activity_service
+
+    seen: list[str] = []
+
+    async def recording(db, *, kind, **_kw):
+        seen.append(kind)
+
+    monkeypatch.setattr(activity_service, "log_activity", recording)
+
+    resp = await anon_client.post(
+        "/api/auth/login", json={"username": "nobody-here", "password": "wrong-password"}
+    )
+
+    assert resp.status_code == 401
+    assert seen == ["auth.login_failed"], seen
+
+
 # ----------------------------- passkeys -------------------------------- #
+
+
+@pytest.mark.parametrize(
+    ("sent", "stored"),
+    [
+        ("  ", "Passkey"),
+        ("\u202eenohPi", "enohPi"),
+        ("x" * 200, "x" * 80),
+    ],
+    ids=["blank", "bidi-override", "overlong"],
+)
+async def test_a_passkey_name_is_cleaned_and_cut_never_refused(
+    anon_client, monkeypatch, sent, stored
+):
+    """The name arrives AFTER the authenticator created the credential, so
+    the server must take it: blank is "Passkey", a bidi override is dropped
+    (it stored verbatim, and read reversed in the list), and an overlong name
+    is cut to the column rather than refused — a 422 here would leave a
+    passkey on the device the server never registered."""
+    await _setup_owner(anon_client)
+    body = (await anon_client.post("/api/auth/passkeys/register/options")).json()
+    monkeypatch.setattr(
+        "headroom.services.passkey_service.verify_registration",
+        lambda credential, challenge: {
+            "credential_id": "cred-name", "public_key": "pk", "sign_count": 0,
+        },
+    )
+
+    resp = await anon_client.post(
+        "/api/auth/passkeys/register/verify",
+        json={"state_id": body["state_id"], "credential": {"id": "cred-name"}, "name": sent},
+    )
+
+    assert resp.status_code == 200, resp.text
+    listed = (await anon_client.get("/api/auth/passkeys")).json()
+    assert [p["name"] for p in listed] == [stored]
 
 
 async def test_passkey_register_and_login_with_stubbed_verify(anon_client, monkeypatch):
@@ -397,6 +547,107 @@ async def test_passkey_register_and_login_with_stubbed_verify(anon_client, monke
     assert resp.status_code == 400
 
 
+@pytest.mark.parametrize(
+    "credential",
+    [
+        {"id": ["x"]},
+        {"id": {"a": 1}},
+        {"id": 12345},
+        {"id": None},
+        {"id": ""},
+        {"id": "x" * 2000},
+        {},
+    ],
+    ids=["list", "object", "number", "null", "empty", "oversize", "missing"],
+)
+async def test_a_malformed_passkey_id_is_refused_without_an_error_row(
+    anon_client, db_session, credential
+):
+    """The anonymous passkey login looks the credential up by `credential["id"]`.
+
+    `credential` is an open dict — it is the browser's object, handed to the
+    passkey library — so the id arrived unchecked, and a list or an object
+    reached the SQL bind and raised: a 500, and a durable `error.unhandled`
+    activity row, per anonymous request. Measured: 100 requests in 0.7 s, 100
+    rows. The id is now a bounded string by schema, so anything else is a 422
+    before the route runs — and a 422 writes nothing.
+    """
+    from sqlalchemy import func, select
+
+    from headroom.models.activity_log import ActivityLog
+
+    opts = (await anon_client.post("/api/auth/passkeys/login/options")).json()
+    resp = await anon_client.post(
+        "/api/auth/passkeys/login/verify",
+        json={"state_id": opts["state_id"], "credential": credential},
+    )
+
+    assert resp.status_code == 422, resp.text
+    errors = (await db_session.execute(
+        select(func.count(ActivityLog.id)).where(ActivityLog.kind == "error.unhandled")
+    )).scalar_one()
+    assert errors == 0, "a malformed passkey id wrote an unhandled-error row"
+
+
+async def test_an_unknown_but_well_formed_passkey_id_is_still_a_401(anon_client):
+    """The schema check narrows what reaches the lookup; it does not replace it."""
+    opts = (await anon_client.post("/api/auth/passkeys/login/options")).json()
+    resp = await anon_client.post(
+        "/api/auth/passkeys/login/verify",
+        json={"state_id": opts["state_id"], "credential": {"id": "never-registered"}},
+    )
+    assert resp.status_code == 401
+    assert resp.json()["detail"] == "Unknown passkey"
+
+
+async def test_one_account_cannot_delete_anothers_passkey(client, app, db_session, monkeypatch):
+    """`row.user_id != user.id` is the only thing between a session and every
+    other account's passkeys — and deleting that half of the check left the
+    whole suite green, because no test ever had a second account.
+
+    Single-owner is how the app is used, not something the schema enforces:
+    the `users` table takes any number of rows. The answer is a 404, the same
+    as a passkey that does not exist, so the id space cannot be probed.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from httpx import ASGITransport, AsyncClient
+    from sqlalchemy import select
+
+    from headroom.models.user import AuthSession, PasskeyCredential, User
+
+    opts = (await client.post("/api/auth/passkeys/register/options")).json()
+    monkeypatch.setattr(
+        "headroom.services.passkey_service.verify_registration",
+        lambda credential, challenge: {
+            "credential_id": "owners-cred", "public_key": "pk", "sign_count": 0,
+        },
+    )
+    assert (await client.post(
+        "/api/auth/passkeys/register/verify",
+        json={"state_id": opts["state_id"], "credential": {"id": "owners-cred"}, "name": "Owner"},
+    )).status_code == 200
+    passkey_id = (await client.get("/api/auth/passkeys")).json()[0]["id"]
+
+    other = User(username="someone-else", password_hash="x", api_token="hr_other-token")
+    db_session.add(other)
+    await db_session.commit()
+    await db_session.refresh(other)
+    db_session.add(AuthSession(
+        id="other-session", user_id=other.id,
+        expires_at=datetime.now(timezone.utc) + timedelta(days=1),
+    ))
+    await db_session.commit()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as intruder:
+        intruder.cookies.set("headroom_session", "other-session")
+        resp = await intruder.delete(f"/api/auth/passkeys/{passkey_id}")
+
+    assert resp.status_code == 404, resp.text
+    db_session.expire_all()
+    still_there = (await db_session.execute(
+        select(PasskeyCredential).where(PasskeyCredential.id == passkey_id)
+    )).scalar_one_or_none()
+    assert still_there is not None, "another account deleted the owner's passkey"
 
 
 async def test_a_second_passkey_can_be_registered(anon_client, monkeypatch):
@@ -467,21 +718,21 @@ async def test_change_password_revokes_other_sessions(anon_client, app):
     await _setup_owner(anon_client)  # session A on anon_client
 
     # Second device logs in → session B
-    other = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
-    resp = await other.post("/api/auth/login", json=CREDS)
-    assert resp.status_code == 200
-    assert (await other.get("/api/hats")).status_code == 200
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as other:
+        resp = await other.post("/api/auth/login", json=CREDS)
+        assert resp.status_code == 200
+        assert (await other.get("/api/hats")).status_code == 200
 
-    # Device A changes the password
-    resp = await anon_client.post(
-        "/api/auth/password",
-        json={"current_password": CREDS["password"], "new_password": "rotated-pass-99"},
-    )
-    assert resp.status_code == 204
+        # Device A changes the password
+        resp = await anon_client.post(
+            "/api/auth/password",
+            json={"current_password": CREDS["password"], "new_password": "rotated-pass-99"},
+        )
+        assert resp.status_code == 204
 
-    # A (the changer) survives; B is dead
-    assert (await anon_client.get("/api/hats")).status_code == 200
-    assert (await other.get("/api/hats")).status_code == 401
+        # A (the changer) survives; B is dead
+        assert (await anon_client.get("/api/hats")).status_code == 200
+        assert (await other.get("/api/hats")).status_code == 401
 
 
 async def test_rotating_usernames_from_one_address_is_still_locked_out(

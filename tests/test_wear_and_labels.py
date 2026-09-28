@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+
 from headroom.services import capacity
 
 pytestmark = pytest.mark.anyio
@@ -16,7 +17,7 @@ async def _hat(client, **fields):
 
 
 async def test_wear_log_and_undo(client):
-    from datetime import datetime, timezone
+    from headroom.services import hat_service
 
     hat_id = await _hat(client)
 
@@ -24,9 +25,10 @@ async def test_wear_log_and_undo(client):
     assert resp.status_code == 200
     body = resp.json()
     assert body["wear_count"] == 1
-    # Records *today* (server clock, UTC) — assert the real date, not merely
-    # "not None", which a stuck/epoch value would also satisfy.
-    today = datetime.now(timezone.utc).date().isoformat()
+    # Records *today* — the server's own calendar day when the client names
+    # none (`owner_today`) — asserted as the real date, not merely "not None",
+    # which a stuck/epoch value would also satisfy.
+    today = hat_service.owner_today().isoformat()
     assert body["date_last_worn"] == today
 
     # Same-day double tap is idempotent

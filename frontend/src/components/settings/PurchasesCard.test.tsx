@@ -211,7 +211,7 @@ describe('PurchasesCard', () => {
     renderWithProviders(<PurchasesCard />);
 
     await user.click(await screen.findByText(/get one from your email/i));
-    await user.click(screen.getByRole('button', { name: 'Copy prompt' }));
+    await user.click(screen.getByRole('button', { name: 'Copy the import prompt' }));
 
     expect(writeText).toHaveBeenCalledTimes(1);
     const copied = writeText.mock.calls[0][0] as string;
@@ -220,7 +220,7 @@ describe('PurchasesCard', () => {
     expect(copied).toContain('item_title');
     expect(copied).toContain('order_date');
     expect(copied).not.toContain('purchased_at');
-    expect(await screen.findByRole('button', { name: 'Copied' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Copied the import prompt' })).toBeInTheDocument();
   });
 
   it('survives a clipboard the browser refuses', async () => {
@@ -237,10 +237,11 @@ describe('PurchasesCard', () => {
 
     renderWithProviders(<PurchasesCard />);
     await user.click(await screen.findByText(/get one from your email/i));
-    await user.click(screen.getByRole('button', { name: 'Copy prompt' }));
+    await user.click(screen.getByRole('button', { name: 'Copy the import prompt' }));
 
     // No crash, no false "Copied".
-    expect(await screen.findByRole('button', { name: 'Copy prompt' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Copy the import prompt' })).toBeInTheDocument();
+    expect(await screen.findByText(/Couldn.t copy the import prompt/)).toBeInTheDocument();
   });
 });
 

@@ -62,9 +62,9 @@ MAX_UNREMARKABLE = 3
 #: Deliberately narrow: it neutralizes one integer in a fixed position and
 #: leaves the rest of the sentence alone. The size and condition qualifiers are
 #: stable facts about the hat, not about the moment, and they mark genuinely
-#: different comparisons — CLAUDE.md's warning that branching on prose
-#: "would silently revalue the collection the day someone reworded the label"
-#: is the reason this does not try to parse the sentence apart.
+#: different comparisons — and branching on prose would silently revalue the
+#: collection the day someone reworded the label, which is the reason this
+#: does not try to parse the sentence apart.
 #:
 #: Same shape as `analysis_job_service._reason_key`: group on a cleaned key,
 #: display the verbatim text.

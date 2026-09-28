@@ -9,6 +9,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.database import get_db
+from headroom.routes._api import DomainErrorRoute
 from headroom.schemas.admin import (
     BackupHealthRead,
     BackupInfo,
@@ -19,23 +20,30 @@ from headroom.schemas.admin import (
 )
 from headroom.services import activity_service, backup_service, settings_service
 
-router = APIRouter()
+router = APIRouter(route_class=DomainErrorRoute)
 
 
 @router.get("/backup", response_class=StreamingResponse)
 async def download_backup(
-    include_uploads: bool = Query(True, description="Include uploads/ tree (photos)"),
+    include_uploads: bool = Query(
+        True,
+        description=(
+            "Full archive: photos and (LAN-HTTPS) the certificate authority. "
+            "false = the database alone"
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     """Stream a one-shot tar.gz of /data.
 
-    `include_uploads=false` returns a DB-only snapshot — much smaller and
-    much faster when the photo tree is large.
+    `include_uploads=false` returns the database alone — no photos and no
+    certificate authority. Much smaller and much faster when the photo tree
+    is large, and the CA's private keys travel only in full archives.
     """
     filename = backup_service.streaming_filename(include_uploads=include_uploads)
     # The backup tarball contains the whole DB (plaintext keys, tokens, session
     # ids, password hashes) — the single highest-value exfil artifact. Audit the
-    # download so a full-dataset export is never invisible (S4/S10 — docs/AUDIT-HISTORY.md).
+    # download so a full-dataset export is never invisible.
     await activity_service.log_activity(
         db, kind="backup.download", entity_type="system", entity_id=None,
         summary=f"Backup downloaded ({'full' if include_uploads else 'db-only'}): {filename}",
@@ -170,23 +178,25 @@ async def get_backup_upload(db: AsyncSession = Depends(get_db)):
 async def set_backup_upload(
     data: BackupUploadUpdate, db: AsyncSession = Depends(get_db)
 ):
-    # No membership check here: `validate_destination` already rejects an
-    # unknown provider with the same message, and stating it twice is two
-    # places for the wording — and the list of providers — to drift apart.
+    # No membership check here: the schema already refused an unknown provider
+    # (`BackupProviderName` is generated from `UPLOAD_PROVIDERS`, the one
+    # registry). What is left is the destination's shape for THIS provider.
     try:
-        destination = backup_service.validate_destination(data.destination, data.provider)
+        destination = backup_service.validate_destination(
+            data.destination, data.provider.value
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
 
     await settings_service.set_setting(
-        db, backup_service.UPLOAD_PROVIDER_KEY, data.provider
+        db, backup_service.UPLOAD_PROVIDER_KEY, data.provider.value
     )
     await settings_service.set_setting(
         db, backup_service.UPLOAD_DESTINATION_KEY, destination
     )
     await activity_service.log_activity(
         db, kind="backup.upload_configured", entity_type="system", entity_id=None,
-        summary=f"Off-box backup upload set to {data.provider} → {destination}",
+        summary=f"Off-box backup upload set to {data.provider.value} → {destination}",
     )
     await db.commit()
     return await _upload_status(db)
@@ -194,8 +204,11 @@ async def set_backup_upload(
 
 @router.delete("/backups/upload", response_model=BackupUploadStatus)
 async def clear_backup_upload(db: AsyncSession = Depends(get_db)):
-    await settings_service.set_setting(db, backup_service.UPLOAD_PROVIDER_KEY, "")
-    await settings_service.set_setting(db, backup_service.UPLOAD_DESTINATION_KEY, "")
+    # `None` deletes the rows — "not configured" is an absent setting, the same
+    # way every other clear here spells it, rather than a stored empty string
+    # that reads back as a provider named "".
+    await settings_service.set_setting(db, backup_service.UPLOAD_PROVIDER_KEY, None)
+    await settings_service.set_setting(db, backup_service.UPLOAD_DESTINATION_KEY, None)
     await activity_service.log_activity(
         db, kind="backup.upload_cleared", entity_type="system", entity_id=None,
         summary="Off-box backup upload turned off",
@@ -219,7 +232,15 @@ async def test_backup_upload(db: AsyncSession = Depends(get_db)):
             ok=False,
             detail="No backup on disk to upload yet. One is written after the next change.",
         )
-    argv = await backup_service.resolve_upload_argv(db, backups[0])
+    try:
+        argv = await backup_service.resolve_upload_argv(db, backups[0])
+    except backup_service.UploadConfigError as exc:
+        # Configured, and no longer valid — the state "Test now" exists to
+        # find. It answered 500 here, because nothing caught it.
+        return BackupUploadTestResult(
+            ok=False,
+            detail=f"The saved destination no longer validates: {exc} Re-enter it and save.",
+        )
     if not argv:
         return BackupUploadTestResult(ok=False, detail="No off-box upload is configured.")
     # Say which of the two it is. "No such file or directory" from a subprocess

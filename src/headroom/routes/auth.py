@@ -9,7 +9,6 @@ unhashed; the API token is returned only by the two password-gated routes
 from __future__ import annotations
 
 import logging
-import os
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -17,12 +16,12 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from headroom.auth import client_ip, require_user
+from headroom import config
+from headroom.auth import client_ip, require_user, resolve_user
 from headroom.database import get_db
 from headroom.models.app_setting import AppSetting
 from headroom.models.user import PasskeyCredential, User
-from headroom.services import auth_service, passkey_service
-from headroom.services.activity_service import log_activity
+from headroom.routes._api import DomainErrorRoute
 from headroom.schemas.auth import (
     ApiTokenRead,
     AuthStatus,
@@ -36,8 +35,12 @@ from headroom.schemas.auth import (
     PasswordChange,
     PasswordConfirm,
 )
-from headroom.auth import resolve_user
-from headroom.services import guest_view_service
+from headroom.services import (
+    activity_service,
+    auth_service,
+    guest_view_service,
+    passkey_service,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +48,11 @@ logger = logging.getLogger(__name__)
 #: the recovery path below and the migration guide both refer to it.
 SETUP_SENTINEL_KEY = "owner_setup_done"
 
-router = APIRouter(prefix="/api/auth", tags=["auth"])
+# Built with the shared route class like every other router, although no
+# service these routes call raises a `DomainError` today: the census in
+# `tests/test_route_layer.py` then covers this module too, instead of carrying
+# an exclusion that would silently outlive the day one of them starts to.
+router = APIRouter(prefix="/api/auth", tags=["auth"], route_class=DomainErrorRoute)
 
 
 def _set_session_cookie(response: Response, request: Request, session_id: str) -> None:
@@ -60,11 +67,69 @@ def _set_session_cookie(response: Response, request: Request, session_id: str) -
     )
 
 
+async def _reauthenticate(
+    db: AsyncSession, request: Request, user: User, password: str, *, action: str
+) -> None:
+    """Prove the session holder knows the password — rate-limited and audited.
+
+    One definition for the three routes a session alone must not authorize
+    (reveal the token, rotate it, change the password). Each used to carry its
+    own bare `verify_password_async`, and together they were a password oracle
+    with no limit and no record: anyone holding a session — a stolen cookie is
+    exactly that — could try passwords as fast as argon2 would answer, and a
+    hit hands them the long-lived API token that outlives every session
+    revocation. The login route, checking the same secret, allows five tries
+    and audits each one.
+
+    So this uses the LOGIN's limiter and the LOGIN's bucket, keyed on (client
+    address, account). Deliberately the same bucket, not a parallel one: both
+    doors check the one password, and separate buckets would simply double an
+    attacker's guesses per window. Keyed on the address as well as the
+    account, as the login is, so a thief hammering from their own network
+    cannot lock the owner out of changing the password from theirs — that is
+    the compromise response, and it must stay reachable.
+
+    Every wrong password writes an `auth.reauth_failed` row (bounded by the
+    limiter, as the login's `auth.login_failed` rows are); the lockout writes
+    one `auth.reauth_blocked` row per window, through the same
+    `should_log_block` gate the login uses.
+    """
+    ip = client_ip(request)
+    if auth_service.is_rate_limited(ip, user.username):
+        logger.warning(
+            "Re-authentication rate-limited: '%s' (%s) from %s", user.username, action, ip
+        )
+        if auth_service.should_log_block(ip, user.username):
+            await activity_service.log_activity(
+                db, kind="auth.reauth_blocked", entity_type="user", entity_id=user.id,
+                summary=f"Password confirmation blocked (rate limit): '{user.username}' from {ip}",
+                details={"ip": ip, "action": action},
+            )
+            await db.commit()
+        raise HTTPException(
+            status_code=429,
+            detail="Too many wrong passwords — try again in a few minutes.",
+        )
+    if not await auth_service.verify_password_async(user.password_hash, password):
+        auth_service.record_failure(ip, user.username)
+        logger.warning(
+            "Password confirmation failed: '%s' (%s) from %s", user.username, action, ip
+        )
+        await activity_service.log_activity(
+            db, kind="auth.reauth_failed", entity_type="user", entity_id=user.id,
+            summary=f"Wrong password confirming {action} for '{user.username}' from {ip}",
+            details={"ip": ip, "action": action},
+        )
+        await db.commit()
+        raise HTTPException(status_code=403, detail="Current password is incorrect")
+    # Same rule as a successful login: the owner who fumbled it twice and then
+    # got it right is not an attacker, and a still-charged bucket would lock
+    # out their next fumble — on this door and the login alike.
+    auth_service.clear_failures(ip, user.username)
 
 
 @router.get("/status", response_model=AuthStatus)
 async def auth_status(request: Request, db: AsyncSession = Depends(get_db)):
-
     needs_setup = (await auth_service.user_count(db)) == 0
     user = None if needs_setup else await resolve_user(request)
 
@@ -101,7 +166,7 @@ async def first_run_setup(
     against an attacker who is already on the LAN. Set it for an
     internet-facing deployment; leave it unset and behavior is unchanged.
     """
-    expected = os.environ.get("HEADROOM_SETUP_TOKEN", "").strip()
+    expected = config.env_str("HEADROOM_SETUP_TOKEN")
     if expected and not secrets.compare_digest(data.setup_token or "", expected):
         # Deliberately indistinguishable from "setup already completed": an
         # attacker learning that the token is merely WRONG has learned the box
@@ -125,7 +190,7 @@ async def first_run_setup(
     # Serialize first-run setup against a racing second POST: app_settings.key
     # is a PRIMARY KEY, so only one concurrent transaction can claim this
     # sentinel — the loser's INSERT collides and rolls back its owner account
-    # too, instead of both check-then-inserting two co-equal owners (S5/R10 — docs/AUDIT-HISTORY.md).
+    # too, instead of both check-then-inserting two co-equal owners.
     db.add(AppSetting(key=SETUP_SENTINEL_KEY, value="1"))
     try:
         user = await auth_service.create_user(db, data.username, data.password)
@@ -139,7 +204,7 @@ async def first_run_setup(
         ) from None
     session = await auth_service.create_session(db, user)
     _set_session_cookie(response, request, session.id)
-    await log_activity(
+    await activity_service.log_activity(
         db, kind="auth.setup", entity_type="user", entity_id=user.id,
         summary=f"Owner account '{user.username}' created",
     )
@@ -161,7 +226,7 @@ async def login(
         # the disk, 90 days at a time. See `auth_service.should_log_block`.
         logger.warning("Login rate-limited: '%s' from %s", data.username, ip)
         if auth_service.should_log_block(ip, data.username):
-            await log_activity(
+            await activity_service.log_activity(
                 db, kind="auth.login_blocked", entity_type="auth", entity_id=None,
                 summary=f"Login blocked (rate limit): '{data.username}' from {ip}",
                 details={"ip": ip, "username": data.username},
@@ -177,6 +242,7 @@ async def login(
     # for the real one — a timing oracle for the owner's username. The
     # placeholder hash is real argon2 with the same parameters, so the work is
     # the same; its result is discarded because there is no user to log in.
+    # The lifespan computes it at boot, off the loop, so this reads a cache.
     password_ok = await auth_service.verify_password_async(
         user.password_hash if user else auth_service.placeholder_password_hash(),
         data.password,
@@ -184,7 +250,7 @@ async def login(
     if user is None or not password_ok:
         auth_service.record_failure(ip, data.username)
         logger.warning("Login failed: '%s' from %s", data.username, ip)
-        await log_activity(
+        await activity_service.log_activity(
             db, kind="auth.login_failed", entity_type="auth",
             entity_id=user.id if user else None,
             summary=f"Failed login: '{data.username}' from {ip}",
@@ -196,7 +262,7 @@ async def login(
     session = await auth_service.create_session(db, user)
     _set_session_cookie(response, request, session.id)
     logger.info("Login success: '%s' from %s", user.username, ip)
-    await log_activity(
+    await activity_service.log_activity(
         db, kind="auth.login", entity_type="user", entity_id=user.id,
         summary=f"Login: '{user.username}' from {ip}", details={"ip": ip},
     )
@@ -232,6 +298,7 @@ async def me(user: User = Depends(require_user)):
 @router.post("/token/reveal", response_model=ApiTokenRead)
 async def reveal_api_token(
     data: PasswordConfirm,
+    request: Request,
     user: User = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -241,11 +308,10 @@ async def reveal_api_token(
     entry or referrer — the same reason the Google Vision key stopped being a
     query parameter.
     """
-    if not await auth_service.verify_password_async(
-        user.password_hash, data.current_password
-    ):
-        raise HTTPException(status_code=403, detail="Current password is incorrect")
-    await log_activity(
+    await _reauthenticate(
+        db, request, user, data.current_password, action="API token reveal"
+    )
+    await activity_service.log_activity(
         db, kind="auth.token_revealed", entity_type="user", entity_id=user.id,
         summary=f"API token revealed for '{user.username}'",
     )
@@ -256,6 +322,7 @@ async def reveal_api_token(
 @router.post("/token/rotate", response_model=ApiTokenRead)
 async def rotate_api_token(
     data: PasswordConfirm,
+    request: Request,
     user: User = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -267,13 +334,12 @@ async def rotate_api_token(
     back. Closing one door and leaving the other one open would have been
     security theater — the escalation path is identical.
     """
-    if not await auth_service.verify_password_async(
-        user.password_hash, data.current_password
-    ):
-        raise HTTPException(status_code=403, detail="Current password is incorrect")
+    await _reauthenticate(
+        db, request, user, data.current_password, action="API token rotation"
+    )
     user.api_token = auth_service.new_api_token()
     db.add(user)
-    await log_activity(
+    await activity_service.log_activity(
         db, kind="auth.token_rotated", entity_type="user", entity_id=user.id,
         summary=f"API token rotated for '{user.username}'",
     )
@@ -288,14 +354,13 @@ async def change_password(
     user: User = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ):
-    if not await auth_service.verify_password_async(
-        user.password_hash, data.current_password
-    ):
-        raise HTTPException(status_code=403, detail="Current password is incorrect")
+    await _reauthenticate(
+        db, request, user, data.current_password, action="password change"
+    )
     user.password_hash = await auth_service.hash_password_async(data.new_password)
     # Password change is a compromise response, so make it a COMPLETE one:
     # rotate the long-lived bearer token too, otherwise a stolen api_token
-    # survives the reset (session revocation alone doesn't cover it — S3).
+    # survives the reset — session revocation alone never reaches it.
     user.api_token = auth_service.new_api_token()
     db.add(user)
     await db.commit()
@@ -304,7 +369,7 @@ async def change_password(
     await auth_service.destroy_other_sessions(
         db, user.id, keep=request.cookies.get(auth_service.SESSION_COOKIE)
     )
-    await log_activity(
+    await activity_service.log_activity(
         db, kind="auth.password_change", entity_type="user", entity_id=user.id,
         summary=f"Password changed for '{user.username}' (token rotated, other sessions revoked)",
     )
@@ -360,12 +425,12 @@ async def passkey_register_verify(
             credential_id=verified["credential_id"],
             public_key=verified["public_key"],
             sign_count=verified["sign_count"],
-            name=data.name[:80] or "Passkey",
+            name=data.name,
         )
     )
-    await log_activity(
+    await activity_service.log_activity(
         db, kind="auth.passkey_added", entity_type="user", entity_id=user.id,
-        summary=f"Passkey '{data.name[:80] or 'Passkey'}' registered for '{user.username}'",
+        summary=f"Passkey '{data.name}' registered for '{user.username}'",
     )
     await db.commit()
     return OkRead()
@@ -381,7 +446,7 @@ async def delete_passkey(
     if row is None or row.user_id != user.id:
         raise HTTPException(status_code=404, detail="Passkey not found")
     await db.delete(row)
-    await log_activity(
+    await activity_service.log_activity(
         db, kind="auth.passkey_removed", entity_type="user", entity_id=user.id,
         summary=f"Passkey '{row.name}' removed for '{user.username}'",
     )
@@ -404,7 +469,9 @@ async def passkey_login_verify(
     entry = passkey_service.pop_challenge(data.state_id)
     if entry is None:
         raise HTTPException(status_code=400, detail="Challenge expired — try again")
-    credential_id = data.credential.get("id", "")
+    # A bounded string by the time it gets here — `PasskeyLoginVerify` checks
+    # the one field this route reads itself, and says why.
+    credential_id = data.credential["id"]
     result = await db.execute(
         select(PasskeyCredential).where(
             PasskeyCredential.credential_id == credential_id
@@ -417,7 +484,7 @@ async def passkey_login_verify(
         new_count = passkey_service.verify_authentication(
             data.credential, entry[0], stored
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001 — library raises many subtypes; each is a failed login
         # Same rule, on an ANONYMOUS route: the text goes to the log.
         logger.warning("Passkey login rejected for credential=%s: %s", stored.id, exc)
         raise HTTPException(status_code=401, detail="Passkey login failed") from None
@@ -426,7 +493,7 @@ async def passkey_login_verify(
     session = await auth_service.create_session(db, user)
     _set_session_cookie(response, request, session.id)
     logger.info("Passkey login success: '%s' from %s", user.username, client_ip(request))
-    await log_activity(
+    await activity_service.log_activity(
         db, kind="auth.login", entity_type="user", entity_id=user.id,
         summary=f"Passkey login: '{user.username}' from {client_ip(request)}",
         details={"ip": client_ip(request), "method": "passkey"},

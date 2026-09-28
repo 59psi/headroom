@@ -33,9 +33,13 @@ describe('copyText', () => {
     const input = document.createElement('input');
     input.value = 'http://headroom.local/t/h/42';
     document.body.appendChild(input);
+    const range = vi.spyOn(input, 'setSelectionRange');
 
     await expect(copyText(input.value, input)).resolves.toBe(true);
     expect(exec).toHaveBeenCalledWith('copy');
+    // Explicitly, not only through select(): iOS Safari ignores select() on
+    // its own, and the copy then takes an empty selection.
+    expect(range).toHaveBeenCalledWith(0, input.value.length);
     // The text stays selected, so a manual long-press → Copy works too.
     expect(input.selectionStart).toBe(0);
     expect(input.selectionEnd).toBe(input.value.length);

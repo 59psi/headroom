@@ -1,0 +1,43 @@
+{
+  // Three rules, enforced — each one a convention this codebase states and
+  // that nothing else can check. CI runs this as `npm run lint`, with
+  // --deny-warnings and --report-unused-disable-directives, so a suppression
+  // comment that no longer suppresses anything fails the build too.
+  //
+  // react/rules-of-hooks: a hook called after an early `return` (the
+  // `if (isLoading) return <Spinner />` shape, the most common bug source
+  // this codebase has had) passes tsc and every unit test, then throws
+  // "Rendered more hooks than during the previous render" on the
+  // loading -> loaded transition.
+  //
+  // react/exhaustive-deps: the `eslint-disable-next-line
+  // react-hooks/exhaustive-deps` comments in the pages were written against a
+  // linter that was never installed, so they documented deliberate omissions
+  // nobody could check — and an accidental omission looked exactly the same.
+  // With the rule on, each remaining comment is a checked, deliberate one.
+  //
+  // typescript/no-explicit-any: `any` switches the type checker off for
+  // everything it touches. The one file that used it (the WebAuthn
+  // conversion) is typed against the DOM's own credential types now.
+  //
+  // oxlint rather than eslint-plugin-react-hooks because @typescript-eslint's
+  // parser does not support TypeScript 7, which this project builds with;
+  // oxlint parses TSX itself. Every default category is switched off so this
+  // stays a gate for these rules rather than a style debate.
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["react", "typescript"],
+  "categories": {
+    "correctness": "off",
+    "suspicious": "off",
+    "pedantic": "off",
+    "perf": "off",
+    "style": "off",
+    "restriction": "off",
+    "nursery": "off"
+  },
+  "rules": {
+    "react/rules-of-hooks": "error",
+    "react/exhaustive-deps": "error",
+    "typescript/no-explicit-any": "error"
+  }
+}

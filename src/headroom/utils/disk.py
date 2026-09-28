@@ -52,6 +52,20 @@ def min_free_mb() -> int:
     return env_int("HEADROOM_DISK_MIN_FREE_MB", DEFAULT_MIN_FREE_MB)
 
 
+def percent_free(free_bytes: int, total_bytes: int) -> float:
+    """Free space as a percentage of the volume, unrounded. 0.0 for no volume.
+
+    The one definition. `check()` compares it with the warning threshold and
+    `DiskStatus.free_pct` rounds it for display; each used to compute it
+    inline, so the number on the card and the number that decided `low` could
+    drift apart. Unrounded here on purpose: 14.96% free under a 15% threshold
+    is low, and rounding first would call it 15.0 and not.
+    """
+    if not total_bytes:
+        return 0.0
+    return free_bytes / total_bytes * 100
+
+
 @dataclass(frozen=True)
 class DiskStatus:
     """A point-in-time reading of one volume."""
@@ -68,9 +82,8 @@ class DiskStatus:
 
     @property
     def free_pct(self) -> float:
-        if not self.total_bytes:
-            return 0.0
-        return round(self.free_bytes / self.total_bytes * 100, 1)
+        """For display: `percent_free`, rounded to one decimal."""
+        return round(percent_free(self.free_bytes, self.total_bytes), 1)
 
     @property
     def free_mb(self) -> int:
@@ -103,10 +116,9 @@ def check(path: Path) -> DiskStatus:
         )
 
     free_mb = usage.free / (1024 * 1024)
-    pct = (usage.free / usage.total * 100) if usage.total else 0.0
     return DiskStatus(
         ok=free_mb >= min_free_mb(),
-        low=pct < warn_pct(),
+        low=percent_free(usage.free, usage.total) < warn_pct(),
         free_bytes=usage.free,
         total_bytes=usage.total,
     )

@@ -80,15 +80,18 @@ def _clear_ebay_token():
     """The token cache is a module global, so one test can poison the next."""
     ebay_service._token = None
     ebay_service._token_expires_at = 0.0
+    ebay_service._token_creds = None
     yield
     ebay_service._token = None
     ebay_service._token_expires_at = 0.0
+    ebay_service._token_creds = None
 
 
 async def test_a_cached_ebay_token_is_reused(monkeypatch):
     """Re-authenticating per call would spend an API quota on nothing."""
     ebay_service._token = "cached-token"
     ebay_service._token_expires_at = time.time() + 3600
+    ebay_service._token_creds = ebay_service._fingerprint("id", "secret")
 
     def _explode(**_kw):
         raise AssertionError("re-authenticated despite a live cached token")
@@ -284,3 +287,247 @@ async def test_a_stale_token_is_retried_once(monkeypatch):
 
     assert forced == [False, True], "the retry did not force a fresh token"
     assert listings == [{"id": "1"}]
+
+
+class _NotJson:
+    """A 200 whose body is a proxy's or captive portal's HTML page."""
+
+    status_code = 200
+    text = "<html><body>Sign in to the Wi-Fi</body></html>"
+
+    def json(self):
+        raise ValueError("Expecting value: line 1 column 1 (char 0)")
+
+
+@pytest.mark.parametrize(
+    "resp",
+    [_NotJson(), _Resp(200, ["a", "list"]), _Resp(200, {"data": "not a list"})],
+    ids=["html-200", "json-list", "data-not-list"],
+)
+async def test_a_malformed_marketplace_reply_is_the_services_own_error(monkeypatch, resp):
+    """Callers catch `MelinRecapError` and degrade to a link. A 200 that was
+    not `{"data": [...]}` used to escape as a raw decode or attribute error —
+    and after a successful (paid) Claude analysis that threw the analysis
+    away, or in a bulk import deleted the hat."""
+    async def _token(_client, force=False):
+        return "tok"
+
+    monkeypatch.setattr(melin_recap, "_get_anon_token", _token)
+    monkeypatch.setattr(melin_recap.httpx, "AsyncClient", _client_returning(resp))
+
+    with pytest.raises(melin_recap.MelinRecapError):
+        await _real_query_listings({"pub_category": "aGame"})
+
+
+async def test_a_reply_without_data_is_an_empty_market_not_an_error(monkeypatch):
+    async def _token(_client, force=False):
+        return "tok"
+
+    monkeypatch.setattr(melin_recap, "_get_anon_token", _token)
+    monkeypatch.setattr(melin_recap.httpx, "AsyncClient", _client_returning(_Resp(200, {"meta": {}})))
+
+    assert await _real_query_listings({"pub_category": "aGame"}) == []
+
+
+@pytest.mark.parametrize(
+    "resp",
+    [_NotJson(), _Resp(200, ["tok"]), _Resp(200, {"access_token": 5}), _Resp(200, {})],
+    ids=["html-200", "json-list", "token-not-string", "no-token"],
+)
+async def test_a_malformed_token_reply_is_the_services_own_error(monkeypatch, resp):
+    """Same seam, one step earlier — and a bad reply must not poison the
+    module-wide token cache for the next call."""
+    monkeypatch.setattr(melin_recap, "_token", None)
+    client = _client_returning(resp)()
+
+    with pytest.raises(melin_recap.MelinRecapError):
+        await melin_recap._get_anon_token(client, force=True)
+    assert melin_recap._token is None
+
+
+# ---- eBay: every failure is EbayError, and the token belongs to its keyset -- #
+
+
+async def test_a_token_minted_for_other_credentials_is_not_reused(monkeypatch):
+    """Replacing the keyset in Settings kept searching with the token the OLD
+    keyset minted, for up to its two-hour life — so revoked or mistyped keys
+    went on "working". Measured: the only request made was a Browse search
+    with the old app's bearer token."""
+    ebay_service._token = "TOKEN-FOR-OLD-APP"
+    ebay_service._token_expires_at = time.time() + 3600
+    ebay_service._token_creds = ebay_service._fingerprint("old-app", "old-cert")
+
+    async def _creds(_db):
+        return "new-app", "new-cert", "EBAY_US"
+
+    seen: list = []
+    monkeypatch.setattr(ebay_service, "get_creds", _creds)
+    monkeypatch.setattr(ebay_service.httpx, "AsyncClient", _client_returning(
+        _Resp(200, {"access_token": "TOKEN-FOR-NEW-APP", "expires_in": 7200}),
+        _Resp(200, {"itemSummaries": [{"price": {"value": "50"}}], "total": 1}),
+        capture=seen,
+    ))
+
+    await ebay_service.find_comps(None, brand="Melin", model="A-Game", style="a_game")
+
+    assert [method for method, _url, _kw in seen] == ["POST", "GET"]
+    assert seen[0][1] == ebay_service.EBAY_OAUTH
+    assert seen[1][2]["headers"]["Authorization"] == "Bearer TOKEN-FOR-NEW-APP"
+
+
+async def test_the_credential_test_never_trusts_a_cached_token(monkeypatch):
+    """Test re-authenticates even with a live cached token for the same keys,
+    or a revoked keyset would pass on the strength of an old token."""
+    ebay_service._token = "cached"
+    ebay_service._token_expires_at = time.time() + 3600
+    ebay_service._token_creds = ebay_service._fingerprint("app", "cert")
+
+    async def _creds(_db):
+        return "app", "cert", "EBAY_US"
+
+    seen: list = []
+    monkeypatch.setattr(ebay_service, "get_creds", _creds)
+    monkeypatch.setattr(ebay_service.httpx, "AsyncClient", _client_returning(
+        _Resp(200, {"access_token": "fresh", "expires_in": 7200}),
+        _Resp(200, {"itemSummaries": [{}]}),
+        capture=seen,
+    ))
+
+    result = await ebay_service.verify_creds(None)
+
+    assert result["ok"] is True, result
+    assert seen[0][:2] == ("POST", ebay_service.EBAY_OAUTH), "Test reused the cached token"
+    assert seen[1][2]["headers"]["Authorization"] == "Bearer fresh"
+
+
+async def test_a_rejected_token_is_refreshed_once_and_the_search_retried(monkeypatch):
+    """A cached token can be revoked before its stated expiry. The 401 retry
+    is what keeps that from presenting as "eBay is down"."""
+    ebay_service._token = "revoked"
+    ebay_service._token_expires_at = time.time() + 3600
+    ebay_service._token_creds = ebay_service._fingerprint("app", "cert")
+
+    async def _creds(_db):
+        return "app", "cert", "EBAY_US"
+
+    seen: list = []
+    monkeypatch.setattr(ebay_service, "get_creds", _creds)
+    monkeypatch.setattr(ebay_service.httpx, "AsyncClient", _client_returning(
+        _Resp(401, {}, text="Unauthorized"),
+        _Resp(200, {"access_token": "fresh", "expires_in": 7200}),
+        _Resp(200, {"itemSummaries": [{"price": {"value": "40"}}, {"price": {"value": "60"}}]}),
+        capture=seen,
+    ))
+
+    result = await ebay_service.find_comps(None, brand="Melin", model="A-Game", style="a_game")
+
+    assert result["ebay_median_price"] == 50.0
+    assert [(m, kw.get("headers", {}).get("Authorization")) for m, _u, kw in seen] == [
+        ("GET", "Bearer revoked"), ("POST", None), ("GET", "Bearer fresh"),
+    ]
+
+
+class _Boom:
+    """A client whose request fails in transport."""
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_a):
+        return False
+
+    async def post(self, *_a, **_kw):
+        raise httpx.ConnectError("no route to host")
+
+    get = post
+
+
+@pytest.mark.parametrize(
+    "client_factory",
+    [
+        lambda: _Boom(),
+        _client_returning(_NotJson()),
+        _client_returning(_Resp(200, ["a", "list"])),
+        _client_returning(_Resp(200, {"expires_in": 7200})),
+    ],
+    ids=["transport", "html-200", "json-list", "no-access-token"],
+)
+async def test_every_oauth_failure_is_an_ebay_error(monkeypatch, client_factory):
+    """A 200 with no usable token raised a raw KeyError or decode error, and a
+    transport failure a raw httpx error — `verify_creds` papered over both
+    with a blind except. `_ensure_token` now raises only `EbayError`."""
+    monkeypatch.setattr(ebay_service.httpx, "AsyncClient", lambda **_kw: client_factory())
+
+    with pytest.raises(ebay_service.EbayError):
+        await ebay_service._ensure_token("app", "cert")
+    assert ebay_service._token is None, "a failed mint must not be cached"
+
+
+async def test_the_credential_test_names_a_transport_failure_at_the_oauth_stage(monkeypatch):
+    async def _creds(_db):
+        return "app", "cert", "EBAY_US"
+
+    monkeypatch.setattr(ebay_service, "get_creds", _creds)
+    monkeypatch.setattr(ebay_service.httpx, "AsyncClient", lambda **_kw: _Boom())
+
+    result = await ebay_service.verify_creds(None)
+
+    assert result["ok"] is False
+    assert result["stage"] == "oauth"
+    assert "Network/transport" in result["detail"]
+
+
+async def test_the_credential_test_reports_a_non_json_browse_reply(monkeypatch):
+    async def _creds(_db):
+        return "app", "cert", "EBAY_US"
+
+    monkeypatch.setattr(ebay_service, "get_creds", _creds)
+    monkeypatch.setattr(ebay_service.httpx, "AsyncClient", _client_returning(
+        _Resp(200, {"access_token": "t", "expires_in": 7200}), _NotJson(),
+    ))
+
+    result = await ebay_service.verify_creds(None)
+
+    assert result == {
+        "ok": False, "stage": "browse",
+        "detail": "Browse API answered 200 with a body that is not a JSON object.",
+    }
+
+
+async def test_ebay_credentials_resolve_through_config_not_the_raw_environment(
+    db_session, monkeypatch
+):
+    """The keyset is resolved like the other two externally issued keys —
+    database over `config.settings` — rather than by a private
+    `os.environ.get`, which bypassed the one module that owns the environment
+    (and reads it once, at import)."""
+    from types import SimpleNamespace
+
+    from headroom.services import settings_service
+
+    monkeypatch.setenv("HEADROOM_EBAY_APP_ID", "raw-env-app")
+    monkeypatch.setenv("HEADROOM_EBAY_CERT_ID", "raw-env-cert")
+    monkeypatch.setattr(
+        settings_service, "config_settings",
+        SimpleNamespace(ebay_app_id="cfg-app", ebay_cert_id="cfg-cert"),
+    )
+
+    assert await ebay_service.get_creds(db_session) == ("cfg-app", "cfg-cert", "EBAY_US")
+
+    await settings_service.set_setting(db_session, ebay_service.EBAY_APP_ID_KEY, "db-app")
+    app_id, cert_id, _market = await ebay_service.get_creds(db_session)
+    assert (app_id, cert_id) == ("db-app", "cfg-cert"), "the database wins, per key"
+
+
+async def test_an_env_ebay_keyset_reaches_the_real_settings(db_session, monkeypatch):
+    """The test above stands a namespace in for `Settings`, so it cannot see
+    whether `Settings` HAS the two fields `get_key` reads. It did not: the
+    environment keyset resolved to None on every install that set it."""
+    from headroom import config
+    from headroom.services import settings_service
+
+    monkeypatch.setenv("HEADROOM_EBAY_APP_ID", "env-app")
+    monkeypatch.setenv("HEADROOM_EBAY_CERT_ID", "env-cert")
+    monkeypatch.setattr(settings_service, "config_settings", config.Settings())
+
+    assert await ebay_service.get_creds(db_session) == ("env-app", "env-cert", "EBAY_US")

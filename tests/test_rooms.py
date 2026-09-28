@@ -202,13 +202,14 @@ async def test_boot_reattaches_cases_whose_room_vanished(client):
         await db.commit()
 
     detail = await client.get(f"/api/cases/{display_id}")
-    assert detail.json()["room_name"] == "Unknown", "precondition: the case is orphaned"
+    # Null — "no such room" — rather than a made-up room called "Unknown".
+    assert detail.json()["room_name"] is None, "precondition: the case is orphaned"
 
     # Through the seam the lifespan uses, not by patching the module global.
     await database.reattach_orphaned_cases(test_session_factory)
 
     repaired = await client.get(f"/api/cases/{display_id}")
-    assert repaired.json()["room_name"] != "Unknown"
+    assert repaired.json()["room_name"] is not None
     # And it now counts towards the room that adopted it — the DEFAULT room,
     # specifically, not merely some room.
     rooms = (await client.get("/api/rooms")).json()

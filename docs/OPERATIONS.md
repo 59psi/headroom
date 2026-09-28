@@ -80,19 +80,33 @@ phone.)
 
 **Under Docker, a variable reaches the app only if `docker-compose.yml`
 forwards it.** A `.env` beside the compose file is read by Compose for
-interpolation, not handed to the container — so every `HEADROOM_*` knob below
-is listed in the compose file's `environment:` block as `${VAR:-}`, and an
-empty value is treated as unset by the app. Until 2.78 most of this table was
-not forwarded at all: `HEADROOM_SETUP_TOKEN` in `.env` protected nothing, and
+interpolation, not handed to the container — so the knobs below are listed in
+the compose file's `environment:` block as `${VAR:-}`, and an empty value is
+treated as unset by the app. Three app knobs are deliberately **not**
+forwarded, and setting them in `.env` does nothing under Docker:
+`HEADROOM_DATABASE_URL` and `HEADROOM_UPLOAD_DIR` (the image fixes both to the
+`/data` volume) and `HEADROOM_REMBG_MODEL` (baked in at build time — choose it
+with the `REMBG_MODEL` build arg and rebuild). The rows marked as belonging
+to one overlay are read by that overlay's files or by Caddy, not by the app.
+Until 2.78 most of this table was not forwarded at all:
+`HEADROOM_SETUP_TOKEN` in `.env` protected nothing, and
 `HEADROOM_MDNS_HOSTNAME=hats` renamed Caddy's site while the app went on
 advertising `headroom.local`. A test now parses the compose file against the
-names the code reads, so a new knob cannot silently join that list.
+names the code reads, so a new knob can only stay unforwarded by being added,
+with a reason, to that test's short list of exceptions.
+
+**A bad value never stops the boot.** Boolean knobs accept `1`/`true`/`yes`/`on`
+and `0`/`false`/`no`/`off` (any case); any other value — and an unparseable
+number or setting — falls back to that knob's default with a logged warning.
+No knob can take the app down: a typo in `.env` costs the one setting it
+meant to change, and the log says which.
 
 | Variable | Default | Notes |
 |---|---|---|
 | `HEADROOM_DATABASE_URL` | `sqlite+aiosqlite:///./headroom.db` | Docker image sets `sqlite+aiosqlite:////data/headroom.db` |
 | `HEADROOM_UPLOAD_DIR` | `uploads` | Docker image sets `/data/uploads` |
-| `HEADROOM_CORS_ORIGINS` | `["http://localhost:5173"]` | JSON list. Compose file sets `["http://localhost:8000"]` |
+| `HEADROOM_CORS_ORIGINS` | `[]` (off) | Origins allowed credentialed cross-origin access (JSON list or comma-separated). Off by default — the SPA is same-origin, including behind the Vite dev proxy; set only if a page on another origin must call the API |
+| `TZ` | _(unset = UTC)_ | The host's time zone, forwarded by `docker-compose.yml`. It decides the calendar day a *Wearing this today* tap lands on when the client does not send one (the iOS Shortcut, a script) — the app sends the wearer's own day. Unset, the server's day is UTC's, which after 5 pm in California is tomorrow. An IANA name: `TZ=America/Los_Angeles` |
 | `HEADROOM_ANTHROPIC_API_KEY` | _(unset)_ | Claude Vision analysis. DB value wins |
 | `HEADROOM_ANTHROPIC_MODEL` | `claude-sonnet-5` | Changeable in the Settings UI too |
 | `HEADROOM_GOOGLE_VISION_API_KEY` | _(unset)_ | Fallback brand (logo) detection. DB value wins |
@@ -102,7 +116,7 @@ names the code reads, so a new knob cannot silently join that list.
 | `HEADROOM_RP_ID` | `localhost` | Passkey (WebAuthn) relying-party id — must equal the serving domain. Set automatically by the HTTPS overlay |
 | `HEADROOM_ORIGIN` | `http://localhost:8000` | Full origin for passkey verification. Set automatically by the HTTPS overlay |
 | `HEADROOM_HTTP_TIMEOUT` | `30.0` | Outbound HTTP to Claude, Google Vision and Melin Recap. eBay uses its own fixed 10–12 s timeouts |
-| `HEADROOM_REMBG_MODEL` | `isnet-general-use` | See §7 Raspberry Pi |
+| `HEADROOM_REMBG_MODEL` | `isnet-general-use` | Bare metal only. **Docker: build time only** — set the `REMBG_MODEL` build arg and rebuild (`REMBG_MODEL=u2netp docker compose up -d --build`); this variable is not forwarded, because the image cannot download a model at runtime. See §7 Raspberry Pi |
 | `HEADROOM_ANALYSIS_WORKER_ENABLED` | `true` | Queue photo analysis off the request. Off = run it inline (slow uploads) |
 | `HEADROOM_REMBG_CONCURRENCY` | `1` | Concurrent background-removal inferences. Both workers reach rembg, and one inference is a 179 MB model plus a full-resolution decode — the app's largest allocation, so `1` inside a 1 GB container |
 | `HEADROOM_REPRICING_ENABLED` | `true` | Nightly re-pricing of every melin hat against live Melin Recap asks — independent of analysis, no Claude call. Off = prices move only when you press *Re-price now* / *Re-price all* in Settings → Data |
@@ -114,7 +128,7 @@ names the code reads, so a new knob cannot silently join that list.
 | `HEADROOM_BACKUP_INTERVAL_HOURS` | `24` | Scheduled backup cadence |
 | `HEADROOM_BACKUP_KEEP` | `5` | Keep the newest N local scheduled backups (a **count**; `HEADROOM_BACKUP_RETENTION_DAYS` is still read, as a count, for existing `.env` files) |
 | `HEADROOM_SQLITE_SYNCHRONOUS` | `FULL` | SQLite durability. **`FULL` fsyncs the WAL on every commit** — committed means committed, even through a power cut. Was `NORMAL`, which is SQLite's own WAL recommendation and safe from *corruption* but **not from loss**: under `NORMAL` the WAL syncs at a checkpoint rather than at commit, so a committed transaction "might roll back following a power loss", and the default 1000-page threshold means what is at risk is every write since the last checkpoint. `FULL` costs one fsync per commit — negligible for this workload, and the reason the default changed after an unclean shutdown destroyed files on the deployment's SD card. Accepts `FULL`/`EXTRA`/`NORMAL`/`OFF`; anything else logs a warning and falls back to `FULL` |
-| `HEADROOM_MAX_BODY_BYTES` | `2097152` | Non-multipart request bodies over this are refused with 413 |
+| `HEADROOM_MAX_BODY_BYTES` | `2097152` | Cap on the request body of every endpoint that does not take a file upload, chosen by endpoint, not by Content-Type (a multipart-labeled body sent to a JSON route gets this cap). Upload endpoints use the bulk-import ceiling instead, which this does not change. Values below 1024, or unparseable ones, are ignored and the default applies |
 | `HEADROOM_DISK_MIN_FREE_MB` | `500` | `/health/ready` fails below this, so the container reports `unhealthy`. **Acting on that requires a watchdog — see §3** |
 | `HEADROOM_DISK_WARN_PCT` | `15` | Warn in the log below this share of the volume |
 | `HEADROOM_BACKUP_INCLUDE_CA` | `true` | Fold Caddy's local CA — **including its private keys** — into each backup, under `data/caddy-pki/`. On by default because the root is installed by hand on every device and nothing can vouch for a replacement, so losing it means visiting them all. Set `false` if you would rather not have a key that can sign for *any* host sitting in an archive you upload off-box. See §4 |
@@ -125,10 +139,10 @@ names the code reads, so a new knob cannot silently join that list.
 | `HEADROOM_IMPORT_WORKER_ENABLED` | `true` | Bulk-import background worker |
 | `HEADROOM_ACTIVITY_LOG_RETENTION_DAYS` | `90` | Audit rows pruned daily |
 | `HEADROOM_MDNS_ENABLED` | `true` | Advertise the app on the LAN via mDNS. Docker needs the `docker-compose.mdns.yml` overlay (host networking) for it to reach the LAN |
-| `HEADROOM_MDNS_HOSTNAME` | `headroom` | mDNS host label — the app resolves as `<label>.local` |
+| `HEADROOM_MDNS_HOSTNAME` | `headroom` | mDNS host label — the app resolves as `<label>.local`. **Bare label only** — no `.local`, no dots, lowercase; the LAN-HTTPS overlay appends `.local`, and the app refuses anything else (and says so on Settings) rather than advertising a name the certificate does not match |
 | `HEADROOM_MDNS_PORT` | `8000` | Port the mDNS advertisement points at |
-| `HEADROOM_MDNS_INTERFACE` | _(detected LAN IP)_ | Which interface the responder binds. Defaults to the detected LAN address so a host-net container doesn't leak onto `docker0`/`veth`; an IP pins a specific NIC, `all` restores zeroconf's all-interfaces mode |
-| `HEADROOM_SITE_ADDRESSES` | `<HEADROOM_MDNS_HOSTNAME>.local` | **LAN HTTPS overlay only.** Comma-separated list of every name and address Caddy answers on, and every name that goes in the certificate. Add the LAN IP or a VPN hostname to reach it where `.local` can't resolve — `"headroom.local, 10.0.111.4"`. Caddy rejects a TLS connection whose SNI matches nothing here, so an address not listed fails the handshake outright. Passkeys still only work on `HEADROOM_ORIGIN` |
+| `HEADROOM_MDNS_INTERFACE` | _(detected LAN IP)_ | Which interface the responder binds. Defaults to the detected LAN address so a host-net container doesn't leak onto `docker0`/`veth`; an IPv4 address pins a specific NIC and is the address advertised (no AAAA is advertised then — the default-route IPv6 may be another NIC's); `all` restores zeroconf's all-interfaces mode. Anything but an IPv4 address or `all` is refused and shown on Settings |
+| `HEADROOM_SITE_ADDRESSES` | `<HEADROOM_MDNS_HOSTNAME>.local` | **LAN HTTPS overlay only** (read by Caddy, not the app). Every name and address Caddy answers on, and every name that goes in the certificate, **separated by spaces** — or by `, ` with a space after the comma. The value is pasted into the `Caddyfile` before Caddy parses it, so a bare comma (`headroom.local,10.0.111.4`) reads as one malformed address and Caddy refuses to start. Add the LAN IP or a VPN hostname to reach it where `.local` can't resolve — `"headroom.local 10.0.111.4"`. Caddy rejects a TLS connection whose SNI matches nothing here, so an address not listed fails the handshake outright. Passkeys still only work on `HEADROOM_ORIGIN` |
 
 ---
 
@@ -228,15 +242,16 @@ names the code reads, so a new knob cannot silently join that list.
   at INFO.
 - **In-app**: Settings → Analysis shows *Recent analysis errors* (a list of
   the latest failures) and, on the *Analysis queue* card, failures grouped by
-  cause with a per-group *Retry*; Settings →
-  Upkeep the *Activity log* (append-only audit of every significant change,
-  pruned daily per retention, with the pruner's own health beside it).
+  cause with a per-group *Retry*; Settings → Upkeep → *Recent activity* the
+  activity log (append-only audit of every significant change, pruned daily
+  per retention, with the pruner's own health beside it).
 - **Operator endpoints** (all under the auth gate; a bearer token works):
   `GET /api/admin/config` — the effective configuration as this process
   resolved it (env, database overrides, defaults), for when you cannot see
   the container's environment; `GET /api/admin/activity-log/retention` — is
   the daily prune running; `GET /api/settings/tls` — is the served
-  certificate valid and is the CA still the one devices trust (§4);
+  certificate valid, is the CA still the one devices trust, and does the
+  served chain actually lead to that exported root (`chain_matches_ca`) (§4);
   `GET /api/admin/repricing` — last sweep, failures, live progress;
   `GET /api/admin/backups/health` and `GET /api/admin/backups/upload` — local
   and off-box backup health, separately, because they fail separately.
@@ -263,10 +278,15 @@ GitHub's cache backend was measured at ~2.7x slower than simply building
 and shipping that over the network costs more than the build it replaces.
 
 **The build's only non-registry network dependency is the model fetch**, and it
-is deliberately non-fatal. rembg downloads the weights on first use anyway, so
-a failure there costs a slow first analysis rather than a deploy you cannot
-perform because somebody else's file host is down. Watch for
-`WARNING: could not pre-cache the rembg model` in the build output.
+is deliberately non-fatal — a deploy should not be impossible because somebody
+else's file host is down. But a failed fetch does **not** heal at runtime: the
+model directory (`/opt/u2net`) is root-owned and the container's filesystem is
+read-only, so rembg cannot download the weights on first use. Background
+removal then fails on every photo until a rebuild succeeds, while the rest of
+the pipeline degrades around it. Watch for
+`WARNING: could not pre-cache the rembg model` in the build output and rebuild
+when you see it. CI loads the baked model with the network switched off, so a
+release cannot ship without it.
 
 **If you would rather not build on the Pi at all**, the alternative is to
 publish the image from CI and `docker compose pull`. That turns a first build
@@ -289,12 +309,19 @@ page lists them, along with whether the scheduler is healthy.
 *Only when changed* matters because the alternative wastes the thing it is
 protecting: on an untouched collection, a daily tarball re-reads every photo,
 wears the card, and evicts a real historical snapshot from a fixed-size window
-to store a restatement of the newest one. Change is judged from the size and
-mtime of the database, its WAL sidecar, every file under uploads and (when
-`HEADROOM_BACKUP_INCLUDE_CA` is on) Caddy's CA files, so a regenerated
-authority triggers a backup too; the marker recording the last backed-up state
-is a file in `backups/`, never a row in the database — the database is part of
-what it measures.
+to store a restatement of the newest one. Change is judged from the
+collection's **rows** — every table except the app's own bookkeeping (audit
+log, sessions, job queues) and what is rewritten on unchanged rows (when a
+price was last *checked*, the listing count its label quotes, `updated_at`)
+— plus the size and mtime of every
+file under uploads and (when `HEADROOM_BACKUP_INCLUDE_CA` is on) Caddy's CA
+files, so a regenerated authority triggers a backup too. So a nightly
+re-pricing sweep that moved no price, a restart, a login or the daily prune is
+not a change; a price that did move is. (If the database cannot be read, the
+gate falls back to the database file's size and mtime and logs that it did —
+an extra backup is the safe failure.) The marker recording the last backed-up
+state is a file in `backups/`, never a row in the database — the database is
+part of what it measures.
 
 This is also why retention is a **count** rather than an age. Age-based
 pruning and change-gating combine badly: leave the collection alone for longer
@@ -308,8 +335,12 @@ distinguishes *running and idle because nothing changed* from *failing* from
 
 **On-demand**: Settings → Upkeep → Backups (*Download full backup* / *Database only*), or
 `GET /api/admin/backup` (add `?include_uploads=false` for a database-only
-archive). This streams a fresh archive — use it before upgrades or before
-experimenting.
+archive — the database alone: no photos and no certificate authority; the
+CA's private keys travel only in full archives). This streams a fresh archive —
+use it before upgrades or before experimenting. The archive is staged under
+`backups/.spool/` on the data volume while it streams (not `/tmp`, which is
+RAM under the shipped compose file), so it needs free space on the volume
+roughly the size of the archive.
 
 **Restore** — archive contents are prefixed `data/` (`data/headroom.db`,
 `data/uploads/…`). Docker:
@@ -382,7 +413,7 @@ echo | openssl s_client -connect 127.0.0.1:443 -servername headroom.local \
   2>/dev/null | openssl x509 -noout -dates
 ```
 
-Settings → Trust this device reports this case directly ("cut short to match
+Settings → Device → Trust this device reports this case directly ("cut short to match
 the intermediate that signs it") rather than telling you to restart Caddy.
 
 ### The certificate authority is in the backup too
@@ -407,26 +438,46 @@ upload hook may be sending the archive to a NAS or cloud. Set
 `HEADROOM_BACKUP_INCLUDE_CA=false` in `.env` to leave it out; you keep the
 database and photos and accept re-trusting every device if the card dies.
 
-**Restoring the CA** — stop the stack, put the four files back, start again:
+**Restoring the CA** — stop the stack, put the four files back, start again.
+Stop it with the **same `-f` files you deploy with**: a bare
+`docker compose down` reads only `docker-compose.yml`, which defines no
+Caddy, so Caddy keeps running on the authority it holds in memory and the
+restore never takes.
 
 ```bash
-docker compose down
+docker compose -f docker-compose.yml -f docker-compose.https-lan.yml down
 tar xzf headroom-backup-<timestamp>.tar.gz data/caddy-pki
 docker run --rm -v headroom_caddy-data:/data -v "$PWD/data/caddy-pki":/restore \
   alpine sh -c 'mkdir -p /data/caddy/pki/authorities/local &&
                 cp /restore/root.* /restore/intermediate.* /data/caddy/pki/authorities/local/ &&
                 chown -R root:root /data/caddy/pki &&
-                chmod 0700 /data/caddy/pki/authorities/local'
+                chmod 0700 /data/caddy/pki/authorities/local &&
+                rm -rf /data/caddy/certificates/local'
 docker compose -f docker-compose.yml -f docker-compose.https-lan.yml up -d
 ```
 
-Then check Settings → Trust this device. It records the CA fingerprint the
+The last step drops certificates Caddy issued from whatever authority it had
+in the meantime; otherwise it keeps serving one your devices do not trust.
+
+Then check the chain Caddy actually **serves**, not just the file it exports —
+use your own hostname; it must print `Verify return code: 0 (ok)`:
+
+```bash
+openssl s_client -connect <host>:443 -servername <host> -showcerts \
+  -CAfile data/caddy-pki/root.crt </dev/null | grep 'Verify return code'
+```
+
+And check Settings → Device → Trust this device. It records the CA fingerprint the
 first time it sees one and compares every reading against it, so **"The
 certificate authority has changed"** appearing there is the alarm for exactly
 this failure — Caddy generated a fresh authority and every device is about to
 refuse the connection. Caddy names every root
 `Caddy Local Authority - <year> ECC Root`, so the fingerprint is the only
 thing that distinguishes the one your devices trust from a replacement.
+The same card also checks the SERVED chain against the
+exported root, and warns **"The certificate being served is from a different
+authority"** when they disagree. (The same steps travel inside every archive
+that carries the CA, as `data/caddy-pki/READ-ME-CA-KEYS.txt`.)
 
 ### Off-site / remote backups
 
@@ -476,9 +527,14 @@ archive exists nowhere but the card it is protecting against.
 
 | Provider | Destination | Needs |
 |---|---|---|
-| Cloud storage (rclone) | `box:Headroom-Backups` | `rclone config` on the host + `docker-compose.backup-rclone.yml` |
+| Cloud storage (rclone) | `box:Headroom-Backups` | a config directory owned by uid 1000 (`~/.config/headroom-rclone`, mode 700) holding the container's OWN rclone remote + `docker-compose.backup-rclone.yml` — see **A.** below |
 | rsync over SSH | `pi@nas.local:/volume1/backups/headroom` | an SSH key + `docker-compose.backup-rsync.yml` (mounts `HEADROOM_BACKUP_SSH_KEY` and `HEADROOM_BACKUP_KNOWN_HOSTS` read-only) |
 | Synology NAS (rsync service) | `backup@nas.local::backups/headroom` | DSM's rsync service + `HEADROOM_BACKUP_RSYNC_PASSWORD` |
+
+For both rsync providers the destination is a **folder**: each backup lands
+inside it under its own name. Headroom adds the trailing slash rsync needs
+(without it rsync writes a single file named after the folder and overwrites
+it nightly); the last folder is created if missing, its parent must exist.
 
 `rsync` and `ssh` ship **in the image**; rclone is ~50 MB and stays a bind
 mount. The browser never sends a command — it sends a provider name and a
@@ -517,39 +573,81 @@ look set and do nothing.
 and Headroom runs it after every scheduled backup, passing the new tarball.
 Placeholders: `{path}` (full path), `{dir}`, `{name}`. It's parsed as an argv
 (no shell), runs off the event loop, is bounded by `HEADROOM_BACKUP_UPLOAD_TIMEOUT`
-(default 600 s), and is **best-effort** — a failed or missing uploader logs a
-warning and never breaks the local backup. Grep `docker compose logs headroom`
-for `Backup uploaded off-box:` to confirm.
+(default 600 s), and is **best-effort** — a failed, timed-out or missing
+uploader logs an **ERROR** (`Backup upload failed …`, `Backup upload timed
+out …`) and is recorded on the *Off-site backup* card, but never breaks the
+local backup. Grep `docker compose logs headroom` for
+`Backup uploaded off-box:` to confirm a success.
 
 The included **`docker-compose.backup-rclone.yml`** overlay wires this to
 [rclone](https://rclone.org) (works with Box, S3, Backblaze B2, Google Drive,
 Dropbox, …). Box has **no native Linux desktop client**, so rclone's `box`
-backend is the supported route on a Pi. One-time: `rclone config` a remote
-(headless → `rclone authorize "box"` on a laptop, paste the token back),
-`chmod 644` the config so the container user can read it, then:
+backend is the supported route on a Pi. One-time:
+`mkdir -p ~/.config/headroom-rclone`, create the remote INTO it with
+`rclone config --config ~/.config/headroom-rclone/rclone.conf` (headless →
+`rclone authorize "box"` on a laptop, paste the token back), then
+`chmod 700 ~/.config/headroom-rclone && sudo chown -R 1000:1000 ~/.config/headroom-rclone`
+(in that order: once uid 1000 owns it, only uid 1000 or root can chmod it).
+The container rewrites that config whenever an OAuth token refreshes (Box
+refresh tokens are single-use), so the directory must be writable by uid
+1000 — and give the container its OWN authorization rather than a config your
+host rclone also uses, or whichever side refreshes first logs the other out.
+Never make it world-readable; it holds live tokens. Then:
 
 ```bash
 export RCLONE_BIN="$(command -v rclone)"
-export RCLONE_CONF="$HOME/.config/rclone/rclone.conf"
 export HEADROOM_BACKUP_REMOTE="box:Headroom-Backups"
+# only if the config directory is not ~/.config/headroom-rclone:
+# export HEADROOM_RCLONE_CONFIG_DIR="/path/to/that/directory"
 docker compose -f docker-compose.yml -f docker-compose.backup-rclone.yml \
   -f docker-compose.http80.yml up -d --build   # + your front-door overlay
 ```
 
 **B. Host cron (zero app config).** rclone + its OAuth token already live on the
 host, so a cron job avoids the in-container mount/permission fiddliness. Pull a
-fresh, consistent archive from the API and ship it:
+fresh, consistent archive from the API and ship it.
+
+The job needs the owner's **API token** (Settings → Device → Account →
+*Show*, which asks for your password — `POST /api/auth/token/reveal`;
+`GET /api/auth/me` deliberately does not return it). That token is a live
+credential for the whole app, so keep it out of the crontab — files in
+`/etc/cron.d` are normally world-readable — and in a header file only you can
+read:
+
+```bash
+mkdir -p ~/.config/headroom && chmod 700 ~/.config/headroom
+( umask 077; printf 'Authorization: Bearer %s\n' 'hr_YOUR_API_TOKEN' \
+    > ~/.config/headroom/auth-header )
+```
+
+Then a small script, so the archive — which is itself a credential bundle —
+is never written anywhere world-readable either:
+
+```bash
+#!/bin/sh
+# ~/bin/headroom-offsite.sh   (chmod 700)
+set -eu
+umask 077
+# The address the app answers on from this host. :8000 is published by the
+# default setup and every LAN overlay; the Let's Encrypt overlay does NOT
+# publish it — there, use https://hats.example.com.
+url="http://localhost:8000"
+dir="$HOME/headroom-offsite"
+mkdir -p "$dir"
+curl -fsS -H @"$HOME/.config/headroom/auth-header" \
+  "$url/api/admin/backup" -o "$dir/headroom-$(date +%F).tar.gz"
+rclone move "$dir" box:Headroom-Backups --include 'headroom-*.tar.gz'
+```
 
 ```bash
 # /etc/cron.d/headroom-offsite — 02:30 nightly
-30 2 * * * pi  curl -fsS -H "Authorization: Bearer hr_YOUR_API_TOKEN" \
-  http://localhost:8000/api/admin/backup -o /tmp/headroom-$(date +\%F).tar.gz \
-  && rclone move /tmp/headroom-*.tar.gz box:Headroom-Backups
+30 2 * * * pi  /home/pi/bin/headroom-offsite.sh
 ```
 
-(The API token is the owner's: Settings → Device → Account → *Show*, which asks for your password — `POST /api/auth/token/reveal`; `GET /api/auth/me` deliberately does not return it.
-`rclone move` deletes the local temp copy after a successful upload.) Same
-recipe targets S3/B2/Drive by changing the remote.
+(`curl -H @file` reads the header from the file; `rclone move` deletes the
+local copy after a successful upload. Rotating the token — or changing your
+password, which rotates it — means rewriting the header file.) Same recipe
+targets S3/B2/Drive by changing the remote.
 
 Either way, keep an eye on retention **on the remote** — Headroom only prunes
 its local copies.
@@ -624,6 +722,14 @@ docker compose up -d --build     # Docker — SEE THE WARNING BELOW about overla
 - Database migrations are **automatic**: `init_db()` runs inline DDL
   migrations at every boot. There is no separate migrate step and no
   downgrade path — take a backup before major upgrades.
+- **One one-time rebuild to know about.** The first boot of the release that
+  made hat ids never-reused rebuilds the `hats` table once for AUTOINCREMENT,
+  logging `Rebuilt hats with AUTOINCREMENT; new hat ids start after N`, so a
+  deleted hat's QR sticker can never open a hat created later. It keeps every
+  row and every mapped column; it does NOT carry over the unmapped
+  `custom_style_detail` column that installs from before 2.7 may still hold
+  (unread since then). The rolling backups taken before the upgrade still
+  contain it.
 - Version sanity check: the footer of the web app shows the running build's
   version; compare with `CHANGELOG.md`.
 
@@ -644,10 +750,12 @@ That writes `HEADROOM_BUILD_SHA` into `.env` (which compose reads
 automatically, whatever `-f` flags you use) and installs git hooks so every
 `git pull` refreshes it. `./scripts/setup.sh` does the same thing.
 
-Or set it inline per build:
+Or set it inline per build — `git describe` with `--dirty` marks a tree that
+has uncommitted changes, as the script does (`--exclude='*'` skips tags, so
+the stamp is the bare commit):
 
 ```bash
-HEADROOM_BUILD_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
+HEADROOM_BUILD_SHA=$(git describe --always --dirty --exclude='*') docker compose up -d --build
 ```
 
 Notes:
@@ -656,8 +764,16 @@ Notes:
   older commands keep working — but a build arg that doesn't match simply
   arrives empty, with no warning, and the footer just never shows a build.
   That is exactly how it can go unnoticed for months.
-- A working tree with uncommitted changes is stamped `a1b2c3d-dirty`, so a
-  stamp can be trusted to mean precisely that commit.
+- `stamp-build.sh` stamps a working tree with uncommitted changes as
+  `a1b2c3d-dirty`, so its stamp means precisely that commit **at the moment
+  it ran**. The hooks run it at pull/checkout time, not build time: edit a
+  file after the last pull and build, and the stamp still reads clean. Run
+  `./scripts/stamp-build.sh` (or use the inline form above) before building an
+  edited tree.
+- A bare-metal SPA build (`setup.sh`, `npx vite build`) with no
+  `HEADROOM_BUILD_SHA` in its environment asks git itself, at build time, the
+  same way as the inline form — so an edited tree reads `a1b2c3d-dirty` there
+  too.
 - No stamp at all is not an error — the footer shows the version alone.
 
 ---
@@ -669,8 +785,9 @@ the web app runs **first-run setup** (create the owner account), after
 which every data-bearing route requires authentication.
 
 **What's protected:** all of `/api/*`, the `/uploads/*` photo mount, and
-the API's own description (`/openapi.json`, `/docs`, `/redoc` — a complete
-map of the attack surface, which used to be public) — via session cookie or
+the API's own description (`/openapi.json` — a complete map of the attack
+surface, which used to be public; the `/docs` and `/redoc` pages are not
+served, since their CDN bundles are blocked by the app's own content policy) — via session cookie or
 bearer API token. **What's open by design:** the SPA shell + hashed JS/CSS
 assets + PWA manifest/icons (no data in them), `/health*` (probes, redacted
 for anonymous callers — §3), `/api/auth/*` (each endpoint self-guards), and
@@ -681,17 +798,30 @@ certificate (`ca-certificate`, LAN-HTTPS overlay only — a public cert), and
 Settings → Sharing → *Guest browsing* and the login page grows a *Browse the
 collection as a guest* link to `/guest` — read-only, no prices, purchases, condition or
 notes, the same projection a share link gets, and `404` (not `403`) while
-it is off, so a stranger cannot learn the feature exists. One test enumerates
+it is off, so a stranger cannot learn the feature exists. Once on, nothing
+limits it to the LAN: it is open to anyone who can reach the app, which on
+the Let's Encrypt overlay is the internet — every hat's photo with its room
+and case. One test enumerates
 every operation in the OpenAPI schema and probes it anonymously, so a new
-route is protected unless someone writes it onto that test's allowlist.
+route is protected unless someone writes it onto that test's allowlist. The
+check is also attached to every protected group of routes itself, not only to
+the path gate in front of them, so a route that ever ended up outside the
+gate's paths would still refuse an anonymous caller.
 
 - **Sessions**: opaque 256-bit tokens, stored server-side (revocable),
   30-day expiry, httpOnly + SameSite=Lax cookies; the `secure` flag is set
   automatically when serving over HTTPS (uvicorn runs with
   `--proxy-headers`, so the Caddy overlay's X-Forwarded-Proto is honored).
-- **Passwords**: argon2id hashes. Login is rate-limited per IP+username
-  (5 failures → 15-minute lockout).
-- **Passkeys (WebAuthn)**: add one from Settings → Account for Face ID /
+- **Passwords**: argon2id hashes. Login is rate-limited in two buckets, both
+  on a 15-minute window: **5 failures for one address + username** lock that
+  pair, and **20 failures from one address across any usernames** lock
+  *every* username from that address — the owner's correct password
+  included — for 15 minutes. A successful login clears both buckets for that
+  address (and that username). A wrong password typed to **confirm** a
+  sensitive action while signed in (below) counts in the same buckets. See the
+  Docker-gateway caveat below: where every LAN client shares the gateway's
+  address, 20 failures by anyone lock out everyone.
+- **Passkeys (WebAuthn)**: add one from Settings → Device → Account for Face ID /
   Touch ID sign-in. Requires a secure context (HTTPS or localhost) and
   `HEADROOM_RP_ID`/`HEADROOM_ORIGIN` matching the serving domain — the
   HTTPS overlay sets both from `HEADROOM_DOMAIN`.
@@ -702,7 +832,14 @@ route is protected unless someone writes it onto that test's allowlist.
   logout and session revocation, so a stolen session must not be able to
   trade itself up for a credential those cannot reach. A **password change
   rotates it** (a compromise response is a complete one) — anything holding
-  the old token stops working, so update the Shortcut afterwards.
+  the old token stops working, so update the Shortcut afterwards. Those three
+  password confirmations (show the token, rotate it, change the password) use
+  the login's limiter and bucket for your address and account: five wrong
+  passwords in 15 minutes — counted together with failed logins — answer
+  `429` *"Too many wrong passwords — try again in a few minutes."*, even to
+  the right one, and lock sign-in for that account from that address too; a
+  correct one clears the count, as a successful sign-in does. Each wrong one is an `auth.reauth_failed` row in the activity log, and the
+  lockout one `auth.reauth_blocked` row per window.
 - **Share links**: 256-bit random tokens granting read-only access to the
   collection view and token-gated photo streaming; revocable, immediately.
   **They expire in 30 days by default** — a link is unscoped and
@@ -718,9 +855,10 @@ route is protected unless someone writes it onto that test's allowlist.
   seconds — so set **`HEADROOM_SETUP_TOKEN`** there and enter it in the
   extra field on the setup form. Unset (the default), nothing changes.
 - **Client IP on the plain bridge compose may be the Docker gateway.**
-  If it is, per-IP login rate limiting collapses into one shared bucket
-  (a stranger's failed logins can lock you out) and the IP recorded on
-  `auth.login_failed` rows is not the caller's. It depends on the host's
+  If it is, per-IP login rate limiting collapses into one shared bucket —
+  every LAN client is the same address, so 20 failed logins by anyone, across
+  any usernames, lock out every account including yours for 15 minutes — and
+  the IP recorded on `auth.login_failed` rows is not the caller's. It depends on the host's
   `userland-proxy` setting — on, and the source is rewritten; off, and
   iptables DNAT preserves it. **All three LAN overlays use host networking
   and are unaffected**, as is the Let's Encrypt overlay, where Caddy sets
@@ -732,7 +870,9 @@ route is protected unless someone writes it onto that test's allowlist.
   attacker-supplied, so honoring it would let a caller choose its own
   rate-limit bucket, which is worse than sharing one.
 - Raw API keys (Anthropic/Google/eBay) are **never returned** by the API —
-  status endpoints reply with a masked prefix/suffix only.
+  status endpoints reply with a masked prefix/suffix only. Backups are the
+  one place they leave the server: an archive carries the whole database,
+  keys included, in plaintext (§4, *Off-site / remote backups*).
 - `HEADROOM_ADMIN_TOKEN` is retired and ignored.
 
 **Forgot the password?** There's no email reset (nothing to send from).
@@ -764,8 +904,11 @@ thing standing between the internet and your hats.
 - The image is multi-arch (amd64 + arm64); build on the Pi (slow first
   build) or build/push from a faster machine with
   `docker buildx build --platform linux/arm64,linux/amd64 -t <registry>/headroom:latest --push .`
-- The rembg model is pre-downloaded **into the image** at build time so the
-  Pi never fetches it at runtime. Default `isnet-general-use` (~179 MB).
+- The rembg model is pre-downloaded **into the image** at build time, into
+  root-owned `/opt/u2net`, so the Pi never fetches it at runtime — and cannot:
+  the container has no writable model directory, so a model the image does
+  not carry is a rebuild, never a download (§3b). Default
+  `isnet-general-use` (~179 MB).
   `u2netp` (4.7 MB) is far faster — 5–15 s per photo on a Pi 4 — but its low
   capacity loses thin protruding shapes, which on a hat means the BILL: it
   keeps the crown and cuts the brim off. Since analysis moved onto the
@@ -854,7 +997,7 @@ Every external call is best-effort — **no outage ever blocks an upload**:
 | eBay test fails with 401 | Sandbox keyset — the Settings page flags `SBX` keys; create a **Production** keyset |
 | Analysis stuck on `skipped` | No Anthropic key; add one in Settings and hit Reanalyze (fallback colors/brand still apply meanwhile) |
 | Forgot the password | Delete the owner rows with a borrowed `sqlite3` (recipe in §6) → first-run setup reappears |
-| iOS Shortcut import started failing after v1.0 | Add an `Authorization: Bearer <api-token>` header to the Shortcut — token in Settings → Account |
+| iOS Shortcut import started failing after v1.0 | Add an `Authorization: Bearer <api-token>` header to the Shortcut — token in Settings → Device → Account |
 | Passkey button missing / erroring | Passkeys need HTTPS (or localhost) AND `HEADROOM_RP_ID` = the serving domain — use the HTTPS overlay |
 | Melin price stopped appearing | Treet may have rotated the public client id — grab the new one from their site bundle and set `HEADROOM_MELIN_CLIENT_ID` |
 | Bulk import queued but idle | Check `HEADROOM_IMPORT_WORKER_ENABLED`; queued items re-enqueue automatically on restart |

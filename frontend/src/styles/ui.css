@@ -109,7 +109,7 @@
   font-family: var(--font-mono);
   color: var(--neon-cyan);
   letter-spacing: 0.04em;
-  text-shadow: 0 0 18px rgba(0, 240, 255, 0.35);
+  text-shadow: 0 0 18px rgb(var(--neon-cyan-rgb) / 0.35);
 }
 
 /* The live count beside the title: "128", or "12 of 128" while filtered.
@@ -140,7 +140,7 @@
 .hr-page-head-summary a {
   color: var(--text);
   text-decoration: underline;
-  text-decoration-color: rgba(0, 240, 255, 0.45);
+  text-decoration-color: rgb(var(--neon-cyan-rgb) / 0.45);
   text-underline-offset: 3px;
 }
 
@@ -230,6 +230,13 @@
 
 .hr-panel-help[open] > summary::before { transform: rotate(45deg); }
 
+/* 32px suits a mouse; on a touchscreen the "How this works" fold on every
+   Settings card, Bulk import, Valuation and Rooms is the documented 44px.
+   It is inline-flex, so the height grows around the centered text. */
+@media (pointer: coarse) {
+  .hr-panel-help > summary { min-height: 44px; }
+}
+
 .hr-panel-help > summary:hover { color: var(--neon-cyan); }
 
 .hr-panel-help > summary:focus-visible {
@@ -240,7 +247,7 @@
 .hr-panel-help-body {
   margin-top: 0.4rem;
   padding: 0.75rem 0.9rem;
-  border-left: 2px solid rgba(0, 240, 255, 0.35);
+  border-left: 2px solid rgb(var(--neon-cyan-rgb) / 0.35);
   background: var(--surface-inset);
   border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
   line-height: 1.55;
@@ -307,26 +314,26 @@
   flex: none;
 }
 
-.hr-pill.is-ok { color: #8dff7a; border-color: rgba(57, 255, 20, 0.35); background: rgba(57, 255, 20, 0.07); }
-.hr-pill.is-ok .hr-pill-dot { background: var(--neon-green); box-shadow: 0 0 6px rgba(57, 255, 20, 0.9); }
+.hr-pill.is-ok { color: var(--tint-green); border-color: rgb(var(--neon-green-rgb) / 0.35); background: rgb(var(--neon-green-rgb) / 0.07); }
+.hr-pill.is-ok .hr-pill-dot { background: var(--neon-green); box-shadow: 0 0 6px rgb(var(--neon-green-rgb) / 0.9); }
 
-.hr-pill.is-warn { color: var(--neon-yellow); border-color: rgba(255, 225, 86, 0.38); background: rgba(255, 225, 86, 0.07); }
-.hr-pill.is-warn .hr-pill-dot { box-shadow: 0 0 6px rgba(255, 225, 86, 0.8); }
+.hr-pill.is-warn { color: var(--neon-yellow); border-color: rgb(var(--neon-yellow-rgb) / 0.38); background: rgb(var(--neon-yellow-rgb) / 0.07); }
+.hr-pill.is-warn .hr-pill-dot { box-shadow: 0 0 6px rgb(var(--neon-yellow-rgb) / 0.8); }
 
-.hr-pill.is-error { color: #ff8aa3; border-color: rgba(255, 56, 96, 0.45); background: rgba(255, 56, 96, 0.09); }
-.hr-pill.is-error .hr-pill-dot { background: var(--neon-red); box-shadow: 0 0 6px rgba(255, 56, 96, 0.9); }
+.hr-pill.is-error { color: var(--tint-red); border-color: rgb(var(--neon-red-rgb) / 0.45); background: rgb(var(--neon-red-rgb) / 0.09); }
+.hr-pill.is-error .hr-pill-dot { background: var(--neon-red); box-shadow: 0 0 6px rgb(var(--neon-red-rgb) / 0.9); }
 
-.hr-pill.is-info { color: #7ff6ff; border-color: rgba(0, 240, 255, 0.35); background: rgba(0, 240, 255, 0.07); }
-.hr-pill.is-info .hr-pill-dot { background: var(--neon-cyan); box-shadow: 0 0 6px rgba(0, 240, 255, 0.8); }
+.hr-pill.is-info { color: var(--tint-cyan); border-color: rgb(var(--neon-cyan-rgb) / 0.35); background: rgb(var(--neon-cyan-rgb) / 0.07); }
+.hr-pill.is-info .hr-pill-dot { background: var(--neon-cyan); box-shadow: 0 0 6px rgb(var(--neon-cyan-rgb) / 0.8); }
 
 .hr-pill.is-off { color: var(--text-muted); }
 .hr-pill.is-off .hr-pill-dot { background: transparent; border: 1.5px solid currentColor; }
 
-.hr-pill.is-busy { color: #d9a8ff; border-color: rgba(177, 78, 255, 0.4); background: rgba(177, 78, 255, 0.08); }
+.hr-pill.is-busy { color: var(--tint-purple); border-color: rgb(var(--neon-purple-rgb) / 0.4); background: rgb(var(--neon-purple-rgb) / 0.08); }
 .hr-pill.is-busy .hr-pill-dot { background: var(--neon-purple); animation: hrPulse 1.2s ease-in-out infinite; }
 
 @keyframes hrPulse {
-  0%, 100% { opacity: 1; box-shadow: 0 0 6px rgba(177, 78, 255, 0.9); }
+  0%, 100% { opacity: 1; box-shadow: 0 0 6px rgb(var(--neon-purple-rgb) / 0.9); }
   50% { opacity: 0.35; box-shadow: none; }
 }
 
@@ -361,7 +368,7 @@
   gap: 0.65rem;
   padding: 0.7rem 0.6rem 0.7rem 0.85rem;
   border-radius: var(--radius-sm);
-  background: rgba(22, 10, 48, 0.94);
+  background: rgb(var(--bg-card-rgb) / 0.94);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border: 1px solid var(--border-bright);
@@ -372,9 +379,9 @@
   animation: hrToastIn var(--dur) var(--ease-out);
 }
 
-.hr-toast.is-success { border-color: rgba(57, 255, 20, 0.4); box-shadow: var(--shadow-lg), 0 0 18px rgba(57, 255, 20, 0.12); }
-.hr-toast.is-error { border-color: rgba(255, 56, 96, 0.55); box-shadow: var(--shadow-lg), 0 0 18px rgba(255, 56, 96, 0.18); }
-.hr-toast.is-info { border-color: rgba(0, 240, 255, 0.4); }
+.hr-toast.is-success { border-color: rgb(var(--neon-green-rgb) / 0.4); box-shadow: var(--shadow-lg), 0 0 18px rgb(var(--neon-green-rgb) / 0.12); }
+.hr-toast.is-error { border-color: rgb(var(--neon-red-rgb) / 0.55); box-shadow: var(--shadow-lg), 0 0 18px rgb(var(--neon-red-rgb) / 0.18); }
+.hr-toast.is-info { border-color: rgb(var(--neon-cyan-rgb) / 0.4); }
 
 .hr-toast-icon {
   flex: none;
@@ -389,8 +396,8 @@
   background: var(--neon-cyan);
 }
 
-.hr-toast.is-success .hr-toast-icon { background: var(--neon-green); box-shadow: 0 0 8px rgba(57, 255, 20, 0.7); }
-.hr-toast.is-error .hr-toast-icon { background: var(--neon-red); box-shadow: 0 0 8px rgba(255, 56, 96, 0.7); }
+.hr-toast.is-success .hr-toast-icon { background: var(--neon-green); box-shadow: 0 0 8px rgb(var(--neon-green-rgb) / 0.7); }
+.hr-toast.is-error .hr-toast-icon { background: var(--neon-red); box-shadow: 0 0 8px rgb(var(--neon-red-rgb) / 0.7); }
 
 .hr-toast-msg { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 
@@ -408,7 +415,7 @@
 }
 
 .hr-toast-action { padding: 0 0.6rem; }
-.hr-toast-action:hover { background: rgba(0, 240, 255, 0.1); }
+.hr-toast-action:hover { background: rgb(var(--neon-cyan-rgb) / 0.1); }
 
 .hr-toast-close {
   width: 36px;
@@ -450,7 +457,7 @@
   background:
     linear-gradient(90deg,
       rgba(255, 255, 255, 0.04) 0%,
-      rgba(177, 78, 255, 0.14) 40%,
+      rgb(var(--neon-purple-rgb) / 0.14) 40%,
       rgba(255, 255, 255, 0.04) 80%) 0 0 / 200% 100%;
   animation: shimmer 1.4s linear infinite;
 }
@@ -471,9 +478,9 @@
 
 .hr-save-state:empty { opacity: 0; }
 
-.hr-save-state.is-ok { color: #8dff7a; }
+.hr-save-state.is-ok { color: var(--tint-green); }
 .hr-save-state.is-ok::before { content: '✓'; }
-.hr-save-state.is-busy { color: #d9a8ff; }
+.hr-save-state.is-busy { color: var(--tint-purple); }
 .hr-save-state.is-busy::before {
   content: '';
   width: 0.45rem;
@@ -483,7 +490,7 @@
   animation: hrPulse 1.2s ease-in-out infinite;
 }
 .hr-save-state.is-pending { color: var(--text-muted); }
-.hr-save-state.is-error { color: #ff8aa3; }
+.hr-save-state.is-error { color: var(--tint-red); }
 
 /* ----- Switch ------------------------------------------------------- */
 .hr-switch-row {
@@ -538,7 +545,7 @@
 .hr-switch.is-on {
   background: var(--gradient-pink-cyan);
   border-color: transparent;
-  box-shadow: 0 0 14px rgba(255, 46, 182, 0.35);
+  box-shadow: 0 0 14px rgb(var(--neon-pink-rgb) / 0.35);
 }
 
 .hr-switch.is-on .hr-switch-knob {
@@ -662,8 +669,8 @@
 
 .hr-seg-btn[aria-pressed='true'] {
   color: var(--text);
-  background: rgba(255, 46, 182, 0.14);
-  box-shadow: inset 0 0 0 1px rgba(255, 46, 182, 0.45), 0 0 14px rgba(255, 46, 182, 0.18);
+  background: rgb(var(--neon-pink-rgb) / 0.14);
+  box-shadow: inset 0 0 0 1px rgb(var(--neon-pink-rgb) / 0.45), 0 0 14px rgb(var(--neon-pink-rgb) / 0.18);
 }
 
 .hr-seg.is-chips .hr-seg-btn {
@@ -685,9 +692,9 @@
 .hr-seg.is-chips .hr-seg-btn:focus-visible { outline-offset: 2px; }
 
 .hr-seg.is-chips .hr-seg-btn[aria-pressed='true'] {
-  border-color: rgba(255, 46, 182, 0.6);
-  background: rgba(255, 46, 182, 0.14);
-  box-shadow: 0 0 14px rgba(255, 46, 182, 0.18);
+  border-color: rgb(var(--neon-pink-rgb) / 0.6);
+  background: rgb(var(--neon-pink-rgb) / 0.14);
+  box-shadow: 0 0 14px rgb(var(--neon-pink-rgb) / 0.18);
 }
 
 .hr-seg-icon {
@@ -713,8 +720,8 @@
 }
 
 .hr-seg-btn[aria-pressed='true'] .hr-seg-count {
-  color: #ffd3ef;
-  background: rgba(255, 46, 182, 0.2);
+  color: var(--tint-pink-light);
+  background: rgb(var(--neon-pink-rgb) / 0.2);
 }
 
 /* Below a 360px phone the counts are what gives in a strip that cannot wrap:
@@ -768,10 +775,11 @@
 
 .hr-field-row > .btn { flex: none; }
 
-/* An icon inside a button, sized to the label's cap height. */
+/* An icon inside a button, sized to the label's cap height. (shell.css had a
+   second copy at 1.15em that won on import order; that size is this one.) */
 .hr-btn-icon {
-  width: 1.1em;
-  height: 1.1em;
+  width: 1.15em;
+  height: 1.15em;
   flex: none;
 }
 
@@ -792,7 +800,7 @@
   border-radius: var(--radius-xs);
   background: var(--surface-inset);
   border: 1px solid var(--border-soft);
-  color: #e7d8ff;
+  color: var(--tint-code);
   overflow-wrap: anywhere;
 }
 
@@ -822,7 +830,7 @@
     z-index: 20;
     margin: 0 -20px 1rem;
     padding: 0.55rem 20px;
-    background: rgba(6, 0, 17, 0.82);
+    background: rgb(var(--bg-deep-rgb) / 0.82);
     backdrop-filter: blur(14px) saturate(140%);
     -webkit-backdrop-filter: blur(14px) saturate(140%);
     border-bottom: 1px solid var(--border-soft);
@@ -925,8 +933,8 @@
 
 .hr-settings-tab.is-active {
   color: var(--text);
-  background: rgba(255, 46, 182, 0.14);
-  box-shadow: inset 0 0 0 1px rgba(255, 46, 182, 0.45), 0 0 14px rgba(255, 46, 182, 0.18);
+  background: rgb(var(--neon-pink-rgb) / 0.14);
+  box-shadow: inset 0 0 0 1px rgb(var(--neon-pink-rgb) / 0.45), 0 0 14px rgb(var(--neon-pink-rgb) / 0.18);
 }
 
 .hr-settings-tab-icon {
@@ -951,7 +959,7 @@
 
   .hr-settings-tab-icon { display: block; color: var(--text-muted); }
 
-  .hr-settings-tab.is-active .hr-settings-tab-icon { color: var(--neon-pink); filter: drop-shadow(0 0 4px rgba(255, 46, 182, 0.7)); }
+  .hr-settings-tab.is-active .hr-settings-tab-icon { color: var(--neon-pink); filter: drop-shadow(0 0 4px rgb(var(--neon-pink-rgb) / 0.7)); }
 
   .hr-settings-tab.is-active::before {
     content: '';
@@ -962,7 +970,7 @@
     width: 3px;
     border-radius: 2px;
     background: var(--gradient-pink-cyan);
-    box-shadow: 0 0 8px rgba(255, 46, 182, 0.7);
+    box-shadow: 0 0 8px rgb(var(--neon-pink-rgb) / 0.7);
   }
 
   .hr-settings-tab.is-active {
@@ -995,7 +1003,7 @@
   font-weight: 700;
   background: var(--neon-red);
   color: var(--text-on-neon);
-  box-shadow: 0 0 8px rgba(255, 56, 96, 0.6);
+  box-shadow: 0 0 8px rgb(var(--neon-red-rgb) / 0.6);
 }
 
 .hr-settings-main { min-width: 0; }

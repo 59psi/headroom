@@ -2,6 +2,8 @@ import { useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getColorwayStatus, refreshColorwayCatalog } from '../../api/settings';
 import type { CatalogStatus } from '../../types';
+import { plural } from '../../lib/format';
+import { qk } from '../../lib/queryKeys';
 import { SweepProgressBar } from '../common/SweepProgressBar';
 import { ErrorNote } from '../common/ErrorNote';
 import { Panel } from '../ui/Panel';
@@ -17,6 +19,16 @@ function statusPill(s: CatalogStatus) {
   // makes it readable at all — so a failed last harvest is the state until
   // the next one starts.
   if (s.progress?.error) return <StatusPill tone="error">Failed</StatusPill>;
+  // Categories the last harvest could not read. It said "Ready" whenever any
+  // entries existed, however many categories had failed — and a harvest that
+  // lost EVERY category left the old rows in place and looked complete.
+  const lost = s.failed_categories?.length ?? 0;
+  if (lost > 0) {
+    const title = `${plural(lost, 'category', 'categories')} could not be read last harvest`;
+    return s.entries === 0
+      ? <StatusPill tone="error" title={title}>Failed</StatusPill>
+      : <StatusPill tone="warn" title={title}>Partial</StatusPill>;
+  }
   if (s.entries === 0) return <StatusPill tone="off">Empty</StatusPill>;
   return <StatusPill tone="ok">Ready</StatusPill>;
 }
@@ -29,7 +41,7 @@ export function ColorwayCatalogCard() {
   // figure sat at 25 no matter how many models had actually been harvested,
   // and looked exactly like a harvest that had only found 25.
   const status = useQuery({
-    queryKey: ['admin', 'colorway-status'],
+    queryKey: qk.admin.colorwayStatus(),
     queryFn: getColorwayStatus,
     // `in_flight`, not `progress.running`. The slot is claimed synchronously
     // in the request and `begin()` runs inside the task, so `running` is still
@@ -51,7 +63,7 @@ export function ColorwayCatalogCard() {
   const wasInFlight = useRef(false);
   useEffect(() => {
     if (wasInFlight.current && !inFlight) {
-      qc.invalidateQueries({ queryKey: ['meta', 'colorways'] });
+      qc.invalidateQueries({ queryKey: qk.meta.colorways() });
     }
     wasInFlight.current = inFlight;
   }, [inFlight, qc]);
@@ -68,7 +80,7 @@ export function ColorwayCatalogCard() {
       // say the same thing sooner. The refusal is said in place instead.
       if (res.already_running) return;
       toast.success('Harvest started');
-      qc.invalidateQueries({ queryKey: ['admin', 'colorway-status'] });
+      qc.invalidateQueries({ queryKey: qk.admin.colorwayStatus() });
     },
   });
 
@@ -129,6 +141,13 @@ export function ColorwayCatalogCard() {
       {s?.last_harvest && !inFlight && (
         <p className="hr-sd-legend mt-2 mb-0">
           Last harvest {new Date(s.last_harvest).toLocaleString()}
+        </p>
+      )}
+      {!!s?.failed_categories?.length && !inFlight && (
+        <p className="hr-sd-metric-note is-warn mb-0">
+          Couldn&rsquo;t read {plural(s.failed_categories.length, 'category', 'categories')}:{' '}
+          {s.failed_categories.join(', ')}. The counts above are missing whatever
+          they hold — refresh to try again.
         </p>
       )}
       <div className="mt-3 hr-sd-progress-slot">

@@ -1,6 +1,7 @@
 """Tests for hat disposition (sold/gifted/lost) tracking."""
 
 import pytest
+
 from headroom.services import capacity
 
 pytestmark = pytest.mark.anyio
@@ -13,18 +14,31 @@ async def _make_hat(client, **overrides):
     return resp.json()
 
 
+#: Every field a disposal records, as the API names them on the way in and on
+#: the way out. A sale, because it is the one kind that carries all four.
+_DISPOSAL = {"via": "sold", "price": 45.0, "to": "Eric F.", "notes": "Paid cash at the meetup"}
+_DISPOSED_FIELDS = {
+    "disposed_via": "sold",
+    "disposed_price": 45.0,
+    "disposed_to": "Eric F.",
+    "disposed_notes": "Paid cash at the meetup",
+}
+
+
 async def test_dispose_sets_fields(client):
+    """All four metadata columns plus the timestamp, stored and read back.
+
+    It never sent `notes`, so a dispose that dropped them passed."""
     hat = await _make_hat(client)
-    resp = await client.post(
-        f"/api/hats/{hat['id']}/dispose",
-        json={"via": "sold", "price": 45.0, "to": "Eric F."},
-    )
+    resp = await client.post(f"/api/hats/{hat['id']}/dispose", json=_DISPOSAL)
     assert resp.status_code == 200
     body = resp.json()
     assert body["disposed_at"] is not None
-    assert body["disposed_via"] == "sold"
-    assert body["disposed_price"] == 45.0
-    assert body["disposed_to"] == "Eric F."
+    assert {k: body[k] for k in _DISPOSED_FIELDS} == _DISPOSED_FIELDS
+
+    # Stored, not just echoed by the response that wrote it.
+    reread = (await client.get(f"/api/hats/{hat['id']}")).json()
+    assert {k: reread[k] for k in _DISPOSED_FIELDS} == _DISPOSED_FIELDS
 
 
 async def test_dispose_rejects_invalid_via(client):
@@ -39,13 +53,22 @@ async def test_dispose_rejects_invalid_via(client):
 
 
 async def test_undispose_clears_fields(client):
+    """Restoring clears every disposal field, not just the two that say
+    "disposed". It used to dispose with `via` alone, so there was no price,
+    buyer or note to see left behind — and a restore that kept all three
+    passed."""
     hat = await _make_hat(client)
-    await client.post(f"/api/hats/{hat['id']}/dispose", json={"via": "lost"})
+    disposed = (await client.post(f"/api/hats/{hat['id']}/dispose", json=_DISPOSAL)).json()
+    assert {k: disposed[k] for k in _DISPOSED_FIELDS} == _DISPOSED_FIELDS, "precondition"
+
     resp = await client.delete(f"/api/hats/{hat['id']}/dispose")
     assert resp.status_code == 200
+    cleared = {"disposed_at": None, **dict.fromkeys(_DISPOSED_FIELDS)}
     body = resp.json()
-    assert body["disposed_at"] is None
-    assert body["disposed_via"] is None
+    assert {k: body[k] for k in cleared} == cleared
+
+    reread = (await client.get(f"/api/hats/{hat['id']}")).json()
+    assert {k: reread[k] for k in cleared} == cleared
 
 
 async def test_status_filter_excludes_disposed_by_default(client):

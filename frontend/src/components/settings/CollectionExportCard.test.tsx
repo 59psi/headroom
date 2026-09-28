@@ -36,6 +36,15 @@ describe('CollectionExportCard', () => {
     );
   });
 
+  it('leads with whether the money goes in, and follows the checkbox', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<CollectionExportCard />);
+    expect(screen.getByText('No prices', { selector: '.hr-pill' })).toBeInTheDocument();
+
+    await user.click(screen.getByLabelText(/Include estimated values/));
+    expect(screen.getByText('With values', { selector: '.hr-pill' })).toBeInTheDocument();
+  });
+
   it('says the zip is being built, since the browser shows nothing until it is', async () => {
     const user = userEvent.setup();
     unblock = blockNavigation();
@@ -58,5 +67,10 @@ describe('InventoryReportCard', () => {
       expect(a).toHaveAttribute('target', '_blank');
       expect(a).toHaveAttribute('rel', 'noopener noreferrer');
     }
+  });
+
+  it('leads with a status like every other card — this one carries the values', () => {
+    renderWithProviders(<InventoryReportCard />);
+    expect(screen.getByText('With values', { selector: '.hr-pill' })).toBeInTheDocument();
   });
 });

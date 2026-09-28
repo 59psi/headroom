@@ -4,9 +4,12 @@ import { ErrorNote } from './ErrorNote';
 import { Segmented } from '../ui/Segmented';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { updateHatColors } from '../../api/hats';
+import { COLOR_TIERS, tierForRank, type Tier } from '../../lib/colorTiers';
+import { invalidateHatViews } from '../../lib/invalidate';
+import { qk } from '../../lib/queryKeys';
 import { useToast } from '../ui/Toast';
 import { useConfirm } from '../ui/Dialogs';
-import type { ColorTag, HatRead } from '../../types';
+import type { ColorTag, ColorTagWrite, HatRead } from '../../types';
 
 interface Props {
   hatId: number;
@@ -15,13 +18,6 @@ interface Props {
   editingRank: number | null;
   onClose: () => void;
 }
-
-const TIERS: ReadonlyArray<{ value: string; label: string }> = [
-  { value: 'primary', label: 'Primary' },
-  { value: 'secondary', label: 'Secondary' },
-  { value: 'tertiary', label: 'Tertiary' },
-  { value: 'accent', label: 'Accent' },
-];
 
 export function ColorEditModal({ hatId, colors, editingRank, onClose }: Props) {
   const qc = useQueryClient();
@@ -38,7 +34,9 @@ export function ColorEditModal({ hatId, colors, editingRank, onClose }: Props) {
   const [hexText, setHexText] = useState(target?.hex_value ?? '#888888');
   const [name, setName] = useState(target?.color_name ?? '');
   const [general, setGeneral] = useState(target?.general_color ?? '');
-  const [tier, setTier] = useState(target?.tier ?? 'primary');
+  // A new color starts at the tier its position implies, as the Edit form's
+  // do — not "primary" for a fourth color nobody called primary.
+  const [tier, setTier] = useState<Tier>(target?.tier ?? tierForRank(colors.length + 1));
 
   // No re-sync effect: `HatDetailPage` mounts this modal only while it is open
   // (`colorEditOpen !== null && <ColorEditModal …/>`), so every open is a fresh
@@ -51,18 +49,23 @@ export function ColorEditModal({ hatId, colors, editingRank, onClose }: Props) {
    * the server derives when the box is left blank — so write that straight
    * into the page's cache. The palette under the modal is correct the moment
    * it closes instead of a refetch later, and it is the server's answer, not
-   * a guess at it. The invalidations stay: the hat lists show swatches too.
+   * a guess at it. The invalidations stay, and they are the whole set: the
+   * palette shows on the collection lists, the room page's loose hats, case
+   * pages and search results — this used to refresh only `['hat', id]` and
+   * `['hats']`, so a recolored loose hat kept its old swatches on its room.
    */
   function applySaved(hat: HatRead | undefined) {
-    if (hat && hat.id === hatId) qc.setQueryData(['hat', hatId], hat);
-    qc.invalidateQueries({ queryKey: ['hat', hatId] });
-    qc.invalidateQueries({ queryKey: ['hats'] });
+    if (hat && hat.id === hatId) qc.setQueryData(qk.hat(hatId), hat);
+    void invalidateHatViews(qc, hatId);
   }
 
   const saveMut = useMutation({
     mutationFn: () => {
-      const next: ColorTag = {
-        color_name: name.trim() || 'unnamed',
+      const next: ColorTagWrite = {
+        // Blank means "name it from the hex" — the server derives the palette
+        // name, the same way it derives a blank general color. It used to be
+        // stored as the literal word "unnamed".
+        color_name: name.trim() || null,
         // Blank means "derive it from the hex" — the server does that, snapping
         // to the filter palette. Don't substitute the *specific* name here: it's
         // free text ("cobalt blue"), and since a typed general_color is now
@@ -70,10 +73,12 @@ export function ColorEditModal({ hatId, colors, editingRank, onClose }: Props) {
         // quietly drop the hat out of the color-chip search.
         general_color: general.trim(),
         hex_value: hex,
-        dominance_rank: editingRank ?? colors.length + 1,
         tier,
       };
-      const updated = isEdit
+      // Position IS the rank on write — the server ignores a sent
+      // `dominance_rank` — so an edit replaces its row in place and an add
+      // appends.
+      const updated: ColorTagWrite[] = isEdit
         ? colors.map(c => c.dominance_rank === editingRank ? next : c)
         : [...colors, next];
       return updateHatColors(hatId, updated);
@@ -86,12 +91,9 @@ export function ColorEditModal({ hatId, colors, editingRank, onClose }: Props) {
   });
 
   const removeMut = useMutation({
-    mutationFn: () => {
-      const filtered = colors
-        .filter(c => c.dominance_rank !== editingRank)
-        .map((c, i) => ({ ...c, dominance_rank: i + 1 }));
-      return updateHatColors(hatId, filtered);
-    },
+    // The rest keep their order, and so their ranks close up: position is
+    // the rank the server stores.
+    mutationFn: () => updateHatColors(hatId, colors.filter(c => c.dominance_rank !== editingRank)),
     onSuccess: hat => {
       applySaved(hat);
       toast.success('Color removed');
@@ -203,7 +205,7 @@ export function ColorEditModal({ hatId, colors, editingRank, onClose }: Props) {
       <Segmented
         variant="chips"
         labelledBy="color-tier-label"
-        options={TIERS}
+        options={COLOR_TIERS}
         value={tier}
         onChange={setTier}
       />

@@ -27,6 +27,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 
+from headroom import config
 from headroom.services import tls_health
 
 pytestmark = pytest.mark.anyio
@@ -106,7 +107,7 @@ def front_door(monkeypatch):
     def _serve(cert_path, key_path, host="localhost"):
         server = _Server(cert_path, key_path)
         servers.append(server)
-        monkeypatch.setenv("HEADROOM_ORIGIN", f"https://{host}:{server.port}")
+        monkeypatch.setattr(config.settings, "origin", f"https://{host}:{server.port}")
         return server
 
     yield _serve
@@ -119,7 +120,7 @@ def front_door(monkeypatch):
 
 async def test_no_https_origin_is_not_a_problem(monkeypatch):
     """Every install without an HTTPS overlay. Must not render as an alarm."""
-    monkeypatch.delenv("HEADROOM_ORIGIN", raising=False)
+    monkeypatch.setattr(config.settings, "origin", "http://localhost:8000")
 
     status = tls_health.check_certificate()
 
@@ -128,7 +129,7 @@ async def test_no_https_origin_is_not_a_problem(monkeypatch):
 
 
 async def test_a_plain_http_origin_is_also_not_applicable(monkeypatch):
-    monkeypatch.setenv("HEADROOM_ORIGIN", "http://headroom.local")
+    monkeypatch.setattr(config.settings, "origin", "http://headroom.local")
 
     assert tls_health.check_certificate().applicable is False
 
@@ -209,7 +210,7 @@ async def test_nothing_listening_is_an_error_not_a_crash(monkeypatch):
     door is down" into "the settings page is down".
     """
     # Port 1 on loopback: reserved, and nothing legitimate binds it.
-    monkeypatch.setenv("HEADROOM_ORIGIN", "https://127.0.0.1:1")
+    monkeypatch.setattr(config.settings, "origin", "https://127.0.0.1:1")
 
     status = tls_health.check_certificate(timeout=2.0)
 

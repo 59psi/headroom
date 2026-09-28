@@ -62,4 +62,7 @@ class Purchase(Base):
     # rules: a lazy="select" access on an AsyncSession raises rather than
     # emitting a query, so a plain attribute read would be a runtime error.
     hat: Mapped["Hat | None"] = relationship(lazy="selectin")  # noqa: F821
+    # What the match that linked this purchase actually WROTE onto the hat, as
+    # JSON {field: value}. Unmatch reverts exactly these and nothing else.
+    match_writes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, server_default=func.now())

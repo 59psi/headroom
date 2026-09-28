@@ -48,7 +48,6 @@ from headroom import database
 from headroom.config import settings
 from headroom.models.app_setting import AppSetting
 from headroom.models.room import Room
-from headroom.models.user import AuthSession, User
 from headroom.services import (
     activity_service,
     analysis_queue,
@@ -61,13 +60,15 @@ from headroom.services.task_health import TaskHealth
 pytestmark = pytest.mark.anyio
 
 #: Every one-time data repair the lifespan runs, by the flag it leaves behind.
-#: A fifth repair with no flag would run on every boot; a renamed flag would
-#: re-run a repair on an upgraded install. Both are worth a failing test.
+#: A repair with no flag would run on every boot; a renamed flag would re-run
+#: a repair on an upgraded install. Both are worth a failing test — and so is
+#: a repair missing from this list, which `_flags` reads without it.
 ONE_TIME_FLAGS = (
     "vocabulary_merged_v1",
     "retail_prices_v2",
     "model_names_split_v1",
     "color_names_normalized_v1",
+    "vocabulary_merged_v2",
 )
 
 _SESSION_ID = "boot-test-session"
@@ -119,25 +120,20 @@ def app(boot_db):
 
 @pytest.fixture
 async def client(app, boot_db):
-    """Authenticated client against the file database."""
+    """Authenticated client against the file database, closed at teardown.
+
+    Seeded through the suite's one `_seed_owner` (and its cached password
+    hash) rather than a second copy of it, as `conftest.file_client` is.
+    """
+    from tests.conftest import _seed_owner
+
     _, factory = boot_db
-    async with factory() as db:
-        user = User(
-            username="bootowner",
-            password_hash=auth_service.hash_password("boot-test-password"),
-            api_token="hr_boot-test-token",
-        )
-        db.add(user)
-        await db.commit()
-        await db.refresh(user)
-        db.add(AuthSession(
-            id=_SESSION_ID, user_id=user.id,
-            expires_at=datetime.now(timezone.utc) + timedelta(days=1),
-        ))
-        await db.commit()
-    c = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
-    c.cookies.set("headroom_session", _SESSION_ID)
-    return c
+    await _seed_owner(
+        factory, username="bootowner", api_token="hr_boot-test-token", session_id=_SESSION_ID
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        c.cookies.set("headroom_session", _SESSION_ID)
+        yield c
 
 
 @pytest.fixture(autouse=True)
@@ -171,8 +167,16 @@ async def _boot(app):
 
 
 async def _flags(db):
+    """Every one-time flag the boot stamped — by the stamp, not by name.
+
+    It filtered on `ONE_TIME_FLAGS`, so a repair nobody added to that list
+    was invisible to every assertion here: `vocabulary_merged_v2` shipped in
+    `app._ONE_TIME_REPAIRS` with this file still asserting the four before
+    it. The repair loop marks each flag `"done"` and nothing else in the app
+    stores that value, so this sees whatever the boot actually ran.
+    """
     rows = (await db.execute(
-        select(AppSetting).where(AppSetting.key.in_(ONE_TIME_FLAGS))
+        select(AppSetting).where(AppSetting.value == "done")
     )).scalars().all()
     return {r.key: r.value for r in rows}
 
@@ -249,18 +253,87 @@ async def test_boot_seeds_the_default_branding_into_the_upload_dir(app):
         await _settled(app)
 
 
+async def test_boot_computes_the_login_placeholder_hash_off_the_event_loop(
+    app, monkeypatch
+):
+    """The unknown-username placeholder is argon2, and it used to be computed
+    lazily — by the first failed login for a name that does not exist, ON the
+    event loop, freezing every in-flight request (the health check included)
+    for up to a second on a Pi, and costing that attempt two argon2 operations
+    where a known name costs one.
+
+    Pinned by where the hashing happens: during boot, on a worker thread, and
+    never again once the app is serving. "On the loop" is read as "a running
+    loop is visible from the hashing call", which is exactly what an event
+    loop thread has and a `to_thread` worker does not.
+    """
+    auth_service.placeholder_password_hash.cache_clear()
+    real_hash = auth_service.hash_password
+    on_loop: list[bool] = []
+
+    def spying_hash(password: str) -> str:
+        try:
+            asyncio.get_running_loop()
+            on_loop.append(True)
+        except RuntimeError:
+            on_loop.append(False)
+        return real_hash(password)
+
+    monkeypatch.setattr(auth_service, "hash_password", spying_hash)
+
+    async with await _boot(app):
+        assert on_loop == [False], (
+            f"boot hashed the placeholder {on_loop!r} (True = on the event loop); "
+            "it must be computed exactly once, on a worker thread"
+        )
+        # What the login route reads for an unknown name: a cache hit now.
+        assert auth_service.placeholder_password_hash().startswith("$argon2")
+        assert on_loop == [False], "the login path hashed again after boot"
+        await _settled(app)
+
+
+async def test_the_boot_placeholder_hash_runs_under_the_argon2_bound(monkeypatch):
+    """Every argon2 operation is bounded — the boot one included, which ran
+    beside the thumbnail and export backfills with nothing limiting it."""
+    import contextlib
+
+    auth_service.placeholder_password_hash.cache_clear()
+    held = {"now": False, "hashed_inside": None}
+    real_hash = auth_service.hash_password
+
+    @contextlib.asynccontextmanager
+    async def _bound():
+        held["now"] = True
+        try:
+            yield
+        finally:
+            held["now"] = False
+
+    def spying_hash(password: str) -> str:
+        held["hashed_inside"] = held["now"]
+        return real_hash(password)
+
+    monkeypatch.setattr(auth_service, "_argon2_semaphore", _bound)
+    monkeypatch.setattr(auth_service, "hash_password", spying_hash)
+
+    await auth_service.warm_placeholder_hash()
+
+    assert held["hashed_inside"] is True
+    auth_service.placeholder_password_hash.cache_clear()
+
+
 # --------------------------------------------------------------------------
 # one-time backfills
 # --------------------------------------------------------------------------
 
 
 async def test_boot_stamps_every_one_time_backfill_and_does_not_repeat_them(app, boot_db, monkeypatch):
-    """Four repairs, each guarded by a flag, each run exactly once.
+    """Every repair guarded by a flag, each run exactly once.
 
     The second half is the one that matters on the real box: a repair that
     re-ran on every boot would re-price or rename the collection daily. The
     color normalizer is the probe because it is the cheapest to count; the
-    property is the flags, which cover all four.
+    property is the flags, which cover all of them.
     """
     from headroom.services import hat_service
 
@@ -283,6 +356,27 @@ async def test_boot_stamps_every_one_time_backfill_and_does_not_repeat_them(app,
     async with await _boot(app):
         await _settled(app)
     assert calls == [1], "a second boot re-ran a one-time repair"
+
+
+async def test_boot_merges_the_spelling_variants_v1_could_not_see(app, boot_db):
+    """`vocabulary_merged_v2`: v1 folded case and whitespace only and never
+    touched colorway, so an upgraded install still holds `Hawaii 808` beside
+    `hawaii-808`. The flag being stamped proves the repair was called; this
+    proves it is the repair that merges them."""
+    from headroom.models.hat import Hat
+
+    _, factory = boot_db
+    async with factory() as db:
+        for colorway in ("Hawaii 808", "Hawaii 808", "hawaii-808"):
+            db.add(Hat(condition="new", size="classic", style="a_game", colorway=colorway))
+        await db.commit()
+
+    async with await _boot(app):
+        await _settled(app)
+
+    async with factory() as db:
+        spellings = set((await db.execute(select(Hat.colorway))).scalars())
+    assert spellings == {"Hawaii 808"}
 
 
 # --------------------------------------------------------------------------
@@ -309,7 +403,13 @@ async def test_boot_runs_the_retention_prune_and_the_endpoint_reports_it(app, cl
 
         body = (await client.get("/api/admin/activity-log/retention")).json()
         assert body["retention_days"] == activity_service.retention_days()
-        assert body["health"]["last_success_at"] == health.last_success_at.isoformat()
+        # Compared as instants: the schema publishes a `datetime`, and its
+        # wire spelling of UTC ("Z") is not `isoformat()`'s ("+00:00").
+        from datetime import datetime
+
+        served = datetime.fromisoformat(body["health"]["last_success_at"])
+        assert served == health.last_success_at
+        assert served.utcoffset() is not None, "a timestamp on the wire carries its zone"
         assert body["health"]["consecutive_failures"] == 0
         await _settled(app)
 
@@ -471,6 +571,49 @@ async def test_the_analysis_worker_boots_and_requeues_a_pending_hat(app, boot_db
     assert not analysis_queue.worker_alive(), "shutdown left the analysis worker running"
 
 
+@pytest.mark.parametrize("worker", ["true", "false"], ids=["worker", "inline"])
+async def test_boot_puts_a_recut_the_last_shutdown_interrupted_back_on_its_cutout(
+    app, boot_db, client, monkeypatch, worker
+):
+    """A re-cut commits the uncut original as the photo and the stage
+    `cutout`, then cuts. A restart in between left exactly that state, and
+    nothing ever touched it again: the boot sweep re-queues only `pending`
+    hats, and a re-cut never sets that. `HatRead` reports the state as a cut
+    in progress, so the hat showed its original, background and all, under a
+    "Cutting out…" spinner that the page polled every two seconds, forever.
+    Either way analysis runs — the queue is in memory, and an inline cut dies
+    with its request."""
+    from PIL import Image
+
+    from headroom.models.hat import Hat
+
+    _, factory = boot_db
+    monkeypatch.setenv("HEADROOM_ANALYSIS_WORKER_ENABLED", worker)
+    hats_dir = settings.upload_dir / "hats"
+    hats_dir.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (8, 8)).save(hats_dir / "orig.jpg", "JPEG")
+    Image.new("RGBA", (8, 8)).save(hats_dir / "orig.png", "PNG")  # the cutout it had
+    hat_id = (await client.post(
+        "/api/hats", json={"condition": "new", "size": "classic", "style": "a_game"}
+    )).json()["id"]
+    async with factory() as db:
+        hat = await db.get(Hat, hat_id)
+        # What `POST /recut` commits before the cut starts.
+        hat.original_path = "hats/orig.jpg"
+        hat.photo_path = "hats/orig.jpg"
+        hat.analysis_status = "ok"
+        hat.analysis_stage = "cutout"
+        await db.commit()
+
+    async with await _boot(app):
+        await _settled(app)
+        body = (await client.get(f"/api/hats/{hat_id}")).json()
+
+    assert body["analysis_stage"] is None, "still reported as cutting out"
+    assert body["photo_path"] == "hats/orig.png", "not back on the cutout it had"
+    assert body["analysis_status"] == "ok", "a re-cut never touches the analysis record"
+
+
 async def test_the_backup_scheduler_boots_writes_a_backup_and_resolves_its_upload_here(
     app, monkeypatch, tmp_path,
 ):
@@ -532,7 +675,6 @@ async def test_shutdown_stops_workers_then_checkpoints_the_wal_last(app, boot_db
     file. This one boots the app and records what it actually did — and that
     the checkpoint ran on THIS app's engine, not the module's.
     """
-    from headroom import app as app_module
     from headroom.services import mdns_service
 
     engine, _ = boot_db
@@ -546,7 +688,7 @@ async def test_shutdown_stops_workers_then_checkpoints_the_wal_last(app, boot_db
     monkeypatch.setattr(import_service, "stop_worker", recorder("import"))
     monkeypatch.setattr(analysis_queue, "stop_worker", recorder("analysis"))
     monkeypatch.setattr(mdns_service, "stop_mdns", recorder("mdns"))
-    monkeypatch.setattr(app_module, "checkpoint_wal", recorder("checkpoint"))
+    monkeypatch.setattr(database, "checkpoint_wal", recorder("checkpoint"))
 
     async with await _boot(app):
         await _settled(app)
@@ -576,7 +718,6 @@ async def test_the_real_checkpoint_truncates_this_databases_wal(app, boot_db):
 
 async def test_a_failing_shutdown_step_does_not_skip_the_ones_after_it(app, monkeypatch, caplog):
     """One raising step used to skip every step after it — including the checkpoint."""
-    from headroom import app as app_module
     from headroom.services import mdns_service
 
     ran = []
@@ -588,7 +729,7 @@ async def test_a_failing_shutdown_step_does_not_skip_the_ones_after_it(app, monk
         ran.append("checkpoint")
 
     monkeypatch.setattr(mdns_service, "stop_mdns", boom)
-    monkeypatch.setattr(app_module, "checkpoint_wal", note)
+    monkeypatch.setattr(database, "checkpoint_wal", note)
     caplog.set_level("WARNING")
 
     async with await _boot(app):
@@ -596,3 +737,45 @@ async def test_a_failing_shutdown_step_does_not_skip_the_ones_after_it(app, monk
 
     assert ran == ["checkpoint"], "the checkpoint was skipped after an earlier step raised"
     assert any("mdns refused to stop" in r.getMessage() for r in caplog.records)
+
+
+# --------------------------------------------------------------------------
+# the daily TLS watch
+# --------------------------------------------------------------------------
+
+
+async def test_the_tls_watch_reports_a_served_chain_from_another_authority(
+    app, monkeypatch, caplog
+):
+    """The loop is the alarm that does not wait for someone to open Settings.
+
+    After a CA restore Caddy can go on serving a leaf from the authority it
+    minted in between: valid, covering the name, root file perfect — and
+    refused by every device. The card says so; the daily watch, which logs an
+    expired leaf, a stalled renewal and a wrong name, said nothing at all.
+    """
+    from headroom.services import ca_vault, tls_health
+
+    status = tls_health.TlsStatus(
+        applicable=True, host="headroom.local", port=443,
+        not_after=datetime.now(timezone.utc) + timedelta(days=700),
+        days_remaining=700.0, expired=False, needs_attention=False,
+        hostname_ok=True, ca_sha256="AA:BB", chain_matches_ca=False,
+    )
+    monkeypatch.setattr(tls_health, "check_certificate", lambda *_a, **_k: status)
+
+    async def _unchanged(_db, _current):
+        return False, None
+
+    monkeypatch.setattr(ca_vault, "check_root", _unchanged)
+    caplog.set_level("ERROR", logger="headroom.app")
+
+    def _reported() -> bool:
+        return any(
+            "headroom.local" in r.getMessage() and "authority" in r.getMessage()
+            for r in caplog.records
+        )
+
+    async with await _boot(app):
+        await _wait_for(_reported, what="the TLS watch to report the foreign chain")
+        await _settled(app)

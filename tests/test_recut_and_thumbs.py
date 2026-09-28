@@ -40,7 +40,7 @@ def fake_cutout(monkeypatch):
         return out
 
     monkeypatch.setattr(
-        "headroom.services.hat_analysis_pipeline.remove_background", _remove
+        "headroom.services.background_removal.remove_background", _remove
     )
 
 
@@ -164,14 +164,14 @@ async def test_recut_spends_no_claude_call_and_touches_nothing_the_owner_wrote(
     """Executed by the review: with a key stubbed in, one upload made one
     analyzer call and one "Redo cutout" made a SECOND — and wrote the
     analyzer's `model_name` over "My Own Name" and its `design_notes` over
-    the owner's. CLAUDE.md said the button spent no call. Now it spends
+    the owner's. The docs said the button spent no call. Now it spends
     none: rembg runs, the thumbnail and export derivative are regenerated,
     and the analysis record and every field are as they were.
     """
     from sqlalchemy import update as sa_update
 
     from headroom.models.hat import Hat
-    from headroom.services import hat_analysis_pipeline, settings_service
+    from headroom.services import settings_service
 
     # Upload first with no key (analysis `skipped`), THEN arm a key and an
     # analyzer that counts — so the only call that could be counted is the
@@ -184,7 +184,7 @@ async def test_recut_spends_no_claude_call_and_touches_nothing_the_owner_wrote(
         calls["n"] += 1
         raise RuntimeError("the analyzer must not run on a re-cut")
 
-    monkeypatch.setattr(hat_analysis_pipeline, "analyze_hat_image", _counting_analyzer)
+    monkeypatch.setattr("headroom.services.claude_analysis.analyze_hat_image", _counting_analyzer)
 
     async def _key(db):
         return "sk-ant-fake", "database"
@@ -208,6 +208,68 @@ async def test_recut_spends_no_claude_call_and_touches_nothing_the_owner_wrote(
     assert after["analysis_stage"] is None
     assert after["photo_path"].endswith(".png")
     assert (settings.upload_dir / after["thumb_path"]).stat().st_mtime_ns >= before_thumb
+
+
+async def test_a_recut_that_cuts_nothing_keeps_the_cutout_it_had(
+    client, fake_cutout, monkeypatch, db_session
+):
+    """rembg failing is `None`, not an exception. On an upload that means
+    "keep the JPEG" (the documented degrade), and the re-cut inherited it: the
+    uncut original became the hat's photo — background and all — and its
+    thumbnail overwrote the old cutout's, both under the same stem."""
+    from sqlalchemy import select
+
+    from headroom.models.hat import Hat
+
+    body = await _hat_with_photo(client)
+    thumb = settings.upload_dir / body["thumb_path"]
+    thumb_bytes = thumb.read_bytes()
+
+    async def _nothing(_input, _output):
+        return None
+
+    monkeypatch.setattr("headroom.services.background_removal.remove_background", _nothing)
+
+    after = (await client.post(f"/api/hats/{body['id']}/recut")).json()
+
+    assert after["photo_path"] == body["photo_path"], "the original must not replace the cutout"
+    assert after["analysis_stage"] is None
+    assert thumb.read_bytes() == thumb_bytes, "the old cutout's thumbnail was overwritten"
+    stage = (await db_session.execute(
+        select(Hat.analysis_stage).where(Hat.id == body["id"])
+    )).scalar_one()
+    assert stage is None
+
+
+async def test_a_recut_that_raises_still_clears_its_stage(client, fake_cutout, monkeypatch):
+    """The stage is cleared in a `finally`: `HatRead` reports it for as long
+    as the photo is the uncut original, so a cut that raised used to leave a
+    "Cutting out…" that nothing was doing."""
+    from headroom.models.hat import Hat
+    from headroom.services import hat_analysis_pipeline
+    from tests.conftest import test_session_factory
+
+    body = await _hat_with_photo(client)
+    published: list = []
+    real_publish = hat_analysis_pipeline._publish_stage
+
+    async def _record(db, hat_id, stage):
+        published.append(stage)
+        await real_publish(db, hat_id, stage)
+
+    async def _thumb_boom(*_a, **_k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(hat_analysis_pipeline, "_publish_stage", _record)
+    monkeypatch.setattr(hat_analysis_pipeline, "make_thumbnail_async", _thumb_boom)
+
+    async with test_session_factory() as db:
+        hat = await db.get(Hat, body["id"])
+        original = settings.upload_dir / body["original_path"]
+        with pytest.raises(OSError):
+            await hat_analysis_pipeline.finalize_hat_photo(db, hat, original, cutout_only=True)
+
+    assert published[-1] is None, f"the re-cut left its stage behind: {published}"
 
 
 async def test_replacing_a_photo_clears_the_previous_derivatives(client, fake_cutout):

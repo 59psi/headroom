@@ -1,6 +1,7 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getModel, setModel, clearModel, getApiKeyStatus, testApiKey } from '../../api/settings';
+import { mk, qk } from '../../lib/queryKeys';
 import { ErrorNote } from '../common/ErrorNote';
 import { Panel } from '../ui/Panel';
 import { StatusPill } from '../ui/StatusPill';
@@ -11,8 +12,13 @@ import { useConfirm } from '../ui/Dialogs';
 import type { ApiKeyTestResult, ModelStatus } from '../../types';
 
 // Curated list of Claude models known to support vision + tool use, which is
-// all this app needs from a model. Deliberately relative ("cheapest", not
+// all this app needs from a model. Deliberately relative ("fastest", not
 // "$1/MTok") — Anthropic's price list changes and a hardcoded number rots.
+//
+// Haiku 4.5 and Opus 4.6 say "(prompt too short to cache)" rather than
+// "cheapest": their prompt-cache minimum is longer than this app's analysis
+// prompt, so every call pays full input price where the others read most of
+// the prompt from cache. Per hat, "cheapest" was not reliably true.
 //
 // Legacy ids are kept listed rather than dropped: an install that saved one
 // stays on a named option instead of silently falling through to "Other…"
@@ -20,7 +26,7 @@ import type { ApiKeyTestResult, ModelStatus } from '../../types';
 // "Other…" covers anything not here, including models newer than this build.
 const CURRENT_MODELS: { id: string; label: string }[] = [
   { id: 'claude-sonnet-5', label: 'Sonnet 5 — balanced' },
-  { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5 — fastest, cheapest' },
+  { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5 — fastest (prompt too short to cache)' },
   { id: 'claude-opus-5', label: 'Opus 5 — more capable, pricier' },
   { id: 'claude-fable-5-1', label: 'Fable 5.1 — most capable, priciest' },
 ];
@@ -28,16 +34,16 @@ const LEGACY_MODELS: { id: string; label: string }[] = [
   { id: 'claude-fable-5', label: 'Fable 5' },
   { id: 'claude-opus-4-8', label: 'Opus 4.8' },
   { id: 'claude-opus-4-7', label: 'Opus 4.7' },
-  { id: 'claude-opus-4-6', label: 'Opus 4.6' },
+  { id: 'claude-opus-4-6', label: 'Opus 4.6 (prompt too short to cache)' },
   { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
   { id: 'claude-sonnet-4-5', label: 'Sonnet 4.5' },
 ];
 const KNOWN_IDS = new Set([...CURRENT_MODELS, ...LEGACY_MODELS].map(m => m.id));
 const OTHER = '__other__';
-const MODEL_KEY = ['settings', 'model'] as const;
+const MODEL_KEY = qk.settings.model();
 // Tags every write to the model (save AND reset) so each can ask whether
 // another is still in flight or queued behind it.
-const WRITE_KEY = ['settings-model-write'] as const;
+const WRITE_KEY = mk.modelWrite();
 
 const SOURCE_PILL: Record<ModelStatus['source'], { tone: 'off' | 'info'; label: string; title: string }> = {
   default: { tone: 'off', label: 'Default', title: 'The built-in default model' },
@@ -62,7 +68,7 @@ export function ClaudeModelCard() {
   const model = useQuery({ queryKey: MODEL_KEY, queryFn: getModel });
   // Read only to decide whether the post-save check can mean anything. The
   // Claude key card above holds the same query, so this is a cache hit.
-  const apiKey = useQuery({ queryKey: ['settings', 'api-key'], queryFn: getApiKeyStatus });
+  const apiKey = useQuery({ queryKey: qk.settings.apiKey(), queryFn: getApiKeyStatus });
 
   // "Other…" picked but not saved yet. The select otherwise DERIVES from the
   // server's model id, so a rollback moves it back without extra bookkeeping.
@@ -180,11 +186,22 @@ export function ClaudeModelCard() {
     if (ok) resetMut.mutate();
   }
 
-  const pill = status && (
-    <StatusPill tone={SOURCE_PILL[status.source].tone} title={SOURCE_PILL[status.source].title}>
-      {SOURCE_PILL[status.source].label}
-    </StatusPill>
-  );
+  // "Connected" only once Claude has answered with THIS model — the same rule
+  // the key card follows — and "Failing" when it refused. Until a check has
+  // run, the pill says where the choice came from, which is all it knows.
+  // The source moves to the tooltip rather than being lost.
+  const checked = check && status && check.modelId === status.model_id ? check.result : null;
+  const source = status ? SOURCE_PILL[status.source] : null;
+  let pill: ReactNode = null;
+  if (status && source) {
+    pill = checked
+      ? (
+        <StatusPill tone={checked.ok ? 'ok' : 'error'} title={`${source.label}: ${source.title}`}>
+          {checked.ok ? 'Connected' : 'Failing'}
+        </StatusPill>
+      )
+      : <StatusPill tone={source.tone} title={source.title}>{source.label}</StatusPill>;
+  }
 
   const suffix = (id: string) => (id === status?.default_model_id ? ' (default)' : '');
 

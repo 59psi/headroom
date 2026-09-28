@@ -19,6 +19,23 @@ export function timeAgo(iso: string | null | undefined): string {
   return `${Math.floor(hours / 24)} days ago`;
 }
 
+/**
+ * "1 hat", "3 hats", "0 purchases" — a count with its noun.
+ *
+ * Three cards carried this exact one-liner as a private `plural`, a fourth a
+ * variant, and about eighteen more sites spelled the ternary inline — one of
+ * them did not, and read "Retry all 1 failed hats". `many` is for the nouns an
+ * `s` does not make plural ("1 has" / "2 have" is `noun`'s job, not this).
+ */
+export function plural(n: number, word: string, many = `${word}s`): string {
+  return `${n} ${noun(n, word, many)}`;
+}
+
+/** The noun alone, agreeing with `n`: "hat" / "hats", "has" / "have". */
+export function noun(n: number, word: string, many = `${word}s`): string {
+  return n === 1 ? word : many;
+}
+
 /** Binary-prefixed size: "512 B", "3.4 KB", "12.0 MB", "1.25 GB". */
 export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;

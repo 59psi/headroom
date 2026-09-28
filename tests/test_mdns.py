@@ -33,19 +33,46 @@ async def test_mdns_enabled_parsing(monkeypatch):
         assert mdns_service.mdns_enabled() is expected
 
 
-async def test_mdns_hostname_normalization(monkeypatch):
-    for raw, expected in [
-        ("headroom", "headroom"),
-        ("headroom.local", "headroom"),
-        ("Hats.Local.", "hats"),
-        (".local", "headroom"),
-        ("", "headroom"),
-        ("  lids  ", "lids"),
-    ]:
+async def test_mdns_hostname_is_the_label_as_configured(monkeypatch):
+    """No normalization: the overlay appends `.local` to the RAW value, so
+    the app must advertise exactly that value or refuse it (below)."""
+    for raw, expected in [("headroom", "headroom"), ("hats", "hats"), ("", "headroom")]:
         monkeypatch.setenv("HEADROOM_MDNS_HOSTNAME", raw)
         assert mdns_service.mdns_hostname() == expected
+        assert mdns_service.hostname_problem() is None
     monkeypatch.delenv("HEADROOM_MDNS_HOSTNAME")
     assert mdns_service.mdns_hostname() == "headroom"
+
+
+@pytest.mark.parametrize("raw", ["hats.local", "Hats", "hats.", "  lids  ", "a.b", ".local"])
+async def test_a_hostname_the_overlay_would_break_on_is_named_as_a_problem(monkeypatch, raw):
+    """`hats.local` became `hats.local.local` in Caddy's site address, the
+    origin and the passkey RP id, while the app quietly advertised `hats`."""
+    monkeypatch.setenv("HEADROOM_MDNS_HOSTNAME", raw)
+    problem = mdns_service.hostname_problem()
+    assert problem is not None and "HEADROOM_MDNS_HOSTNAME" in problem
+
+
+async def test_a_dot_local_hostname_is_refused_loudly_not_repaired(monkeypatch):
+    import zeroconf.asyncio as zasync
+
+    monkeypatch.setenv("HEADROOM_MDNS_ENABLED", "true")
+    monkeypatch.setenv("HEADROOM_MDNS_HOSTNAME", "hats.local")
+    monkeypatch.setattr(mdns_service, "_lan_ip", lambda: "192.168.1.50")
+    monkeypatch.setattr(mdns_service, "_lan_ipv6", lambda: None)
+    monkeypatch.setattr(mdns_service, "_aiozc", None)
+    monkeypatch.setattr(mdns_service, "_error", None)
+
+    def _must_not_construct(*_a, **_k):
+        raise AssertionError("advertised a name the overlay does not serve")
+
+    monkeypatch.setattr(zasync, "AsyncZeroconf", _must_not_construct)
+
+    await mdns_service.start_mdns()
+
+    status = mdns_service.mdns_status()
+    assert status["advertising"] is False
+    assert "Set it to `hats`" in (status["error"] or ""), status["error"]
 
 
 async def test_advertised_url_scheme_and_port():
@@ -153,15 +180,26 @@ async def test_lan_ipv6_rejects_link_local(monkeypatch):
         assert mdns_service._lan_ipv6() == expected, addr
 
 
-async def _capture_registration(monkeypatch, *, ipv4, ipv6):
+async def _capture_registration(monkeypatch, *, ipv4, ipv6, interface=None, nsec=None):
     """Run start_mdns() against a fake AsyncZeroconf and return what it registered."""
     import zeroconf.asyncio as zasync
 
     monkeypatch.setenv("HEADROOM_MDNS_ENABLED", "true")
-    monkeypatch.delenv("HEADROOM_MDNS_INTERFACE", raising=False)
+    if interface is None:
+        monkeypatch.delenv("HEADROOM_MDNS_INTERFACE", raising=False)
+    else:
+        monkeypatch.setenv("HEADROOM_MDNS_INTERFACE", interface)
     monkeypatch.setattr(mdns_service, "_lan_ip", lambda: ipv4)
     monkeypatch.setattr(mdns_service, "_lan_ipv6", lambda: ipv6)
     monkeypatch.setattr(mdns_service, "_aiozc", None)
+    if nsec is not None:
+        # Record which address the NSEC responder would join the group on,
+        # instead of binding 5353 for real.
+        async def _fake_nsec(host, ip):
+            nsec["ip"] = ip
+            return None
+
+        monkeypatch.setattr(mdns_service, "_start_nsec_responder", _fake_nsec)
 
     captured: dict = {}
 
@@ -285,3 +323,54 @@ async def test_start_mdns_pins_lan_interface(monkeypatch):
         assert captured["info"].addresses == [socket.inet_aton("192.168.7.42")]
     finally:
         await mdns_service.stop_mdns()  # resets the module singleton
+
+
+# ---------------- a pinned NIC is also the ADVERTISED address --------------- #
+
+
+async def test_a_pinned_interface_advertises_its_own_address(monkeypatch):
+    """Multi-homed host: default route on 192.168.1.50, responder pinned to
+    10.9.9.9. The responder bound 10.9.9.9 and then told clients on that
+    network to connect to 192.168.1.50 — in the A record, in the NSEC
+    membership and on the Settings card."""
+    import socket
+
+    from zeroconf import IPVersion
+
+    nsec: dict = {}
+    captured = await _capture_registration(
+        monkeypatch, ipv4="192.168.1.50", ipv6="2600:1::50", interface="10.9.9.9", nsec=nsec,
+    )
+    try:
+        assert captured["kwargs"].get("interfaces") == ["10.9.9.9"]
+        assert captured["info"].addresses == [socket.inet_aton("10.9.9.9")], (
+            "the A record carries the default-route NIC's address, not the pinned one"
+        )
+        # The default-route v6 may belong to another NIC — not advertised.
+        assert captured["kwargs"].get("ip_version") is IPVersion.V4Only
+        assert nsec["ip"] == "10.9.9.9", "the NSEC responder joined the group on the wrong NIC"
+        status = mdns_service.mdns_status()
+        assert status["ip"] == "10.9.9.9"
+        assert status["ipv6"] is None
+    finally:
+        await mdns_service.stop_mdns()
+
+
+@pytest.mark.parametrize("override", ["2600:1::50", "eth0", "10.9.9"])
+async def test_an_interface_that_is_not_an_ipv4_address_is_refused(monkeypatch, override):
+    import zeroconf.asyncio as zasync
+
+    monkeypatch.setenv("HEADROOM_MDNS_ENABLED", "true")
+    monkeypatch.setenv("HEADROOM_MDNS_INTERFACE", override)
+    monkeypatch.setattr(mdns_service, "_lan_ip", lambda: "192.168.1.50")
+    monkeypatch.setattr(mdns_service, "_aiozc", None)
+    monkeypatch.setattr(mdns_service, "_error", None)
+
+    def _must_not_construct(*_a, **_k):
+        raise AssertionError("advertised past an unusable interface pin")
+
+    monkeypatch.setattr(zasync, "AsyncZeroconf", _must_not_construct)
+
+    await mdns_service.start_mdns()
+
+    assert "HEADROOM_MDNS_INTERFACE" in (mdns_service.mdns_status()["error"] or "")

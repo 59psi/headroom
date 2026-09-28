@@ -125,7 +125,8 @@ async def test_the_request_we_send_is_the_one_the_prompt_engineering_assumes(mon
 
 
 async def test_a_text_only_answer_is_an_analysis_error_not_a_crash(monkeypatch, hat_photo):
-    """`tool_choice` should make this impossible; the parser must still cope."""
+    """A forced `tool_choice` makes this impossible where the model allows
+    forcing; under `auto` it is merely unlikely. The parser copes either way."""
     reply = _tool_use_response({})
     reply["content"] = [{"type": "text", "text": "I cannot see a hat."}]
     reply["stop_reason"] = "end_turn"
@@ -175,3 +176,158 @@ async def test_verify_api_key_reports_the_outcome_without_raising(monkeypatch):
     good, detail = await claude_analysis.verify_api_key("sk-ant-wrong")
     assert good is False
     assert detail
+
+
+# ---- the request shape a model will actually accept ----------------------- #
+
+_ANSWER = {
+    "brand": "melin", "logo_detected": None, "artist_series": None,
+    "model_name": "Odysea Hydro", "colorway": None, "model_confidence": "high",
+    "style_descriptor": "structured", "design_notes": "",
+    "estimated_new_price_usd": None,
+    "colors": [{"name": "Black", "hex": "#0a141e", "tier": "primary"}],
+}
+
+
+@pytest.mark.parametrize(
+    ("model", "forced"),
+    [
+        ("claude-sonnet-5", True),
+        ("claude-opus-5", True),
+        ("claude-fable-5", True),
+        ("claude-haiku-4-5-20251001", True),
+        ("claude-opus-4-6", True),
+        # These three answer a forced tool choice with a 400.
+        ("claude-fable-5-1", False),
+        ("claude-mythos-5-1", False),
+        # `claude-opus-5` + "-5" — must not pass for a dated Opus 5.
+        ("claude-opus-5-5", False),
+        # Anything this build has not heard of gets the choice every model accepts.
+        ("claude-someday-9", False),
+    ],
+)
+async def test_the_tool_is_forced_only_where_the_model_allows_it(
+    monkeypatch, hat_photo, model, forced
+):
+    """Fable 5.1 was on the Settings roster as "most capable", and every
+    analysis sent it `tool_choice: {type: "tool"}`, which it rejects with a
+    400 — so every hat fell back to basic ID. Unlisted models get `auto`
+    (plus room for the thinking those models always do); listed ones keep the
+    forced call's guarantee."""
+    seen = _wire(monkeypatch, lambda req: httpx2.Response(200, json=_tool_use_response(_ANSWER)))
+
+    await claude_analysis.analyze_hat_image(hat_photo, api_key="sk-ant-test", model=model)
+
+    body = json.loads(seen[0].content)
+    if forced:
+        assert body["tool_choice"] == {"type": "tool", "name": "record_hat_analysis"}
+        assert body["max_tokens"] == 1024
+    else:
+        assert body["tool_choice"] == {"type": "auto"}
+        assert body["max_tokens"] > 1024, "thinking tokens count against max_tokens"
+    # The instruction to call the tool is what `auto` relies on.
+    assert "Always respond by calling the `record_hat_analysis` tool" in body["system"][0]["text"]
+
+
+@pytest.mark.parametrize(("model", "max_tokens"), [("claude-sonnet-5", 1024), ("claude-fable-5-1", 8192)])
+async def test_the_wait_fits_the_answer_the_request_allows(monkeypatch, hat_photo, model, max_tokens):
+    """A non-streaming request sends nothing back until the whole answer is
+    written, so its timeout is a cap on generation time. The `auto` path
+    allows 8192 tokens because those models think first, and the 30 s
+    `http_timeout` that fits a 1024-token forced call cut it off part-way —
+    and the SDK retries a timeout, paying for each abandoned attempt."""
+    timeouts: list[float] = []
+
+    def fake_client(api_key, timeout, **kw):
+        timeouts.append(timeout)
+        return AsyncAnthropic(
+            api_key=api_key, timeout=timeout, max_retries=0,
+            http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(
+                lambda req: httpx2.Response(200, json=_tool_use_response(_ANSWER))
+            )),
+        )
+
+    monkeypatch.setattr(claude_analysis, "_anthropic_client", fake_client)
+    await claude_analysis.analyze_hat_image(hat_photo, api_key="sk-ant-test", model=model)
+
+    # The SDK's own budget for a non-streaming request: an hour per 128k
+    # output tokens. Never less than the configured timeout.
+    from headroom.config import settings
+
+    assert timeouts == [max(settings.http_timeout, 3600 * max_tokens / 128_000)]
+    assert max_tokens == 1024 or timeouts[0] > 200
+
+
+@pytest.mark.parametrize("model", ["claude-sonnet-5", "claude-fable-5-1"])
+async def test_the_key_test_sends_the_request_an_analysis_sends(monkeypatch, hat_photo, model):
+    """The Test button sent a bare ping with no tools, so a model that
+    rejects the ANALYSIS request's shape tested "OK" and then failed every
+    hat. It now sends the same system prompt, tool and tool choice."""
+    seen = _wire(monkeypatch, lambda req: httpx2.Response(200, json=_tool_use_response(_ANSWER)))
+
+    await claude_analysis.analyze_hat_image(hat_photo, api_key="sk-ant-test", model=model)
+    good, detail = await claude_analysis.verify_api_key("sk-ant-test", model)
+
+    assert good is True, detail
+    analysis, test = (json.loads(r.content) for r in seen)
+    for field in ("model", "system", "tools", "tool_choice"):
+        assert test[field] == analysis[field], f"Test's {field} differs from the analysis request"
+
+
+async def test_a_refused_request_shape_fails_the_key_test(monkeypatch):
+    """And when the model refuses that shape, Test says so instead of "OK"."""
+    _wire(monkeypatch, lambda req: httpx2.Response(400, json={
+        "type": "error",
+        "error": {"type": "invalid_request_error",
+                  "message": 'tool_choice: type "tool" and "any" are not supported for this model.'},
+    }))
+
+    good, detail = await claude_analysis.verify_api_key("sk-ant-test", "claude-sonnet-5")
+
+    assert good is False
+    assert "tool_choice" in detail
+
+
+async def test_a_tool_input_that_is_not_an_object_is_an_analysis_error(monkeypatch, hat_photo):
+    """The parser's `.get` calls assume an object. A list raised
+    AttributeError, which is not in the parse handler — so it escaped the
+    pipeline's `ClaudeAnalysisError` handling and failed the run instead of
+    falling back."""
+    _wire(monkeypatch, lambda req: httpx2.Response(200, json=_tool_use_response(["not", "an", "object"])))
+
+    with pytest.raises(claude_analysis.ClaudeAnalysisError, match="not an object"):
+        await claude_analysis.analyze_hat_image(hat_photo, api_key="sk-ant-test")
+
+
+async def test_a_reply_without_a_tool_call_names_why(monkeypatch, hat_photo):
+    """Under `auto` a missing call is possible, and the stop reason is the
+    diagnosis — `max_tokens` means thinking used the room."""
+    reply = _tool_use_response({})
+    reply["content"] = [{"type": "thinking", "thinking": "", "signature": "sig"}]
+    reply["stop_reason"] = "max_tokens"
+    _wire(monkeypatch, lambda req: httpx2.Response(200, json=reply))
+
+    with pytest.raises(claude_analysis.ClaudeAnalysisError, match="max_tokens"):
+        await claude_analysis.analyze_hat_image(
+            hat_photo, api_key="sk-ant-test", model="claude-fable-5-1"
+        )
+
+
+async def test_each_analysis_logs_its_cache_counts(monkeypatch, hat_photo, caplog):
+    """Whether the cache breakpoint does anything depends on the model's
+    minimum cacheable prefix, and the API is silent when it does not. The
+    counts in the log are how an owner can tell."""
+    reply = _tool_use_response(_ANSWER)
+    reply["usage"] = {
+        "input_tokens": 1200, "output_tokens": 300,
+        "cache_read_input_tokens": 2480, "cache_creation_input_tokens": 0,
+    }
+    _wire(monkeypatch, lambda req: httpx2.Response(200, json=reply))
+    caplog.set_level("INFO", logger="headroom.services.claude_analysis")
+
+    await claude_analysis.analyze_hat_image(hat_photo, api_key="sk-ant-test")
+
+    assert any(
+        "cache_read=2480" in r.getMessage() and "cache_write=0" in r.getMessage()
+        for r in caplog.records
+    ), [r.getMessage() for r in caplog.records]

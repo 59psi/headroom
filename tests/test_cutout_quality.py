@@ -98,7 +98,7 @@ async def test_reanalysis_does_not_re_cut_an_existing_cutout(
         calls.append(input_path)
         return None
 
-    monkeypatch.setattr(hat_analysis_pipeline, "remove_background", _spy)
+    monkeypatch.setattr("headroom.services.background_removal.remove_background", _spy)
 
     async def _no_key(_db):
         return "", None
@@ -132,7 +132,7 @@ async def test_a_fresh_jpeg_upload_still_gets_background_removed(
         calls.append(input_path)
         return None
 
-    monkeypatch.setattr(hat_analysis_pipeline, "remove_background", _spy)
+    monkeypatch.setattr("headroom.services.background_removal.remove_background", _spy)
 
     async def _no_key(_db):
         return "", None

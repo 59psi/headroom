@@ -8,7 +8,7 @@ import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../test/utils';
 import { DuplicatesPage } from './DuplicatesPage';
 import * as searchApi from '../api/search';
-import type { DuplicateGroup, SearchResult } from '../types';
+import type { DuplicateGroupRead, SearchResult } from '../types';
 
 vi.mock('../api/search', async (importOriginal) => {
   const { stubAll } = await import('../test/stubModule');
@@ -21,12 +21,12 @@ function hat(id: number): SearchResult {
   return {
     id, display_id: `A-001-0${id}`, case_display_id: 'A-001', photo_path: null, thumb_path: null,
     style: 'a_game', condition: 'new', size: 'classic', is_beanie: false,
-    brand: 'melin', model_name: 'A-Game', construction: null, colors: [],
+    brand: 'melin', model_name: 'A-Game', construction: null, colorway: null, colors: [],
     room_id: 1, room_name: 'Study',
   };
 }
 
-const GROUPS: DuplicateGroup[] = [
+const GROUPS: DuplicateGroupRead[] = [
   { key: 'g1', confidence: 'exact', label: 'A-Game · Classic · Black', hats: [hat(1), hat(2)] },
   { key: 'g2', confidence: 'likely', label: 'Odysea · Classic', hats: [hat(3), hat(4)] },
 ];

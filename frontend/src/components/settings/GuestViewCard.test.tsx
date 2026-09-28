@@ -53,10 +53,12 @@ describe('GuestViewCard', () => {
     expect(sw).toHaveAttribute('aria-checked', 'true');
     expect(sw).toHaveAttribute('aria-busy', 'true');
     expect(screen.getByText('On')).toBeInTheDocument();
+    // The same "Saving… / Saved" note every save-on-change control carries.
+    expect(screen.getByText('Saving…')).toBeInTheDocument();
 
     mocked.getGuestView.mockResolvedValue({ enabled: true });
     save.resolve({ enabled: true });
-    expect(await screen.findByText('Guest browsing on')).toBeInTheDocument(); // toast
+    expect(await screen.findByText('Saved')).toBeInTheDocument();
     expect(sw).toHaveAttribute('aria-checked', 'true');
   });
 
@@ -90,8 +92,9 @@ describe('GuestViewCard', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Admin only');
     await waitFor(() => expect(sw).toHaveAttribute('aria-checked', 'false'));
     expect(screen.getByText('Off')).toBeInTheDocument();
-    // An error is reported in place, not as a success toast.
-    expect(screen.queryByText('Guest browsing on')).not.toBeInTheDocument();
+    // An error is reported in place, and the note says it did not take.
+    expect(screen.getByText('Not saved')).toBeInTheDocument();
+    expect(screen.queryByText('Saved')).not.toBeInTheDocument();
   });
 
   it('reads "Unknown", not "Off", when the status cannot be loaded — and can retry', async () => {

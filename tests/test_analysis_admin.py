@@ -515,6 +515,98 @@ async def test_a_failure_that_cannot_be_retried_is_shown_but_not_promised(
     assert (await client.post("/api/admin/analysis/retry-failed")).json()["queued"] == 0
 
 
+async def test_a_photo_gone_from_disk_is_not_offered_a_retry(client, db_session):
+    """The row still names a photo, so the retry used to count it — and the
+    retry then failed on the same missing file. Whether a photo EXISTS is a
+    question about the disk, not the row."""
+    from headroom.config import settings
+    from headroom.models.hat import Hat
+
+    hat_id = await _hat_with_photo(client)
+    row = await db_session.get(Hat, hat_id)
+    (settings.upload_dir / row.photo_path).unlink()
+    await _set_analysis(
+        db_session, hat_id, status="error",
+        error=f"Photo file missing on disk: {row.photo_path}",
+    )
+
+    groups = (await client.get("/api/admin/analysis/failures")).json()
+    gone = next(g for g in groups if "missing on disk" in g["reason"])
+    assert gone["retryable_count"] == 0
+    assert await _why_not(db_session, gone["reason"]) == "no_photo"
+
+    queued = await client.post(
+        "/api/admin/analysis/retry-failed", params={"reason": gone["reason"]}
+    )
+    assert queued.json()["queued"] == 0
+
+
+async def test_no_key_failures_are_retryable_only_once_a_key_exists(client, db_session):
+    """With no Claude key, a retry can only fall back again — so the card says
+    "add a key" rather than offering a button. The same hats become retryable
+    the moment a key is set, which is why this is judged against the key as
+    configured NOW."""
+    from headroom.services import settings_service
+
+    hat_id = await _hat_with_photo(client)
+    await _set_analysis(
+        db_session, hat_id, status="skipped", error="No Anthropic API key configured."
+    )
+
+    group = next(
+        g for g in (await client.get("/api/admin/analysis/failures")).json()
+        if g["reason"].startswith("No Anthropic API key")
+    )
+    assert group["retryable_count"] == 0
+    assert await _why_not(db_session, group["reason"]) == "no_api_key"
+    assert (await client.post(
+        "/api/admin/analysis/retry-failed", params={"reason": group["reason"]}
+    )).json()["queued"] == 0
+
+    await settings_service.set_key(db_session, settings_service.ANTHROPIC_KEY, "sk-ant-test")
+
+    group = next(
+        g for g in (await client.get("/api/admin/analysis/failures")).json()
+        if g["reason"].startswith("No Anthropic API key")
+    )
+    assert group["retryable_count"] == 1
+    assert await _why_not(db_session, group["reason"]) is None
+
+
+async def test_a_keyless_install_is_not_shown_as_failing(client, db_session):
+    """"Nothing is mandatory" — yet three keyless uploads put a red "3 hats
+    failed analysis" badge on the Settings tab. With no key the badge (and
+    the error list it opens) leave the no-key hats out; the failures card
+    keeps them as ONE group whose `unretryable_reason` is the "Add a key"
+    nudge; and the whole-card Retry queues nothing, because every one could
+    only fall back again. Add a key and they count, and queue, again."""
+    from headroom.services import settings_service
+
+    hats = [await _hat_with_photo(client) for _ in range(2)]
+
+    assert (await client.get("/api/admin/recent-errors/count")).json() == {"count": 0}
+    assert (await client.get("/api/admin/recent-errors")).json() == []
+    [group] = (await client.get("/api/admin/analysis/failures")).json()
+    assert group["reason"].startswith("No Anthropic API key")
+    assert (group["hat_count"], group["retryable_count"]) == (2, 0)
+    assert group["unretryable_reason"] == "no_api_key"
+    assert (await client.post("/api/admin/analysis/retry-failed")).json()["queued"] == 0
+
+    await settings_service.set_key(db_session, settings_service.ANTHROPIC_KEY, "sk-ant-test")
+
+    assert (await client.get("/api/admin/recent-errors/count")).json() == {"count": len(hats)}
+    assert (await client.post("/api/admin/analysis/retry-failed")).json()["queued"] == len(hats)
+
+
+async def _why_not(db_session, reason: str) -> str | None:
+    """The group's `unretryable_reason`, read from the service: it is what the
+    card needs to say WHICH problem blocks a retry."""
+    from headroom.services import analysis_job_service
+
+    groups = await analysis_job_service.recent_failures(db_session)
+    return next(g for g in groups if g["reason"] == reason)["unretryable_reason"]
+
+
 async def test_retry_failed_skips_disposed_hats(client, db_session):
     """A hat that failed a year ago and has since left the collection is gone.
 

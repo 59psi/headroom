@@ -8,7 +8,9 @@
  * written for it) is about to change.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { screen } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
+import { focusManager } from '@tanstack/react-query';
+import { ApiError } from '../api/client';
 import userEvent from '@testing-library/user-event';
 import { Routes, Route, useParams } from 'react-router';
 import { renderWithProviders } from '../test/utils';
@@ -68,6 +70,9 @@ describe('EditCasePage', () => {
 
     await user.selectOptions(type, 'daily_wear');
     expect(screen.getByRole('note')).toHaveTextContent(/renumbers this case — A-001 becomes the\s+next D-###/);
+    // The server never issues a number twice (`case_service.get_next_sequence`),
+    // so the stale label finds nothing rather than another case — and says so.
+    expect(screen.getByRole('note')).toHaveTextContent(/never reused, so it can.t open a different case/);
 
     await user.click(screen.getByRole('button', { name: 'Save changes' }));
 
@@ -99,6 +104,44 @@ describe('EditCasePage', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not load rooms — database is locked');
     expect(screen.getByRole('combobox', { name: 'Room' })).toBeInTheDocument();
+  });
+
+  it('shows an orphaned case in its own (missing) room, not the first room in the list', async () => {
+    // With no option matching its value, the select displayed "Study" while
+    // the form meant room 9 — the case detail page handled this, the Edit
+    // form's copy of the select did not.
+    cases.getCase.mockResolvedValue({ ...caseFixture({ display_id: 'A-001', room_id: 9, room_name: null }), hats: [] });
+    renderEdit();
+
+    await screen.findByRole('option', { name: 'Study' });
+    const picker = screen.getByRole('combobox', { name: 'Room' });
+    expect(picker).toHaveValue('9');
+    expect(screen.getByRole('option', { name: 'No room' })).toBeInTheDocument();
+  });
+
+  it('keeps what was typed when the case refetches mid-edit', async () => {
+    // The seed used to re-run on every refetch (this query refetches on
+    // window focus), reverting a half-edited form to the server's values.
+    const user = userEvent.setup();
+    renderEdit();
+    const capacity = await screen.findByRole('spinbutton', { name: 'Capacity (hats)' });
+    await user.type(capacity, '5');
+
+    cases.getCase.mockResolvedValue({ ...caseFixture({ display_id: 'A-001', room_id: 1, room_name: 'Study', capacity: 2 }), hats: [] });
+    focusManager.setFocused(false);
+    focusManager.setFocused(true);
+    await waitFor(() => expect(cases.getCase.mock.calls.length).toBeGreaterThan(1));
+    await new Promise(r => setTimeout(r, 20));
+
+    expect(capacity).toHaveValue(5);
+  });
+
+  it('says a missing case is missing, with the way back to the list', async () => {
+    cases.getCase.mockRejectedValue(new ApiError('Case not found', 404));
+    renderEdit();
+
+    expect(await screen.findByText('Case not found')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Back to cases' })).toHaveAttribute('href', '/cases');
   });
 
   it('keeps a failed save on the form and says why', async () => {

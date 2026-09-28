@@ -132,6 +132,29 @@ async def test_the_archive_says_it_holds_private_keys(tmp_path, monkeypatch):
     assert "cp /restore/* " not in note
 
 
+async def test_the_restore_recipe_actually_stops_caddy_and_checks_what_is_served():
+    """The recipe is the response to a CA that changed, so it has to work on
+    the stack that has Caddy in it.
+
+    A bare `docker compose down` reads only docker-compose.yml, which defines
+    no Caddy: Caddy and the CA-export sidecar kept running, the later `up -d`
+    left the unchanged Caddy alone, and it went on serving from the authority
+    it had in memory. The export sidecar then copied the restored root.crt, so
+    the Settings alarm turned green while devices still refused the chain —
+    which is why the note also says how to check the SERVED chain.
+    """
+    note = ca_vault.BACKUP_README
+    commands = [
+        line.strip() for line in note.splitlines() if line.strip().startswith("docker compose")
+    ]
+    down = [c for c in commands if c.endswith(" down")]
+    assert down, "the recipe must stop the stack"
+    assert all("-f docker-compose.https-lan.yml" in c for c in down), down
+    assert "rm -rf /data/caddy/certificates/local" in note
+    assert "-CAfile data/caddy-pki/root.crt" in note
+    assert "Verify return code: 0 (ok)" in note
+
+
 async def test_opting_out_leaves_the_keys_behind(tmp_path, monkeypatch):
     """A trusted root's key is a broader capability than the rest of the DB."""
     _fake_pki(tmp_path, monkeypatch)

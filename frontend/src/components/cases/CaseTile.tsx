@@ -1,12 +1,24 @@
 import { Link } from 'react-router';
 import type { CaseRead } from '../../types';
+import { caseTypeName } from '../../lib/caseTypes';
+import { plural } from '../../lib/format';
 import { CaseCollage } from './CaseCollage';
 
 /** "Empty", "4 beanies" or "3 hats" — a case holds one kind, so one count. */
 export function caseOccupancyLabel(c: CaseRead): string {
   if (c.hat_count === 0) return 'Empty';
-  if (c.beanie_count > 0) return `${c.beanie_count} beanie${c.beanie_count !== 1 ? 's' : ''}`;
-  return `${c.regular_count} hat${c.regular_count !== 1 ? 's' : ''}`;
+  if (c.beanie_count > 0) return plural(c.beanie_count, 'beanie');
+  return plural(c.regular_count, 'hat');
+}
+
+/**
+ * The room a case is in, or "No room" for an orphaned case — one whose room
+ * is gone. The server used to fill that gap with the placeholder "Unknown",
+ * which read as a room of that name; it sends null now, and every caption
+ * says what that means in the same words.
+ */
+export function caseRoomName(c: Pick<CaseRead, 'room_name'>): string {
+  return c.room_name ?? 'No room';
 }
 
 /**
@@ -24,11 +36,6 @@ export function caseFillLabel(c: CaseRead): 'full' | 'overfull' | null {
   if (c.overfull) return 'overfull';
   const isFull = c.beanie_count > 0 ? c.free_beanie === 0 : c.free_regular === 0;
   return c.hat_count > 0 && isFull ? 'full' : null;
-}
-
-/** "Archive" / "Daily wear" — the two case types, in words. */
-export function caseTypeLabel(c: Pick<CaseRead, 'case_type'>): string {
-  return c.case_type === 'archive' ? 'Archive' : 'Daily wear';
 }
 
 /**
@@ -78,7 +85,7 @@ export function CaseTile({ c, showRoom = true }: { c: CaseRead; showRoom?: boole
         </div>
         <CaseFillMeter c={c} />
         <div className="hr-case-tile-meta">
-          {caseTypeLabel(c)}{showRoom && <> · {c.room_name}</>}
+          {caseTypeName(c.case_type)}{showRoom && <> · {caseRoomName(c)}</>}
         </div>
       </div>
     </Link>

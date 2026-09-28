@@ -25,8 +25,8 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import StatementError
 
-from headroom.utils.redaction import redact_share_tokens
 from headroom.services.activity_service import log_activity
+from headroom.utils.redaction import redact_share_tokens
 
 logger = logging.getLogger(__name__)
 

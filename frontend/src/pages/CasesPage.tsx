@@ -5,25 +5,27 @@ import { listCases } from '../api/cases';
 import { getRoomOptions } from '../api/rooms';
 import { caseLabelsUrl } from '../api/settings';
 import { CaseGridSkeleton, CaseTile } from '../components/cases/CaseTile';
+import { ErrorNote } from '../components/common/ErrorNote';
+import { LoadError } from '../components/common/LoadError';
 import { PageHeader } from '../components/ui/PageHeader';
 import { Segmented } from '../components/ui/Segmented';
 import { DEFAULT_BEANIE_CAPACITY, DEFAULT_REGULAR_CAPACITY } from '../lib/capacity';
+import { CASE_TYPES, isCaseType, type CaseType } from '../lib/caseTypes';
+import { plural } from '../lib/format';
+import { qk } from '../lib/queryKeys';
 
-type CaseTypeFilter = 'all' | 'archive' | 'daily_wear';
+type CaseTypeFilter = 'all' | CaseType;
 
+/** "All", then one segment per case type — from the one table of them. */
 const TYPE_FILTERS: ReadonlyArray<{ value: CaseTypeFilter; label: string }> = [
   { value: 'all', label: 'All' },
-  { value: 'archive', label: 'Archive' },
-  { value: 'daily_wear', label: 'Daily wear' },
+  ...CASE_TYPES.map(t => ({ value: t.value, label: t.label })),
 ];
 
-function plural(n: number, one: string, many = `${one}s`) {
-  return `${n} ${n === 1 ? one : many}`;
-}
-
 export function CasesPage() {
-  const { data, isLoading, error } = useQuery({ queryKey: ['cases'], queryFn: listCases });
-  const roomsQ = useQuery({ queryKey: ['meta', 'rooms'], queryFn: getRoomOptions });
+  const casesQ = useQuery({ queryKey: qk.cases(), queryFn: listCases });
+  const { data, isLoading, error } = casesQ;
+  const roomsQ = useQuery({ queryKey: qk.meta.rooms(), queryFn: getRoomOptions });
   // The type filter lives in the URL so the home page's Archive/Daily counts
   // can link straight to the filtered list, and so a filtered view survives a
   // reload or being shared. The buttons below write to the same place, which
@@ -32,8 +34,7 @@ export function CasesPage() {
   // was the one filter a reload threw away.
   const [params, setParams] = useSearchParams();
   const rawType = params.get('type');
-  const typeFilter: CaseTypeFilter =
-    rawType === 'archive' || rawType === 'daily_wear' ? rawType : 'all';
+  const typeFilter: CaseTypeFilter = isCaseType(rawType) ? rawType : 'all';
   const rawRoom = params.get('room') ?? '';
   // A `?room=` from an old link can name a room that has since been deleted.
   // Applied as-is it filters to nothing while the select — with no option for
@@ -74,7 +75,9 @@ export function CasesPage() {
     [data, roomFilter],
   );
   const typeCounts = useMemo(() => {
-    const counts: Record<CaseTypeFilter, number> = { all: inRoom.length, archive: 0, daily_wear: 0 };
+    const counts = Object.fromEntries(
+      TYPE_FILTERS.map(f => [f.value, f.value === 'all' ? inRoom.length : 0]),
+    ) as Record<CaseTypeFilter, number>;
     for (const c of inRoom) counts[c.case_type]++;
     return counts;
   }, [inRoom]);
@@ -86,12 +89,10 @@ export function CasesPage() {
   let body: ReactNode;
   if (error) {
     // Same rule as Home/Valuation/Stats: a failed fetch is an error, not an
-    // empty collection with a "create your first one" call to action.
-    body = (
-      <div className="alert alert-danger" role="alert">
-        Couldn&rsquo;t load your cases. Reload to try again.
-      </div>
-    );
+    // empty collection with a "create your first one" call to action — and
+    // the retry is a refetch in place. This page said "Reload to try again"
+    // with no button, which restarts the whole app to refetch one list.
+    body = <LoadError what="Couldn’t load your cases." queries={[casesQ]} />;
   } else if (isLoading || !data) {
     body = <CaseGridSkeleton />;
   } else if (!data.length) {
@@ -184,6 +185,9 @@ export function CasesPage() {
           </select>
         </div>
       )}
+      {/* A failed room list is a filter offering only "All rooms", which
+          reads as a collection with no rooms in it. */}
+      {!error && <ErrorNote of={roomsQ} what="Could not load the room filter" className="mb-3" />}
 
       {body}
     </>
