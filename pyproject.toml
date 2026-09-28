@@ -41,7 +41,7 @@ dependencies = [
     # `model_name` with no `protected_namespaces=()` opt-out
     # (`tests/test_route_layer.py::test_no_schema_trips_pydantics_protected_namespace`).
     "pydantic>=2.10",
-    "rembg[cpu]>=2.0.78",
+    "rembg[cpu]>=2.0.85",
     "onnxruntime",
     "argon2-cffi>=25.1.0",
     "webauthn>=3.0.0",
