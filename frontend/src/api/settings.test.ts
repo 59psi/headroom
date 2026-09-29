@@ -11,7 +11,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  caCertificateAvailable, inventoryReportUrl, releaseFrozenPrices, retryFailedAnalysis,
+  caCertificateAvailable, getModelOptions, inventoryReportUrl, releaseFrozenPrices, retryFailedAnalysis,
 } from './settings';
 
 const PEM = '-----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----\n';
@@ -103,6 +103,34 @@ describe('retryFailedAnalysis', () => {
   it('sends no reason for "retry everything that failed"', async () => {
     const sent = urls({ queued: 0, worker_alive: true, job: null });
     await retryFailedAnalysis();
+    expect(sent()[0].search).toBe('');
+  });
+});
+
+describe('getModelOptions', () => {
+  // The server keeps Anthropic's listing for hours; `?refresh=1` makes it
+  // ask again. The card's ordinary fetch must never send it — every Settings
+  // visit would otherwise be a round trip to Anthropic — and Refresh must.
+  it('reads the cached list by default', async () => {
+    const sent = urls({ models: [] });
+    await getModelOptions();
+    expect(sent()[0].pathname).toBe('/api/settings/models');
+    expect(sent()[0].search).toBe('');
+  });
+
+  it('asks for a fresh check with Anthropic on request', async () => {
+    const sent = urls({ models: [] });
+    await getModelOptions(true);
+    expect(sent()[0].pathname).toBe('/api/settings/models');
+    expect(sent()[0].searchParams.get('refresh')).toBe('1');
+  });
+
+  it("does not read TanStack's query context as a request to refresh", async () => {
+    // What it receives if ever passed to `useQuery` as a bare `queryFn` —
+    // which tsc accepts. An object is truthy; it is not `true`.
+    const sent = urls({ models: [] });
+    const context = { queryKey: ['settings', 'models'], signal: new AbortController().signal };
+    await (getModelOptions as (ctx: unknown) => Promise<unknown>)(context);
     expect(sent()[0].search).toBe('');
   });
 });

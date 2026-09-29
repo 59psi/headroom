@@ -62,6 +62,14 @@ export interface KeyProviderSpec {
     run: () => Promise<ApiKeyTestResult>;
     resetOn?: string | undefined;
   };
+  /**
+   * Other queries whose answer depends on WHICH key is set, refetched when
+   * this one is saved or removed. The Claude model list is Anthropic's
+   * listing for the configured key: without this, adding a first key left
+   * the model card beside it saying "No Claude API key configured" until the
+   * page was reloaded.
+   */
+  dependents?: readonly (readonly unknown[])[];
 }
 
 const SOURCE_LABEL: Record<string, string> = {
@@ -87,6 +95,10 @@ export function KeyCard({ provider }: { provider: KeyProviderSpec }) {
     onSuccess: (data) => setTestResult(data),
   });
 
+  function refreshDependents() {
+    for (const queryKey of provider.dependents ?? []) qc.invalidateQueries({ queryKey });
+  }
+
   const saveMut = useMutation({
     mutationFn: (key: string) => provider.setKey(key),
     onSuccess: (data) => {
@@ -97,6 +109,7 @@ export function KeyCard({ provider }: { provider: KeyProviderSpec }) {
       // key at once instead of the old one for a refetch's worth of time.
       if (data) qc.setQueryData(provider.queryKey, data);
       qc.invalidateQueries({ queryKey: provider.queryKey });
+      refreshDependents();
       if (!provider.test) {
         toast.success('Key saved');
         return;
@@ -122,6 +135,7 @@ export function KeyCard({ provider }: { provider: KeyProviderSpec }) {
       setTestResult(null);
       setReplacing(false);
       qc.invalidateQueries({ queryKey: provider.queryKey });
+      refreshDependents();
       toast.success('Key removed');
     },
   });

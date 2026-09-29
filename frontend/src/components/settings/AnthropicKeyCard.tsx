@@ -40,6 +40,10 @@ const ANTHROPIC: Omit<KeyProviderSpec, 'test'> = {
       </p>
     </>
   ),
+  // Anthropic lists models per key (the server caches per key fingerprint),
+  // so the Claude model card's list and its "Checked with Anthropic" line
+  // are about the key this card just changed.
+  dependents: [qk.settings.models()],
   removeConfirm: 'Remove API key?',
   removeConsequence: (
     <p>

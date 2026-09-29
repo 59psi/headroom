@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -36,6 +36,48 @@ class ModelStatus(BaseModel):
     # of carrying "(default)" in a hand-typed label that a model bump left
     # pointing at a superseded id for a whole generation.
     default_model_id: str
+
+
+class ModelOption(BaseModel):
+    """One Claude model the picker can offer (`model_catalog.ModelOption`).
+
+    Dated and alias ids of one model are ONE entry. `id` is the id to save:
+    the catalog's canonical one, or the alias this install already uses.
+    """
+
+    id: str
+    #: "Claude Sonnet 5.5" — the catalog's name, else the API's display_name.
+    name: str
+    #: `new` = listed by Anthropic for this key, unknown to this build's
+    #: catalog (only image-capable ones are passed through).
+    status: Literal["current", "legacy", "retired", "new"]
+    #: Anthropic's comparative-latency word.
+    speed: Literal["Fastest", "Fast", "Moderate", "Slower"] | None
+    #: Relative price per token: Haiku 1, Sonnet 2, Opus 3, Fable 5.
+    cost_level: Literal[1, 2, 3, 4, 5] | None
+    summary: str | None
+    note: str | None
+    #: The current model a legacy or retired one should move to.
+    successor: str | None
+    #: Accepts a forced `tool_choice` — the table the analysis request reads.
+    forced_tool: bool
+    #: Listed by the Models API for this key; None when not checked live.
+    available: bool | None
+    #: Anthropic will not retire it before this date.
+    retires_after: date | None
+
+
+class ModelOptions(BaseModel):
+    """`GET /api/settings/models` — the catalog merged with Anthropic's live list."""
+
+    default_model_id: str
+    #: True when `models` reflects the Models API for the configured key.
+    live: bool
+    #: When that live list was fetched (it is cached for hours).
+    checked_at: datetime | None
+    #: Why there is no live list — no key, or a short API error.
+    live_error: str | None
+    models: list[ModelOption]
 
 
 class ModelUpdate(BaseModel):

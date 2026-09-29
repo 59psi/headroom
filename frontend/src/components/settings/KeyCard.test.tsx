@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../../test/utils';
 import { AnthropicKeyCard } from './AnthropicKeyCard';
@@ -16,7 +16,7 @@ vi.mock('../../api/settings', async (importOriginal) => {
     deleteApiKey: vi.fn(),
     testApiKey: vi.fn(),
     getModel: vi.fn(async () => ({
-      model_id: 'claude-sonnet-5', source: 'default', default_model_id: 'claude-sonnet-5',
+      model_id: 'claude-sonnet-5-5', source: 'default', default_model_id: 'claude-sonnet-5-5',
     })),
     getGoogleVisionKeyStatus: vi.fn(),
     setGoogleVisionKey: vi.fn(),
@@ -31,7 +31,7 @@ const FROM_ENV: ApiKeyStatus = { configured: true, source: 'environment', masked
 beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(settingsApi.getModel).mockResolvedValue({
-    model_id: 'claude-sonnet-5', source: 'default', default_model_id: 'claude-sonnet-5',
+    model_id: 'claude-sonnet-5-5', source: 'default', default_model_id: 'claude-sonnet-5-5',
   });
 });
 
@@ -116,6 +116,55 @@ describe('Claude API key card — saving', () => {
 
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(document.getElementById('anthropic-key')).toBeNull();
+  });
+});
+
+describe('Claude API key card — the model list follows the key', () => {
+  // Anthropic lists models per key. Without this, adding a first key left
+  // the model card beside it on "Built-in list — No Claude API key
+  // configured" until the page was reloaded.
+  const MODELS = ['settings', 'models'];
+  const refreshedModels = (spy: { mock: { calls: unknown[][] } }) =>
+    spy.mock.calls.some(([filters]) =>
+      JSON.stringify((filters as { queryKey?: unknown }).queryKey) === JSON.stringify(MODELS));
+
+  it('refreshes it when a key is saved', async () => {
+    const user = userEvent.setup();
+    vi.mocked(settingsApi.getApiKeyStatus).mockResolvedValueOnce(NONE).mockResolvedValue(SAVED);
+    vi.mocked(settingsApi.setApiKey).mockResolvedValue(SAVED);
+    vi.mocked(settingsApi.testApiKey).mockResolvedValue({ ok: true, detail: 'Reachable.' });
+
+    const { client } = renderWithProviders(<AnthropicKeyCard />);
+    const spy = vi.spyOn(client, 'invalidateQueries');
+    await user.type(await screen.findByLabelText('API key'), 'sk-ant-new{Enter}');
+
+    await waitFor(() => expect(refreshedModels(spy)).toBe(true));
+  });
+
+  it('refreshes it when the key is removed', async () => {
+    const user = userEvent.setup();
+    vi.mocked(settingsApi.getApiKeyStatus).mockResolvedValueOnce(SAVED).mockResolvedValue(NONE);
+    vi.mocked(settingsApi.deleteApiKey).mockResolvedValue(undefined);
+
+    const { client } = renderWithProviders(<AnthropicKeyCard />);
+    const spy = vi.spyOn(client, 'invalidateQueries');
+    await user.click(await screen.findByRole('button', { name: 'Remove key' }));
+    await user.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Remove key' }));
+
+    await waitFor(() => expect(refreshedModels(spy)).toBe(true));
+  });
+
+  it('is left alone by the Google Vision key, which lists no models', async () => {
+    const user = userEvent.setup();
+    vi.mocked(settingsApi.getGoogleVisionKeyStatus).mockResolvedValueOnce(NONE).mockResolvedValue(SAVED);
+    vi.mocked(settingsApi.setGoogleVisionKey).mockResolvedValue(SAVED);
+
+    const { client } = renderWithProviders(<GoogleVisionKeyCard />);
+    const spy = vi.spyOn(client, 'invalidateQueries');
+    await user.type(await screen.findByLabelText('API key'), 'AIza-new{Enter}');
+
+    expect(await screen.findByText('Key saved')).toBeInTheDocument();
+    expect(refreshedModels(spy)).toBe(false);
   });
 });
 

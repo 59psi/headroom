@@ -393,6 +393,54 @@ export interface ModelStatus {
   default_model_id: string;
 }
 
+/**
+ * Where a model stands. `new` = Anthropic lists it for this key but this
+ * build's catalog has never heard of it (only image-capable ones are passed
+ * through). `retired` = Anthropic answers 404 for it; the picker shows one
+ * only when it is the saved model.
+ */
+export type ModelLifecycle = 'current' | 'legacy' | 'retired' | 'new';
+
+/** Anthropic's own latency words, relative across the lineup. */
+export type ModelSpeed = 'Fastest' | 'Fast' | 'Moderate' | 'Slower';
+
+/** Relative price per token: Haiku 1, Sonnet 2, Opus 3, Fable 5. */
+export type ModelCostLevel = 1 | 2 | 3 | 4 | 5;
+
+/** One entry of `GET /api/settings/models` — a catalog model, or a `new`
+ *  one the Models API listed. Dated and alias ids of one model are ONE entry. */
+export interface ModelOption {
+  id: string;
+  /** "Claude Sonnet 5.5" — the catalog's name, else the API's display_name. */
+  name: string;
+  status: ModelLifecycle;
+  speed: ModelSpeed | null;
+  cost_level: ModelCostLevel | null;
+  /** One short phrase for the option label. */
+  summary: string | null;
+  /** One sentence of detail: caching, thinking, precision. */
+  note: string | null;
+  /** The current model a legacy or retired one should move to. */
+  successor: string | null;
+  /** Accepts a forced tool_choice (the same table the analysis reads). */
+  forced_tool: boolean;
+  /** Whether the Models API lists it for this key; null = not checked live. */
+  available: boolean | null;
+  /** ISO date Anthropic will not retire it before, e.g. "2026-10-15". */
+  retires_after: string | null;
+}
+
+export interface ModelOptions {
+  default_model_id: string;
+  /** True when `models` reflects Anthropic's Models API for the configured key. */
+  live: boolean;
+  /** UTC ISO time the live list was fetched (the server caches it). */
+  checked_at: string | null;
+  /** Why there is no live list: no key configured, or a short API error. */
+  live_error: string | null;
+  models: ModelOption[];
+}
+
 export interface RecentError {
   hat_id: number;
   display_id: string | null;

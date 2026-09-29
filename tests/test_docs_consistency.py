@@ -1,11 +1,12 @@
 """Pin the places that restate the default Claude model to the code that owns it.
 
 `config.Settings.anthropic_model` is the single source of truth, but three other
-files quote it to a human: the README env table, the OPERATIONS env table, and
+places quote it to a human: the README env table, the OPERATIONS env table, and
 the Settings UI, which labels one option "(default)". Nothing links them, so a
 model bump can update the code and leave all three advertising the old id —
 which is exactly how the app spent a generation pointing users at a superseded
-model while every test stayed green.
+model while every test stayed green. (The UI now takes both the default and
+the list it picks from off the server, so its checks read the served list.)
 
 These assertions are cheap and catch that at PR time instead of in a doc audit.
 """
@@ -52,13 +53,25 @@ async def test_settings_ui_marks_the_default_from_the_server_not_a_label():
     assert "default_model_id" in source, "the card must read the served default"
 
 
-async def test_settings_ui_offers_the_default_model_as_a_choice():
-    """The default must be selectable, not only reachable via "Other…"."""
-    ids = set(re.findall(r"id:\s*'(claude-[^']+)'", _MODEL_CARD.read_text()))
-    assert settings.anthropic_model in ids, (
-        f"'{settings.anthropic_model}' is the default but isn't in the picker's "
-        f"model list: {sorted(ids)}"
-    )
+async def test_settings_ui_offers_the_default_model_as_a_choice(client):
+    """The default must be selectable, not only reachable via "Other…".
+
+    This read the card's hand-kept roster until the roster moved server-side:
+    the picker now renders `GET /api/settings/models`, built from
+    `model_catalog`, so that is where the default has to be — as a CURRENT
+    model, since a default the catalog calls legacy would be advertised and
+    discouraged on the same card. And the card must not grow a second roster
+    back: two copies of the model list is what let the picker offer Fable
+    5.1 while the analysis sent it a tool choice it refuses.
+    """
+    body = (await client.get("/api/settings/models")).json()
+    assert body["default_model_id"] == settings.anthropic_model
+    entry = next((m for m in body["models"] if m["id"] == settings.anthropic_model), None)
+    assert entry is not None, f"'{settings.anthropic_model}' is the default but isn't offered"
+    assert entry["status"] == "current", entry
+
+    ids = re.findall(r"id:\s*'(claude-[^']+)'", _MODEL_CARD.read_text())
+    assert ids == [], f"the card lists models itself again: {ids}"
 
 
 async def test_the_prompt_agrees_with_the_price_table():

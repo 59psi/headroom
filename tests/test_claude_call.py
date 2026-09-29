@@ -146,14 +146,30 @@ async def test_the_tool_is_forced_so_the_reply_is_always_structured(
     monkeypatch, tmp_path
 ):
     """Prose would have to be parsed, and a parser for free text is a second
-    failure mode on top of the one this call already has."""
+    failure mode on top of the one this call already has. Forced wherever the
+    model accepts it — pinned to one that does, since the default no longer
+    does (below)."""
+    capture: dict = {}
+    _stub_client(monkeypatch, capture=capture)
+
+    await claude_analysis.analyze_hat_image(_photo(tmp_path), "sk-ant-test", model="claude-haiku-4-5")
+
+    assert capture["tool_choice"]["type"] == "tool"
+    assert capture["tool_choice"]["name"] == "record_hat_analysis"
+
+
+async def test_the_default_model_is_asked_for_the_tool_not_forced(monkeypatch, tmp_path):
+    """The built-in default is Sonnet 5.5, which answers a forced tool choice
+    with a 400 — forcing it would fail every analysis on a fresh install. It
+    gets `auto` plus the tool, and the prompt's instruction to call it."""
     capture: dict = {}
     _stub_client(monkeypatch, capture=capture)
 
     await claude_analysis.analyze_hat_image(_photo(tmp_path), "sk-ant-test")
 
-    assert capture["tool_choice"]["type"] == "tool"
-    assert capture["tool_choice"]["name"] == "record_hat_analysis"
+    assert capture["model"] == "claude-sonnet-5-5"
+    assert capture["tool_choice"] == {"type": "auto"}
+    assert [t["name"] for t in capture["tools"]] == ["record_hat_analysis"]
 
 
 async def test_the_system_prompt_is_cached(monkeypatch, tmp_path):

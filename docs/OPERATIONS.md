@@ -108,7 +108,7 @@ meant to change, and the log says which.
 | `HEADROOM_CORS_ORIGINS` | `[]` (off) | Origins allowed credentialed cross-origin access (JSON list or comma-separated). Off by default — the SPA is same-origin, including behind the Vite dev proxy; set only if a page on another origin must call the API |
 | `TZ` | _(unset = UTC)_ | The host's time zone, forwarded by `docker-compose.yml`. It decides the calendar day a *Wearing this today* tap lands on when the client does not send one (the iOS Shortcut, a script) — the app sends the wearer's own day. Unset, the server's day is UTC's, which after 5 pm in California is tomorrow. An IANA name: `TZ=America/Los_Angeles` |
 | `HEADROOM_ANTHROPIC_API_KEY` | _(unset)_ | Claude Vision analysis. DB value wins |
-| `HEADROOM_ANTHROPIC_MODEL` | `claude-sonnet-5` | Changeable in the Settings UI too |
+| `HEADROOM_ANTHROPIC_MODEL` | `claude-sonnet-5-5` | Changeable in the Settings UI too |
 | `HEADROOM_GOOGLE_VISION_API_KEY` | _(unset)_ | Fallback brand (logo) detection. DB value wins |
 | `HEADROOM_MELIN_CLIENT_ID` | _(baked in)_ | Public Sharetribe client id for live Melin resale stats; override only if Treet rotates it |
 | `HEADROOM_EBAY_APP_ID` / `HEADROOM_EBAY_CERT_ID` | _(unset)_ | eBay Browse API comps. Must be a **Production** keyset (sandbox keys 401) |

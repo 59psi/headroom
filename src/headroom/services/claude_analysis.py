@@ -7,7 +7,9 @@ notes, and a confidence label).
 The system prompt carries a cache breakpoint, so the tools + system prefix
 (about 2,500 tokens) is written once and read cheaply by every later hat in
 the cache window — ON MODELS WHOSE MINIMUM CACHEABLE PREFIX IS BELOW THAT.
-Sonnet 5, Opus 5, Opus 4.8 and the Fable models (512–1024 tokens) cache it;
+Sonnet 5.5, Opus 5.5, Sonnet 5, Opus 5, Opus 4.8 and the Fable models
+(512–1024 tokens) cache it — Sonnet 5.5 and Opus 5.5 measured on real hats on
+2026-09-28, each writing ~4k cached tokens on the first call;
 Haiku 4.5 and Opus 4.6 need 4,096, so there the marker is a silent no-op — no
 error, just full price on every call. Each analysis logs the cache read/write
 token counts, which is how to tell which of the two a given model is doing.
@@ -25,6 +27,7 @@ from pathlib import Path
 from anthropic import APIError, AsyncAnthropic, AuthenticationError
 
 from headroom.config import settings as config_settings
+from headroom.services import model_catalog
 
 logger = logging.getLogger(__name__)
 
@@ -462,20 +465,21 @@ def _anthropic_client(api_key: str, timeout: float, **kw) -> AsyncAnthropic:
 #: Models known to ACCEPT a forced `tool_choice` (`{"type": "tool", ...}`).
 #:
 #: An allow-list, deliberately, not a list of the models that refuse. Claude
-#: Fable 5.1, Mythos 5.1 and Opus 5.5 answer a forced tool choice with a 400
-#: ("tool_choice: type "tool" and "any" are not supported for this model"),
-#: and Fable 5.1 was on the Settings roster as "most capable" — so every hat
-#: analyzed with it failed and fell back, while the key Test (a bare ping, no
-#: tools) reported the model reachable. A deny-list has to be updated for
-#: every new model that drops forced tool use, and forgetting fails every
+#: Fable 5.1, Mythos 5.1, Opus 5.5 and Sonnet 5.5 answer a forced tool choice
+#: with a 400 ("tool_choice: type "tool" and "any" are not supported for this
+#: model"), and Fable 5.1 was on the Settings roster as "most capable" — so
+#: every hat analyzed with it failed and fell back, while the key Test (a bare
+#: ping, no tools) reported the model reachable. A deny-list has to be updated
+#: for every new model that drops forced tool use, and forgetting fails every
 #: analysis; with an allow-list an unlisted model gets `auto`, which every
 #: model accepts, and forgetting costs nothing but the guarantee below.
-_FORCED_TOOL_CHOICE_MODELS = frozenset({
-    "claude-sonnet-5", "claude-opus-5", "claude-fable-5",
-    "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6",
-    "claude-opus-4-5", "claude-sonnet-4-5", "claude-haiku-4-5",
-    "claude-opus-4-1", "claude-opus-4", "claude-sonnet-4",
-})
+#:
+#: DERIVED from `model_catalog`, the one table of models, rather than kept
+#: here by hand: the picker's roster and this list were two copies of the
+#: same knowledge, and a model added to one was a model missing from the
+#: other. Canonical ids and aliases both — `claude-opus-4-20250514` is not
+#: `claude-opus-4-0` plus a date, so the date rule below cannot find it.
+_FORCED_TOOL_CHOICE_MODELS = model_catalog.forced_tool_ids()
 
 #: Output room for the forced path: the tool call alone, which runs a few
 #: hundred tokens.
