@@ -166,6 +166,129 @@
   min-width: 0;
 }
 
+/* The select's closed face shows one option's text. At 390 px a long label
+   ("Sonnet 5.5 — fast and inexpensive (default)") ends in an ellipsis
+   instead of running under the arrow; the open list is the platform's and
+   wraps on its own. */
+.hr-an-model-select {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The saved model's standing — gone, or superseded — with the one-tap move
+   beside it on a tablet and under it, full width, on a phone. The tone is
+   the `.alert` it sits on: red when analyses will fail, cyan when they won't. */
+.hr-an-model-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  margin: 0.75rem 0 0;
+}
+
+.hr-an-model-notice > p {
+  flex: 1 1 14rem;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 575.98px) {
+  .hr-an-model-notice > .btn { width: 100%; }
+}
+
+/* What the picked model is like: speed and relative cost as two quiet
+   facts, then its one sentence of detail. Prose, not state — no neon. */
+.hr-an-model-about { margin-top: 0.75rem; }
+
+.hr-an-model-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1.5rem;
+  margin: 0 0 0.35rem;
+}
+
+.hr-an-model-facts > div {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.hr-an-model-facts dt {
+  font-size: var(--fs-2xs);
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.hr-an-model-facts dd {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+
+/* Five marks, the unlit ones dimmed: "$$" of five reads at a glance where
+   "2/5" has to be read. */
+.hr-an-cost {
+  font-family: var(--font-mono);
+  letter-spacing: 0.06em;
+}
+
+.hr-an-cost-on { color: var(--text); }
+
+.hr-an-cost-off { color: rgb(var(--text-muted-rgb) / 0.4); }
+
+/* Forced colors (Windows high contrast) repaint every mark in one system
+   color, and the count of lit ones — the meter's whole meaning — went with
+   it: every model read "$$$$$". GrayText is the system's own dimmed color. */
+@media (forced-colors: active) {
+  .hr-an-cost-off { color: GrayText; }
+}
+
+/* A date Anthropic has announced — state, so it gets the warning tint. */
+.hr-an-model-retire {
+  margin: 0.35rem 0 0;
+  font-size: var(--fs-sm);
+  font-weight: 550;
+  color: var(--tint-yellow);
+}
+
+/* "Checked with Anthropic 4 min ago · Refresh": where the list came from,
+   in fine print, with the one way to ask again. */
+.hr-an-model-source {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem 1rem;
+  margin-top: 0.85rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--border-soft);
+}
+
+.hr-an-model-source > .hr-an-fine {
+  flex: 1 1 12rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The list failed to load: why, and "Try again", above the id box that
+   still works without it. */
+.hr-an-model-listfail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.hr-an-model-listfail > .hr-error-note {
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+
 /* ----- Analysis queue ------------------------------------------------- */
 
 .hr-an-run {

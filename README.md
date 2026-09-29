@@ -34,8 +34,9 @@ result, and three independent price signals per hat.
 **🧠 Identify**
 - **Claude Vision analysis** — brand, specific model, colorway, tiered colors
   with hex, design notes. One tool-use call per photo; the ~2.5k-token prompt
-  is cached on models whose minimum cacheable prefix is below that (Sonnet 5,
-  Opus 5, Opus 4.8, Fable) — not on Haiku 4.5 or Opus 4.6. Each analysis logs
+  is cached on models whose minimum cacheable prefix is below that (Sonnet 5.5,
+  Opus 5.5, Sonnet 5, Opus 5, Opus 4.8, Fable) — not on Haiku 4.5 or Opus 4.6.
+  Each analysis logs
   `cache_read=`/`cache_write=` token counts.
   Retail price is **looked up**, not guessed: a table of melin's real list
   prices by construction (cross-checked against order history) answers first,
@@ -606,7 +607,7 @@ Data → Re-pricing; neither spends a Claude call.
 | `HEADROOM_CORS_ORIGINS` | `[]` (off) | Origins allowed credentialed cross-origin access (JSON list or comma-separated). Off by default — the SPA is same-origin, including behind the Vite dev proxy; set only if a page on another origin must call the API |
 | `TZ` | _(unset = UTC)_ | The host's time zone (`America/Los_Angeles`) — the calendar day a date-less *Wearing this today* tap (the iOS Shortcut, a script) lands on. `docker-compose.yml` forwards it |
 | `HEADROOM_ANTHROPIC_API_KEY` | _(unset)_ | Default API key (overridden by DB value) |
-| `HEADROOM_ANTHROPIC_MODEL` | `claude-sonnet-5` | Claude model for vision analysis |
+| `HEADROOM_ANTHROPIC_MODEL` | `claude-sonnet-5-5` | Claude model for vision analysis |
 | `HEADROOM_GOOGLE_VISION_API_KEY` | _(unset)_ | Fallback brand (logo) detection. DB value wins |
 | `HEADROOM_MELIN_CLIENT_ID` | _(baked in)_ | Public Sharetribe client id for live Melin resale stats |
 | `HEADROOM_EBAY_APP_ID` / `HEADROOM_EBAY_CERT_ID` | _(unset)_ | eBay Browse API comps (Production keyset) |

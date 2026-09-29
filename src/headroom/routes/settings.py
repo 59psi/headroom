@@ -20,6 +20,7 @@ from headroom.schemas.settings import (
     GuestViewUpdate,
     LogoStatus,
     MdnsStatus,
+    ModelOptions,
     ModelStatus,
     ModelUpdate,
     TagBaseStatus,
@@ -32,6 +33,7 @@ from headroom.services import (
     claude_analysis,
     guest_view_service,
     mdns_service,
+    model_catalog,
     settings_service,
     tag_service,
     tls_health,
@@ -257,6 +259,20 @@ async def get_mdns_status():
 async def get_model(db: AsyncSession = Depends(get_db)):
     model_id, source = await settings_service.get_anthropic_model(db)
     return ModelStatus(model_id=model_id, source=source, default_model_id=settings.anthropic_model)
+
+
+@router.get("/models", response_model=ModelOptions)
+async def list_models(refresh: bool = False, db: AsyncSession = Depends(get_db)):
+    """The models the picker can offer: the catalog, merged with Anthropic's live list.
+
+    Never an error: with no key, or with Anthropic unreachable, the catalog
+    alone comes back with `live: false` and the reason in `live_error`. The
+    live list is cached for hours per key; `?refresh=1` fetches it again.
+    """
+    key, _source = await settings_service.get_anthropic_key(db)
+    active, _msrc = await settings_service.get_anthropic_model(db)
+    options = await model_catalog.model_options(key, active_model_id=active, refresh=refresh)
+    return ModelOptions(**asdict(options))
 
 
 @router.put("/model", response_model=ModelStatus, dependencies=[Depends(require_admin)])

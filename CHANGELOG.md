@@ -6,6 +6,33 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.83.0] — 2026-09-28
+
+The Claude model picker, brought up to date — and kept that way.
+
+### Changed
+
+- **Current Claude lineup:** Sonnet 5.5, Opus 5.5, Fable 5.1 and Haiku 4.5,
+  with the previous generation (Opus 5, Sonnet 5, Fable 5, Opus 4.x, Sonnet
+  4.x) grouped separately. Each option shows its speed, a relative cost, and
+  what it means for hat analysis — for example, Opus 5.5 names models more
+  precisely ("Trenches Icon" rather than "Trenches") but takes about twice as
+  long and writes about 1.7 times the output per hat.
+- **The list is checked with Anthropic.** With a Claude key set, Settings asks
+  Anthropic which models that key can use (cached for six hours; **Refresh**
+  re-checks). A model Anthropic adds later appears automatically, marked new;
+  a model the key can no longer use is flagged. Without a key, the built-in
+  list is shown and says so.
+- **Warnings with a one-click fix:** a saved model that has been retired or is
+  unavailable shows a red notice ("analyses will fail"), and a previous-
+  generation model shows its current version — each with a **Switch to …**
+  button. Nothing is switched for you.
+- **New default: Claude Sonnet 5.5** (was Sonnet 5) — the same price tier,
+  faster, and the current generation. Installs that chose a model keep it.
+- Which models accept a forced tool call is now read from the same table the
+  picker uses, so the two cannot drift. Sonnet 5.5, Opus 5.5 and Fable 5.1 are
+  asked (not forced) to answer with the tool, which they reliably do.
+
 ## [2.82.2] — 2026-09-28
 
 ### Fixed

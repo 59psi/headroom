@@ -3,7 +3,7 @@ import type {
   ActivityRow, AnalysisQueueStatus, ApiKeyStatus, ApiKeyTestResult,
   BackupHealthRead, BackupInfo, BackupUploadStatus, BackupUploadTestResult, CatalogRefreshStarted,
   CountRead, EbayCredsStatus, EbayTestResult, GuestViewStatus, ImportJobCreated, ImportJobRead,
-  MdnsStatus, ModelStatus, TlsStatusRead, FrozenPriceRow, PriceReleaseResult, AnalysisFailureGroup,
+  MdnsStatus, ModelOptions, ModelStatus, TlsStatusRead, FrozenPriceRow, PriceReleaseResult, AnalysisFailureGroup,
   RecentError, TagBaseStatus, ConstructionAuditRow, ConstructionClearResult, RepricingStatus,
   ReanalyzeAllResult, AnalysisJobDetail, CatalogStatus, SharedPriceGroup,
   UnclaimedFromPurchases, RepricingRunResult, RepricingSweepStarted, RetentionStatus, LogoStatus,
@@ -83,6 +83,19 @@ export function setModel(model_id: string) {
 
 export function clearModel() {
   return apiFetch<void>('/api/settings/model', { method: 'DELETE' });
+}
+
+/** The models the picker offers: this build's catalog, checked against
+ *  Anthropic's Models API for the configured key. The server caches the live
+ *  list for hours; `refresh` asks it to fetch again now. Never fails over a
+ *  live-list problem — that comes back as `live: false` with `live_error`.
+ *
+ *  `=== true`, not truthiness: handed to `useQuery` as a bare `queryFn`, this
+ *  receives TanStack's query context — an object, so truthy — and tsc does
+ *  not object. Every Settings visit would then be a forced round trip to
+ *  Anthropic, defeating the server's cache. */
+export function getModelOptions(refresh = false) {
+  return apiFetch<ModelOptions>(`/api/settings/models${refresh === true ? '?refresh=1' : ''}`);
 }
 
 export function getRecentErrors(limit = 20) {

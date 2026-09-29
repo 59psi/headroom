@@ -34,9 +34,22 @@ function explicit() {
   getGoogleVisionKeyStatus: vi.fn(async () => ({ configured: false, source: null, masked: null })),
   setGoogleVisionKey: vi.fn(), deleteGoogleVisionKey: vi.fn(),
   getModel: vi.fn<typeof S.getModel>(async () => ({
-    model_id: 'claude-sonnet-5', source: 'default', default_model_id: 'claude-sonnet-5',
+    model_id: 'claude-sonnet-5-5', source: 'default', default_model_id: 'claude-sonnet-5-5',
   })),
   setModel: vi.fn(), clearModel: vi.fn(),
+  // The real payload shape, every field present: pydantic serializes them all.
+  getModelOptions: vi.fn<typeof S.getModelOptions>(async () => ({
+    default_model_id: 'claude-sonnet-5-5', live: false, checked_at: null,
+    live_error: 'No Claude API key configured',
+    models: [
+      { id: 'claude-sonnet-5-5', name: 'Claude Sonnet 5.5', status: 'current', speed: 'Fast',
+        cost_level: 2, summary: 'balanced', note: null, successor: null, forced_tool: false,
+        available: null, retires_after: null },
+      { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', status: 'legacy', speed: 'Fast',
+        cost_level: 2, summary: null, note: null, successor: 'claude-sonnet-5-5', forced_tool: true,
+        available: null, retires_after: null },
+    ],
+  })),
   getMdnsStatus: vi.fn(async () => ({
     enabled: true, advertising: true, hostname: 'headroom.local', port: 8000,
     ip: '192.168.1.20', ipv6: '2600:6c52:7500:a7b::99',
@@ -385,6 +398,9 @@ describe('SettingsPage', () => {
     ['offline', 'Share the collection'],
     ['retention', 'Recent activity'],
     ['prune', 'Recent activity'],
+    // The newest family by name, and the word a retirement notice uses.
+    ['fable', 'Claude model'],
+    ['retired', 'Claude model'],
   ])('finds a card by a word on it: "%s" → %s', async (word, card) => {
     const user = userEvent.setup();
     const { container } = renderWithProviders(<SettingsPage />);
@@ -407,7 +423,7 @@ describe('SettingsPage', () => {
   it("surfaces data from each card's own query rather than a page-level fetch", async () => {
     renderWithProviders(<SettingsPage />, { route: '/settings?tab=analysis' });
     expect(await screen.findByText('sk-an…wxyz')).toBeInTheDocument();       // key card
-    expect(await screen.findByText('claude-sonnet-5')).toBeInTheDocument(); // model card
+    expect(await screen.findByText('claude-sonnet-5-5')).toBeInTheDocument(); // model card
   });
 
   it("surfaces each card's own query in the other sections too", async () => {
@@ -476,7 +492,7 @@ describe('AnthropicKeyCard loading guard', () => {
     expect(screen.getByText('Connected')).toBeInTheDocument();
 
     // Simulate the Model card saving a different model.
-    vi.mocked(settingsApi.getModel).mockResolvedValue({ model_id: 'claude-opus-5', source: 'database', default_model_id: 'claude-sonnet-5' });
+    vi.mocked(settingsApi.getModel).mockResolvedValue({ model_id: 'claude-opus-5-5', source: 'database', default_model_id: 'claude-sonnet-5-5' });
     await client.invalidateQueries({ queryKey: ['settings', 'model'] });
 
     await waitFor(() => {
@@ -490,10 +506,11 @@ describe('AnthropicKeyCard loading guard', () => {
 
 describe('ClaudeModelCard', () => {
   async function renderWithStoredModel(model_id: string) {
-    vi.mocked(settingsApi.getModel).mockResolvedValue({ model_id, source: 'database', default_model_id: 'claude-sonnet-5' });
+    vi.mocked(settingsApi.getModel).mockResolvedValue({ model_id, source: 'database', default_model_id: 'claude-sonnet-5-5' });
     renderWithProviders(<ClaudeModelCard />);
     await screen.findByText(model_id);
-    return screen.getByLabelText('Model') as HTMLSelectElement;
+    // The picker waits for the model list; the saved id does not.
+    return await screen.findByLabelText('Model') as HTMLSelectElement;
   }
 
   it('keeps a superseded model on its own named option', async () => {
@@ -503,6 +520,9 @@ describe('ClaudeModelCard', () => {
     const select = await renderWithStoredModel('claude-sonnet-4-6');
     expect(select.value).toBe('claude-sonnet-4-6');
     expect(screen.queryByLabelText('Custom model ID')).not.toBeInTheDocument();
+    // …and names what superseded it, without moving it there.
+    expect(screen.getByText('Claude Sonnet 5.5 is the current version of this model.')).toBeInTheDocument();
+    expect(settingsApi.setModel).not.toHaveBeenCalled();
   });
 
   it('falls back to a custom-id box for a model it has never heard of', async () => {

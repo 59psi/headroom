@@ -78,6 +78,10 @@ export const qk = {
     apiKey: () => ['settings', 'api-key'] as const,
     googleVisionKey: () => ['settings', 'google-vision-key'] as const,
     model: () => ['settings', 'model'] as const,
+    /** The picker's model list. SIBLING of `model()`, not under it: "models"
+     *  is not the segment "model", so a model write names both. The Claude
+     *  KEY card invalidates it too — Anthropic lists models per key. */
+    models: () => ['settings', 'models'] as const,
     logo: () => ['settings', 'logo'] as const,
     tags: () => ['settings', 'tags'] as const,
     mdns: () => ['settings', 'mdns'] as const,

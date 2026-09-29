@@ -197,7 +197,8 @@ _ANSWER = {
         ("claude-fable-5", True),
         ("claude-haiku-4-5-20251001", True),
         ("claude-opus-4-6", True),
-        # These three answer a forced tool choice with a 400.
+        # These answer a forced tool choice with a 400 — the default among them.
+        ("claude-sonnet-5-5", False),
         ("claude-fable-5-1", False),
         ("claude-mythos-5-1", False),
         # `claude-opus-5` + "-5" — must not pass for a dated Opus 5.

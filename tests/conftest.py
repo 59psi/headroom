@@ -164,6 +164,28 @@ def no_live_melin_marketplace(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_live_model_listing(monkeypatch):
+    """Tests never list Anthropic's models, and never inherit a cached list.
+
+    `model_catalog.list_live_models` is that service's network seam, and its
+    six-hour cache is a module global — so without the clear, one test's
+    canned listing would answer the next test's `GET /api/settings/models`.
+    Raising the service's own error exercises the catalog-only path; tests
+    that want a live list re-patch the seam (or reach the real one through
+    the SDK's in-memory transport, as `test_model_catalog` does).
+    """
+    from headroom.services import model_catalog
+
+    async def _no_network(_api_key):
+        raise model_catalog.ModelListingError("live model listing disabled in tests")
+
+    monkeypatch.setattr(model_catalog, "list_live_models", _no_network)
+    model_catalog.clear_cache()
+    yield
+    model_catalog.clear_cache()
+
+
+@pytest.fixture(autouse=True)
 def no_outbound_http(monkeypatch):
     """No test reaches any host, whatever key it managed to store.
 
