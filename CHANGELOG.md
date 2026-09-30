@@ -6,6 +6,18 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.83.1] — 2026-09-29
+
+Dependency refresh. No behavior changes, no migration.
+
+### Changed
+
+- Backend: `anthropic` 1.8.0 (now the declared floor), `pillow-heif` 1.8.0,
+  `lazy-loader` 0.6 and `platformdirs` 4.11.12 — re-locked within the 7-day
+  cooldown, with `requirements.txt` re-exported from the new `uv.lock`.
+- Frontend: jsdom 30.1.1 (tests only).
+- Image: `uv` 0.12.21.
+
 ## [2.83.0] — 2026-09-28
 
 The Claude model picker, brought up to date — and kept that way.
