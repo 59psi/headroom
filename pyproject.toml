@@ -15,7 +15,7 @@ dependencies = [
     "python-multipart",
     "Pillow",
     "pillow-heif",
-    "anthropic>=1.7.0",
+    "anthropic>=1.8.0",
     # Declared, not inherited. `ebay_service`, `google_vision` and
     # `melin_recap` all `import httpx` directly, but it was only ever present
     # as a transitive of `anthropic` — so the day anthropic stops depending on
