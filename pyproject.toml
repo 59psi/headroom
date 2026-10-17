@@ -2,7 +2,7 @@
 license = "AGPL-3.0-or-later"
 license-files = ["LICENSE"]
 name = "headroom"
-version = "2.83.3"
+version = "2.83.4"
 description = "Headroom — AI-powered hat collection tracker"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -15,7 +15,7 @@ dependencies = [
     "python-multipart",
     "Pillow",
     "pillow-heif",
-    "anthropic>=1.8.0",
+    "anthropic>=1.12.0",
     # Declared, not inherited. `ebay_service`, `google_vision` and
     # `melin_recap` all `import httpx` directly, but it was only ever present
     # as a transitive of `anthropic` — so the day anthropic stops depending on
@@ -44,9 +44,9 @@ dependencies = [
     "rembg[cpu]>=2.0.85",
     "onnxruntime",
     "argon2-cffi>=25.1.0",
-    "webauthn>=3.0.0",
+    "webauthn>=3.0.1",
     "qrcode>=8.2",
-    "zeroconf>=0.151.3",
+    "zeroconf>=0.151.5",
 ]
 
 [dependency-groups]
