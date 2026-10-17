@@ -2,25 +2,42 @@ import { useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  importPurchases, listPurchases, previewImport, rematchPurchases, unmatchAllPurchases,
-  unmatchPurchase,
+  confirmPurchaseLink, importPurchases, listPurchases, previewImport, rematchPurchases,
+  unlinkSuspectPurchases, unmatchAllPurchases, unmatchPurchase,
 } from '../../api/purchases';
 import type { ImportPreview, PurchaseRead } from '../../types';
 import { plural } from '../../lib/format';
 import { invalidateHatViews, invalidatePurchaseDerived } from '../../lib/invalidate';
+import { useHatLabels } from '../../lib/labels';
+import { hatName } from '../../lib/placement';
+import { tileSrc } from '../../lib/photo';
 import { qk } from '../../lib/queryKeys';
 import { ErrorNote } from '../common/ErrorNote';
 import { CopyButton } from '../ui/CopyButton';
 import { Panel } from '../ui/Panel';
+import { Segmented } from '../ui/Segmented';
 import { StatusPill } from '../ui/StatusPill';
 import { Skeleton } from '../ui/Skeleton';
 import { useToast } from '../ui/Toast';
 import { useConfirm } from '../ui/Dialogs';
+import { LinkHatDialog, receiptLine } from '../purchases/LinkHatDialog';
 
 const KEY = qk.admin.purchases();
 
-/** How many purchase rows to list inline; the rest are counted, not hidden. */
-const ROW_LIMIT = 8;
+/** How many rows a tab lists before "Show all"; the rest are counted, not hidden. */
+const ROW_LIMIT = 12;
+
+/**
+ * The four piles the list is cut into. "To check" leads when it has anything:
+ * those are links the old rules made that the corrected ones reject, and
+ * each one is a hat showing a stranger's colorway and price right now.
+ */
+type View = 'check' | 'needs' | 'linked' | 'accessories';
+
+/** A toast's tail for ties the matcher left for you rather than guessing. */
+function needsChoiceNote(n: number): string {
+  return n > 0 ? ` — ${plural(n, 'purchase')} could be more than one hat; pick them under “Needs a hat”` : '';
+}
 
 /** Accepts either a bare array of line items or `{items: [...]}`. */
 function readItems(text: string): Record<string, unknown>[] {
@@ -101,6 +118,11 @@ export function PurchasesCard() {
   const [staged, setStaged] = useState<{ name: string; items: Record<string, unknown>[] } | null>(null);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [readError, setReadError] = useState<string | null>(null);
+  // `null` until you pick a tab: the card then opens on whatever needs you.
+  const [chosenView, setView] = useState<View | null>(null);
+  const [showAll, setShowAll] = useState(false);
+  const [linking, setLinking] = useState<PurchaseRead | null>(null);
+  const labels = useHatLabels();
 
   const purchases = useQuery({
     queryKey: KEY,
@@ -130,7 +152,9 @@ export function PurchasesCard() {
   const importMut = useMutation({
     mutationFn: importPurchases,
     onSuccess: result => {
-      toast.success(`Imported ${result.imported}, matched ${result.matched} to hats`);
+      toast.success(
+        `Imported ${result.imported}, matched ${result.matched} to hats${needsChoiceNote(result.needs_choice)}`,
+      );
       invalidatePurchaseDerived(qc);
       void invalidateHatViews(qc);
       reset();
@@ -140,7 +164,30 @@ export function PurchasesCard() {
   const rematchMut = useMutation({
     mutationFn: rematchPurchases,
     onSuccess: result => {
-      toast.success(`Matched ${result.matched}, ${result.unmatched} still unmatched`);
+      toast.success(
+        `Matched ${result.matched}, ${result.unmatched} still unmatched${needsChoiceNote(result.needs_choice)}`,
+      );
+      invalidatePurchaseDerived(qc);
+      void invalidateHatViews(qc);
+    },
+  });
+
+  // "Keep" in the review list: you vouch for the link, and it is never listed
+  // as one to check again.
+  const keepMut = useMutation({
+    mutationFn: confirmPurchaseLink,
+    onSuccess: () => {
+      toast.success('Kept — it won’t be flagged again');
+      invalidatePurchaseDerived(qc);
+    },
+  });
+
+  const unlinkSuspectMut = useMutation({
+    mutationFn: unlinkSuspectPurchases,
+    onSuccess: result => {
+      toast.success(
+        `Unlinked ${result.unmatched}, cleared ${plural(result.fields_cleared, 'field')} they had copied`,
+      );
       invalidatePurchaseDerived(qc);
       void invalidateHatViews(qc);
     },
@@ -165,14 +212,19 @@ export function PurchasesCard() {
   // answer is predictable (it unlinks exactly that purchase), and a failure
   // restores the cached list. The hat id is captured BEFORE the optimistic
   // write, because afterwards the cache no longer knows which hat it was.
+  //
+  // `clearCopied` is the review list's Unlink: you have looked at the hat and
+  // the receipt and said the link was wrong, so the colorway, price and date
+  // it copied go too — even on links too old to have recorded their writes.
   const unmatchOneMut = useMutation({
-    mutationFn: unmatchPurchase,
-    onMutate: async (purchaseId: number) => {
+    mutationFn: ({ purchaseId, clearCopied }: { purchaseId: number; clearCopied: boolean }) =>
+      unmatchPurchase(purchaseId, { clearCopied }),
+    onMutate: async ({ purchaseId }) => {
       await qc.cancelQueries({ queryKey: KEY });
       const previous = qc.getQueryData<PurchaseRead[]>(KEY);
       const hatId = previous?.find(r => r.id === purchaseId)?.hat_id ?? undefined;
       qc.setQueryData<PurchaseRead[]>(KEY, list =>
-        list?.map(r => (r.id === purchaseId ? { ...r, hat_id: null } : r)));
+        list?.map(r => (r.id === purchaseId ? { ...r, hat_id: null, hat: null, suspect: false } : r)));
       return { previous, hatId };
     },
     onError: (_err, _id, ctx) => {
@@ -225,9 +277,33 @@ export function PurchasesCard() {
     if (ok) unmatchMut.mutate();
   };
 
+  // Rejecting every link the corrected rules flag is a bulk write onto hats
+  // — colorway, price and date cleared on each — so it asks first, and says
+  // which links it spares.
+  const unlinkAllSuspect = async (count: number) => {
+    const ok = await confirm({
+      title: `Unlink all ${count} to check?`,
+      body:
+        'Each is unlinked from its hat, and the colorway, price and purchase date it '
+        + 'copied onto that hat are cleared. Links you made or kept are not touched. '
+        + 'The purchases stay; link each to the right hat from “Needs a hat”.',
+      confirmLabel: 'Unlink all',
+      tone: 'danger',
+    });
+    if (ok) unlinkSuspectMut.mutate();
+  };
+
   const rows = purchases.data ?? [];
+  const toCheck = rows.filter(r => r.suspect);
+  const needsHat = rows.filter(r => r.hat_id == null && !r.accessory);
+  const linkedRows = rows.filter(r => r.hat_id != null && !r.suspect);
+  const accessories = rows.filter(r => r.accessory && r.hat_id == null);
   const linked = rows.filter(r => r.hat_id != null).length;
-  const unlinked = rows.length - linked;
+  const view: View = chosenView ?? (toCheck.length > 0 ? 'check' : 'needs');
+  const piles: Record<View, PurchaseRead[]> = {
+    check: toCheck, needs: needsHat, linked: linkedRows, accessories,
+  };
+  const shown = showAll ? piles[view] : piles[view].slice(0, ROW_LIMIT);
   const busy = previewMut.isPending || importMut.isPending;
   // The one primary action per card: picking a file, until a preview is up —
   // then confirming that preview is the thing to do, and picking another file
@@ -240,9 +316,11 @@ export function PurchasesCard() {
       status={purchases.isSuccess && (
         rows.length === 0
           ? <StatusPill tone="off">None imported</StatusPill>
-          : unlinked === 0
-            ? <StatusPill tone="ok">All linked</StatusPill>
-            : <StatusPill tone="info">{unlinked} unlinked</StatusPill>
+          : toCheck.length > 0
+            ? <StatusPill tone="warn">{toCheck.length} to check</StatusPill>
+            : needsHat.length === 0
+              ? <StatusPill tone="ok">All linked</StatusPill>
+              : <StatusPill tone="info">{needsHat.length} need a hat</StatusPill>
       )}
       description="Order lines from your melin receipts. Matching gives hats their colorway and what you paid, so valuation shows a real gain."
       help={
@@ -260,8 +338,15 @@ export function PurchasesCard() {
           </p>
           <p>
             Importing re-runs matching over every unmatched purchase, not just the
-            new file&rsquo;s. <em>Unlink</em> on a row undoes one match;{' '}
-            <em>Unlink all</em> undoes them all.
+            new file&rsquo;s. Matching only links what it can tell apart; when a
+            receipt could be more than one of your hats, it waits under{' '}
+            <em>Needs a hat</em> for you to pick, with photos.
+          </p>
+          <p>
+            <em>To check</em> lists links made by earlier matching that the current
+            rules reject — usually a hat whose series the receipt never mentions.{' '}
+            <em>Keep</em> one you know is right; <em>Unlink</em> clears the colorway,
+            price and date it copied onto the hat.
           </p>
         </>
       }
@@ -319,6 +404,10 @@ export function PurchasesCard() {
             <div className="hr-metric">
               <dt className="hr-metric-label">Linked to hats</dt>
               <dd className="hr-metric-value">{linked}</dd>
+            </div>
+            <div className="hr-metric">
+              <dt className="hr-metric-label">Need a hat</dt>
+              <dd className="hr-metric-value">{needsHat.length}</dd>
             </div>
           </dl>
         )
@@ -403,55 +492,130 @@ export function PurchasesCard() {
 
       <ErrorNote
         className="mt-3"
-        of={[purchases, previewMut, importMut, rematchMut, unmatchMut, unmatchOneMut]}
+        of={[purchases, previewMut, importMut, rematchMut, unmatchMut, unmatchOneMut, keepMut, unlinkSuspectMut]}
       />
 
       {rows.length > 0 && (
         <>
-          <span className="hr-eyebrow mt-3">Recent purchases</span>
-          <ul className="hr-sd-rows">
-            {rows.slice(0, ROW_LIMIT).map(r => (
-              <li key={r.id}>
-                <span className="hr-sd-row-title">
-                  <span
-                    className={`hr-sd-link-dot${r.hat_id != null ? ' is-linked' : ''}`}
-                    aria-hidden="true"
-                  />
-                  <span className="visually-hidden">
-                    {r.hat_id != null ? 'Linked: ' : 'Not linked: '}
+          <Segmented<View>
+            className="mt-3"
+            label="Which purchases to list"
+            value={view}
+            onChange={next => { setView(next); setShowAll(false); }}
+            options={[
+              ...(toCheck.length > 0 ? [{ value: 'check' as const, label: 'To check', count: toCheck.length }] : []),
+              { value: 'needs', label: 'Needs a hat', count: needsHat.length },
+              { value: 'linked', label: 'Linked', count: linkedRows.length },
+              ...(accessories.length > 0
+                ? [{ value: 'accessories' as const, label: 'Cases & accessories', count: accessories.length }]
+                : []),
+            ]}
+          />
+
+          {view === 'check' && toCheck.length > 0 && (
+            <div className="hr-sd-check-intro small">
+              <p className="mb-2">
+                Linked by earlier matching, and the current rules disagree — usually
+                the hat&rsquo;s series appears nowhere in the receipt. Each hat below is
+                showing that receipt&rsquo;s colorway and price.
+              </p>
+              <button
+                type="button"
+                className="btn btn-outline-danger btn-sm"
+                onClick={() => void unlinkAllSuspect(toCheck.length)}
+                disabled={unlinkSuspectMut.isPending}
+              >
+                {unlinkSuspectMut.isPending ? 'Unlinking…' : `Unlink all ${toCheck.length}`}
+              </button>
+            </div>
+          )}
+
+          {piles[view].length === 0 ? (
+            <p className="text-secondary small mt-2 mb-0">
+              {view === 'needs' ? 'Every hat purchase is linked.' : 'Nothing here.'}
+            </p>
+          ) : (
+            <ul className="hr-sd-rows mt-2">
+              {shown.map(r => (
+                <li key={r.id}>
+                  <span className="hr-sd-row-title">
+                    {view === 'check' && r.hat && (
+                      r.hat.photo_path || r.hat.thumb_path
+                        ? <img className="hr-pick-thumb" src={tileSrc(r.hat)} alt="" loading="lazy" />
+                        : <span className="hr-pick-thumb" aria-hidden="true" />
+                    )}
+                    <span className="hr-sd-row-text">
+                      {r.item_title}
+                      <span className="hr-sd-row-sub">
+                        {view === 'check' && r.hat ? (
+                          <>
+                            On <Link to={`/hats/${r.hat.id}`}>{hatName(r.hat)}</Link>
+                            {r.hat.artist_series && <> — series &ldquo;{r.hat.artist_series}&rdquo;</>}
+                          </>
+                        ) : view === 'linked' && r.hat ? (
+                          <>On <Link to={`/hats/${r.hat.id}`}>{hatName(r.hat)}</Link> · {receiptLine(r, labels.size)}</>
+                        ) : receiptLine(r, labels.size)}
+                      </span>
+                    </span>
                   </span>
-                  {/* A linked row opens its hat: the link is the thing a
-                      person checks before deciding it is wrong. */}
-                  <span className="hr-sd-row-text">
-                    {r.hat_id != null
-                      ? <Link to={`/hats/${r.hat_id}`}>{r.item_title}</Link>
-                      : r.item_title}
+                  <span className="hr-sd-row-aside">
+                    {view === 'needs' && (
+                      <button type="button" className="btn btn-outline-secondary btn-sm" onClick={() => setLinking(r)}>
+                        Link to hat…
+                      </button>
+                    )}
+                    {view === 'check' && (
+                      <>
+                        <button
+                          type="button"
+                          className="btn btn-outline-secondary btn-sm"
+                          aria-label={`Keep ${r.item_title} on ${r.hat ? hatName(r.hat) : 'its hat'}`}
+                          disabled={keepMut.isPending}
+                          onClick={() => keepMut.mutate(r.id)}
+                        >
+                          Keep
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-outline-danger btn-sm"
+                          aria-label={`Unlink ${r.item_title} and clear what it copied`}
+                          disabled={unmatchOneMut.isPending}
+                          onClick={() => unmatchOneMut.mutate({ purchaseId: r.id, clearCopied: true })}
+                        >
+                          Unlink
+                        </button>
+                      </>
+                    )}
+                    {view === 'linked' && (
+                      <>
+                        <button type="button" className="btn btn-outline-secondary btn-sm" onClick={() => setLinking(r)}>
+                          Change…
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-outline-secondary btn-sm"
+                          aria-label={`Unlink ${r.item_title} from its hat`}
+                          disabled={unmatchOneMut.isPending}
+                          onClick={() => unmatchOneMut.mutate({ purchaseId: r.id, clearCopied: false })}
+                        >
+                          Unlink
+                        </button>
+                      </>
+                    )}
                   </span>
-                </span>
-                <span className="hr-sd-row-aside">
-                  <span className="font-mono text-secondary">
-                    {r.price != null ? `$${r.price.toFixed(2)}` : '—'}
-                  </span>
-                  {r.hat_id != null && (
-                    <button
-                      type="button"
-                      className="btn btn-outline-secondary btn-sm"
-                      aria-label={`Unlink ${r.item_title} from its hat`}
-                      disabled={unmatchOneMut.isPending}
-                      onClick={() => unmatchOneMut.mutate(r.id)}
-                    >
-                      Unlink
-                    </button>
-                  )}
-                </span>
-              </li>
-            ))}
-          </ul>
-          {rows.length > ROW_LIMIT && (
-            <div className="small text-muted mt-1">…and {rows.length - ROW_LIMIT} more</div>
+                </li>
+              ))}
+            </ul>
+          )}
+          {!showAll && piles[view].length > ROW_LIMIT && (
+            <button type="button" className="btn btn-outline-secondary btn-sm mt-2" onClick={() => setShowAll(true)}>
+              Show all {piles[view].length}
+            </button>
           )}
         </>
       )}
+
+      {linking && <LinkHatDialog purchase={linking} onClose={() => setLinking(null)} />}
 
       <hr className="hr-panel-divider" />
       <EmailPromptDisclosure />

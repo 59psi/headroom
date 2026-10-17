@@ -227,21 +227,131 @@
   flex: none;
 }
 
-/* Linked or not, as a dot: a filled green one for a purchase tied to a hat,
-   a hollow one for a purchase still in the pool. The words are there too,
-   visually hidden, so the state is never color-only. */
-.hr-sd-link-dot {
-  flex: none;
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 50%;
-  border: 1.5px solid var(--text-muted);
+/* A purchase row's second line: the receipt (date · price · size), or which
+   hat it is on. */
+.hr-sd-row-sub {
+  display: block;
+  color: var(--text-secondary);
 }
 
-.hr-sd-link-dot.is-linked {
-  border-color: transparent;
-  background: var(--neon-green);
-  box-shadow: 0 0 6px rgb(var(--neon-green-rgb) / 0.7);
+/* The review list's lead-in: what "to check" means, and the bulk unlink. */
+.hr-sd-check-intro {
+  margin-top: 0.75rem;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid rgb(var(--neon-orange-rgb) / 0.35);
+  border-radius: var(--radius-sm);
+  background: rgb(var(--neon-orange-rgb) / 0.06);
+  color: var(--text-secondary);
+}
+
+/* ----- Linking a purchase to a hat (both dialogs, and the review rows) ----- */
+.hr-pick-receipt {
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.6rem;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.hr-pick-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: min(55vh, 28rem);
+  overflow-y: auto;
+}
+
+/* A whole row is the target: a hat is picked by its photo and its record,
+   never by a small button at the end of a line. 56px, past the 44px floor. */
+.hr-pick-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  min-height: 56px;
+  padding: 0.45rem 0.5rem;
+  border: 0;
+  border-top: 1px solid var(--border-soft);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+
+.hr-pick-list > li:first-child .hr-pick-row { border-top: 0; }
+
+.hr-pick-row:hover,
+.hr-pick-row:focus-visible {
+  background: var(--surface-hover);
+}
+
+.hr-pick-thumb {
+  flex: none;
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+  border-radius: var(--radius-xs);
+  background: var(--surface-inset);
+}
+
+.hr-pick-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.hr-pick-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.hr-pick-detail {
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.hr-pick-agrees {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.2rem;
+}
+
+.hr-pick-chip {
+  padding: 0 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: var(--fs-2xs);
+  color: var(--text-secondary);
+}
+
+.hr-pick-chip.is-fit {
+  border-color: rgb(var(--neon-green-rgb) / 0.6);
+  color: var(--neon-green);
+}
+
+.hr-pick-note {
+  margin-top: 0.15rem;
+  font-size: var(--fs-xs);
+  color: var(--neon-orange);
+}
+
+.hr-pick-confirm {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.hr-pick-confirm-photo {
+  flex: none;
+  width: 112px;
+  height: 112px;
+  object-fit: contain;
+  border-radius: var(--radius-sm);
+  background: var(--surface-inset);
+}
+
+.hr-pick-warn {
+  color: var(--neon-orange);
 }
 
 /* ----- eBay credentials ---------------------------------------------- */

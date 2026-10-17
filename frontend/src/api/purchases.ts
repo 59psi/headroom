@@ -1,6 +1,7 @@
 import { apiFetch } from './client';
 import type {
-  ImportPreview, ImportResult, MatchResult, PurchaseRead, UnmatchAllResult, UnmatchOneResult,
+  HatsForPurchase, ImportPreview, ImportResult, MatchResult, PurchaseLink, PurchaseLinkResult,
+  PurchaseRead, PurchasesForHat, UnmatchAllResult, UnmatchOneResult,
 } from '../types';
 
 /**
@@ -43,8 +44,37 @@ export function unmatchAllPurchases() {
  * single wrong match meant unlinking every purchase and re-running the
  * matcher, which is the whole-collection hammer for a one-row mistake.
  */
-export function unmatchPurchase(purchaseId: number) {
-  return apiFetch<UnmatchOneResult>(`/api/admin/purchases/${purchaseId}/unmatch`, {
+export function unmatchPurchase(purchaseId: number, opts: { clearCopied?: boolean } = {}) {
+  const query = opts.clearCopied ? '?clear_copied=true' : '';
+  return apiFetch<UnmatchOneResult>(`/api/admin/purchases/${purchaseId}/unmatch${query}`, {
     method: 'POST',
   });
+}
+
+/** Every hat a purchase could be linked to, best fit first (ranked, not filtered). */
+export function hatsForPurchase(purchaseId: number) {
+  return apiFetch<HatsForPurchase>(`/api/admin/purchases/${purchaseId}/hats`);
+}
+
+/** A hat's linked purchase, and every hat purchase it could have instead. */
+export function purchasesForHat(hatId: number) {
+  return apiFetch<PurchasesForHat>(`/api/admin/purchases/for-hat/${hatId}`);
+}
+
+/** Link a purchase to the hat you chose. Fills only the hat's empty fields. */
+export function linkPurchase(purchaseId: number, body: PurchaseLink) {
+  return apiFetch<PurchaseLinkResult>(`/api/admin/purchases/${purchaseId}/link`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+/** "Keep": vouch for a link so it is never listed as one to check. */
+export function confirmPurchaseLink(purchaseId: number) {
+  return apiFetch<PurchaseRead>(`/api/admin/purchases/${purchaseId}/confirm`, { method: 'POST' });
+}
+
+/** Unlink every suspect link, clearing the receipt values each copied. */
+export function unlinkSuspectPurchases() {
+  return apiFetch<UnmatchAllResult>('/api/admin/purchases/unlink-suspect', { method: 'POST' });
 }

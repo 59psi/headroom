@@ -178,7 +178,7 @@ describe('SharedPricesCard', () => {
     mocked.auditSharedPrices.mockResolvedValue([group()]);
     mocked.getUnclaimedFromPurchases.mockResolvedValue(unclaimed({ colorways: 3 }));
     purchases.rematchPurchases.mockResolvedValue({
-      dry_run: false, matched: 3, unmatched: 5, ambiguous: 0, proposals: [],
+      dry_run: false, matched: 3, unmatched: 5, ambiguous: 0, needs_choice: 0, proposals: [],
     });
 
     renderWithProviders(<SharedPricesCard />);
@@ -194,7 +194,7 @@ describe('SharedPricesCard', () => {
     mocked.auditSharedPrices.mockResolvedValue([group()]);
     mocked.getUnclaimedFromPurchases.mockResolvedValue(unclaimed({ colorways: 3 }));
     purchases.rematchPurchases.mockResolvedValue({
-      dry_run: false, matched: 3, unmatched: 5, ambiguous: 0, proposals: [],
+      dry_run: false, matched: 3, unmatched: 5, ambiguous: 0, needs_choice: 0, proposals: [],
     });
 
     const { client } = renderWithProviders(<SharedPricesCard />);

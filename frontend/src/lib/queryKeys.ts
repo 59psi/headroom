@@ -120,6 +120,16 @@ export const qk = {
     sharedPrices: () => ['admin', 'shared-prices'] as const,
     unclaimedPurchases: () => ['admin', 'unclaimed-purchases'] as const,
     purchases: () => ['admin', 'purchases'] as const,
+    /** The hats one purchase could be linked to; with no id, every list. */
+    purchaseHats: (purchaseId?: number) =>
+      (purchaseId === undefined
+        ? ['admin', 'purchase-hats'] as const
+        : ['admin', 'purchase-hats', purchaseId] as const),
+    /** One hat's linked purchase and candidates; with no id, every hat's. */
+    hatPurchases: (hatId?: number) =>
+      (hatId === undefined
+        ? ['admin', 'hat-purchases'] as const
+        : ['admin', 'hat-purchases', hatId] as const),
     frozenPrices: () => ['admin', 'frozen-prices'] as const,
     constructionAudit: () => ['admin', 'construction-audit'] as const,
     colorwayStatus: () => ['admin', 'colorway-status'] as const,
