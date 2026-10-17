@@ -420,6 +420,11 @@ class PurchaseRead(BaseModel):
     quantity: int | None = None
     hat_id: int | None = None
     source: str | None = None
+    #: When the owner vouched for the link (made it, or kept it in review).
+    link_confirmed_at: datetime | None = None
+    #: A matcher-made link its corrected rules reject (`catalog_service.
+    #: is_suspect`) — listed for review. Set by the list route.
+    suspect: bool = False
 
     @computed_field  # type: ignore[prop-decorator]
     @property

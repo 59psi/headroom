@@ -65,4 +65,8 @@ class Purchase(Base):
     # What the match that linked this purchase actually WROTE onto the hat, as
     # JSON {field: value}. Unmatch reverts exactly these and nothing else.
     match_writes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # When the OWNER vouched for this link — made it by hand, or kept it from
+    # the suspicious-links review. A vouched link is never flagged as suspect
+    # again; NULL for every link the matcher made on its own.
+    link_confirmed_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, server_default=func.now())

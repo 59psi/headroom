@@ -1486,19 +1486,74 @@ async def _apply_link(
     return writes
 
 
-def _break_link(purchase: Purchase, hat: Hat | None) -> list[str]:
-    """Unlink one purchase, reverting what its link wrote. Caller commits."""
-    cleared = _revert_hat_fields(purchase, hat) if hat is not None else []
+def _break_link(purchase: Purchase, hat: Hat | None, *, clear_copied: bool = False) -> list[str]:
+    """Unlink one purchase, reverting what its link wrote. Caller commits.
+
+    `clear_copied`: see `_revert_hat_fields`.
+    """
+    cleared = (
+        _revert_hat_fields(purchase, hat, clear_copied=clear_copied) if hat is not None else []
+    )
     purchase.hat_id = None
     purchase.match_writes = None
+    purchase.link_confirmed_at = None
     return cleared
+
+
+def is_suspect(purchase: Purchase) -> bool:
+    """A link the matcher made that its corrected rules reject, which the
+    owner has not vouched for. On the owner's shelf that was 99 of 197 links —
+    the hat's series contradicting the receipt (an orange "Have More Fun" hat
+    holding a "23XI - White Speed Camo" receipt) or a different model — and
+    98 of those hats were carrying that receipt's colorway and price."""
+    return (
+        purchase.hat_id is not None
+        and purchase.link_confirmed_at is None
+        and purchase.hat is not None
+        and _match_score(purchase, purchase.hat) is None
+    )
+
+
+async def confirm_link(db: AsyncSession, purchase_id: int) -> Purchase:
+    """The owner vouches for a link: it is never flagged as suspect again."""
+    purchase = await db.get(Purchase, purchase_id)
+    if purchase is None:
+        raise errors.NotFound("Purchase not found")
+    if purchase.hat_id is None:
+        raise errors.Invalid("That purchase is not linked to a hat")
+    purchase.link_confirmed_at = datetime.now(timezone.utc)
+    await activity_service.log_activity(
+        db, kind="purchase.confirmed", entity_type="purchase", entity_id=purchase.id,
+        summary=f"Purchase #{purchase.id} confirmed as hat #{purchase.hat_id}'s",
+        details={"hat_id": purchase.hat_id},
+    )
+    await db.commit()
+    return purchase
+
+
+async def unlink_suspect_purchases(db: AsyncSession) -> dict:
+    """Break every suspect link, clearing what each copied onto its hat."""
+    linked = (
+        await db.execute(select(Purchase).where(Purchase.hat_id.is_not(None)))
+    ).scalars().all()
+    suspects = [p for p in linked if is_suspect(p)]
+    cleared = 0
+    for purchase in suspects:
+        cleared += len(_break_link(purchase, purchase.hat, clear_copied=True))
+    await db.commit()
+    await activity_service.log_and_commit(
+        db, kind="purchase.unmatched_suspect", entity_type="purchase",
+        summary=f"Unlinked {len(suspects)} suspicious purchase link(s)",
+        details={"unmatched": len(suspects), "fields_cleared": cleared},
+    )
+    return {"unmatched": len(suspects), "fields_cleared": cleared}
 
 
 #: The hat fields a match can write, in the order `_revert_hat_fields` checks.
 _MATCH_FIELDS = ("purchase_price", "purchased_at", "colorway")
 
 
-def _revert_hat_fields(purchase: Purchase, hat: Hat) -> list[str]:
+def _revert_hat_fields(purchase: Purchase, hat: Hat, *, clear_copied: bool = False) -> list[str]:
     """Undo what THIS purchase's match wrote onto the hat. Returns the fields cleared.
 
     Driven by `purchase.match_writes` — the fields the match ACTUALLY set, and
@@ -1520,10 +1575,25 @@ def _revert_hat_fields(purchase: Purchase, hat: Hat) -> list[str]:
     wrote, and guessing from agreement is the bug above. The link still
     breaks; the values stay for the owner to judge, which is the direction
     this module always errs in.
+
+    `clear_copied` is the owner having judged: they looked at the hat and the
+    receipt and said the link was WRONG. For a link with no record, the
+    receipt's own values are then taken as what it wrote — on a wrong link,
+    a hat carrying that receipt's exact colorway, price and date is carrying
+    them because of it (98 of 99 such hats on the owner's shelf did). Only
+    the owner's unlink of a link they rejected passes it.
     """
-    if not purchase.match_writes:
+    if purchase.match_writes:
+        written = json.loads(purchase.match_writes)
+    elif clear_copied:
+        written = {
+            "colorway": purchase.colorway,
+            "purchase_price": purchase.price,
+            "purchased_at": purchase.order_date.isoformat() if purchase.order_date else None,
+        }
+        written = {k: v for k, v in written.items() if v is not None}
+    else:
         return []
-    written = json.loads(purchase.match_writes)
     cleared = []
     for field in _MATCH_FIELDS:
         if field not in written:
@@ -1540,7 +1610,9 @@ def _revert_hat_fields(purchase: Purchase, hat: Hat) -> list[str]:
     return cleared
 
 
-async def unmatch_purchase(db: AsyncSession, purchase_id: int) -> dict:
+async def unmatch_purchase(
+    db: AsyncSession, purchase_id: int, *, clear_copied: bool = False
+) -> dict:
     """Break one purchase→hat link and put the purchase back in the pool.
 
     Exists because matching had no undo at all. It mutates hats, it runs over
@@ -1560,7 +1632,7 @@ async def unmatch_purchase(db: AsyncSession, purchase_id: int) -> dict:
         return {"unmatched": 0, "hat_id": None, "cleared": []}
 
     hat_id = purchase.hat_id
-    cleared = _break_link(purchase, await db.get(Hat, hat_id))
+    cleared = _break_link(purchase, await db.get(Hat, hat_id), clear_copied=clear_copied)
     await db.commit()
 
     await activity_service.log_and_commit(
@@ -1777,6 +1849,10 @@ async def link_purchase(
         raise errors.NotFound("Hat not found")
     result = {"hat_id": hat.id, "wrote": [], "moved_from_hat_id": None, "replaced_purchase_id": None}
     if purchase.hat_id == hat.id:
+        # Re-choosing the hat it is already on still vouches for the link.
+        if purchase.link_confirmed_at is None:
+            purchase.link_confirmed_at = datetime.now(timezone.utc)
+            await db.commit()
         return result
 
     holder = (await db.execute(
@@ -1798,6 +1874,7 @@ async def link_purchase(
     writes = await _apply_link(
         db, purchase, hat, verb="linked", receipt_colorway=receipt_colorway
     )
+    pass
     result["wrote"] = sorted(f for f in writes if f in _MATCH_FIELDS)
     await db.commit()
     return result

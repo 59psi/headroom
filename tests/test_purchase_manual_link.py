@@ -143,6 +143,70 @@ async def test_identical_hats_still_take_their_receipts(client):
         assert (await client.get(f"/api/hats/{hat_id}")).json()["purchase_price"] == 79.0
 
 
+# ---- reviewing the links the old rules made -------------------------------- #
+
+
+async def _legacy_wrong_link(client, db_session):
+    """What the old matcher left behind: a "23XI" receipt on the orange "Have
+    More Fun" hat, its colorway and price copied over, and — made before the
+    record of a link's writes existed — `match_writes` NULL."""
+    hat_id = await _new_hat(client, "Odysea Hydro", artist_series="Have More Fun")
+    rows = await _import(client, _line("Odysea 23XI Hydro - White Speed Camo", "R1", price=89.0))
+    pid = rows["R1"]["id"]
+    await db_session.execute(sa_update(Purchase).where(Purchase.id == pid).values(hat_id=hat_id))
+    await db_session.execute(sa_update(Hat).where(Hat.id == hat_id).values(
+        colorway="White Speed Camo", purchase_price=89.0))
+    await db_session.commit()
+    return pid, hat_id
+
+
+async def test_a_link_the_corrected_rules_reject_is_listed_as_suspect(client, db_session):
+    pid, _ = await _legacy_wrong_link(client, db_session)
+    row = next(p for p in (await client.get("/api/admin/purchases")).json() if p["id"] == pid)
+    assert row["suspect"] is True
+
+
+async def test_keeping_a_link_stops_it_being_suspect(client, db_session):
+    pid, _ = await _legacy_wrong_link(client, db_session)
+    resp = await client.post(f"/api/admin/purchases/{pid}/confirm")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["link_confirmed_at"] is not None
+    row = next(p for p in (await client.get("/api/admin/purchases")).json() if p["id"] == pid)
+    assert row["suspect"] is False
+
+
+async def test_rejecting_an_old_link_clears_what_it_copied(client, db_session):
+    pid, hat_id = await _legacy_wrong_link(client, db_session)
+    resp = await client.post(f"/api/admin/purchases/{pid}/unmatch?clear_copied=true")
+    assert resp.status_code == 200, resp.text
+    hat = (await client.get(f"/api/hats/{hat_id}")).json()
+    assert (hat["colorway"], hat["purchase_price"]) == (None, None), (
+        "the wrong receipt's colorway and price stayed on the hat"
+    )
+
+
+async def test_a_plain_unlink_of_an_old_link_still_leaves_values_alone(client, db_session):
+    pid, hat_id = await _legacy_wrong_link(client, db_session)
+    await client.post(f"/api/admin/purchases/{pid}/unmatch")
+    hat = (await client.get(f"/api/hats/{hat_id}")).json()
+    assert (hat["colorway"], hat["purchase_price"]) == ("White Speed Camo", 89.0)
+
+
+async def test_unlink_all_suspect_spares_kept_and_hand_made_links(client, db_session):
+    suspect, suspect_hat = await _legacy_wrong_link(client, db_session)
+    kept_hat = await _new_hat(client, "Eagle Denim", artist_series="Union")
+    rows = await _import(client, _line("Odysea Hydro - Navy", "K1"))
+    await client.post(f"/api/admin/purchases/{rows['K1']['id']}/link", json={"hat_id": kept_hat})
+
+    resp = await client.post("/api/admin/purchases/unlink-suspect")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["unmatched"] == 1
+    after = {p["id"]: p for p in (await client.get("/api/admin/purchases")).json()}
+    assert after[suspect]["hat_id"] is None
+    assert after[rows["K1"]["id"]]["hat_id"] == kept_hat, "a hand-made link is vouched for"
+    assert (await client.get(f"/api/hats/{suspect_hat}")).json()["colorway"] is None
+
+
 # ---- accessories ------------------------------------------------------------ #
 
 

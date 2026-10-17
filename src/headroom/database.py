@@ -225,6 +225,8 @@ _PURCHASE_COLUMN_DDL: dict[str, str] = {
     "size": "ALTER TABLE purchases ADD COLUMN size VARCHAR(20)",
     # What a match actually wrote onto the hat, so unmatch reverts exactly that.
     "match_writes": "ALTER TABLE purchases ADD COLUMN match_writes TEXT",
+    # v2.84 — the owner vouched for this link (made it, or kept it in review).
+    "link_confirmed_at": "ALTER TABLE purchases ADD COLUMN link_confirmed_at DATETIME",
 }
 
 _CASE_COLUMN_DDL: dict[str, str] = {

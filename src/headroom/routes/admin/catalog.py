@@ -136,7 +136,19 @@ async def import_purchases(
 
 @router.get("/purchases", response_model=list[PurchaseRead])
 async def list_purchases(db: AsyncSession = Depends(get_db)):
-    return await catalog_service.list_purchases(db)
+    return [
+        PurchaseRead.model_validate(p).model_copy(update={"suspect": catalog_service.is_suspect(p)})
+        for p in await catalog_service.list_purchases(db)
+    ]
+
+
+@router.post("/purchases/unlink-suspect", response_model=UnmatchAllResult)
+async def unlink_suspect(db: AsyncSession = Depends(get_db)):
+    """Break every suspect link, clearing the receipt values each copied onto
+    its hat — the bulk "these were all wrong" from the review list. Links
+    the owner made or kept are never suspect, so never touched."""
+    async with locks.loop_lock("purchase-import"):
+        return await catalog_service.unlink_suspect_purchases(db)
 
 
 # Registered BEFORE `{purchase_id}` for the same reason `unmatch-all` is: a
@@ -209,12 +221,22 @@ async def link_purchase(
         )
 
 
+@router.post("/purchases/{purchase_id}/confirm", response_model=PurchaseRead)
+async def confirm_link(purchase_id: int, db: AsyncSession = Depends(get_db)):
+    """The owner vouches for a link — "Keep" in the review list."""
+    return await catalog_service.confirm_link(db, purchase_id)
+
+
 @router.post("/purchases/{purchase_id}/unmatch", response_model=UnmatchOneResult)
-async def unmatch_one(purchase_id: int, db: AsyncSession = Depends(get_db)):
+async def unmatch_one(
+    purchase_id: int, clear_copied: bool = False, db: AsyncSession = Depends(get_db)
+):
     """Break one purchase→hat link and return the purchase to the pool.
 
     Reverts `purchase_price`, `purchased_at` and `colorway` on the hat, but
     only where they still hold the value this purchase wrote — anything
-    edited since belongs to whoever edited it.
+    edited since belongs to whoever edited it. `?clear_copied=true` is the
+    owner rejecting a link from the review list: for a link old enough to
+    have no record of its writes, the receipt's own values are taken as them.
     """
-    return await catalog_service.unmatch_purchase(db, purchase_id)
+    return await catalog_service.unmatch_purchase(db, purchase_id, clear_copied=clear_copied)
