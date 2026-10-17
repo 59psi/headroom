@@ -154,10 +154,32 @@ email, and it hands back the JSON the importer reads. **Import JSON…** then
 shows a preview — how many lines are new, how many would match a hat, and
 how many of the *already-imported* backlog would match too — before **Import
 N and match** writes anything. Matching links a purchase to a hat when the
-model names agree (and colorways don't conflict), on a best-overall
-assignment rather than first-come; re-run it any time after editing hats,
-and the *Prices shared by many hats* card offers to when it can see
-colorways sitting unclaimed in orders you already imported.
+model names agree, nothing on record contradicts the receipt (a different
+size or colorway, or a series the receipt never mentions), and the choice is
+not a coin toss, on a best-overall assignment rather than first-come. When a
+receipt fits two hats that read differently on record, it is left for you
+rather than guessed. Re-run it any time after editing hats, and the *Prices
+shared by many hats* card offers to when it can see colorways sitting
+unclaimed in orders you already imported.
+
+The card lists purchases in tabs:
+
+- **Needs a hat** — hat purchases with no hat yet. **Link to hat…** shows
+  every hat, best fit first, each with its photo and what agrees (model,
+  series, colorway, size, price); hats already holding a purchase are marked,
+  and choosing one replaces it. When the receipt's colorway differs from the
+  hat's, you choose which to keep.
+- **To check** — links made by earlier matching that the current rules
+  reject, shown beside the hat's photo. **Keep** one you know is right (it is
+  never flagged again); **Unlink** clears the colorway, price and date it
+  copied onto the hat. **Unlink all** does every one at once, after asking.
+- **Linked** — **Change…** to move one to a different hat, or **Unlink**.
+- **Cases & accessories** — travel cases and the like, which never link.
+
+The same choice is on each hat's page: the **Purchase** panel shows the order
+the hat came from, and **Link a purchase…** picks one from your history, best
+fit first — including one linked to another hat, which moves it. A link you
+make or keep yourself is never flagged for checking.
 
 For anything the import can't cover — bought secondhand, in person, or from a
 shop that doesn't email line items — enter **Price paid** and **Bought on**
