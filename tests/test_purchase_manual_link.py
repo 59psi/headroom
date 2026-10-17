@@ -166,6 +166,12 @@ async def test_a_link_the_corrected_rules_reject_is_listed_as_suspect(client, db
     assert row["suspect"] is True
 
 
+async def test_the_hat_page_list_flags_its_suspect_link_too(client, db_session):
+    pid, hat_id = await _legacy_wrong_link(client, db_session)
+    linked = (await client.get(f"/api/admin/purchases/for-hat/{hat_id}")).json()["linked"]
+    assert [(p["id"], p["suspect"]) for p in linked] == [(pid, True)]
+
+
 async def test_keeping_a_link_stops_it_being_suspect(client, db_session):
     pid, _ = await _legacy_wrong_link(client, db_session)
     resp = await client.post(f"/api/admin/purchases/{pid}/confirm")
@@ -245,6 +251,21 @@ async def test_the_hat_list_flags_a_hat_that_already_holds_a_purchase(client):
 
     options = (await client.get(f"/api/admin/purchases/{free['id']}/hats")).json()["options"]
     assert next(o for o in options if o["hat_id"] == taken)["linked_purchase_id"] == holder["id"]
+
+
+async def test_a_taken_hats_price_is_not_evidence_for_another_receipt(client, db_session):
+    """A hat linked to one receipt carries that receipt's price. At melin's
+    common price points the pick list was marking a "Yellow Jacket" hat as
+    fitting a "Chain Camo" receipt on $89 alone."""
+    taken = await _new_hat(client, "Trenches Hydro")
+    await _import(client, _line("Trenches Hydro - Yellow Jacket", "R1", price=89.0))
+    assert (await client.get(f"/api/hats/{taken}")).json()["colorway"] == "Yellow Jacket"
+    rows = await _import(client, _line("Trenches Hydro - Chain Camo", "R2", price=89.0))
+
+    options = (await client.get(f"/api/admin/purchases/{rows['R2']['id']}/hats")).json()["options"]
+    held = next(o for o in options if o["hat_id"] == taken)
+    assert held["fits"] is False, "another receipt's $89 made a Yellow Jacket hat fit Chain Camo"
+    assert "price" not in held["agrees"]
 
 
 async def test_the_purchase_list_for_a_hat_skips_accessories(client):

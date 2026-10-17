@@ -193,8 +193,16 @@ async def unmatch_all(db: AsyncSession = Depends(get_db)):
 @router.get("/purchases/for-hat/{hat_id}", response_model=PurchasesForHat)
 async def purchases_for_hat(hat_id: int, db: AsyncSession = Depends(get_db)):
     """The purchase linked to a hat, and every hat purchase it could be
-    linked to instead — best fit first. For the hat page."""
-    return await catalog_service.purchases_for_hat(db, hat_id)
+    linked to instead — best fit first. For the hat page, which flags a
+    suspect link the same way the review list does."""
+    result = await catalog_service.purchases_for_hat(db, hat_id)
+    return {
+        **result,
+        "linked": [
+            PurchaseRead.model_validate(p).model_copy(update={"suspect": catalog_service.is_suspect(p)})
+            for p in result["linked"]
+        ],
+    }
 
 
 @router.get("/purchases/{purchase_id}/hats", response_model=HatsForPurchase)

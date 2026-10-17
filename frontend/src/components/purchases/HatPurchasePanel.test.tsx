@@ -65,6 +65,23 @@ describe('HatPurchasePanel', () => {
     await waitFor(() => expect(callsTo('/purchases/21/unmatch')).toHaveLength(1));
   });
 
+  it('flags a suspect link, and its Unlink clears what it copied', async () => {
+    const user = userEvent.setup();
+    route({ '/purchases/for-hat/76': { linked: [{ ...RECEIPT, hat_id: 76, suspect: true }], options: [] } });
+    renderWithProviders(<HatPurchasePanel hat={hatFixture({ id: 76, artist_series: 'Have More Fun' })} />);
+    expect(await screen.findByText(/“Have More Fun” is nowhere on the receipt/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /^Unlink Trenches Icon Hydro - Misty Trails/ }));
+    await waitFor(() => expect(callsTo('/purchases/21/unmatch?clear_copied=true')).toHaveLength(1));
+  });
+
+  it('keeps a suspect link you vouch for', async () => {
+    const user = userEvent.setup();
+    route({ '/purchases/for-hat/76': { linked: [{ ...RECEIPT, hat_id: 76, suspect: true }], options: [] } });
+    renderWithProviders(<HatPurchasePanel hat={hatFixture({ id: 76 })} />);
+    await user.click(await screen.findByRole('button', { name: /^Keep Trenches Icon Hydro - Misty Trails/ }));
+    await waitFor(() => expect(callsTo('/purchases/21/confirm')).toHaveLength(1));
+  });
+
   it('links the purchase you pick to this hat', async () => {
     const user = userEvent.setup();
     route({

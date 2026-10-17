@@ -961,7 +961,7 @@ def _model_tier(hat_model: str | None, purchase_model: str) -> int | None:
     return None
 
 
-def _match_score(purchase: Purchase, hat: Hat) -> int | None:
+def _match_score(purchase: Purchase, hat: Hat, *, hat_price_is_evidence: bool = True) -> int | None:
     """How well one hat fits one purchase. Higher is better; None = no match.
 
     Model name is mandatory. Colorway and size each *rule a hat out* when both
@@ -1046,11 +1046,14 @@ def _match_score(purchase: Purchase, hat: Hat) -> int | None:
     # looks like ("Navy Denium") rather than what melin called it ("Hickory
     # Denim"). A price entered by hand from an order confirmation is a fact,
     # and matching one to the cent is corroboration a spelling cannot outweigh.
-    price_corroborates = (
-        hat.purchase_price is not None
-        and purchase.price is not None
-        and abs(float(hat.purchase_price) - float(purchase.price)) < 0.005
-    )
+    #
+    # Only while the hat's price is its OWN. A hat already linked to another
+    # receipt got its price from that receipt, and at melin's common price
+    # points ($69, $79, $89) "same price" then says nothing: the pick list
+    # was marking a "Yellow Jacket" hat as fitting a "Chain Camo" receipt on
+    # $89 alone. The matcher only ever scores free hats; the pick list passes
+    # `hat_price_is_evidence=False` for the taken ones.
+    price_corroborates = hat_price_is_evidence and _prices_agree(purchase, hat)
     if price_corroborates:
         score += PRICE_EXACT
 
@@ -1703,7 +1706,7 @@ def _prices_agree(purchase: Purchase, hat: Hat) -> bool:
     )
 
 
-def _agreements(purchase: Purchase, hat: Hat) -> list[str]:
+def _agreements(purchase: Purchase, hat: Hat, *, hat_price_is_evidence: bool = True) -> list[str]:
     """What a purchase and a hat visibly agree on — the pick list's "why"."""
     agrees = []
     if purchase.model_name and _model_tier(hat.model_name, purchase.model_name) is not None:
@@ -1715,12 +1718,12 @@ def _agreements(purchase: Purchase, hat: Hat) -> list[str]:
         agrees.append("colorway")
     if purchase.size and hat.size and purchase.size == hat.size:
         agrees.append("size")
-    if _prices_agree(purchase, hat):
+    if hat_price_is_evidence and _prices_agree(purchase, hat):
         agrees.append("price")
     return agrees
 
 
-def _resemblance(purchase: Purchase, hat: Hat) -> int:
+def _resemblance(purchase: Purchase, hat: Hat, *, hat_price_is_evidence: bool = True) -> int:
     """A rank for pairs the matcher's rules rule OUT, so the list still leads
     with the likely ones: words the receipt title shares with everything the
     hat record says, the receipt's colorway against the photo's colors, and
@@ -1734,20 +1737,25 @@ def _resemblance(purchase: Purchase, hat: Hat) -> int:
         score += 1
     if purchase.size and hat.size:
         score += 2 if purchase.size == hat.size else -2
-    if _prices_agree(purchase, hat):
+    if hat_price_is_evidence and _prices_agree(purchase, hat):
         score += 3
     return score
 
 
-def _fit(purchase: Purchase, hat: Hat) -> dict:
+def _fit(purchase: Purchase, hat: Hat, *, hat_price_is_evidence: bool = True) -> dict:
     """`fits`: the matcher's own rules accept the pair. `score`: its score when
     they do, the looser `_resemblance` when they do not — ranked in that
-    order, so every pair the rules accept comes first."""
-    strict = _match_score(purchase, hat)
+    order, so every pair the rules accept comes first.
+
+    `hat_price_is_evidence` False when the hat holds ANOTHER purchase — its
+    price is that receipt's, not a fact about this one (see `_match_score`).
+    """
+    evidence = {"hat_price_is_evidence": hat_price_is_evidence}
+    strict = _match_score(purchase, hat, **evidence)
     return {
         "fits": strict is not None,
-        "score": strict if strict is not None else _resemblance(purchase, hat),
-        "agrees": _agreements(purchase, hat),
+        "score": strict if strict is not None else _resemblance(purchase, hat, **evidence),
+        "agrees": _agreements(purchase, hat, **evidence),
     }
 
 
@@ -1782,7 +1790,8 @@ async def hats_for_purchase(db: AsyncSession, purchase_id: int) -> dict:
             "thumb_path": hat.thumb_path,
             "purchase_price": hat.purchase_price,
             "linked_purchase_id": holder.id if holder is not None else None,
-            **_fit(purchase, hat),
+            **_fit(purchase, hat,
+                   hat_price_is_evidence=holder is None or holder.id == purchase.id),
         })
     options.sort(key=_by_fit)
     return {"purchase": purchase, "options": options}
@@ -1805,12 +1814,15 @@ async def purchases_for_hat(db: AsyncSession, hat_id: int) -> dict:
         h.id: h.display_id
         for h in (await db.execute(select(Hat).where(Hat.id.in_(elsewhere)))).scalars()
     } if elsewhere else {}
+    # The hat's price is evidence only while no purchase is linked to it; a
+    # linked one put its own price there (see `_match_score`).
+    own_price = not any(p.hat_id == hat.id for p in purchases)
     options = [
         {
             **{column: getattr(p, column) for column in _PURCHASE_COLUMNS},
             "linked_hat_id": p.hat_id,
             "linked_hat_display_id": display_ids.get(p.hat_id),
-            **_fit(p, hat),
+            **_fit(p, hat, hat_price_is_evidence=own_price),
         }
         for p in purchases
         if p.hat_id != hat.id and not naming.is_accessory(p.item_title)

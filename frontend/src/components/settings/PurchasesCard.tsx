@@ -499,6 +499,7 @@ export function PurchasesCard() {
         <>
           <Segmented<View>
             className="mt-3"
+            variant="chips"
             label="Which purchases to list"
             value={view}
             onChange={next => { setView(next); setShowAll(false); }}
@@ -535,7 +536,7 @@ export function PurchasesCard() {
               {view === 'needs' ? 'Every hat purchase is linked.' : 'Nothing here.'}
             </p>
           ) : (
-            <ul className="hr-sd-rows mt-2">
+            <ul className="hr-sd-rows is-stacked mt-2">
               {shown.map(r => (
                 <li key={r.id}>
                   <span className="hr-sd-row-title">

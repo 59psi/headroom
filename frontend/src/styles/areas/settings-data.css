@@ -227,6 +227,28 @@
   flex: none;
 }
 
+/* Purchase rows: the receipt title IS the evidence — "Trenches Mossy Oak
+   Hydro - Bottomland" cut to "… - B…" hides the colorway being judged — so
+   these rows wrap instead of truncating, and the actions drop below the text
+   when a phone has no room beside it. */
+.hr-sd-rows.is-stacked > li {
+  flex-wrap: wrap;
+}
+
+.hr-sd-rows.is-stacked .hr-sd-row-title {
+  flex: 1 1 15rem;
+}
+
+.hr-sd-rows.is-stacked .hr-sd-row-text {
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.hr-sd-rows.is-stacked .hr-sd-row-aside {
+  margin-left: auto;
+}
+
 /* A purchase row's second line: the receipt (date · price · size), or which
    hat it is on. */
 .hr-sd-row-sub {
