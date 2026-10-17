@@ -1874,7 +1874,8 @@ async def link_purchase(
     writes = await _apply_link(
         db, purchase, hat, verb="linked", receipt_colorway=receipt_colorway
     )
-    pass
+    # The owner made this link, so it is vouched for — never "suspect".
+    purchase.link_confirmed_at = datetime.now(timezone.utc)
     result["wrote"] = sorted(f for f in writes if f in _MATCH_FIELDS)
     await db.commit()
     return result

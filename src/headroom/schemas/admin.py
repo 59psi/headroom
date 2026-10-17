@@ -400,6 +400,21 @@ class ReanalyzeAllResult(BaseModel):
     job: AnalysisJobRead | None = None
 
 
+class LinkedHat(BaseModel):
+    """The hat a purchase is linked to, as the review list shows it: enough to
+    put its photo and its own record beside the receipt."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    display_id: str | None = None
+    model_name: str | None = None
+    artist_series: str | None = None
+    colorway: str | None = None
+    photo_path: str | None = None
+    thumb_path: str | None = None
+
+
 class PurchaseRead(BaseModel):
     """A purchase-history line item.
 
@@ -422,6 +437,8 @@ class PurchaseRead(BaseModel):
     source: str | None = None
     #: When the owner vouched for the link (made it, or kept it in review).
     link_confirmed_at: datetime | None = None
+    #: The linked hat (`Purchase.hat`, loaded with the row).
+    hat: LinkedHat | None = None
     #: A matcher-made link its corrected rules reject (`catalog_service.
     #: is_suspect`) — listed for review. Set by the list route.
     suspect: bool = False
