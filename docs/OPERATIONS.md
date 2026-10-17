@@ -271,7 +271,14 @@ over your home connection for no reason:
 | `/opt/model-cache` | The rembg weights are **~179 MB**. That layer busts on any dependency change, so it was re-downloading a byte-identical file. |
 | `/var/cache/apt`, `/var/lib/apt` | Same idea for the native libs. |
 
-They are local disk and cost nothing to consult. Note the deliberate asymmetry
+They are local disk and cost nothing to consult, but only while they survive.
+Docker counts them as build cache, so anything that prunes the build cache by
+size can delete them. `scripts/upgrade.sh --prune-build-cache` keeps every
+record the build just used for exactly that reason. A size cap below one
+build's working set (about 12 GB) turns every upgrade into a cold build that
+downloads everything again.
+
+Note the deliberate asymmetry
 with CI, which has **no** registry-backed layer cache: exporting layers to
 GitHub's cache backend was measured at ~2.7x slower than simply building
 (98s → 204–284s), because this image carries a ~179 MB model plus a full venv
@@ -285,8 +292,9 @@ read-only, so rembg cannot download the weights on first use. Background
 removal then fails on every photo until a rebuild succeeds, while the rest of
 the pipeline degrades around it. Watch for
 `WARNING: could not pre-cache the rembg model` in the build output and rebuild
-when you see it. CI loads the baked model with the network switched off, so a
-release cannot ship without it.
+when you see it. CI cuts out a real image with the network switched off, on
+the same read-only filesystem the container runs with, so a release cannot ship
+without the model, or with a cutout that only works on a writable one.
 
 **If you would rather not build on the Pi at all**, the alternative is to
 publish the image from CI and `docker compose pull`. That turns a first build
@@ -725,11 +733,12 @@ to remember between releases. It:
 7. restarts a Caddy container whose served Caddyfile no longer matches the
    file on disk (a pull replaces the file's inode, and a bind-mounted file
    keeps the old one until restart);
-8. with `--prune-build-cache`, caps Docker's build cache at 6 GB
-   (`HEADROOM_BUILD_CACHE_CAP`), keeping the newest layers the next build
-   reuses — worth it on a Pi's SD card, where it grows by a few GB per
-   release. (An age limit does not work there: a box that upgrades weekly has
-   no cache older than a week.)
+8. with `--prune-build-cache`, drops the Docker build cache that this build
+   did not use and keeps everything it did — layers and the Python, npm,
+   apt and model download caches — so the next build stays fast while the
+   cache stops growing by a few GB per release on a Pi's SD card. (A size cap
+   does not work: one build uses about 12 GB of cache, so any smaller cap
+   deletes what the next build needs and it re-downloads everything.)
 
 `--no-pull` rebuilds the current checkout without pulling.
 

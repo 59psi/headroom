@@ -226,30 +226,39 @@ esac
     assert not restarted.exists()
 
 
-@pytest.mark.parametrize(
-    ("help_text", "expected"),
-    [
-        ("--max-used-space bytes   Maximum amount", "builder prune -f --max-used-space 6GB"),
-        ("--keep-storage bytes   Amount of disk", "builder prune -f --keep-storage 6GB"),
-        ("--filter filter   Provide filter values", "builder prune -f --filter until=168h"),
-    ],
-)
-async def test_the_build_cache_is_capped_by_size_where_docker_can(sandbox, tmp_path, help_text, expected):
-    """An age filter freed nothing on the Pi: a box that upgrades weekly has
-    no cache older than a week. A size cap keeps the newest layers only."""
+async def test_the_prune_keeps_everything_this_build_used(sandbox, tmp_path):
+    """A 6 GB cap deleted half of a ~12 GB build's cache on every upgrade, so
+    the next build re-downloaded every wheel and the rembg model; a week-long
+    window kept every build's set. `until` keeps records USED within the
+    window, so one reaching back to this build's start keeps exactly its
+    working set — whatever its size — and nothing older."""
+    import time
+
     calls = tmp_path / "calls"
-    _stub(sandbox["bin"], "docker", f"""
-if [ "$*" = "builder prune --help" ]; then echo "{help_text}"; exit 0; fi
-echo "$*" >> "{calls}"
-""")
-    sandbox["run"]("prune_build_cache")
-    assert calls.read_text().strip() == expected
+    _stub(sandbox["bin"], "docker", f'echo "$*" >> "{calls}"\n')
+    started = int(time.time()) - 600  # a ten-minute build
+    sandbox["run"](f"prune_build_cache {started}")
+
+    words = calls.read_text().split()
+    assert words[:3] == ["builder", "prune", "-af"]
+    assert "--max-used-space" not in words and "--keep-storage" not in words, (
+        "a size cap evicts what the next build reuses"
+    )
+    window = int(words[words.index("--filter") + 1].removeprefix("until=").removesuffix("s"))
+    assert 600 <= window <= 960, f"window {window}s must reach back to the build's start"
+
+
+async def test_the_prune_refuses_to_guess_when_the_build_started(sandbox):
+    """Without the start time there is no safe window: `main` must pass it."""
+    result = sandbox["run"]("prune_build_cache", check=False)
+    assert result.returncode != 0
+    assert "build start time" in result.stderr
 
 
 async def test_help_prints_the_whole_header(sandbox):
     result = subprocess.run(["bash", str(SCRIPT), "--help"], capture_output=True, text=True, check=True)
     assert result.stdout.startswith("Upgrade a Docker install of Headroom in place")
-    assert "HEADROOM_BUILD_CACHE_CAP" in result.stdout
+    assert "--prune-build-cache: drops the Docker build cache" in result.stdout
     assert "tests/test_upgrade_script.py" in result.stdout  # the header's last line
     assert "set -euo pipefail" not in result.stdout
 

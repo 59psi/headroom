@@ -6,6 +6,29 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.83.3] — 2026-10-17
+
+Faster Pi upgrades again, and clearer certificate setup. No app changes; this
+release touches only the upgrade script and the docs.
+
+### Fixed
+
+- **`scripts/upgrade.sh --prune-build-cache` was making the next upgrade
+  slow.** Its 6 GB cap (2.82.2) was about half of what one build uses, so each
+  upgrade deleted the cached Python packages, npm packages and the 179 MB
+  cutout model, and the next build downloaded them all again. It now drops
+  only the cache the build did not use and keeps everything it did. The
+  `HEADROOM_BUILD_CACHE_CAP` setting is gone.
+
+### Docs
+
+- The README gives the certificate download by IP address
+  (`https://<your Pi's IP>/api/public/ca-certificate`) alongside the
+  `headroom.local` one. It also explains the symptom of a device that only
+  ever accepted a one-time warning: `headroom.local` spins or shows a
+  certificate error after Caddy reissues its certificate, while the IP keeps
+  working.
+
 ## [2.83.2] — 2026-10-17
 
 Hat cutouts work again in the Docker image.
