@@ -466,6 +466,13 @@ def _line_fields(item: PurchaseLine) -> tuple[str, str | None, str | None, int]:
     """(title, model, colorway, quantity) for one incoming line."""
     title = item.item_title.strip()
     model, colorway = parse_listing_title(title)
+    # Only a SEPARATED colorway ("Model - Colorway") is read off an order
+    # line. The splitter also takes a trailing "(…)" — the analyzer's old
+    # model-name shape — and on a reseller's title that is a sales tag: the
+    # eBay line "…HAWAII MAUI STRONG (RARE)" gave the owner's Maui Strong
+    # hat the colorway "RARE".
+    if colorway and not any(sep in title for sep in naming.SEPARATORS):
+        colorway = None
     # An explicit colorway beats one recovered from the title. Order lines
     # carry it separately ("Indigo Depth / Classic") and plenty of titles have
     # no " - " to split on at all -- "Odysea Hydro Indigo Depth" parses to a

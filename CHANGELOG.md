@@ -6,6 +6,21 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.84.1] — 2026-10-17
+
+### Fixed
+
+- **Faster Pi upgrades.** Two image steps set file permissions recursively,
+  which on Docker's overlay filesystem copied the whole Python environment
+  and the 179 MB cutout model into new image layers on every build. On the
+  Pi that cost about 4 minutes in one step plus the time to export the
+  copies. Permissions are now changed only on the files that need it, with
+  the same read-only guarantees, still checked by CI.
+- **A purchase title's sales tag is no longer read as a colorway.** An eBay
+  line ending "(RARE)" gave a hat the colorway "RARE". A colorway is now read
+  from an order line's title only when it follows a separator ("Model -
+  Colorway").
+
 ## [2.84.0] — 2026-10-17
 
 Purchases you can link to the right hat yourself, a matcher that stops
