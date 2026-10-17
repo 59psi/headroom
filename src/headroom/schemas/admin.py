@@ -8,11 +8,11 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 from headroom.schemas.common import Colorway, Money, api_key_text, clean_text
 from headroom.schemas.hat import AnalysisStage, AnalysisStatus
-from headroom.services import backup_service
+from headroom.services import backup_service, naming
 
 
 class RecentError(BaseModel):
@@ -293,6 +293,15 @@ class PurchaseLine(BaseModel):
     def _blank_title_is_empty(cls, v: str | None) -> str:
         return v or ""
 
+    @field_validator("order_ref", mode="after")
+    @classmethod
+    def _order_number_without_its_hash(cls, v: str | None) -> str | None:
+        """`#1294073` and `1294073` are one order. The re-import dedupe keys
+        on the order number, and the two spellings made the owner's whole
+        history look new: a second export printing the `#` would have added
+        all 341 units again on top of the 294 already there."""
+        return v.lstrip("#").strip() or None if v else v
+
 
 class PurchaseImport(BaseModel):
     items: list[PurchaseLine] = Field(max_length=MAX_IMPORT_LINES)
@@ -391,6 +400,21 @@ class ReanalyzeAllResult(BaseModel):
     job: AnalysisJobRead | None = None
 
 
+class LinkedHat(BaseModel):
+    """The hat a purchase is linked to, as the review list shows it: enough to
+    put its photo and its own record beside the receipt."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    display_id: str | None = None
+    model_name: str | None = None
+    artist_series: str | None = None
+    colorway: str | None = None
+    photo_path: str | None = None
+    thumb_path: str | None = None
+
+
 class PurchaseRead(BaseModel):
     """A purchase-history line item.
 
@@ -411,6 +435,87 @@ class PurchaseRead(BaseModel):
     quantity: int | None = None
     hat_id: int | None = None
     source: str | None = None
+    #: When the owner vouched for the link (made it, or kept it in review).
+    link_confirmed_at: datetime | None = None
+    #: The linked hat (`Purchase.hat`, loaded with the row).
+    hat: LinkedHat | None = None
+    #: A matcher-made link its corrected rules reject (`catalog_service.
+    #: is_suspect`) — listed for review. Set by the list route.
+    suspect: bool = False
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def accessory(self) -> bool:
+        """A travel case, gift card or other non-hat line (`naming.is_accessory`)
+        — never matched to a hat, so the card lists them apart rather than as
+        "unmatched"."""
+        return naming.is_accessory(self.item_title)
+
+
+#: What a pick-list row says about one candidate pairing. `fits`: the matcher's
+#: own rules accept it. `score`: its score when they do, a looser resemblance
+#: when they do not (ranked after every fitting row). `agrees`: the fields that
+#: visibly match — model, series, colorway, size, price.
+MatchAgreement = Literal["model", "series", "colorway", "size", "price"]
+
+
+class HatOption(BaseModel):
+    """One hat a purchase could be linked to."""
+
+    hat_id: int
+    display_id: str | None = None
+    model_name: str | None = None
+    artist_series: str | None = None
+    colorway: str | None = None
+    size: str | None = None
+    construction: str | None = None
+    photo_path: str | None = None
+    thumb_path: str | None = None
+    purchase_price: float | None = None
+    #: The purchase this hat is already linked to, if any (possibly this one).
+    linked_purchase_id: int | None = None
+    fits: bool
+    score: int
+    agrees: list[MatchAgreement]
+
+
+class HatsForPurchase(BaseModel):
+    purchase: PurchaseRead
+    options: list[HatOption]
+
+
+class PurchaseOption(PurchaseRead):
+    """One purchase a hat could be linked to."""
+
+    #: Set when this purchase is linked to ANOTHER hat; linking moves it.
+    linked_hat_id: int | None = None
+    linked_hat_display_id: str | None = None
+    fits: bool
+    score: int
+    agrees: list[MatchAgreement]
+
+
+class PurchasesForHat(BaseModel):
+    linked: list[PurchaseRead]
+    options: list[PurchaseOption]
+
+
+class PurchaseLink(BaseModel):
+    hat_id: int
+    #: Unlink the purchase already on that hat first. Without it, a hat that
+    #: holds one is a 409 — never a silent takeover.
+    replace: bool = False
+    #: Put the receipt's colorway on the hat even though it already has one
+    #: (usually a guess read off the photo). Undone by an unlink.
+    receipt_colorway: bool = False
+
+
+class PurchaseLinkResult(BaseModel):
+    hat_id: int
+    #: The hat fields this link filled in (only empty ones are ever written).
+    wrote: list[str]
+    moved_from_hat_id: int | None = None
+    replaced_purchase_id: int | None = None
 
 
 class SweepProgressRead(BaseModel):
@@ -780,7 +885,10 @@ class MatchResult(BaseModel):
     dry_run: bool = False
     matched: int
     unmatched: int
+    #: Linked although tied — only ever between hats identical on record.
     ambiguous: int
+    #: Tied between hats that DIFFER, so left unlinked for the owner to pick.
+    needs_choice: int = 0
     proposals: list[MatchProposal] = []
 
 
@@ -795,6 +903,8 @@ class ImportResult(BaseModel):
     matched: int
     unmatched: int
     ambiguous: int
+    #: See `MatchResult.needs_choice`.
+    needs_choice: int = 0
 
 
 class ImportPreview(BaseModel):
@@ -810,6 +920,8 @@ class ImportPreview(BaseModel):
     would_match_backlog: int
     would_match_total: int
     ambiguous: int
+    #: See `MatchResult.needs_choice`.
+    needs_choice: int = 0
     proposals: list[MatchProposal] = []
 
 

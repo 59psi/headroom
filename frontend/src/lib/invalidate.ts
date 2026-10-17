@@ -130,4 +130,8 @@ export function invalidatePurchaseDerived(qc: QueryClient) {
   qc.invalidateQueries({ queryKey: qk.admin.purchases() });
   qc.invalidateQueries({ queryKey: qk.admin.unclaimedPurchases() });
   qc.invalidateQueries({ queryKey: qk.admin.sharedPrices() });
+  // The pick lists: every link moves a hat between "free" and "taken" and a
+  // purchase between linked and not, in both directions.
+  qc.invalidateQueries({ queryKey: qk.admin.purchaseHats() });
+  qc.invalidateQueries({ queryKey: qk.admin.hatPurchases() });
 }

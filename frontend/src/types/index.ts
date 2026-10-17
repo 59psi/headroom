@@ -661,6 +661,17 @@ export interface ConstructionClearResult {
 
 // ---- Purchase history ---------------------------------------------- //
 
+/** The hat a purchase is linked to, as the review list shows it. */
+export interface LinkedHat {
+  id: number;
+  display_id: string | null;
+  model_name: string | null;
+  artist_series: string | null;
+  colorway: string | null;
+  photo_path: string | null;
+  thumb_path: string | null;
+}
+
 export interface PurchaseRead {
   id: number;
   order_ref: string | null;
@@ -673,6 +684,73 @@ export interface PurchaseRead {
   quantity: number | null;
   hat_id: number | null;
   source: string | null;
+  /** When you vouched for the link (made it, or kept it in review). */
+  link_confirmed_at: string | null;
+  /** A matcher-made link its corrected rules reject — listed to check. */
+  suspect: boolean;
+  /** The linked hat, when there is one. */
+  hat: LinkedHat | null;
+  /** A travel case, gift card or other non-hat line. */
+  accessory: boolean;
+}
+
+/** What visibly agrees between a purchase and a hat — the pick list's "why". */
+export type MatchAgreement = 'model' | 'series' | 'colorway' | 'size' | 'price';
+
+/** One hat a purchase could be linked to. */
+export interface HatOption {
+  hat_id: number;
+  display_id: string | null;
+  model_name: string | null;
+  artist_series: string | null;
+  colorway: string | null;
+  size: string | null;
+  construction: string | null;
+  photo_path: string | null;
+  thumb_path: string | null;
+  purchase_price: number | null;
+  /** The purchase this hat is already linked to (possibly this one). */
+  linked_purchase_id: number | null;
+  /** The matcher's own rules accept the pair; ranked ahead of the rest. */
+  fits: boolean;
+  score: number;
+  agrees: MatchAgreement[];
+}
+
+export interface HatsForPurchase {
+  purchase: PurchaseRead;
+  options: HatOption[];
+}
+
+/** One purchase a hat could be linked to. */
+export interface PurchaseOption extends PurchaseRead {
+  /** Set when linked to ANOTHER hat; linking here moves it. */
+  linked_hat_id: number | null;
+  linked_hat_display_id: string | null;
+  fits: boolean;
+  score: number;
+  agrees: MatchAgreement[];
+}
+
+export interface PurchasesForHat {
+  linked: PurchaseRead[];
+  options: PurchaseOption[];
+}
+
+export interface PurchaseLink {
+  hat_id: number;
+  /** Unlink the purchase already on that hat first (otherwise a 409). */
+  replace?: boolean;
+  /** Put the receipt's colorway on the hat over the one it has. */
+  receipt_colorway?: boolean;
+}
+
+export interface PurchaseLinkResult {
+  hat_id: number;
+  /** The hat fields this link filled in. */
+  wrote: string[];
+  moved_from_hat_id: number | null;
+  replaced_purchase_id: number | null;
 }
 
 export interface UnmatchOneResult {
@@ -726,6 +804,8 @@ export interface ImportPreview {
    *  backlog. The number the preview is accountable for. */
   would_match_total: number;
   ambiguous: number;
+  /** Ties between hats that differ on record — left unlinked for you to pick. */
+  needs_choice: number;
   /** The links the import would make, row by row. */
   proposals: MatchProposal[];
 }
@@ -737,8 +817,10 @@ export interface ImportResult {
   skipped: number;
   matched: number;
   unmatched: number;
-  /** Matches that were a tie between equally good hats. */
+  /** Linked although tied — only ever between hats identical on record. */
   ambiguous: number;
+  /** Ties between hats that differ on record — left unlinked for you to pick. */
+  needs_choice: number;
 }
 
 /** What matching linked, or would link under `dry_run`. */
@@ -747,6 +829,7 @@ export interface MatchResult {
   matched: number;
   unmatched: number;
   ambiguous: number;
+  needs_choice: number;
   proposals: MatchProposal[];
 }
 

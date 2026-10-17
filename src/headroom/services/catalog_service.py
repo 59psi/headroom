@@ -15,13 +15,14 @@ cost basis (`purchase_price`, `purchased_at`) and fill `colorway`.
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import logging
 from collections.abc import Collection, Sequence
 from datetime import datetime, timezone
 from typing import NamedTuple
 
-from sqlalchemy import ColumnElement, and_, func, or_, select
+from sqlalchemy import ColumnElement, and_, func, or_, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -355,6 +356,33 @@ def _model_prefilter(tokens: Collection[str]) -> ColumnElement[bool]:
     )
 
 
+async def _bought_colorways(
+    db: AsyncSession, model: str | None, q: str | None = None
+) -> dict[str, int]:
+    """Colorways on the owner's own receipts for this model, with how many
+    units of each — colorway knowledge the harvested catalog (marketplace
+    listings) can lack, and the only kind that is certainly a real product.
+
+    Same model rule as the catalog side — every requested token contained —
+    through `_model_tokens`, because receipts spell the Odysea "Odyssey".
+    Accessories are left out: a travel case's "Black" says nothing about a hat.
+    """
+    wanted = _model_tokens(model)
+    if not wanted:
+        return {}
+    stmt = select(Purchase.item_title, Purchase.model_name, Purchase.colorway).where(
+        Purchase.colorway.is_not(None)
+    )
+    if q:
+        stmt = stmt.where(Purchase.colorway.ilike(f"%{q}%"))
+    counts: dict[str, int] = {}
+    for title, p_model, colorway in (await db.execute(stmt)).all():
+        if naming.is_accessory(title) or not wanted <= _model_tokens(p_model):
+            continue
+        counts[colorway] = counts.get(colorway, 0) + 1
+    return counts
+
+
 async def catalog_options(
     db: AsyncSession, q: str | None = None, model: str | None = None, limit: int = 25
 ) -> list[dict]:
@@ -399,8 +427,15 @@ async def catalog_options(
             if wanted and not wanted <= naming.token_set(entry_model):
                 continue
             best[colorway] = max(best.get(colorway, 0), int(count or 0))
-        ranked = sorted(best.items(), key=lambda kv: (-kv[1], kv[0]))
-        return [{"value": colorway} for colorway, _count in ranked[:limit]]
+        bought = await _bought_colorways(db, model, q)
+        # What the owner actually bought of this model leads — on their own
+        # receipts, so certainly real and the likeliest answer for a hat on
+        # their shelf — then the harvested catalog by listing count.
+        ranked = sorted(
+            set(best) | set(bought),
+            key=lambda c: (-bought.get(c, 0), -best.get(c, 0), c),
+        )
+        return [{"value": colorway} for colorway in ranked[:limit]]
 
     stmt = (
         select(ColorwayEntry.model_name, func.count(ColorwayEntry.id))
@@ -470,13 +505,19 @@ async def _units_to_add(
     # hats than the preview promised. Preview and import share this function
     # precisely so they cannot disagree, and an incidental flush was quietly
     # making them disagree anyway.
+    #
+    # A MISSING size is unknown, not different. One export reads a beanie's
+    # "One Size" as no size and another mangled it into "small"; under strict
+    # equality the second import of that order added the beanie again. Two
+    # STATED sizes that differ still keep two lines apart — that is what the
+    # size is in the key for.
     with db.no_autoflush:
         existing = int((await db.execute(
             select(func.count(Purchase.id)).where(
                 Purchase.item_title == title,
                 Purchase.order_ref == item.order_ref,
                 Purchase.price == price,
-                Purchase.size.is_(None) if size is None else Purchase.size == size,
+                true() if size is None else or_(Purchase.size == size, Purchase.size.is_(None)),
             )
         )).scalar_one())
     wanted = max(quantity - existing - staged.get(key, 0), 0)
@@ -556,6 +597,7 @@ async def import_purchases(db: AsyncSession, items: list[PurchaseLine | dict]) -
 _SIZE_ALIASES: dict[str, str] = {
     "classic": "classic",
     "c": "classic",
+    "cl": "classic",         # how resellers abbreviate it (Hawaiian Island Creations)
     "standard": "classic",   # the pre-2.0 name for the same size
     "small": "small",
     "s": "small",
@@ -677,12 +719,17 @@ async def preview_import(db: AsyncSession, items: list[PurchaseLine | dict]) -> 
     proposals: list[dict] = []
     backlog_matches = 0
     to_match = [*backlog, *would_import]
-    assignment = await asyncio.to_thread(
-        assign_purchases, to_match, [h for h in hats if h.id not in claimed]
-    )
+    free = [h for h in hats if h.id not in claimed]
+    descriptions = _descriptions(free)
+    assignment = await asyncio.to_thread(assign_purchases, to_match, free)
+    assigned = {found.hat.id for found in assignment.values()}
+    needs_choice = 0
     for purchase in to_match:
         found = assignment.get(id(purchase))
         if found is None:
+            continue
+        if _decided(found, descriptions, assigned) is None:
+            needs_choice += 1
             continue
         hat, best_score, ambiguous, tied_hat_ids = found
         claimed.add(hat.id)
@@ -713,6 +760,7 @@ async def preview_import(db: AsyncSession, items: list[PurchaseLine | dict]) -> 
         # preview is accountable for.
         "would_match_total": len(proposals),
         "ambiguous": sum(1 for p in proposals if p["ambiguous"]),
+        "needs_choice": needs_choice,
         "proposals": proposals,
     }
 
@@ -749,10 +797,7 @@ def _looks_like_headwear(purchase: Purchase, hats: list[Hat]) -> bool:
     of leaving them to be noticed as odd rows months later.
     """
     title = (purchase.item_title or "").lower()
-    if any(word in title for word in (
-        "travel case", "gift card", "shipping protection", "sticker",
-        "lanyard", "keychain", "tote",
-    )):
+    if naming.is_accessory(title):
         return False
     # A model name already on the shelf is strong evidence it is headwear.
     known_models = {(h.model_name or "").lower() for h in hats if h.model_name}
@@ -828,6 +873,26 @@ def _color_words(hat: Hat) -> frozenset[str]:
     return frozenset(words)
 
 
+#: Receipt spellings of a line the hat record spells another way. melin's
+#: order emails called the Odysea "Odyssey" (2024–2025 on the owner's
+#: history), while every hat — named from melin's catalog or by the owner —
+#: says "Odysea". Six purchase lines matched nothing for that alone.
+_MODEL_ALIASES: dict[str, str] = {"odyssey": "odysea"}
+#: Words a receipt puts in a model name that identify nothing: "The Shore
+#: Hydro" is the Shore line, and no hat record carries the article.
+_MODEL_FILLER: frozenset[str] = frozenset({"the"})
+
+
+@functools.lru_cache(maxsize=4096)
+def _model_tokens(name: str | None) -> frozenset[str]:
+    """`naming.token_set`, with receipt-only spellings folded — for MODEL
+    comparison only. Not in `naming` itself: "the" is a real word in series
+    names ("Melin x Hawaii (Explore The Unexplored)" is one on this shelf),
+    and only the model gate knows it can be dropped. Cached: the gate is
+    quadratic."""
+    return frozenset(_MODEL_ALIASES.get(t, t) for t in naming.token_set(name)) - _MODEL_FILLER
+
+
 def _model_tier(hat_model: str | None, purchase_model: str) -> int | None:
     """How well two model names agree, or None if they don't.
 
@@ -851,8 +916,8 @@ def _model_tier(hat_model: str | None, purchase_model: str) -> int | None:
     did not, which does not happen — and allowing it would let one generic
     receipt line claim any specific hat in the family.
     """
-    hat_tokens = naming.token_set(hat_model)
-    purchase_tokens = naming.token_set(purchase_model)
+    hat_tokens = _model_tokens(hat_model)
+    purchase_tokens = _model_tokens(purchase_model)
     if not hat_tokens or not purchase_tokens:
         return None
     if hat_tokens == purchase_tokens:
@@ -896,7 +961,7 @@ def _model_tier(hat_model: str | None, purchase_model: str) -> int | None:
     return None
 
 
-def _match_score(purchase: Purchase, hat: Hat) -> int | None:
+def _match_score(purchase: Purchase, hat: Hat, *, hat_price_is_evidence: bool = True) -> int | None:
     """How well one hat fits one purchase. Higher is better; None = no match.
 
     Model name is mandatory. Colorway and size each *rule a hat out* when both
@@ -944,6 +1009,21 @@ def _match_score(purchase: Purchase, hat: Hat) -> int | None:
     if hat_construction and title_construction and not (hat_construction & title_construction):
         return None
 
+    # A stated series that the title does not mention at ALL rules the hat out.
+    #
+    # The series is what the hat IS — "Have More Fun", "Aston Martin Aramco
+    # F1", "AURA" — and melin prints the line's name in the title. On the
+    # owner's shelf 84 of 108 links to a hat with a series shared no word with
+    # their receipt, and every one checked against its photo was wrong: the
+    # orange "Have More Fun" hat held a "23XI Hydro - White Speed Camo"
+    # receipt, and had been given that colorway. "Absence is not
+    # disagreement" holds for a hat with NO series; a hat that names one and
+    # a title that names another line are two different products. Partial
+    # overlap ("CAMO" vs "Black Camo") still passes and earns nothing below.
+    hat_series = naming.token_set(hat.artist_series)
+    if hat_series and not (hat_series & title_tokens):
+        return None
+
     for stated in (hat.artist_series, hat.construction):
         tokens = naming.token_set(stated)
         if tokens and tokens <= title_tokens:
@@ -966,11 +1046,14 @@ def _match_score(purchase: Purchase, hat: Hat) -> int | None:
     # looks like ("Navy Denium") rather than what melin called it ("Hickory
     # Denim"). A price entered by hand from an order confirmation is a fact,
     # and matching one to the cent is corroboration a spelling cannot outweigh.
-    price_corroborates = (
-        hat.purchase_price is not None
-        and purchase.price is not None
-        and abs(float(hat.purchase_price) - float(purchase.price)) < 0.005
-    )
+    #
+    # Only while the hat's price is its OWN. A hat already linked to another
+    # receipt got its price from that receipt, and at melin's common price
+    # points ($69, $79, $89) "same price" then says nothing: the pick list
+    # was marking a "Yellow Jacket" hat as fitting a "Chain Camo" receipt on
+    # $89 alone. The matcher only ever scores free hats; the pick list passes
+    # `hat_price_is_evidence=False` for the taken ones.
+    price_corroborates = hat_price_is_evidence and _prices_agree(purchase, hat)
     if price_corroborates:
         score += PRICE_EXACT
 
@@ -1259,11 +1342,17 @@ async def match_purchases_to_hats(db: AsyncSession, *, dry_run: bool = False) ->
     # the session.
     assignment = await asyncio.to_thread(assign_purchases, purchases, free_hats)
 
+    descriptions = _descriptions(free_hats)
+    assigned = {found.hat.id for found in assignment.values()}
     matched = 0
+    needs_choice = 0
     proposals: list[dict] = []
     for purchase in purchases:
         found = assignment.get(id(purchase))
         if found is None:
+            continue
+        if _decided(found, descriptions, assigned) is None:
+            needs_choice += 1
             continue
         hat, best_score, ambiguous, tied_hat_ids = found
 
@@ -1279,34 +1368,8 @@ async def match_purchases_to_hats(db: AsyncSession, *, dry_run: bool = False) ->
             matched += 1
             continue
 
-        purchase.hat_id = hat.id
         linked_hat_ids.add(hat.id)
-        writes: dict[str, object] = {}
-        if purchase.colorway and not hat.colorway:
-            # Through the vocabulary, like every other colorway writer: a
-            # receipt's spelling must converge on the one already on record.
-            hat.colorway = await vocabulary.canonicalize(db, Hat.colorway, purchase.colorway)
-            writes["colorway"] = hat.colorway
-        if purchase.price is not None and hat.purchase_price is None:
-            hat.purchase_price = purchase.price
-            writes["purchase_price"] = purchase.price
-        if purchase.order_date is not None and hat.purchased_at is None:
-            hat.purchased_at = purchase.order_date
-            writes["purchased_at"] = purchase.order_date.isoformat()
-        # What THIS link actually wrote — the only thing an unmatch may undo.
-        # See `_revert_hat_fields`.
-        purchase.match_writes = json.dumps(writes)
-        # One audit row per link, in the same transaction as the writes. A
-        # match puts a cost onto a hat, and it was the one hat-mutating path
-        # here with no trail while its own undo was logged.
-        await activity_service.log_activity(
-            db, kind="purchase.matched", entity_type="purchase", entity_id=purchase.id,
-            summary=(
-                f"Purchase #{purchase.id} matched to hat #{hat.id}"
-                + (f" · set {', '.join(sorted(writes))}" if writes else "")
-            ),
-            details={"hat_id": hat.id, "set": writes},
-        )
+        await _apply_link(db, purchase, hat, verb="matched")
         matched += 1
 
     if dry_run:
@@ -1319,6 +1382,7 @@ async def match_purchases_to_hats(db: AsyncSession, *, dry_run: bool = False) ->
             "matched": matched,
             "unmatched": len(purchases) - matched,
             "ambiguous": sum(1 for p in proposals if p["ambiguous"]),
+            "needs_choice": needs_choice,
             "proposals": proposals,
         }
 
@@ -1327,14 +1391,172 @@ async def match_purchases_to_hats(db: AsyncSession, *, dry_run: bool = False) ->
         "matched": matched,
         "unmatched": len(purchases) - matched,
         "ambiguous": sum(1 for p in proposals if p["ambiguous"]),
+        "needs_choice": needs_choice,
     }
+
+
+def _descriptions(hats: Sequence[Hat]) -> dict[int, tuple]:
+    """How each hat reads on record — taken BEFORE a run links anything.
+
+    A snapshot because linking writes: the first unit of a two-hat order puts
+    the receipt's colorway on hat A, and compared live, A no longer read like
+    its twin B, so B's identical tie looked like a coin toss and was left
+    unlinked. Ties are judged on the shelf as it was, not as this run is
+    changing it.
+    """
+    return {
+        h.id: tuple(naming.name_key(v) for v in (
+            h.model_name, h.artist_series, h.colorway, h.size, h.construction
+        ))
+        for h in hats
+    }
+
+
+def _decided(
+    found: Assignment | None, descriptions: dict[int, tuple], assigned: set[int]
+) -> Assignment | None:
+    """An assignment the matcher may ACT on, or None to leave it to the owner.
+
+    A tie is a coin toss only while one of the tied alternatives is STILL
+    FREE after the whole assignment and reads differently on record — the
+    receipt could have gone there instead, and a wrong toss writes a
+    stranger's colorway and price onto a hat. The owner can pick from photos.
+
+    Not a toss: alternatives identical on record (two of the same Baja —
+    whichever gets it is described correctly), and alternatives another
+    purchase in this assignment needed (a sizeless receipt tied between a
+    Classic and a Small, when a Classic receipt takes the Classic, can only
+    be the Small). One function because the preview and the matcher must agree.
+    """
+    if found is None or not found.ambiguous:
+        return found
+    mine = descriptions.get(found.hat.id)
+    open_alternatives = [
+        i for i in found.tied_hat_ids if i != found.hat.id and i not in assigned
+    ]
+    return found if all(descriptions.get(i) == mine for i in open_alternatives) else None
+
+
+async def _apply_link(
+    db: AsyncSession, purchase: Purchase, hat: Hat, *, verb: str,
+    receipt_colorway: bool = False,
+) -> dict:
+    """Link one purchase to one hat: fill the hat's EMPTY fields from the
+    receipt, record exactly what was written, and log it. Caller commits.
+
+    The one writer for both ways a link is made — the matcher (`verb`
+    "matched") and the owner choosing the hat (`verb` "linked"). A second
+    copy of this block would be a second place for the owner-values-win rule
+    or the `match_writes` record to drift, and the undo trusts both.
+
+    `receipt_colorway` is the owner saying the receipt's colorway is the
+    right one for this hat, over the one already on it — an analyzer's guess
+    from the photo, usually ("Navy Denium" against a receipt reading
+    "Hickory Denim"). Only a person makes that call; the matcher never
+    passes it. The replaced value is recorded so an unlink puts it back.
+    """
+    purchase.hat_id = hat.id
+    writes: dict[str, object] = {}
+    if purchase.colorway and (not hat.colorway or receipt_colorway):
+        # Through the vocabulary, like every other colorway writer: a
+        # receipt's spelling must converge on the one already on record.
+        colorway = await vocabulary.canonicalize(db, Hat.colorway, purchase.colorway)
+        if colorway != hat.colorway:
+            if hat.colorway:
+                writes["colorway_was"] = hat.colorway
+            hat.colorway = colorway
+            writes["colorway"] = colorway
+    if purchase.price is not None and hat.purchase_price is None:
+        hat.purchase_price = purchase.price
+        writes["purchase_price"] = purchase.price
+    if purchase.order_date is not None and hat.purchased_at is None:
+        hat.purchased_at = purchase.order_date
+        writes["purchased_at"] = purchase.order_date.isoformat()
+    # What THIS link actually wrote — the only thing an unmatch may undo.
+    # See `_revert_hat_fields`.
+    purchase.match_writes = json.dumps(writes)
+    # One audit row per link, in the same transaction as the writes. A link
+    # puts a cost onto a hat, and it was the one hat-mutating path here with
+    # no trail while its own undo was logged.
+    await activity_service.log_activity(
+        db, kind=f"purchase.{verb}", entity_type="purchase", entity_id=purchase.id,
+        summary=(
+            f"Purchase #{purchase.id} {verb} to hat #{hat.id}"
+            + (f" · set {', '.join(sorted(writes))}" if writes else "")
+        ),
+        details={"hat_id": hat.id, "set": writes},
+    )
+    return writes
+
+
+def _break_link(purchase: Purchase, hat: Hat | None, *, clear_copied: bool = False) -> list[str]:
+    """Unlink one purchase, reverting what its link wrote. Caller commits.
+
+    `clear_copied`: see `_revert_hat_fields`.
+    """
+    cleared = (
+        _revert_hat_fields(purchase, hat, clear_copied=clear_copied) if hat is not None else []
+    )
+    purchase.hat_id = None
+    purchase.match_writes = None
+    purchase.link_confirmed_at = None
+    return cleared
+
+
+def is_suspect(purchase: Purchase) -> bool:
+    """A link the matcher made that its corrected rules reject, which the
+    owner has not vouched for. On the owner's shelf that was 99 of 197 links —
+    the hat's series contradicting the receipt (an orange "Have More Fun" hat
+    holding a "23XI - White Speed Camo" receipt) or a different model — and
+    98 of those hats were carrying that receipt's colorway and price."""
+    return (
+        purchase.hat_id is not None
+        and purchase.link_confirmed_at is None
+        and purchase.hat is not None
+        and _match_score(purchase, purchase.hat) is None
+    )
+
+
+async def confirm_link(db: AsyncSession, purchase_id: int) -> Purchase:
+    """The owner vouches for a link: it is never flagged as suspect again."""
+    purchase = await db.get(Purchase, purchase_id)
+    if purchase is None:
+        raise errors.NotFound("Purchase not found")
+    if purchase.hat_id is None:
+        raise errors.Invalid("That purchase is not linked to a hat")
+    purchase.link_confirmed_at = datetime.now(timezone.utc)
+    await activity_service.log_activity(
+        db, kind="purchase.confirmed", entity_type="purchase", entity_id=purchase.id,
+        summary=f"Purchase #{purchase.id} confirmed as hat #{purchase.hat_id}'s",
+        details={"hat_id": purchase.hat_id},
+    )
+    await db.commit()
+    return purchase
+
+
+async def unlink_suspect_purchases(db: AsyncSession) -> dict:
+    """Break every suspect link, clearing what each copied onto its hat."""
+    linked = (
+        await db.execute(select(Purchase).where(Purchase.hat_id.is_not(None)))
+    ).scalars().all()
+    suspects = [p for p in linked if is_suspect(p)]
+    cleared = 0
+    for purchase in suspects:
+        cleared += len(_break_link(purchase, purchase.hat, clear_copied=True))
+    await db.commit()
+    await activity_service.log_and_commit(
+        db, kind="purchase.unmatched_suspect", entity_type="purchase",
+        summary=f"Unlinked {len(suspects)} suspicious purchase link(s)",
+        details={"unmatched": len(suspects), "fields_cleared": cleared},
+    )
+    return {"unmatched": len(suspects), "fields_cleared": cleared}
 
 
 #: The hat fields a match can write, in the order `_revert_hat_fields` checks.
 _MATCH_FIELDS = ("purchase_price", "purchased_at", "colorway")
 
 
-def _revert_hat_fields(purchase: Purchase, hat: Hat) -> list[str]:
+def _revert_hat_fields(purchase: Purchase, hat: Hat, *, clear_copied: bool = False) -> list[str]:
     """Undo what THIS purchase's match wrote onto the hat. Returns the fields cleared.
 
     Driven by `purchase.match_writes` — the fields the match ACTUALLY set, and
@@ -1356,10 +1578,25 @@ def _revert_hat_fields(purchase: Purchase, hat: Hat) -> list[str]:
     wrote, and guessing from agreement is the bug above. The link still
     breaks; the values stay for the owner to judge, which is the direction
     this module always errs in.
+
+    `clear_copied` is the owner having judged: they looked at the hat and the
+    receipt and said the link was WRONG. For a link with no record, the
+    receipt's own values are then taken as what it wrote — on a wrong link,
+    a hat carrying that receipt's exact colorway, price and date is carrying
+    them because of it (98 of 99 such hats on the owner's shelf did). Only
+    the owner's unlink of a link they rejected passes it.
     """
-    if not purchase.match_writes:
+    if purchase.match_writes:
+        written = json.loads(purchase.match_writes)
+    elif clear_copied:
+        written = {
+            "colorway": purchase.colorway,
+            "purchase_price": purchase.price,
+            "purchased_at": purchase.order_date.isoformat() if purchase.order_date else None,
+        }
+        written = {k: v for k, v in written.items() if v is not None}
+    else:
         return []
-    written = json.loads(purchase.match_writes)
     cleared = []
     for field in _MATCH_FIELDS:
         if field not in written:
@@ -1368,12 +1605,17 @@ def _revert_hat_fields(purchase: Purchase, hat: Hat) -> list[str]:
         if field == "purchased_at":
             value = datetime.fromisoformat(value)
         if getattr(hat, field) == value:
-            setattr(hat, field, None)
+            # Back to what the link replaced (`<field>_was`, written only when
+            # the owner chose the receipt's value over one already there),
+            # else to empty — which is what every other link found.
+            setattr(hat, field, written.get(f"{field}_was"))
             cleared.append(field)
     return cleared
 
 
-async def unmatch_purchase(db: AsyncSession, purchase_id: int) -> dict:
+async def unmatch_purchase(
+    db: AsyncSession, purchase_id: int, *, clear_copied: bool = False
+) -> dict:
     """Break one purchase→hat link and put the purchase back in the pool.
 
     Exists because matching had no undo at all. It mutates hats, it runs over
@@ -1392,11 +1634,8 @@ async def unmatch_purchase(db: AsyncSession, purchase_id: int) -> dict:
     if purchase.hat_id is None:
         return {"unmatched": 0, "hat_id": None, "cleared": []}
 
-    hat = await db.get(Hat, purchase.hat_id)
-    cleared = _revert_hat_fields(purchase, hat) if hat else []
     hat_id = purchase.hat_id
-    purchase.hat_id = None
-    purchase.match_writes = None
+    cleared = _break_link(purchase, await db.get(Hat, hat_id), clear_copied=clear_copied)
     await db.commit()
 
     await activity_service.log_and_commit(
@@ -1427,11 +1666,7 @@ async def unmatch_all_purchases(db: AsyncSession) -> dict:
 
     cleared_total = 0
     for purchase in linked:
-        hat = hats.get(purchase.hat_id)
-        if hat is not None:
-            cleared_total += len(_revert_hat_fields(purchase, hat))
-        purchase.hat_id = None
-        purchase.match_writes = None
+        cleared_total += len(_break_link(purchase, hats.get(purchase.hat_id)))
     await db.commit()
 
     await activity_service.log_and_commit(
@@ -1450,6 +1685,212 @@ def _matched_on(purchase: Purchase, hat: Hat) -> list[str]:
     if purchase.size and hat.size:
         fields.append("size")
     return fields
+
+
+# ---- choosing the hat by hand ---------------------------------------------- #
+#
+# The matcher links only what its rules can tell apart, and on a real shelf
+# that leaves a residue no rule can: fifteen `Trenches Hydro` hats with no
+# colorway or price recorded, a receipt that calls the Odysea an "Odyssey", a
+# hat whose size was entered wrong. The owner can tell which hat a receipt
+# was for; these let them say so. The pick lists are RANKED, never filtered —
+# the right hat is sometimes one the matcher's rules exclude, which is
+# precisely why it needed a person.
+
+
+def _prices_agree(purchase: Purchase, hat: Hat) -> bool:
+    return (
+        hat.purchase_price is not None
+        and purchase.price is not None
+        and abs(float(hat.purchase_price) - float(purchase.price)) < 0.005
+    )
+
+
+def _agreements(purchase: Purchase, hat: Hat, *, hat_price_is_evidence: bool = True) -> list[str]:
+    """What a purchase and a hat visibly agree on — the pick list's "why"."""
+    agrees = []
+    if purchase.model_name and _model_tier(hat.model_name, purchase.model_name) is not None:
+        agrees.append("model")
+    series = naming.token_set(hat.artist_series)
+    if series and series <= naming.token_set(purchase.item_title):
+        agrees.append("series")
+    if purchase.colorway and hat.colorway and purchase.colorway.lower() == hat.colorway.lower():
+        agrees.append("colorway")
+    if purchase.size and hat.size and purchase.size == hat.size:
+        agrees.append("size")
+    if hat_price_is_evidence and _prices_agree(purchase, hat):
+        agrees.append("price")
+    return agrees
+
+
+def _resemblance(purchase: Purchase, hat: Hat, *, hat_price_is_evidence: bool = True) -> int:
+    """A rank for pairs the matcher's rules rule OUT, so the list still leads
+    with the likely ones: words the receipt title shares with everything the
+    hat record says, the receipt's colorway against the photo's colors, and
+    size and price. Ordering only — nothing is ever linked on this."""
+    hat_words = (
+        _model_tokens(hat.model_name) | naming.token_set(hat.artist_series)
+        | naming.token_set(hat.colorway) | naming.token_set(hat.construction)
+    )
+    score = len(hat_words & _model_tokens(purchase.item_title))
+    if naming.token_set(purchase.colorway) & _color_words(hat):
+        score += 1
+    if purchase.size and hat.size:
+        score += 2 if purchase.size == hat.size else -2
+    if hat_price_is_evidence and _prices_agree(purchase, hat):
+        score += 3
+    return score
+
+
+def _fit(purchase: Purchase, hat: Hat, *, hat_price_is_evidence: bool = True) -> dict:
+    """`fits`: the matcher's own rules accept the pair. `score`: its score when
+    they do, the looser `_resemblance` when they do not — ranked in that
+    order, so every pair the rules accept comes first.
+
+    `hat_price_is_evidence` False when the hat holds ANOTHER purchase — its
+    price is that receipt's, not a fact about this one (see `_match_score`).
+    """
+    evidence = {"hat_price_is_evidence": hat_price_is_evidence}
+    strict = _match_score(purchase, hat, **evidence)
+    return {
+        "fits": strict is not None,
+        "score": strict if strict is not None else _resemblance(purchase, hat, **evidence),
+        "agrees": _agreements(purchase, hat, **evidence),
+    }
+
+
+def _by_fit(option: dict) -> tuple:
+    return (not option["fits"], -option["score"])
+
+
+async def _holders(db: AsyncSession) -> dict[int, Purchase]:
+    """Linked purchases keyed by the hat they are linked to."""
+    linked = (await db.execute(select(Purchase).where(Purchase.hat_id.is_not(None)))).scalars()
+    return {p.hat_id: p for p in linked}
+
+
+async def hats_for_purchase(db: AsyncSession, purchase_id: int) -> dict:
+    """Every hat this purchase could be linked to, best fit first."""
+    purchase = await db.get(Purchase, purchase_id)
+    if purchase is None:
+        raise errors.NotFound("Purchase not found")
+    holders = await _holders(db)
+    options = []
+    for hat in await _matchable_hats(db):
+        holder = holders.get(hat.id)
+        options.append({
+            "hat_id": hat.id,
+            "display_id": hat.display_id,
+            "model_name": hat.model_name,
+            "artist_series": hat.artist_series,
+            "colorway": hat.colorway,
+            "size": hat.size,
+            "construction": hat.construction,
+            "photo_path": hat.photo_path,
+            "thumb_path": hat.thumb_path,
+            "purchase_price": hat.purchase_price,
+            "linked_purchase_id": holder.id if holder is not None else None,
+            **_fit(purchase, hat,
+                   hat_price_is_evidence=holder is None or holder.id == purchase.id),
+        })
+    options.sort(key=_by_fit)
+    return {"purchase": purchase, "options": options}
+
+
+async def purchases_for_hat(db: AsyncSession, hat_id: int) -> dict:
+    """The purchase linked to this hat, and every hat purchase it could be
+    linked to instead, best fit first. Accessories are left out; purchases
+    linked to another hat are included, flagged, because moving a link the
+    matcher got wrong is exactly what this is for."""
+    hat = (await db.execute(
+        select(Hat).options(selectinload(Hat.colors)).where(Hat.id == hat_id)
+    )).scalar_one_or_none()
+    if hat is None:
+        raise errors.NotFound("Hat not found")
+    purchases = (await db.execute(select(Purchase))).scalars().all()
+    elsewhere = {p.hat_id for p in purchases if p.hat_id not in (None, hat.id)}
+    # Hat objects, not columns: `display_id` is a property of the hat's case.
+    display_ids = {
+        h.id: h.display_id
+        for h in (await db.execute(select(Hat).where(Hat.id.in_(elsewhere)))).scalars()
+    } if elsewhere else {}
+    # The hat's price is evidence only while no purchase is linked to it; a
+    # linked one put its own price there (see `_match_score`).
+    own_price = not any(p.hat_id == hat.id for p in purchases)
+    options = [
+        {
+            **{column: getattr(p, column) for column in _PURCHASE_COLUMNS},
+            "linked_hat_id": p.hat_id,
+            "linked_hat_display_id": display_ids.get(p.hat_id),
+            **_fit(p, hat, hat_price_is_evidence=own_price),
+        }
+        for p in purchases
+        if p.hat_id != hat.id and not naming.is_accessory(p.item_title)
+    ]
+    options.sort(key=_by_fit)
+    return {"linked": [p for p in purchases if p.hat_id == hat.id], "options": options}
+
+
+#: The purchase columns a pick-list row carries (`PurchaseRead`'s).
+_PURCHASE_COLUMNS = ("id", "order_ref", "order_date", "item_title", "model_name",
+                     "colorway", "size", "price", "quantity", "hat_id", "source")
+
+
+async def link_purchase(
+    db: AsyncSession, purchase_id: int, hat_id: int, *,
+    replace: bool = False, receipt_colorway: bool = False,
+) -> dict:
+    """Link a purchase to the hat the owner chose.
+
+    Writes what a match writes, through the same `_apply_link` — the hat's
+    EMPTY fields only, recorded so an unlink undoes exactly this — whether or
+    not the matcher's rules would have paired them: the owner knows which hat
+    a receipt was for, and that is the case this exists for.
+
+    A hat holds one purchase. If another one is already linked to it, that is
+    a `Conflict` unless `replace`, which unlinks it first (reverting what it
+    wrote) — a silent takeover would leave the other purchase looking matched
+    to nothing. A purchase already linked elsewhere is MOVED: its old link is
+    undone the same way before the new one is written.
+    """
+    purchase = await db.get(Purchase, purchase_id)
+    if purchase is None:
+        raise errors.NotFound("Purchase not found")
+    hat = await db.get(Hat, hat_id)
+    if hat is None:
+        raise errors.NotFound("Hat not found")
+    result = {"hat_id": hat.id, "wrote": [], "moved_from_hat_id": None, "replaced_purchase_id": None}
+    if purchase.hat_id == hat.id:
+        # Re-choosing the hat it is already on still vouches for the link.
+        if purchase.link_confirmed_at is None:
+            purchase.link_confirmed_at = datetime.now(timezone.utc)
+            await db.commit()
+        return result
+
+    holder = (await db.execute(
+        select(Purchase).where(Purchase.hat_id == hat.id, Purchase.id != purchase.id)
+    )).scalars().first()
+    if holder is not None:
+        if not replace:
+            ref = f" ({holder.order_ref})" if holder.order_ref else ""
+            raise errors.Conflict(
+                f"{hat.display_id or f'Hat #{hat.id}'} is already linked to "
+                f"“{holder.item_title}”{ref}. Replace it, or unlink that purchase first."
+            )
+        _break_link(holder, hat)
+        result["replaced_purchase_id"] = holder.id
+    if purchase.hat_id is not None:
+        result["moved_from_hat_id"] = purchase.hat_id
+        _break_link(purchase, await db.get(Hat, purchase.hat_id))
+
+    writes = await _apply_link(
+        db, purchase, hat, verb="linked", receipt_colorway=receipt_colorway
+    )
+    # The owner made this link, so it is vouched for — never "suspect".
+    purchase.link_confirmed_at = datetime.now(timezone.utc)
+    result["wrote"] = sorted(f for f in writes if f in _MATCH_FIELDS)
+    await db.commit()
+    return result
 
 
 async def unclaimed_from_purchases(db: AsyncSession) -> dict:
@@ -1571,5 +2012,13 @@ async def is_real_product(db: AsyncSession, model_name: str | None, colorway: st
         if want_model <= set(naming.token_set(cat_model)) and (
             set(naming.token_set(cat_colorway)) == want_colorway
         ):
+            return True
+    # The owner's own receipts, under the same two rules. A colorway printed
+    # on an order confirmation is a product melin sold, and the harvest — a
+    # marketplace's live listings — can lack it entirely: an older or
+    # sold-out colorway is exactly the kind on a collector's shelf and not on
+    # a resale site. Equality on the colorway half, as above.
+    for p_colorway in (await _bought_colorways(db, model_name)):
+        if set(naming.token_set(p_colorway)) == want_colorway:
             return True
     return False

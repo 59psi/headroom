@@ -6,6 +6,46 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.84.0] — 2026-10-17
+
+Purchases you can link to the right hat yourself, a matcher that stops
+guessing, and a review of the links it guessed wrong. Adds one column to
+`purchases`, applied automatically at startup.
+
+### Added
+
+- **Link a purchase to the hat you choose.** In Settings → Data → Purchase
+  history, **Link to hat…** lists every hat, best fit first, each with its
+  photo and what agrees. Hats already holding a purchase are marked, and
+  choosing one replaces that purchase. Each hat's page has a **Purchase**
+  panel with the same choice from the other side. When the receipt's colorway
+  differs from the hat's, you pick which one stays.
+- **A review of earlier automatic links.** A **To check** tab lists links the
+  current rules reject, each beside the hat's photo, with **Keep** and
+  **Unlink** (which clears the colorway, price and date that link copied onto
+  the hat), plus **Unlink all**. Links you make or keep are never flagged.
+- **Tabs for the purchase list:** Needs a hat, To check, Linked, and Cases &
+  accessories. Travel cases no longer count as unmatched.
+- Colorways from your own receipts appear in the colorway picker, and they
+  count as real melin products when analysis checks a colorway it read off
+  a photo.
+
+### Fixed
+
+- **Matching linked receipts to the wrong hats.** A receipt could land on any
+  hat of the same model family when nothing on record contradicted it. That
+  put, for example, a "23XI Hydro - White Speed Camo" receipt and its
+  colorway on a "Have More Fun" hat. A hat whose series the receipt never
+  mentions is no longer a match. A receipt that fits several hats that read
+  differently on record is left for you to pick instead of decided by chance.
+  A price that came from another receipt no longer counts as evidence.
+- **Receipt spellings** "Odyssey" (for Odysea), a leading "The", and the size
+  "CL" (Classic) are now understood.
+- **Re-importing the same order history no longer adds it twice** when order
+  numbers are written with a leading `#` in one export and without in
+  another. A line with no size no longer counts as a different unit from the
+  same line with one.
+
 ## [2.83.4] — 2026-10-17
 
 Dependency refresh (Dependabot #185, #188, #189, #190, #192). No behavior

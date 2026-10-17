@@ -245,29 +245,54 @@ describe('PurchasesCard', () => {
   });
 });
 
+const HAT_7 = {
+  id: 7, display_id: 'A-001-01', model_name: 'Trenches Hydro', artist_series: 'Have More Fun',
+  colorway: null, photo_path: null, thumb_path: null,
+};
+const BASE = { link_confirmed_at: null, suspect: false, accessory: false, hat: null };
 const LINKED = [
-  { id: 1, order_ref: 'A', order_date: null, item_title: 'Trenches Hydro', price: 79, hat_id: 7 },
-  { id: 2, order_ref: 'B', order_date: null, item_title: 'Travel case', price: 40, hat_id: null },
+  { ...BASE, id: 1, order_ref: 'A', order_date: null, item_title: 'Trenches Hydro', price: 79, hat_id: 7, hat: HAT_7 },
+  { ...BASE, id: 2, order_ref: 'B', order_date: null, item_title: 'Travel case', price: 40, hat_id: null, accessory: true },
 ];
+const UNLINKED_HAT = {
+  ...BASE, id: 3, order_ref: 'C', order_date: null, item_title: 'Odysea Hydro - Navy', price: 79, hat_id: null,
+  colorway: 'Navy',
+};
+const SUSPECT = {
+  ...BASE, id: 4, order_ref: 'D', order_date: null, item_title: 'Odysea 23XI Hydro - White Speed Camo',
+  price: 89, hat_id: 7, hat: HAT_7, suspect: true,
+};
+
+/** Open one of the list's tabs, by its visible name. */
+async function openTab(user: ReturnType<typeof userEvent.setup>, name: RegExp) {
+  await user.click(await screen.findByRole('button', { name }));
+}
 
 describe('PurchasesCard — status and loading', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('names the state in the header: none, some unlinked, all linked', async () => {
+  it('names the state in the header: none, waiting, to check, all linked', async () => {
     route({ '/api/admin/purchases': [] });
     const first = renderWithProviders(<PurchasesCard />);
     expect(await screen.findByText('None imported')).toBeInTheDocument();
     first.unmount();
 
+    // A travel case is an accessory, not a hat waiting for one: on the
+    // owner's history 78 of 95 "unmatched" lines were cases, burying the 17
+    // hat purchases actually waiting.
     route({ '/api/admin/purchases': LINKED });
     const second = renderWithProviders(<PurchasesCard />);
-    // The travel case never links — "1 unlinked", not a claim that all are.
-    expect(await screen.findByText('1 unlinked')).toBeInTheDocument();
+    expect(await screen.findByText('All linked')).toBeInTheDocument();
     second.unmount();
 
-    route({ '/api/admin/purchases': [LINKED[0]] });
+    route({ '/api/admin/purchases': [...LINKED, UNLINKED_HAT] });
+    const third = renderWithProviders(<PurchasesCard />);
+    expect(await screen.findByText('1 need a hat')).toBeInTheDocument();
+    third.unmount();
+
+    route({ '/api/admin/purchases': [...LINKED, SUSPECT] });
     renderWithProviders(<PurchasesCard />);
-    expect(await screen.findByText('All linked')).toBeInTheDocument();
+    expect(await screen.findByText('1 to check')).toBeInTheDocument();
   });
 
   it('does not flash "0 purchases" while the list is loading', async () => {
@@ -334,6 +359,7 @@ describe('PurchasesCard — single unlink is optimistic', () => {
     });
     renderWithProviders(<PurchasesCard />);
 
+    await openTab(user, /^Linked/);
     await user.click(await screen.findByRole('button', { name: 'Unlink Trenches Hydro from its hat' }));
 
     await waitFor(() =>
@@ -350,11 +376,121 @@ describe('PurchasesCard — single unlink is optimistic', () => {
     });
     renderWithProviders(<PurchasesCard />);
 
+    await openTab(user, /^Linked/);
     await user.click(await screen.findByRole('button', { name: 'Unlink Trenches Hydro from its hat' }));
 
     expect(await screen.findByText(/Purchase not found/)).toBeInTheDocument();
     expect(await screen.findByRole('button', { name: 'Unlink Trenches Hydro from its hat' }))
       .toBeInTheDocument();
     expect(await metric('Linked to hats')).toBe('1');
+  });
+});
+
+/** Every request the card made whose path contains `needle`. */
+const callsTo = (needle: string) =>
+  fetchMock.mock.calls.filter(([p]) => String(p).includes(needle));
+
+describe('PurchasesCard — checking the links earlier matching made', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('opens on the links to check, each beside the hat it is on', async () => {
+    route({ '/api/admin/purchases': [...LINKED, SUSPECT] });
+    renderWithProviders(<PurchasesCard />);
+    expect(await screen.findByText('Odysea 23XI Hydro - White Speed Camo')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'A-001-01' })).toHaveAttribute('href', '/hats/7');
+    expect(screen.getByText(/series “Have More Fun”/)).toBeInTheDocument();
+  });
+
+  it('keeps a link you vouch for', async () => {
+    const user = userEvent.setup();
+    route({ '/api/admin/purchases': [...LINKED, SUSPECT] });
+    renderWithProviders(<PurchasesCard />);
+    await user.click(await screen.findByRole('button', { name: /^Keep Odysea 23XI/ }));
+    await waitFor(() => expect(callsTo('/purchases/4/confirm')).toHaveLength(1));
+  });
+
+  it('unlinking one clears what it copied onto the hat', async () => {
+    const user = userEvent.setup();
+    route({ '/api/admin/purchases': [...LINKED, SUSPECT] });
+    renderWithProviders(<PurchasesCard />);
+    await user.click(await screen.findByRole('button', { name: /^Unlink Odysea 23XI .* clear what it copied/ }));
+    await waitFor(() => expect(callsTo('/purchases/4/unmatch?clear_copied=true')).toHaveLength(1));
+  });
+
+  it('unlinking all of them asks first, then sends one request', async () => {
+    const user = userEvent.setup();
+    route({ '/api/admin/purchases': [...LINKED, SUSPECT] });
+    renderWithProviders(<PurchasesCard />);
+    await user.click(await screen.findByRole('button', { name: 'Unlink all 1' }));
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog).toHaveTextContent(/Links you made or kept are not touched/);
+    expect(callsTo('/unlink-suspect')).toHaveLength(0);
+    await user.click(within(dialog).getByRole('button', { name: 'Unlink all' }));
+    await waitFor(() => expect(callsTo('/unlink-suspect')).toHaveLength(1));
+  });
+});
+
+const OPTIONS = {
+  purchase: UNLINKED_HAT,
+  options: [
+    { hat_id: 9, display_id: 'A-002-03', model_name: 'Odysea Hydro', artist_series: null,
+      colorway: 'Bone', size: 'classic', construction: 'HYDRO', photo_path: null, thumb_path: null,
+      purchase_price: null, linked_purchase_id: null, fits: true, score: 14, agrees: ['model', 'size'] },
+    { hat_id: 7, display_id: 'A-001-01', model_name: 'Trenches Hydro', artist_series: 'Have More Fun',
+      colorway: null, size: 'classic', construction: 'HYDRO', photo_path: null, thumb_path: null,
+      purchase_price: 79, linked_purchase_id: 1, fits: false, score: 2, agrees: [] },
+  ],
+};
+
+describe('PurchasesCard — linking a purchase to the hat you choose', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  async function openPicker(user: ReturnType<typeof userEvent.setup>) {
+    route({
+      '/purchases/3/hats': OPTIONS,
+      '/purchases/3/link': { hat_id: 9, wrote: [], moved_from_hat_id: null, replaced_purchase_id: null },
+      '/api/admin/purchases': [...LINKED, UNLINKED_HAT],
+    });
+    renderWithProviders(<PurchasesCard />);
+    await user.click(await screen.findByRole('button', { name: 'Link to hat…' }));
+    return screen.findByRole('dialog', { name: 'Which hat is this?' });
+  }
+
+  it('offers every hat, best fit first, and says which one already has a purchase', async () => {
+    const user = userEvent.setup();
+    const dialog = await openPicker(user);
+    const rows = await within(dialog).findAllByRole('button', { name: /A-00/ });
+    expect(rows[0]).toHaveTextContent('A-002-03');
+    expect(rows[0]).toHaveTextContent('Fits');
+    expect(rows[1]).toHaveTextContent(/Has another purchase/);
+  });
+
+  it('links to the chosen hat, and asks before using the receipt’s colorway over the hat’s', async () => {
+    const user = userEvent.setup();
+    const dialog = await openPicker(user);
+    await user.click(await within(dialog).findByRole('button', { name: /A-002-03/ }));
+    const colorway = within(dialog).getByRole('checkbox', {
+      name: /receipt’s colorway “Navy” instead of the hat’s “Bone”/,
+    });
+    expect(colorway).not.toBeChecked();
+    await user.click(colorway);
+    await user.click(within(dialog).getByRole('button', { name: 'Link to A-002-03' }));
+
+    await waitFor(() => expect(callsTo('/purchases/3/link')).toHaveLength(1));
+    const [, init] = callsTo('/purchases/3/link')[0];
+    expect(JSON.parse(String((init as RequestInit).body))).toEqual({
+      hat_id: 9, replace: false, receipt_colorway: true,
+    });
+  });
+
+  it('choosing a hat that already has a purchase says so, and replaces it', async () => {
+    const user = userEvent.setup();
+    const dialog = await openPicker(user);
+    await user.click(await within(dialog).findByRole('button', { name: /A-001-01/ }));
+    expect(dialog).toHaveTextContent(/already has a purchase linked\. Linking replaces it/);
+    await user.click(within(dialog).getByRole('button', { name: 'Link to A-001-01' }));
+    await waitFor(() => expect(callsTo('/purchases/3/link')).toHaveLength(1));
+    const [, init] = callsTo('/purchases/3/link')[0];
+    expect(JSON.parse(String((init as RequestInit).body)).replace).toBe(true);
   });
 });

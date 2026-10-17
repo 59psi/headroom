@@ -14,11 +14,15 @@ from headroom.routes._api import DomainErrorRoute
 from headroom.schemas.admin import (
     CatalogRefreshStarted,
     CatalogStatus,
+    HatsForPurchase,
     ImportPreview,
     ImportResult,
     MatchResult,
     PurchaseImport,
+    PurchaseLink,
+    PurchaseLinkResult,
     PurchaseRead,
+    PurchasesForHat,
     UnclaimedFromPurchases,
     UnmatchAllResult,
     UnmatchOneResult,
@@ -132,7 +136,19 @@ async def import_purchases(
 
 @router.get("/purchases", response_model=list[PurchaseRead])
 async def list_purchases(db: AsyncSession = Depends(get_db)):
-    return await catalog_service.list_purchases(db)
+    return [
+        PurchaseRead.model_validate(p).model_copy(update={"suspect": catalog_service.is_suspect(p)})
+        for p in await catalog_service.list_purchases(db)
+    ]
+
+
+@router.post("/purchases/unlink-suspect", response_model=UnmatchAllResult)
+async def unlink_suspect(db: AsyncSession = Depends(get_db)):
+    """Break every suspect link, clearing the receipt values each copied onto
+    its hat — the bulk "these were all wrong" from the review list. Links
+    the owner made or kept are never suspect, so never touched."""
+    async with locks.loop_lock("purchase-import"):
+        return await catalog_service.unlink_suspect_purchases(db)
 
 
 # Registered BEFORE `{purchase_id}` for the same reason `unmatch-all` is: a
@@ -174,12 +190,61 @@ async def unmatch_all(db: AsyncSession = Depends(get_db)):
     return await catalog_service.unmatch_all_purchases(db)
 
 
+@router.get("/purchases/for-hat/{hat_id}", response_model=PurchasesForHat)
+async def purchases_for_hat(hat_id: int, db: AsyncSession = Depends(get_db)):
+    """The purchase linked to a hat, and every hat purchase it could be
+    linked to instead — best fit first. For the hat page, which flags a
+    suspect link the same way the review list does."""
+    result = await catalog_service.purchases_for_hat(db, hat_id)
+    return {
+        **result,
+        "linked": [
+            PurchaseRead.model_validate(p).model_copy(update={"suspect": catalog_service.is_suspect(p)})
+            for p in result["linked"]
+        ],
+    }
+
+
+@router.get("/purchases/{purchase_id}/hats", response_model=HatsForPurchase)
+async def hats_for_purchase(purchase_id: int, db: AsyncSession = Depends(get_db)):
+    """Every hat a purchase could be linked to, best fit first — the ones the
+    matcher's rules accept, then the rest by resemblance. Ranked, not
+    filtered: the right hat is sometimes one those rules rule out."""
+    return await catalog_service.hats_for_purchase(db, purchase_id)
+
+
+@router.post("/purchases/{purchase_id}/link", response_model=PurchaseLinkResult)
+async def link_purchase(
+    purchase_id: int, data: PurchaseLink, db: AsyncSession = Depends(get_db)
+):
+    """Link a purchase to the hat the owner chose (fills only empty fields).
+
+    Under the import lock: an import's matcher run mutates the same links and
+    hats, and must not interleave with a hand-made one.
+    """
+    async with locks.loop_lock("purchase-import"):
+        return await catalog_service.link_purchase(
+            db, purchase_id, data.hat_id,
+            replace=data.replace, receipt_colorway=data.receipt_colorway,
+        )
+
+
+@router.post("/purchases/{purchase_id}/confirm", response_model=PurchaseRead)
+async def confirm_link(purchase_id: int, db: AsyncSession = Depends(get_db)):
+    """The owner vouches for a link — "Keep" in the review list."""
+    return await catalog_service.confirm_link(db, purchase_id)
+
+
 @router.post("/purchases/{purchase_id}/unmatch", response_model=UnmatchOneResult)
-async def unmatch_one(purchase_id: int, db: AsyncSession = Depends(get_db)):
+async def unmatch_one(
+    purchase_id: int, clear_copied: bool = False, db: AsyncSession = Depends(get_db)
+):
     """Break one purchase→hat link and return the purchase to the pool.
 
     Reverts `purchase_price`, `purchased_at` and `colorway` on the hat, but
     only where they still hold the value this purchase wrote — anything
-    edited since belongs to whoever edited it.
+    edited since belongs to whoever edited it. `?clear_copied=true` is the
+    owner rejecting a link from the review list: for a link old enough to
+    have no record of its writes, the receipt's own values are taken as them.
     """
-    return await catalog_service.unmatch_purchase(db, purchase_id)
+    return await catalog_service.unmatch_purchase(db, purchase_id, clear_copied=clear_copied)

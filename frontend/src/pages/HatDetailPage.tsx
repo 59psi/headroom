@@ -28,6 +28,7 @@ import { caseTypeName } from '../lib/caseTypes';
 import { formatDateOnly } from '../lib/dates';
 import { isCutout, uploadUrl } from '../lib/photo';
 import { useWearLog } from '../lib/useWearLog';
+import { HatPurchasePanel } from '../components/purchases/HatPurchasePanel';
 import type { HatRead } from '../types';
 
 /**
@@ -706,6 +707,11 @@ export function HatDetailPage() {
               </div>
             </Panel>
           )}
+
+          {/* Which order this hat came from, and the place to choose it when
+              the matcher could not. Keyed like the notes card below, so its
+              open dialog never carries over to the next hat. */}
+          <HatPurchasePanel key={`purchase-${data.id}`} hat={data} />
 
           {/* Keyed on the hat so navigating between hats REMOUNTS the card.
               Without this the component instance is reused and only `notes` is

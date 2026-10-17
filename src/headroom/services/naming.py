@@ -86,6 +86,23 @@ def name_key(text: str | None) -> str:
     return " ".join(tokens(text))
 
 
+#: Order-line phrases that name something other than headwear. Read from the
+#: TITLE, the only thing every line has: a "3 Hat Travel Case - Black" carries
+#: a colorway and a price like any hat, and on the owner's history these were
+#: 78 of the 95 lines the matcher could not place — an "unmatched" list that
+#: was mostly cases buried the hat purchases actually waiting for a hat.
+ACCESSORY_PHRASES: tuple[str, ...] = (
+    "travel case", "gift card", "shipping protection", "sticker",
+    "lanyard", "keychain", "tote",
+)
+
+
+def is_accessory(title: str | None) -> bool:
+    """Whether an order line is a case, gift card or other non-hat item."""
+    folded = " ".join(tokens(title))
+    return any(phrase in folded for phrase in ACCESSORY_PHRASES)
+
+
 def split_model_colorway(text: str | None) -> tuple[str | None, str | None]:
     """`"Trenches Hydro — Hawaii 808"` → `("Trenches Hydro", "Hawaii 808")`.
 
