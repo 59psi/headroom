@@ -323,7 +323,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await analysis_queue.start_worker(factory)
 
     # Compile the cutout dependencies now, in a thread, rather than inside the
-    # first upload after an upgrade — and say so at boot if they cannot load,
+    # first upload after a restart — and say so at boot if they cannot load,
     # instead of one WARNING per photo while every cutout silently fails
     # (`background_removal.warm_up`). Tied to the worker flag: it is the
     # production shape, and the test suite turns it off.

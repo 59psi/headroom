@@ -17,9 +17,10 @@ Hat cutouts work again in the Docker image.
   somewhere writable to cache the result. Once the app's own files became
   read-only, it had nowhere to put that cache and refused to run. Hats kept
   their photos with the background, and analysis still reported success. The
-  image now gives it a cache under `/data/cache/numba` (not included in
-  backups), and the app compiles it in the background at startup, so the
-  first cutout after an upgrade no longer waits on it.
+  image now gives it a cache in the container's temporary memory-backed
+  storage, which is cleared on restart, never on the data volume. The app
+  compiles it in the background at startup, about two minutes on a Raspberry
+  Pi, so uploads don't wait on it.
 - **A photo whose cutout failed can be cut out again.** The hat page offered
   **Redo cutout** only for hats with a retained original, and a failed cutout
   recorded none, so those photos could only be fixed by re-taking them. They

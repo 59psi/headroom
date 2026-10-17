@@ -186,17 +186,19 @@ async def warm_up() -> bool:
     """Import rembg once at boot, in a thread: compile now, and fail loudly now.
 
     Importing rembg imports pymatting, whose numba kernels carry explicit
-    signatures and therefore compile AT IMPORT — about two minutes on a Pi —
-    and write a cache that makes every later import near-instant. That cache
-    is why `NUMBA_CACHE_DIR` exists in the Dockerfile: numba writes beside
-    the source by default, the venv is root-owned on a read-only root
-    filesystem, and with nowhere to write numba refuses to compile at all
-    ("cannot cache function ... no locator available"). From 2.79.0 to 2.83.1
-    that made every cutout fail, logged at WARNING per photo and nowhere else.
+    signatures and therefore compile AT IMPORT — about two minutes on a Pi.
+    numba must be able to write a cache to do that, which is why the
+    Dockerfile sets `NUMBA_CACHE_DIR`: it writes beside the source by default,
+    the venv is root-owned on a read-only root filesystem, and with nowhere
+    to write numba refuses to compile at all ("cannot cache function ... no
+    locator available"). From 2.79.0 to 2.83.1 that made every cutout fail,
+    logged at WARNING per photo and nowhere else. The cache is on the tmpfs
+    (it is executable code, so it must not persist), so the compile is paid
+    once per container start.
 
-    Doing it here moves both halves of that off the owner's first upload:
-    the compile no longer stalls the first cutout after an upgrade, and a
-    broken import is an ERROR at boot instead of a quiet degrade per photo.
+    Doing it here moves both halves of that off the owner's uploads: the
+    compile no longer stalls the first cutout after a restart, and a broken
+    import is an ERROR at boot instead of a quiet degrade per photo.
     The ONNX session is NOT created — that is the 179 MB model, which stays
     lazy (`_get_session`) so an install that never uploads never holds it.
 
