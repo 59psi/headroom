@@ -328,15 +328,31 @@ app advertises `https://headroom.local` over mDNS, and the passkey identity
 (`HEADROOM_RP_ID` / `HEADROOM_ORIGIN`) is set to the LAN name automatically.
 
 **2. Get Caddy's root certificate onto the device.** Easiest way — on the
-device itself, open:
+device itself, open the Pi's address followed by
+`/api/public/ca-certificate`. By IP address, which always works:
+
+```
+https://10.0.111.4/api/public/ca-certificate
+```
+
+(Use your Pi's own IP. Safari warns once, because the device doesn't trust
+the certificate yet — that is what you are installing. Continue past it.)
+Or, by name, without the warning:
 
 ```
 http://headroom.local:8000/api/public/ca-certificate
 ```
 
-That serves the **root** certificate with the right content type, so iOS
+Both serve the **root** certificate with the right content type, so iOS
 offers to install it directly. It's also linked from **Settings → Device
 → Trust this device**, which only appears when a local CA exists.
+
+> **`headroom.local` spins forever, or shows a certificate error, while the IP
+> address works?** That device doesn't trust the root yet. A "visit anyway"
+> you once accepted is tied to one exact certificate and stops matching when
+> Caddy reissues it, so the name breaks while the IP's own exception keeps
+> working. Install the root (this step, then step 3) and it trusts every
+> certificate Caddy issues from now on.
 
 > Upgrading from an overlay older than 2.45? Recreate the stack
 > (`up -d` again) before using that URL. It is served from a certificate the

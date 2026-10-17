@@ -25,8 +25,8 @@
 #   7. waits for the container's healthcheck (/health/ready) to pass
 #   8. restarts any Caddy container whose served Caddyfile differs from the
 #      file on disk
-#   9. with --prune-build-cache: caps Docker build cache at 6 GB
-#      (HEADROOM_BUILD_CACHE_CAP)
+#   9. with --prune-build-cache: drops the Docker build cache this build did
+#      not use, and keeps all of what it did, so the next build stays cached
 #
 # "Back up first" is not here because the app does it itself: the first boot
 # of a new version snapshots the database to
@@ -234,28 +234,32 @@ refresh_caddy() {
   done
 }
 
-# Cap Docker's build cache instead of aging it out. An age filter did nothing
-# on the Pi it was written for: every release rebuilds, so the whole 29 GB was
-# less than a week old. A size cap keeps the newest layers — the ones the next
-# build reuses — and drops the rest. `--max-used-space` is Docker 28+;
-# `--keep-storage` is its predecessor; the age filter is the last resort.
+# Drop the build cache THIS build did not use, and keep all of what it did.
+#
+# Both earlier rules failed in opposite directions on the Pi:
+#
+# * `until=168h` measured from now: every build in the week kept its whole set,
+#   and the cache grew to 29 GB.
+# * A 6 GB size cap (2.82.2): one build of this image uses about 12 GB of cache
+#   — its layers plus the uv, npm, apt and rembg-model cache mounts — so every
+#   capped upgrade deleted half of what the next build needed. The next build
+#   then re-downloaded every Python wheel and the 179 MB model with nothing
+#   cached (observed: the 2.83.2 upgrade), which is the slowness the cache
+#   mounts exist to prevent.
+#
+# `until` keeps records USED within the window (buildx prune docs), so a window
+# reaching back to the moment this build started keeps exactly its working
+# set, whatever its size, and drops everything only an earlier build used.
+# Five minutes of slack covers the clock between `date` and the first step.
 prune_build_cache() {
-  local cap="${HEADROOM_BUILD_CACHE_CAP:-6GB}" help
-  help="$(docker builder prune --help 2>/dev/null || true)"
-  if grep -q -- '--max-used-space' <<<"$help"; then
-    log "capping build cache at $cap"
-    docker builder prune -f --max-used-space "$cap" >/dev/null
-  elif grep -q -- '--keep-storage' <<<"$help"; then
-    log "capping build cache at $cap"
-    docker builder prune -f --keep-storage "$cap" >/dev/null
-  else
-    log "pruning build cache older than a week"
-    docker builder prune -f --filter until=168h >/dev/null
-  fi
+  local started="${1:?prune_build_cache needs the build start time (epoch seconds)}" keep
+  keep=$(( $(date +%s) - started + 300 ))
+  log "dropping build cache the build did not use"
+  docker builder prune -af --filter "until=${keep}s" >/dev/null
 }
 
 main() {
-  local tz="" pull=1 prune=0
+  local tz="" pull=1 prune=0 build_started
   while [ $# -gt 0 ]; do
     case "$1" in
       --tz) tz="${2:-}"; [ -n "$tz" ] || die "--tz needs a value"; shift 2 ;;
@@ -285,6 +289,7 @@ main() {
   fi
 
   log "building (this is the slow part on a Pi)"
+  build_started="$(date +%s)"
   docker compose build
   log "starting"
   docker compose up -d
@@ -292,7 +297,7 @@ main() {
   refresh_caddy
 
   if [ "$prune" = 1 ]; then
-    prune_build_cache
+    prune_build_cache "$build_started"
   fi
 
   log "running $(docker exec "$APP_CONTAINER" python -c 'import importlib.metadata as m; print(m.version("headroom"))' 2>/dev/null || echo '?')"
