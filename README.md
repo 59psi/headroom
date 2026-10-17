@@ -169,7 +169,9 @@ Things worth knowing from that picture:
 
 - **The original photo is never thrown away.** `rembg` output becomes the
   canonical image, but the flattened JPEG is retained as `original_path` — it
-  is the only thing a re-cut can work from.
+  is the only thing a re-cut can work from. If the cut fails, the JPEG stays
+  the hat's photo, and the hat page offers **✂ Cut out background** to try
+  again from it.
 - **On upload, the price lookups are gated on Claude succeeding** — both
   fallback branches return early, because without a model name there is
   nothing to look up comparables *for*, and guessing from the style alone
@@ -734,7 +736,8 @@ modules mocked at the module boundary. Test files live beside the components
 inside `src/`, so `npm run typecheck` covers them too. CI runs lint →
 typecheck → tests → production build on every PR, beside the backend's
 ruff → pytest → lockfile check and a Docker build that must run as non-root
-and load the baked rembg model with no network.
+and, on the same read-only filesystem `docker-compose.yml` uses, cut out a
+real image with the baked rembg model and no network.
 
 ## Architecture
 
