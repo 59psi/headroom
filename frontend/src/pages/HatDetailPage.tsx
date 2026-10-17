@@ -26,7 +26,7 @@ import { isNotFound } from '../api/client';
 import { costOf, money, moneyPrecise, valueHat } from '../lib/valuation';
 import { caseTypeName } from '../lib/caseTypes';
 import { formatDateOnly } from '../lib/dates';
-import { uploadUrl } from '../lib/photo';
+import { isCutout, uploadUrl } from '../lib/photo';
 import { useWearLog } from '../lib/useWearLog';
 import type { HatRead } from '../types';
 
@@ -454,19 +454,23 @@ export function HatDetailPage() {
                     {reanalyzeMut.isPending ? '↻ Analyzing…' : '↻ Reanalyze'}
                   </button>
                 )}
-                {/* Only offered when there is an original to cut from. Hats
-                    analyzed before originals were retained have none, and the
-                    stored cutout can never be re-segmented — doing so eats the
-                    alpha and trims the bill a little more each pass. */}
-                {data.original_path && (
+                {/* Offered when there is something to cut from: the retained
+                    original, or a photo that was never cut (its upload's
+                    cutout failed, so it IS the original). Hats analyzed
+                    before originals were retained have neither, and the
+                    stored cutout can never be re-segmented — doing so eats
+                    the alpha and trims the bill a little more each pass. */}
+                {(data.original_path || (data.photo_path && !isCutout(data.photo_path))) && (
                   <button
                     type="button"
                     className="btn btn-outline-secondary"
                     onClick={() => recutMut.mutate(data.id)}
                     disabled={recutMut.isPending || recutting || data.analysis_status === 'pending'}
-                    title="Redo the background removal from the original photo"
+                    title="Remove the background from the original photo"
                   >
-                    {recutMut.isPending || recutting ? '✂ Re-cutting…' : '✂ Redo cutout'}
+                    {recutMut.isPending || recutting
+                      ? '✂ Cutting out…'
+                      : isCutout(data.photo_path) ? '✂ Redo cutout' : '✂ Cut out background'}
                   </button>
                 )}
               </div>

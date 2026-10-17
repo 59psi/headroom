@@ -196,6 +196,31 @@ describe('HatDetailPage — a write lands on the hat it was started for', () => 
   });
 });
 
+describe('HatDetailPage — cutting out the background', () => {
+  it('offers the cut for a photo whose cutout never happened', async () => {
+    // An upload whose background removal failed keeps its JPEG and records
+    // no original. The button used to key on `original_path` alone, so that
+    // hat had no way to get a cutout short of re-taking the photo.
+    const user = userEvent.setup();
+    mocked.recutHat.mockResolvedValue(hatFixture({ id: 7, photo_path: 'hats/a.png', original_path: 'hats/a.jpg' }));
+    renderPage(hatFixture({ id: 7, photo_path: 'hats/a.jpg', original_path: null }));
+
+    await user.click(await screen.findByRole('button', { name: /Cut out background/ }));
+    expect(mocked.recutHat).toHaveBeenCalledWith(7);
+  });
+
+  it('says "Redo" once there is a cutout', async () => {
+    renderPage(hatFixture({ id: 8, photo_path: 'hats/b.png', original_path: 'hats/b.jpg' }));
+    expect(await screen.findByRole('button', { name: /Redo cutout/ })).toBeInTheDocument();
+  });
+
+  it('offers no cut for a cutout that kept no original', async () => {
+    renderPage(hatFixture({ id: 9, display_id: 'A-001-9', photo_path: 'hats/c.png', original_path: null }));
+    expect(await screen.findByRole('heading', { level: 1, name: 'A-001-9' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /cutout|Cut out/i })).not.toBeInTheDocument();
+  });
+});
+
 describe('HatDetailPage — clear the palette', () => {
   it('empties the palette the moment it is confirmed, before the server answers', async () => {
     const user = userEvent.setup();

@@ -116,6 +116,23 @@ async def test_the_runtime_user_is_not_root():
     assert users[-1].split(":")[0] not in {"root", "0"}, f"the image runs as {users[-1]!r}"
 
 
+async def test_numba_has_somewhere_writable_to_cache():
+    """The other half of a read-only venv: rembg's numba kernels need a cache.
+
+    numba writes beside the source unless `NUMBA_CACHE_DIR` says otherwise,
+    and refuses to compile at all when it cannot write — every cutout failed
+    from 2.79.0 to 2.83.1 that way. The only writable, persistent place in
+    the container is the `/data` volume; `uploads/` is excluded so backups
+    do not carry a compiler cache.
+    """
+    env = " ".join(args for keyword, args in runtime_stage() if keyword == "ENV")
+    match = re.search(r"\bNUMBA_CACHE_DIR=(\S+)", env)
+    assert match, "the runtime stage must set NUMBA_CACHE_DIR"
+    path = match.group(1).strip("\"'")
+    assert path.startswith("/data/"), f"{path} is not on the writable volume"
+    assert not path.startswith("/data/uploads"), f"{path} would be swept into backups"
+
+
 async def test_nothing_the_app_executes_is_owned_by_the_runtime_user():
     """Code, venv, SPA and model are root-owned; only /data is the app's.
 

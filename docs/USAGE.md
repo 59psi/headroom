@@ -124,7 +124,9 @@ The status pill on the hat page tells you where a hat is:
 the existing photo — use it after adding/fixing a key. It upgrades fallback
 hats to full identification when a Claude key exists. **✂ Redo cutout**
 re-runs only the background removal from the original photo, for a bill the
-model clipped, without spending a Claude call. For the whole collection,
+model clipped, without spending a Claude call. A photo whose background
+removal did not finish keeps the photo as taken and offers **✂ Cut out
+background** instead, which runs the same cut. For the whole collection,
 Settings → Analysis → *Analysis queue* has **Re-analyze every hat**, a
 per-cause **Retry** for hats a transient error knocked over (an overload is
 worth retrying; a photo that has gone is not, and neither is a missing-key

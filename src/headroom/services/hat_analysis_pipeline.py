@@ -156,6 +156,16 @@ async def finalize_hat_photo(
     return hat
 
 
+def is_cutout(photo_rel: str) -> bool:
+    """Whether a stored photo is a cutout: rembg's output is the only PNG.
+
+    Uploads are normalized to JPEG before anything else sees them, so the
+    suffix is the marker — the same one `_cut_and_derive` skips on and the
+    fallback reads colors by.
+    """
+    return PurePosixPath(photo_rel).suffix.lower() == ".png"
+
+
 def _recut_target(original_rel: str) -> str:
     """Where a cut of the retained original lands: `hats/<stem>.png`.
 

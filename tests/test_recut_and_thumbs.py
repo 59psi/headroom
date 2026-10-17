@@ -30,18 +30,19 @@ def fake_cutout(monkeypatch):
     correctly no separate original to keep. Retention and re-cutting only exist
     on the path where a cutout succeeds, so they need this.
     """
-    async def _remove(input_path, output_path):
-        out = output_path.with_suffix(".png")
-        img = Image.new("RGBA", (200, 200), (0, 0, 0, 0))
-        for x in range(50, 150):
-            for y in range(50, 150):
-                img.putpixel((x, y), (200, 30, 90, 255))
-        img.save(out, "PNG")
-        return out
-
     monkeypatch.setattr(
-        "headroom.services.background_removal.remove_background", _remove
+        "headroom.services.background_removal.remove_background", _fake_remove
     )
+
+
+async def _fake_remove(input_path, output_path):
+    out = output_path.with_suffix(".png")
+    img = Image.new("RGBA", (200, 200), (0, 0, 0, 0))
+    for x in range(50, 150):
+        for y in range(50, 150):
+            img.putpixel((x, y), (200, 30, 90, 255))
+    img.save(out, "PNG")
+    return out
 
 
 def _jpeg(color=(40, 90, 200)) -> bytes:
@@ -139,6 +140,47 @@ async def test_recut_requires_an_original(client):
     hat_id = created.json()["id"]
 
     resp = await client.post(f"/api/hats/{hat_id}/recut")
+    assert resp.status_code == 400
+    assert "re-upload" in resp.json()["detail"].lower()
+
+
+async def test_a_photo_whose_cutout_failed_can_still_be_cut(client, monkeypatch):
+    """The upload's cut failed, so the photo is the uncut JPEG and no original
+    was recorded. That hat used to get "re-upload the photo" here (and no
+    button on the page): from 2.79.0 to 2.83.1 every cutout failed, and none
+    of those photos could be fixed without taking the picture again."""
+    body = await _hat_with_photo(client)  # conftest's stub: the cut produces nothing
+    hat_id = body["id"]
+    uncut = body["photo_path"]
+    assert uncut.endswith(".jpg") and body["original_path"] is None
+
+    monkeypatch.setattr(
+        "headroom.services.background_removal.remove_background", _fake_remove
+    )
+    resp = await client.post(f"/api/hats/{hat_id}/recut")
+
+    assert resp.status_code == 200, resp.text
+    cut = resp.json()
+    assert cut["photo_path"].endswith(".png"), "the re-cut must leave the hat on a cutout"
+    assert cut["original_path"] == uncut, "the uncut photo becomes the retained original"
+    assert (settings.upload_dir / uncut).exists()
+
+
+async def test_a_cutout_with_no_original_is_still_refused(client, db_session, fake_cutout):
+    """The other side of the rule above: a PNG is already a cutout, and
+    re-segmenting it eats the alpha — so with no original there is still
+    nothing safe to cut from."""
+    from sqlalchemy import update as sa_update
+
+    from headroom.models.hat import Hat
+
+    body = await _hat_with_photo(client)
+    await db_session.execute(
+        sa_update(Hat).where(Hat.id == body["id"]).values(original_path=None)
+    )
+    await db_session.commit()
+
+    resp = await client.post(f"/api/hats/{body['id']}/recut")
     assert resp.status_code == 400
     assert "re-upload" in resp.json()["detail"].lower()
 

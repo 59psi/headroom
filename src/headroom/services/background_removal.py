@@ -36,6 +36,7 @@ hardware.
 from __future__ import annotations
 
 import asyncio
+import importlib
 import logging
 from pathlib import Path
 
@@ -168,5 +169,43 @@ async def remove_background(input_path: Path, output_path: Path) -> Path | None:
         async with _get_inference_sem():
             return await asyncio.to_thread(_remove_sync, input_path, output_path)
     except Exception as exc:  # noqa: BLE001 — surface to caller, never crash upload
-        logger.warning("Background removal failed for %s: %s", input_path, exc)
+        # ERROR, not WARNING: the hat keeps its photo, background and all, and
+        # the analysis that follows still reports `ok` — this line is the only
+        # place the failure is written down. At WARNING it was easy to read as
+        # noise, and every cutout failed for six weeks unnoticed.
+        logger.error("Background removal failed for %s: %s", input_path, exc)
         return None
+
+
+def _import_rembg() -> None:
+    """The import IS the work: `rembg.bg` imports pymatting, which compiles."""
+    importlib.import_module("rembg.bg")
+
+
+async def warm_up() -> bool:
+    """Import rembg once at boot, in a thread: compile now, and fail loudly now.
+
+    Importing rembg imports pymatting, whose numba kernels carry explicit
+    signatures and therefore compile AT IMPORT — about two minutes on a Pi —
+    and write a cache that makes every later import near-instant. That cache
+    is why `NUMBA_CACHE_DIR` exists in the Dockerfile: numba writes beside
+    the source by default, the venv is root-owned on a read-only root
+    filesystem, and with nowhere to write numba refuses to compile at all
+    ("cannot cache function ... no locator available"). From 2.79.0 to 2.83.1
+    that made every cutout fail, logged at WARNING per photo and nowhere else.
+
+    Doing it here moves both halves of that off the owner's first upload:
+    the compile no longer stalls the first cutout after an upgrade, and a
+    broken import is an ERROR at boot instead of a quiet degrade per photo.
+    The ONNX session is NOT created — that is the 179 MB model, which stays
+    lazy (`_get_session`) so an install that never uploads never holds it.
+
+    Returns whether cutouts can run. Never raises.
+    """
+    try:
+        await asyncio.to_thread(_import_rembg)
+    except Exception as exc:  # noqa: BLE001 — boot must not fail on it; the log is the alarm
+        logger.error("Background removal is unavailable — cutouts will fail: %s", exc)
+        return False
+    logger.info("Background removal ready (rembg model %s)", _MODEL_NAME)
+    return True

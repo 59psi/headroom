@@ -236,12 +236,19 @@ def stub_background_removal(monkeypatch):
     to the processed JPEG, which is exactly what we want for the test contract.
     One patch: the pipeline calls `background_removal.remove_background`
     through the module, so the owner's attribute is the only seam.
+
+    The boot warm-up (`background_removal.warm_up`) imports rembg too — which
+    compiles pymatting's numba kernels — whenever a test turns the analysis
+    worker on. `_import_rembg` is its one seam, stubbed for the same reason.
     """
     async def _noop(_input, _output):
         return None
 
     monkeypatch.setattr(
         "headroom.services.background_removal.remove_background", _noop
+    )
+    monkeypatch.setattr(
+        "headroom.services.background_removal._import_rembg", lambda: None
     )
 
 

@@ -16,6 +16,15 @@ export function tileSrc(hat: { thumb_path?: string | null; photo_path: string | 
 }
 
 /**
+ * Whether a stored photo is a background-removed cutout. Uploads are stored as
+ * JPEG and rembg's output is the only PNG — the server's rule
+ * (`hat_analysis_pipeline.is_cutout`), here for the page that offers a cut.
+ */
+export function isCutout(path: string | null | undefined): boolean {
+  return !!path && path.toLowerCase().endsWith('.png');
+}
+
+/**
  * Where a stored file is served from. One definition: `/uploads/${…}` was
  * assembled inline in nine components, which is nine places for the mount
  * to drift away from `app.py`.

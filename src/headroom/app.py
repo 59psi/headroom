@@ -26,6 +26,7 @@ from headroom.services import (
     activity_service,
     analysis_queue,
     auth_service,
+    background_removal,
     backup_service,
     ca_vault,
     hat_analysis_pipeline,
@@ -321,6 +322,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if env_flag("HEADROOM_ANALYSIS_WORKER_ENABLED"):
         await analysis_queue.start_worker(factory)
 
+    # Compile the cutout dependencies now, in a thread, rather than inside the
+    # first upload after an upgrade — and say so at boot if they cannot load,
+    # instead of one WARNING per photo while every cutout silently fails
+    # (`background_removal.warm_up`). Tied to the worker flag: it is the
+    # production shape, and the test suite turns it off.
+    warm_task: asyncio.Task | None = None
+    if env_flag("HEADROOM_ANALYSIS_WORKER_ENABLED"):
+        warm_task = asyncio.create_task(background_removal.warm_up())
+
     # Gallery thumbnails for hats that predate them. Off the boot path for the
     # same reason mDNS is: it is image work over every existing photo, which on
     # a Pi would visibly delay the app becoming reachable. Idempotent, so a
@@ -499,7 +509,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         yield
     finally:
         for task in (backup_task, app.state.repricing_task, prune_task,
-                     mdns_task, thumbs_task, exports_task, tls_task):
+                     mdns_task, thumbs_task, exports_task, tls_task, warm_task):
             if task is not None:
                 task.cancel()
                 try:
