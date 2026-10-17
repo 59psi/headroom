@@ -6,6 +6,25 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.83.4] — 2026-10-17
+
+Dependency refresh (Dependabot #185, #188, #189, #190, #192). No behavior
+changes, no migration.
+
+### Changed
+
+- Backend: `anthropic` 1.12.0, FastAPI 0.142.2 / Starlette 1.7.0 (FastAPI now
+  depends on `opentelemetry-api`), `cryptography` 50.0.2, `webauthn` 3.0.1,
+  `zeroconf` 0.151.5, `httpx2` 2.13.1 and Ruff 0.16.10. The
+  floors for `anthropic`, `webauthn` and `zeroconf` were raised to match, and
+  `requirements.txt` was re-exported from the new `uv.lock`. Dependabot's
+  version of #190 had left it stale, which failed that PR's tests and image
+  build.
+- Frontend: `@tanstack/react-query` 5.104.1, `react-easy-crop` 6.2.4, Vite
+  8.3.3, Vitest 5.0.3, oxlint 1.87.0, jsdom 30.1.2, `@vitejs/plugin-react`
+  6.1.2, `@types/node` 26.6.4 and `source-map-js` 1.2.2.
+- Image: `uv` 0.12.23. CI: `actions/setup-node` 7.1.0.
+
 ## [2.83.3] — 2026-10-17
 
 Faster Pi upgrades again, and clearer certificate setup. No app changes; this
