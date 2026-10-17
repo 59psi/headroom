@@ -116,6 +116,28 @@ async def test_the_runtime_user_is_not_root():
     assert users[-1].split(":")[0] not in {"root", "0"}, f"the image runs as {users[-1]!r}"
 
 
+async def test_numba_caches_on_the_tmpfs_and_nowhere_that_persists():
+    """The other half of a read-only venv: rembg's numba kernels need a cache.
+
+    numba writes beside the source unless `NUMBA_CACHE_DIR` says otherwise,
+    and refuses to compile at all when it cannot write — every cutout failed
+    from 2.79.0 to 2.83.1 that way. Writable, then, but not persistent: the
+    cache is compiled code that numba loads and runs, so on the `/data`
+    volume it would be a place to leave code that every later boot executes —
+    the persistence the read-only root denies. The compose tmpfs is the one
+    location that is both writable and gone at the next start.
+    """
+    env = " ".join(args for keyword, args in runtime_stage() if keyword == "ENV")
+    match = re.search(r"\bNUMBA_CACHE_DIR=(\S+)", env)
+    assert match, "the runtime stage must set NUMBA_CACHE_DIR"
+    path = match.group(1).strip("\"'")
+    tmpfs = compose("docker-compose.yml")["services"]["headroom"].get("tmpfs", [])
+    assert any(path == t or path.startswith(t.rstrip("/") + "/") for t in tmpfs), (
+        f"{path} is not on a tmpfs the container mounts ({tmpfs})"
+    )
+    assert not path.startswith("/data"), f"{path} would persist on the volume"
+
+
 async def test_nothing_the_app_executes_is_owned_by_the_runtime_user():
     """Code, venv, SPA and model are root-owned; only /data is the app's.
 

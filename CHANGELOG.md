@@ -6,6 +6,32 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.83.2] — 2026-10-17
+
+Hat cutouts work again in the Docker image.
+
+### Fixed
+
+- **Background removal failed for every photo** in the container since
+  2.79.0. The cutout library compiles part of itself on first use and needs
+  somewhere writable to cache the result. Once the app's own files became
+  read-only, it had nowhere to put that cache and refused to run. Hats kept
+  their photos with the background, and analysis still reported success. The
+  image now gives it a cache in the container's temporary memory-backed
+  storage, which is cleared on restart, never on the data volume. The app
+  compiles it in the background at startup, about two minutes on a Raspberry
+  Pi, so uploads don't wait on it.
+- **A photo whose cutout failed can be cut out again.** The hat page offered
+  **Redo cutout** only for hats with a retained original, and a failed cutout
+  recorded none, so those photos could only be fixed by re-taking them. They
+  now show **✂ Cut out background**, which runs the same cut from the photo
+  as taken.
+- **A failed cutout is now logged as an error, and so is a cutout runtime
+  that cannot load at startup**. Before, there was one warning per photo.
+- **CI runs a real cutout** with the network off, on the same read-only
+  runtime as `docker-compose.yml`. Its old check only loaded the model, on a
+  writable filesystem, which is why it passed throughout.
+
 ## [2.83.1] — 2026-09-29
 
 Dependency refresh. No behavior changes, no migration.

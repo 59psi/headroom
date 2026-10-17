@@ -572,6 +572,22 @@ async def test_the_analysis_worker_boots_and_requeues_a_pending_hat(app, boot_db
     assert not analysis_queue.worker_alive(), "shutdown left the analysis worker running"
 
 
+async def test_boot_warms_the_cutout_runtime_when_the_worker_runs(app, monkeypatch):
+    """The compile happens at boot, not inside the first upload after an
+    upgrade, and a runtime that cannot load says so at boot."""
+    import threading
+
+    from headroom.services import background_removal
+
+    imported = threading.Event()  # set from the warm-up's worker thread
+    monkeypatch.setattr(background_removal, "_import_rembg", imported.set)
+    monkeypatch.setenv("HEADROOM_ANALYSIS_WORKER_ENABLED", "true")
+
+    async with await _boot(app):
+        assert await asyncio.to_thread(imported.wait, 5), "boot never warmed the cutout runtime"
+        await _settled(app)
+
+
 @pytest.mark.parametrize("worker", ["true", "false"], ids=["worker", "inline"])
 async def test_boot_puts_a_recut_the_last_shutdown_interrupted_back_on_its_cutout(
     app, boot_db, client, monkeypatch, worker

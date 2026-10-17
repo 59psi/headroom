@@ -146,8 +146,13 @@ jobs:
             done
             echo "uid $(id -u): code, model and SPA are read-only to the app"'
       - name: Container serves /health/ready
+        # With docker-compose.yml's constraints — read-only root, a tmpfs /tmp,
+        # a volume at /data — because those are what the app actually runs
+        # under, and a probe on a writable root proves less than it appears
+        # to (see the cutout step below for what that hid).
         run: |
-          docker run -d --name ci -p 8000:8000 headroom:ci
+          docker run -d --name ci -p 8000:8000 \
+            --read-only --tmpfs /tmp -v headroom-ci-data:/data headroom:ci
           # /health/ready, not /health. `/health` is a static 200 that proves
           # only that the process is listening; /health/ready is what
           # docker-compose's healthcheck, the host watchdog and the autoheal
@@ -157,13 +162,38 @@ jobs:
           # this probe watched the endpoint that cannot fail.
           timeout 120 bash -c 'until curl -fsS localhost:8000/health/ready; do sleep 2; done' \
             || { echo "never became ready"; docker logs ci; exit 1; }
-      - name: The baked rembg model loads with no network
-        # The image bakes the ONNX weights so a Pi never fetches them at
-        # runtime — and shipped for months with the weights at a path rembg
-        # no longer reads, so every container downloaded 179 MB on its first
-        # analysis and an offline box could not analyze at all. Readiness
-        # passed throughout. This probe is the only check that can see it:
-        # the session must load with the network switched off.
+      - name: A real cutout, offline, on the production runtime
+        # Two failures this is the only check able to see, both of which
+        # shipped with readiness green throughout:
+        #
+        # * The image bakes the ONNX weights so a Pi never fetches them — and
+        #   shipped for months with them at a path rembg no longer reads, so
+        #   an offline box could not analyze at all. Hence `--network none`.
+        # * From 2.79.0 to 2.83.1 every cutout failed in production: rembg's
+        #   pymatting kernels compile through numba, numba must write a cache,
+        #   and the venv is read-only. This step used to run on a WRITABLE
+        #   root, where numba quietly fell back to a cache in the user's home,
+        #   and it only loaded the session — so it passed. Hence the compose
+        #   constraints, and an actual cut through the app's own code path.
         run: |
-          docker run --rm --network none headroom:ci \
-            python -c "from rembg import new_session; import os; s = new_session(os.environ['HEADROOM_REMBG_MODEL']); print('loaded', type(s).__name__)"
+          docker run --rm -i --network none --read-only --tmpfs /tmp \
+            -v headroom-ci-cut:/data headroom:ci python - <<'PY'
+          import os
+          from pathlib import Path
+          from PIL import Image, ImageDraw
+          from headroom.services import background_removal
+
+          src = Path("/tmp/hat.jpg")
+          img = Image.new("RGB", (640, 480), "white")
+          ImageDraw.Draw(img).ellipse((160, 120, 480, 360), fill=(30, 40, 160))
+          img.save(src, "JPEG")
+
+          out = background_removal._remove_sync(src, Path("/tmp/hat"))
+          with Image.open(out) as cut:
+              assert cut.mode == "RGBA", cut.mode
+              lo, hi = cut.getchannel("A").getextrema()
+          assert hi > 0 and lo < 255, f"the cut kept nothing or removed nothing: alpha {lo}..{hi}"
+          cache = Path(os.environ["NUMBA_CACHE_DIR"])
+          assert any(cache.rglob("*.nbi")), f"numba wrote no cache under {cache}"
+          print("cutout ok:", out.name, "alpha", lo, hi)
+          PY

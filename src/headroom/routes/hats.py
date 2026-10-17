@@ -202,8 +202,23 @@ async def recut_hat(hat_id: int, db: AsyncSession = Depends(get_db)):
     therefore left exactly as it was; only the stage is published, and
     `HatRead` reports it while the photo is still the uncut original, so the
     page can show the cut in progress and knows to keep polling.
+
+    A hat whose cut never happened is its own original. An upload whose rembg
+    failed keeps the JPEG as its photo and records no original — and this
+    route used to answer that hat with "re-upload the photo", while the page
+    hid the button altogether, so a failed cutout could only be fixed by
+    taking the picture again. Every cutout failed that way for six weeks
+    (the read-only venv, see the Dockerfile's `NUMBA_CACHE_DIR`). The photo
+    is the uncut JPEG, which is exactly what a re-cut starts from, so it is
+    recorded as the original and the cut runs as for any other hat.
     """
     hat = await hat_service.get_hat(db, hat_id)
+    if (
+        not hat.original_path
+        and hat.photo_path
+        and not hat_analysis_pipeline.is_cutout(hat.photo_path)
+    ):
+        hat.original_path = hat.photo_path
     if not hat.original_path:
         raise HTTPException(
             status_code=400,

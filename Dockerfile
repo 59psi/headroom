@@ -220,13 +220,30 @@ ARG REMBG_MODEL=isnet-general-use
 # would not have been enough there either: whoever owns a directory can rename
 # its entries, so a model inside the user's home can always be swapped out
 # wholesale. Outside it, root owns the whole path.
+#
+# `NUMBA_CACHE_DIR` is what lets a cutout run at all on that read-only root.
+# rembg imports pymatting, whose numba kernels compile at import with
+# `cache=True`, and numba writes that cache beside the source — in the
+# root-owned venv. With nowhere writable it does not fall back to compiling
+# uncached; it raises ("cannot cache function ... no locator available"), so
+# every cutout failed from the release that made the venv read-only (2.79.0)
+# until this line.
+#
+# On the `/tmp` tmpfs, NOT the `/data` volume, although that means paying the
+# compile (about two minutes on a Pi) once per container start — the app does
+# it in the background at boot (`background_removal.warm_up`). The cache is
+# compiled machine code that numba loads and runs. On the volume, anything
+# able to write as the app could leave code there that every later boot
+# executes, upgrades included, which is exactly the persistence the read-only
+# root above exists to deny. A tmpfs dies with the container.
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH" \
     HEADROOM_UPLOAD_DIR=/data/uploads \
     HEADROOM_DATABASE_URL=sqlite+aiosqlite:////data/headroom.db \
     HEADROOM_REMBG_MODEL=${REMBG_MODEL} \
-    U2NET_HOME=/opt/u2net
+    U2NET_HOME=/opt/u2net \
+    NUMBA_CACHE_DIR=/tmp/numba-cache
 
 # Create unprivileged user so the container does not run as root
 RUN groupadd --system --gid 1000 headroom \
