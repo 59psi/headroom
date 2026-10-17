@@ -8,11 +8,11 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 from headroom.schemas.common import Colorway, Money, api_key_text, clean_text
 from headroom.schemas.hat import AnalysisStage, AnalysisStatus
-from headroom.services import backup_service
+from headroom.services import backup_service, naming
 
 
 class RecentError(BaseModel):
@@ -411,6 +411,80 @@ class PurchaseRead(BaseModel):
     quantity: int | None = None
     hat_id: int | None = None
     source: str | None = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def accessory(self) -> bool:
+        """A travel case, gift card or other non-hat line (`naming.is_accessory`)
+        — never matched to a hat, so the card lists them apart rather than as
+        "unmatched"."""
+        return naming.is_accessory(self.item_title)
+
+
+#: What a pick-list row says about one candidate pairing. `fits`: the matcher's
+#: own rules accept it. `score`: its score when they do, a looser resemblance
+#: when they do not (ranked after every fitting row). `agrees`: the fields that
+#: visibly match — model, series, colorway, size, price.
+MatchAgreement = Literal["model", "series", "colorway", "size", "price"]
+
+
+class HatOption(BaseModel):
+    """One hat a purchase could be linked to."""
+
+    hat_id: int
+    display_id: str | None = None
+    model_name: str | None = None
+    artist_series: str | None = None
+    colorway: str | None = None
+    size: str | None = None
+    construction: str | None = None
+    photo_path: str | None = None
+    thumb_path: str | None = None
+    purchase_price: float | None = None
+    #: The purchase this hat is already linked to, if any (possibly this one).
+    linked_purchase_id: int | None = None
+    fits: bool
+    score: int
+    agrees: list[MatchAgreement]
+
+
+class HatsForPurchase(BaseModel):
+    purchase: PurchaseRead
+    options: list[HatOption]
+
+
+class PurchaseOption(PurchaseRead):
+    """One purchase a hat could be linked to."""
+
+    #: Set when this purchase is linked to ANOTHER hat; linking moves it.
+    linked_hat_id: int | None = None
+    linked_hat_display_id: str | None = None
+    fits: bool
+    score: int
+    agrees: list[MatchAgreement]
+
+
+class PurchasesForHat(BaseModel):
+    linked: list[PurchaseRead]
+    options: list[PurchaseOption]
+
+
+class PurchaseLink(BaseModel):
+    hat_id: int
+    #: Unlink the purchase already on that hat first. Without it, a hat that
+    #: holds one is a 409 — never a silent takeover.
+    replace: bool = False
+    #: Put the receipt's colorway on the hat even though it already has one
+    #: (usually a guess read off the photo). Undone by an unlink.
+    receipt_colorway: bool = False
+
+
+class PurchaseLinkResult(BaseModel):
+    hat_id: int
+    #: The hat fields this link filled in (only empty ones are ever written).
+    wrote: list[str]
+    moved_from_hat_id: int | None = None
+    replaced_purchase_id: int | None = None
 
 
 class SweepProgressRead(BaseModel):

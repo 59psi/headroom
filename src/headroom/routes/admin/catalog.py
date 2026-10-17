@@ -14,11 +14,15 @@ from headroom.routes._api import DomainErrorRoute
 from headroom.schemas.admin import (
     CatalogRefreshStarted,
     CatalogStatus,
+    HatsForPurchase,
     ImportPreview,
     ImportResult,
     MatchResult,
     PurchaseImport,
+    PurchaseLink,
+    PurchaseLinkResult,
     PurchaseRead,
+    PurchasesForHat,
     UnclaimedFromPurchases,
     UnmatchAllResult,
     UnmatchOneResult,
@@ -172,6 +176,37 @@ async def unmatch_all(db: AsyncSession = Depends(get_db)):
     Re-run `/purchases/match` afterwards to redo it.
     """
     return await catalog_service.unmatch_all_purchases(db)
+
+
+@router.get("/purchases/for-hat/{hat_id}", response_model=PurchasesForHat)
+async def purchases_for_hat(hat_id: int, db: AsyncSession = Depends(get_db)):
+    """The purchase linked to a hat, and every hat purchase it could be
+    linked to instead — best fit first. For the hat page."""
+    return await catalog_service.purchases_for_hat(db, hat_id)
+
+
+@router.get("/purchases/{purchase_id}/hats", response_model=HatsForPurchase)
+async def hats_for_purchase(purchase_id: int, db: AsyncSession = Depends(get_db)):
+    """Every hat a purchase could be linked to, best fit first — the ones the
+    matcher's rules accept, then the rest by resemblance. Ranked, not
+    filtered: the right hat is sometimes one those rules rule out."""
+    return await catalog_service.hats_for_purchase(db, purchase_id)
+
+
+@router.post("/purchases/{purchase_id}/link", response_model=PurchaseLinkResult)
+async def link_purchase(
+    purchase_id: int, data: PurchaseLink, db: AsyncSession = Depends(get_db)
+):
+    """Link a purchase to the hat the owner chose (fills only empty fields).
+
+    Under the import lock: an import's matcher run mutates the same links and
+    hats, and must not interleave with a hand-made one.
+    """
+    async with locks.loop_lock("purchase-import"):
+        return await catalog_service.link_purchase(
+            db, purchase_id, data.hat_id,
+            replace=data.replace, receipt_colorway=data.receipt_colorway,
+        )
 
 
 @router.post("/purchases/{purchase_id}/unmatch", response_model=UnmatchOneResult)
