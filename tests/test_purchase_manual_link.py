@@ -70,6 +70,79 @@ async def test_the_same_line_with_and_without_the_is_an_exact_model_match():
     assert catalog_service._model_tier("Shore Hydro", "The Shore Hydro") == catalog_service.MODEL_EXACT
 
 
+# ---- re-importing an export of the same history ---------------------------- #
+
+
+async def test_an_order_number_with_a_hash_is_the_same_order(client):
+    """The owner's second export printed `#1294073` where the first had
+    `1294073`, and every one of 341 units imported again."""
+    await _import(client, _line("Odysea Hydro - Navy", "1294073"))
+    resp = await client.post("/api/admin/purchases/import",
+                             json={"items": [_line("Odysea Hydro - Navy", "#1294073")]})
+    assert resp.json()["imported"] == 0
+    assert len((await client.get("/api/admin/purchases")).json()) == 1
+
+
+async def test_a_line_with_no_size_is_not_a_new_unit_of_one_that_has_one(client):
+    await _import(client, _line("All Day Beanie - Black", "1715774", size="Small", price=0.0))
+    resp = await client.post("/api/admin/purchases/import",
+                             json={"items": [_line("All Day Beanie - Black", "1715774", size=None, price=0.0)]})
+    assert resp.json()["imported"] == 0, "an unknown size duplicated a beanie already on record"
+
+
+async def test_two_stated_sizes_are_still_two_units(client):
+    await _import(client, _line("Odysea Hydro - Navy", "R1", size="Classic"))
+    resp = await client.post("/api/admin/purchases/import",
+                             json={"items": [_line("Odysea Hydro - Navy", "R1", size="Small")]})
+    assert resp.json()["imported"] == 1
+
+
+async def test_a_resellers_cl_size_reads_as_classic():
+    assert catalog_service.normalize_size("CL") == "classic"
+
+
+# ---- what the matcher must NOT link on its own ----------------------------- #
+
+
+async def test_a_hat_whose_series_the_receipt_never_names_is_not_its_hat(client, db_session):
+    """The orange "Have More Fun" hat held a "23XI Hydro - White Speed Camo"
+    receipt and had been given that colorway — 84 of 108 links to a hat with
+    a series shared no word with their receipt, and every one checked was
+    wrong."""
+    hat_id = await _new_hat(client, "Odysea Hydro", artist_series="Have More Fun")
+    rows = await _import(client, _line("Odysea 23XI Hydro - White Speed Camo", "R1"))
+    assert rows["R1"]["hat_id"] is None
+    assert (await client.get(f"/api/hats/{hat_id}")).json()["colorway"] is None
+
+
+async def test_a_series_the_title_shares_a_word_with_still_links(client):
+    hat_id = await _new_hat(client, "Trenches Icon Thermal", artist_series="CAMO")
+    rows = await _import(client, _line("Trenches Icon Thermal - Black Camo", "R1"))
+    assert rows["R1"]["hat_id"] == hat_id
+
+
+async def test_a_real_coin_toss_is_left_for_the_owner(client):
+    """Two free hats that read differently — a Classic and a Small — and one
+    receipt that states no size, so it fits both equally: linking either is a
+    guess that writes onto the hat."""
+    await _new_hat(client, "Trenches Hydro", size="classic")
+    await _new_hat(client, "Trenches Hydro", size="small")
+    resp = await client.post("/api/admin/purchases/import",
+                             json={"items": [_line("Trenches Hydro - Black", "R1", size=None)]})
+    body = resp.json()
+    assert (body["matched"], body["needs_choice"]) == (0, 1), body
+
+
+async def test_identical_hats_still_take_their_receipts(client):
+    a = await _new_hat(client, "Trenches Hydro")
+    b = await _new_hat(client, "Trenches Hydro")
+    resp = await client.post("/api/admin/purchases/import",
+                             json={"items": [_line("Trenches Hydro - Black", "R1", quantity=2)]})
+    assert resp.json()["matched"] == 2
+    for hat_id in (a, b):
+        assert (await client.get(f"/api/hats/{hat_id}")).json()["purchase_price"] == 79.0
+
+
 # ---- accessories ------------------------------------------------------------ #
 
 

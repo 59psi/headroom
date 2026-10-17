@@ -293,6 +293,15 @@ class PurchaseLine(BaseModel):
     def _blank_title_is_empty(cls, v: str | None) -> str:
         return v or ""
 
+    @field_validator("order_ref", mode="after")
+    @classmethod
+    def _order_number_without_its_hash(cls, v: str | None) -> str | None:
+        """`#1294073` and `1294073` are one order. The re-import dedupe keys
+        on the order number, and the two spellings made the owner's whole
+        history look new: a second export printing the `#` would have added
+        all 341 units again on top of the 294 already there."""
+        return v.lstrip("#").strip() or None if v else v
+
 
 class PurchaseImport(BaseModel):
     items: list[PurchaseLine] = Field(max_length=MAX_IMPORT_LINES)
@@ -854,7 +863,10 @@ class MatchResult(BaseModel):
     dry_run: bool = False
     matched: int
     unmatched: int
+    #: Linked although tied — only ever between hats identical on record.
     ambiguous: int
+    #: Tied between hats that DIFFER, so left unlinked for the owner to pick.
+    needs_choice: int = 0
     proposals: list[MatchProposal] = []
 
 
@@ -869,6 +881,8 @@ class ImportResult(BaseModel):
     matched: int
     unmatched: int
     ambiguous: int
+    #: See `MatchResult.needs_choice`.
+    needs_choice: int = 0
 
 
 class ImportPreview(BaseModel):
@@ -884,6 +898,8 @@ class ImportPreview(BaseModel):
     would_match_backlog: int
     would_match_total: int
     ambiguous: int
+    #: See `MatchResult.needs_choice`.
+    needs_choice: int = 0
     proposals: list[MatchProposal] = []
 
 

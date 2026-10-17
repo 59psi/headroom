@@ -22,7 +22,7 @@ from collections.abc import Collection, Sequence
 from datetime import datetime, timezone
 from typing import NamedTuple
 
-from sqlalchemy import ColumnElement, and_, func, or_, select
+from sqlalchemy import ColumnElement, and_, func, or_, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -505,13 +505,19 @@ async def _units_to_add(
     # hats than the preview promised. Preview and import share this function
     # precisely so they cannot disagree, and an incidental flush was quietly
     # making them disagree anyway.
+    #
+    # A MISSING size is unknown, not different. One export reads a beanie's
+    # "One Size" as no size and another mangled it into "small"; under strict
+    # equality the second import of that order added the beanie again. Two
+    # STATED sizes that differ still keep two lines apart — that is what the
+    # size is in the key for.
     with db.no_autoflush:
         existing = int((await db.execute(
             select(func.count(Purchase.id)).where(
                 Purchase.item_title == title,
                 Purchase.order_ref == item.order_ref,
                 Purchase.price == price,
-                Purchase.size.is_(None) if size is None else Purchase.size == size,
+                true() if size is None else or_(Purchase.size == size, Purchase.size.is_(None)),
             )
         )).scalar_one())
     wanted = max(quantity - existing - staged.get(key, 0), 0)
@@ -591,6 +597,7 @@ async def import_purchases(db: AsyncSession, items: list[PurchaseLine | dict]) -
 _SIZE_ALIASES: dict[str, str] = {
     "classic": "classic",
     "c": "classic",
+    "cl": "classic",         # how resellers abbreviate it (Hawaiian Island Creations)
     "standard": "classic",   # the pre-2.0 name for the same size
     "small": "small",
     "s": "small",
@@ -712,12 +719,17 @@ async def preview_import(db: AsyncSession, items: list[PurchaseLine | dict]) -> 
     proposals: list[dict] = []
     backlog_matches = 0
     to_match = [*backlog, *would_import]
-    assignment = await asyncio.to_thread(
-        assign_purchases, to_match, [h for h in hats if h.id not in claimed]
-    )
+    free = [h for h in hats if h.id not in claimed]
+    descriptions = _descriptions(free)
+    assignment = await asyncio.to_thread(assign_purchases, to_match, free)
+    assigned = {found.hat.id for found in assignment.values()}
+    needs_choice = 0
     for purchase in to_match:
         found = assignment.get(id(purchase))
         if found is None:
+            continue
+        if _decided(found, descriptions, assigned) is None:
+            needs_choice += 1
             continue
         hat, best_score, ambiguous, tied_hat_ids = found
         claimed.add(hat.id)
@@ -748,6 +760,7 @@ async def preview_import(db: AsyncSession, items: list[PurchaseLine | dict]) -> 
         # preview is accountable for.
         "would_match_total": len(proposals),
         "ambiguous": sum(1 for p in proposals if p["ambiguous"]),
+        "needs_choice": needs_choice,
         "proposals": proposals,
     }
 
@@ -994,6 +1007,21 @@ def _match_score(purchase: Purchase, hat: Hat) -> int | None:
     hat_construction = naming.token_set(hat.construction) & CONSTRUCTION_TOKENS
     title_construction = title_tokens & CONSTRUCTION_TOKENS
     if hat_construction and title_construction and not (hat_construction & title_construction):
+        return None
+
+    # A stated series that the title does not mention at ALL rules the hat out.
+    #
+    # The series is what the hat IS — "Have More Fun", "Aston Martin Aramco
+    # F1", "AURA" — and melin prints the line's name in the title. On the
+    # owner's shelf 84 of 108 links to a hat with a series shared no word with
+    # their receipt, and every one checked against its photo was wrong: the
+    # orange "Have More Fun" hat held a "23XI Hydro - White Speed Camo"
+    # receipt, and had been given that colorway. "Absence is not
+    # disagreement" holds for a hat with NO series; a hat that names one and
+    # a title that names another line are two different products. Partial
+    # overlap ("CAMO" vs "Black Camo") still passes and earns nothing below.
+    hat_series = naming.token_set(hat.artist_series)
+    if hat_series and not (hat_series & title_tokens):
         return None
 
     for stated in (hat.artist_series, hat.construction):
@@ -1311,11 +1339,17 @@ async def match_purchases_to_hats(db: AsyncSession, *, dry_run: bool = False) ->
     # the session.
     assignment = await asyncio.to_thread(assign_purchases, purchases, free_hats)
 
+    descriptions = _descriptions(free_hats)
+    assigned = {found.hat.id for found in assignment.values()}
     matched = 0
+    needs_choice = 0
     proposals: list[dict] = []
     for purchase in purchases:
         found = assignment.get(id(purchase))
         if found is None:
+            continue
+        if _decided(found, descriptions, assigned) is None:
+            needs_choice += 1
             continue
         hat, best_score, ambiguous, tied_hat_ids = found
 
@@ -1345,6 +1379,7 @@ async def match_purchases_to_hats(db: AsyncSession, *, dry_run: bool = False) ->
             "matched": matched,
             "unmatched": len(purchases) - matched,
             "ambiguous": sum(1 for p in proposals if p["ambiguous"]),
+            "needs_choice": needs_choice,
             "proposals": proposals,
         }
 
@@ -1353,7 +1388,50 @@ async def match_purchases_to_hats(db: AsyncSession, *, dry_run: bool = False) ->
         "matched": matched,
         "unmatched": len(purchases) - matched,
         "ambiguous": sum(1 for p in proposals if p["ambiguous"]),
+        "needs_choice": needs_choice,
     }
+
+
+def _descriptions(hats: Sequence[Hat]) -> dict[int, tuple]:
+    """How each hat reads on record — taken BEFORE a run links anything.
+
+    A snapshot because linking writes: the first unit of a two-hat order puts
+    the receipt's colorway on hat A, and compared live, A no longer read like
+    its twin B, so B's identical tie looked like a coin toss and was left
+    unlinked. Ties are judged on the shelf as it was, not as this run is
+    changing it.
+    """
+    return {
+        h.id: tuple(naming.name_key(v) for v in (
+            h.model_name, h.artist_series, h.colorway, h.size, h.construction
+        ))
+        for h in hats
+    }
+
+
+def _decided(
+    found: Assignment | None, descriptions: dict[int, tuple], assigned: set[int]
+) -> Assignment | None:
+    """An assignment the matcher may ACT on, or None to leave it to the owner.
+
+    A tie is a coin toss only while one of the tied alternatives is STILL
+    FREE after the whole assignment and reads differently on record — the
+    receipt could have gone there instead, and a wrong toss writes a
+    stranger's colorway and price onto a hat. The owner can pick from photos.
+
+    Not a toss: alternatives identical on record (two of the same Baja —
+    whichever gets it is described correctly), and alternatives another
+    purchase in this assignment needed (a sizeless receipt tied between a
+    Classic and a Small, when a Classic receipt takes the Classic, can only
+    be the Small). One function because the preview and the matcher must agree.
+    """
+    if found is None or not found.ambiguous:
+        return found
+    mine = descriptions.get(found.hat.id)
+    open_alternatives = [
+        i for i in found.tied_hat_ids if i != found.hat.id and i not in assigned
+    ]
+    return found if all(descriptions.get(i) == mine for i in open_alternatives) else None
 
 
 async def _apply_link(
