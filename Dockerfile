@@ -187,10 +187,16 @@ COPY README.md ./
 # `go-w` over the whole venv makes the invariant hold for anything else an
 # installer leaves behind, not just the one file found. (Cleaned after the
 # earlier `uv pip install` instead, `uv sync` here simply wrote it back.)
+#
+# `find -perm /022` rather than `chmod -R`: only the files that ARE group- or
+# world-writable are touched. A recursive chmod rewrites the metadata of every
+# file in the venv, and on an overlay filesystem that copies the whole venv
+# into this layer — on the Pi this step took 248 s and the export after it
+# another 141 s, every release, for a layer that changed almost nothing.
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev \
  && rm -f /opt/venv/.lock \
- && chmod -R go-w /opt/venv
+ && find /opt/venv -perm /022 -exec chmod go-w {} +
 
 
 # ============================================================ #
@@ -274,10 +280,15 @@ COPY seed /app/seed
 # SSH and rclone overlays bind-mount into it — and a recursive chown of it is
 # precisely how the model became writable. CI asserts the ownership of every
 # path below from inside the built image, not from this text.
+#
+# Readable by all, but only where it is not already: a recursive `chmod`
+# would copy the 179 MB model and all of `/app` into a new layer on every
+# build (see the venv step above). Directories need r-x, files r--.
 WORKDIR /app
 RUN mkdir -p /data/uploads/hats /data/uploads/branding \
     && chown -R headroom:headroom /data \
-    && chmod -R a+rX /app /opt/u2net
+    && find /app /opt/u2net \( -type d ! -perm -0555 -o ! -type d ! -perm -0444 \) \
+         -exec chmod a+rX {} +
 
 # Non-root, and the LAST `USER` in the file. CI runs `id -u` in the built
 # image and fails the build on 0; `tests/test_compose_and_ignores.py` reads

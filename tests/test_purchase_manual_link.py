@@ -97,6 +97,22 @@ async def test_two_stated_sizes_are_still_two_units(client):
     assert resp.json()["imported"] == 1
 
 
+async def test_a_sales_tag_in_parentheses_is_not_a_colorway(client):
+    """The eBay line "…HAWAII MAUI STRONG (RARE)" gave a hat the colorway
+    "RARE" — the title splitter's "(…)" rule is for the analyzer's old model
+    names, not for a seller's listing title."""
+    rows = await _import(client, {
+        "item_title": "MELIN TRENCHES ICON HYDRO HAWAII MAUI STRONG (RARE)",
+        "order_ref": "15-12273-68404", "price": 130.0, "quantity": 1,
+    })
+    assert rows["15-12273-68404"]["colorway"] is None
+
+
+async def test_a_separated_colorway_is_still_read_from_the_title(client):
+    rows = await _import(client, {"item_title": "Trenches Hydro - Bone", "order_ref": "R9", "quantity": 1})
+    assert rows["R9"]["colorway"] == "Bone"
+
+
 async def test_a_resellers_cl_size_reads_as_classic():
     assert catalog_service.normalize_size("CL") == "classic"
 
