@@ -53,6 +53,7 @@ from starlette.exceptions import HTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from headroom.config import env_int
+from headroom.services.database_import import MAX_UPLOAD_BYTES as DATABASE_IMPORT_MAX_BYTES
 from headroom.services.import_service import MAX_TOTAL_UPLOAD_BYTES
 
 logger = logging.getLogger(__name__)
@@ -118,37 +119,31 @@ def endpoint_streams_files(endpoint: Callable[..., object] | None) -> bool:
     return any(_mentions_upload_file(t) for name, t in hints.items() if name != "return")
 
 
-#: Where `streams_body` records an endpoint's own ceiling.
-_DECLARED_CAP = "__headroom_max_body_bytes__"
-#: Every ceiling `streams_body` has declared — what the pre-routing
-#: Content-Length check must allow a raw stream, before it knows which
-#: endpoint will read it.
-_declared_caps: list[int] = []
+#: The ceiling for an endpoint that reads its body as a raw stream
+#: (`streams_body`): the database import's archive, the one such body today.
+STREAMED_MAX_BODY_BYTES = DATABASE_IMPORT_MAX_BYTES
+#: Where `streams_body` marks an endpoint.
+_STREAMS_BODY = "__headroom_streams_body__"
 
 
-def streams_body(max_bytes: int):
-    """Mark an endpoint that reads its body as a raw stream, with its own ceiling.
+def streams_body(endpoint: Callable[..., object]) -> Callable[..., object]:
+    """Mark an endpoint that reads its body as a raw stream.
 
     For a body too large for either cap above that must not pass through
     multipart parsing — which spools every part to `/tmp`, RAM under the
-    shipped compose file — the database import's archive is the one today.
-    The endpoint reads `request.stream()` and writes it where it belongs; the
-    count below still cuts it off at this ceiling, chosen by the endpoint as
-    every cap here is. A decorator that returns the function unchanged, so
-    FastAPI sees the signature it always did.
+    shipped compose file. The endpoint reads `request.stream()` and writes it
+    where it belongs; the count below still cuts it off, at
+    `STREAMED_MAX_BODY_BYTES`, chosen by the endpoint as every cap here is.
+    Returns the function unchanged, so FastAPI sees the signature it always did.
     """
-    def mark(endpoint: Callable[..., object]) -> Callable[..., object]:
-        setattr(endpoint, _DECLARED_CAP, max_bytes)
-        _declared_caps.append(max_bytes)
-        return endpoint
-    return mark
+    setattr(endpoint, _STREAMS_BODY, True)
+    return endpoint
 
 
 def endpoint_cap(endpoint: Callable[..., object] | None, ordinary: int) -> int:
-    """The body ceiling for `endpoint`: declared, multipart, or the ordinary cap."""
-    declared = getattr(endpoint, _DECLARED_CAP, None)
-    if declared is not None:
-        return declared
+    """The body ceiling for `endpoint`: streamed, multipart, or the ordinary cap."""
+    if getattr(endpoint, _STREAMS_BODY, False):
+        return STREAMED_MAX_BODY_BYTES
     return MULTIPART_MAX_BODY_BYTES if endpoint_streams_files(endpoint) else ordinary
 
 
@@ -176,11 +171,11 @@ class BodySizeLimitMiddleware:
         # body labeled multipart gets past this line and is caught by the
         # count below the moment the login route reads it. A raw stream
         # (`application/octet-stream`) may be headed for a `streams_body`
-        # endpoint, so it is allowed the largest ceiling one declared.
+        # endpoint, so it is allowed that ceiling.
         if content_type.startswith("multipart/form-data"):
             widest = MULTIPART_MAX_BODY_BYTES
         elif content_type.startswith("application/octet-stream"):
-            widest = max([MULTIPART_MAX_BODY_BYTES, *_declared_caps])
+            widest = max(MULTIPART_MAX_BODY_BYTES, STREAMED_MAX_BODY_BYTES)
         else:
             widest = ordinary
         declared = headers.get("content-length")

@@ -16,6 +16,12 @@ without changing anything, and may run alongside the app.
     python -m headroom.import_database backups/headroom-backup-<time>.tar.gz
     python -m headroom.import_database --preview old-headroom.db
     python -m headroom.import_database --yes - < headroom-backup-<time>.tar.gz
+    python -m headroom.import_database --list
+    python -m headroom.import_database --restore-point pre-upgrade-<…>.db
+
+`--list` and `--restore-point` reach the files in `backups/` by name — the
+way back when the app itself will not start, without copying one out of a
+Docker volume first.
 """
 
 from __future__ import annotations
@@ -28,6 +34,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 from headroom import database
+from headroom.schemas.admin import DatabaseImportPreview
 from headroom.services import (
     database_import,
     database_upgrade,
@@ -44,7 +51,20 @@ async def _stdin() -> AsyncIterator[bytes]:
         yield chunk
 
 
-def _describe(s: database_import.Summary) -> str:
+def _list_restore_points() -> int:
+    points = asyncio.run(database_import.restore_points())
+    if not points:
+        print("No backups in this server's backups folder.")
+        return 0
+    for p in points:
+        print(
+            f"{p.name}  {p.kind.value.replace('_', '-'):<11} "
+            f"{p.created_at:%Y-%m-%d %H:%M} UTC  {p.size_bytes / (1024 * 1024):,.1f} MB"
+        )
+    return 0
+
+
+def _describe(s: DatabaseImportPreview) -> str:
     lines = [
         f"{s.source}: a {'backup archive' if s.kind == 'archive' else 'database file'}"
         + (f", last run by Headroom {s.version}" if s.version else ""),
@@ -62,7 +82,8 @@ def _describe(s: database_import.Summary) -> str:
     lines.append(
         (f"It replaces the {s.current_hats} hats here. " if s.current_hats
          else "There are no hats here yet to replace. ")
-        + ("This install's account, passkeys, share links and settings stay."
+        + ("This install's account, passkeys, share links, API keys, model and "
+           "off-site backup stay as they are."
            if s.keeps_account else "There is no account here yet, so the import's comes too.")
     )
     return "\n".join(lines)
@@ -97,7 +118,11 @@ async def _run(args: argparse.Namespace) -> int:
             # column into the CURRENT schema, and on a fresh install this is
             # what creates the file.
             await database_upgrade.upgrade(database.engine, session_factory)
-        if args.file == "-":
+        if args.restore_point:
+            summary = await database_import.stage_restore_point(
+                args.restore_point, session_factory=compare_with
+            )
+        elif args.file == "-":
             summary = await database_import.stage_upload(
                 _stdin(), filename="stdin", declared_size=None, session_factory=compare_with
             )
@@ -148,11 +173,19 @@ def main(argv: list[str] | None = None) -> int:
         prog="python -m headroom.import_database",
         description="Replace this Headroom collection with a backup's.",
     )
-    parser.add_argument("file", help='a backup (.tar.gz) or database (.db); "-" reads it from stdin')
+    parser.add_argument(
+        "file", nargs="?", help='a backup (.tar.gz) or database (.db); "-" reads it from stdin'
+    )
+    parser.add_argument(
+        "--restore-point", metavar="NAME", help="a file in this server's backups folder (see --list)"
+    )
+    parser.add_argument("--list", action="store_true", help="list the backups this server holds")
     parser.add_argument("--yes", action="store_true", help="import without asking")
     parser.add_argument("--preview", action="store_true", help="show what the file holds; change nothing")
     parser.add_argument("--verbose", action="store_true", help="show the app's log, tracebacks included")
     args = parser.parse_args(argv)
+    if not args.list and (args.file is None) == (args.restore_point is None):
+        parser.error("give a FILE or --restore-point NAME (one of them)")
     # Quiet by default: every refusal arrives as one plain sentence below,
     # and the service's log lines (a traceback for a failed migration) are
     # for the server log, not a person at a terminal.
@@ -160,6 +193,8 @@ def main(argv: list[str] | None = None) -> int:
         level=logging.INFO if args.verbose else logging.CRITICAL,
         format="%(levelname)s %(name)s: %(message)s",
     )
+    if args.list:
+        return _list_restore_points()
     return asyncio.run(_run(args))
 
 

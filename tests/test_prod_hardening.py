@@ -246,7 +246,7 @@ async def test_setup_blocks_second_owner(anon_client):
 def _make_backup(name_ts: str, age_days: float):
     from headroom.services import backup_service
 
-    p = backup_service._backup_dir() / (
+    p = backup_service.backup_dir() / (
         f"{backup_service.BACKUP_PREFIX}{name_ts}{backup_service.BACKUP_SUFFIX}"
     )
     p.write_bytes(b"x")

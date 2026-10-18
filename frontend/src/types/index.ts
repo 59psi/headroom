@@ -463,7 +463,7 @@ export interface BackupInfo {
 export interface RestorePointRead {
   name: string;
   /** A scheduled archive (database + photos) or a one-file database copy. */
-  kind: 'archive' | 'snapshot';
+  kind: 'archive' | 'pre_upgrade' | 'pre_import' | 'snapshot';
   size_bytes: number;
   created_at: string;
 }

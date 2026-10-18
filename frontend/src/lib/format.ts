@@ -19,6 +19,11 @@ export function timeAgo(iso: string | null | undefined): string {
   return `${Math.floor(hours / 24)} days ago`;
 }
 
+/** The full local date and time, for the `title` behind a `timeAgo`. */
+export function absoluteTime(iso: string | null | undefined): string | undefined {
+  return iso ? new Date(iso).toLocaleString() : undefined;
+}
+
 /**
  * "1 hat", "3 hats", "0 purchases" — a count with its noun.
  *

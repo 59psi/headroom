@@ -121,7 +121,7 @@ async def test_streaming_cleans_up_its_temp_copy(client, monkeypatch):
     """
     from headroom.services import backup_service
 
-    spool = backup_service._backup_dir() / backup_service.SPOOL_DIR_NAME
+    spool = backup_service.backup_dir() / backup_service.SPOOL_DIR_NAME
     async for _ in backup_service.stream_backup(include_uploads=False):
         assert list(spool.glob("headroom-stream-*")), "not staged where this test looks"
     assert list(spool.glob("headroom-stream-*")) == [], "the staged tarball was left behind"
@@ -152,7 +152,7 @@ async def test_an_abandoned_download_cleans_up_too(client, tmp_path, monkeypatch
     monkeypatch.setattr(tempfile, "tempdir", str(private_tmp))
     (settings.upload_dir / "hats" / "noise.bin").write_bytes(os.urandom(4096))
     monkeypatch.setattr(backup_service, "_STREAM_CHUNK", 512)
-    spool = backup_service._backup_dir() / backup_service.SPOOL_DIR_NAME
+    spool = backup_service.backup_dir() / backup_service.SPOOL_DIR_NAME
 
     gen = backup_service.stream_backup(include_uploads=True)
     await gen.__anext__()

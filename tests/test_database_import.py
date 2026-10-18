@@ -36,12 +36,24 @@ pytestmark = pytest.mark.anyio
 _IMPORT = "/api/admin/database/import"
 
 
+async def _settle() -> None:
+    """Wait for an import's post-swap work (the thumbnail/export backfill).
+
+    The suite's in-memory database is ONE shared connection (`StaticPool`),
+    so a background session ending mid-request rolls back that request's
+    uncommitted insert — a hat created right after an import came back
+    missing on CI. Production's pool gives each session its own connection;
+    this is the test database's shape, so the tests wait it out.
+    """
+    for task in list(database_import._background):
+        await task
+
+
 @pytest.fixture(autouse=True)
 async def _clean_slate():
     """No staged import or post-import task leaks between tests."""
     yield
-    for task in list(database_import._background):
-        await task
+    await _settle()
     await database_import.discard()
 
 
@@ -74,10 +86,16 @@ async def _upload(client, path: Path, name: str | None = None):
     )
 
 
+async def _apply(client, token: str):
+    resp = await client.post(f"{_IMPORT}/{token}/apply")
+    await _settle()
+    return resp
+
+
 async def _import(client, path: Path) -> dict:
     staged = await _upload(client, path)
     assert staged.status_code == 200, staged.text
-    applied = await client.post(f"{_IMPORT}/{staged.json()['token']}/apply")
+    applied = await _apply(client, staged.json()["token"])
     assert applied.status_code == 200, applied.text
     return applied.json()
 
@@ -112,7 +130,7 @@ async def test_an_imported_backup_replaces_the_collection(client, tmp_path):
     # Staging changes nothing live.
     assert await _models() == ["Odysea Hydro", "Trenches Hydro", "Added After The Backup"]
 
-    applied = await client.post(f"{_IMPORT}/{preview['token']}/apply")
+    applied = await _apply(client, preview["token"])
     assert applied.status_code == 200, applied.text
     assert await _models() == ["Odysea Hydro", "Trenches Hydro"]
 
@@ -124,7 +142,7 @@ async def test_the_replaced_database_is_saved_first_and_is_itself_a_restore_poin
 
     result = await _import(client, backup)
 
-    saved = backup_service._backup_dir() / result["snapshot"]
+    saved = backup_service.backup_dir() / result["snapshot"]
     assert saved.name.startswith(database_import.SNAPSHOT_PREFIX)
     conn = sqlite3.connect(saved)
     try:
@@ -134,14 +152,14 @@ async def test_the_replaced_database_is_saved_first_and_is_itself_a_restore_poin
     assert models == ["In The Backup", "Only Live"], "the undo copy is not the replaced collection"
 
     points = (await client.get("/api/admin/database/restore-points")).json()
-    assert {"name": saved.name, "kind": "snapshot"}.items() <= next(
+    assert {"name": saved.name, "kind": "pre_import"}.items() <= next(
         p for p in points if p["name"] == saved.name
     ).items()
 
     # ...and importing it is the undo.
     staged = await client.post(f"{_IMPORT}/restore-point", json={"name": saved.name})
     assert staged.status_code == 200, staged.text
-    undone = await client.post(f"{_IMPORT}/{staged.json()['token']}/apply")
+    undone = await _apply(client, staged.json()["token"])
     assert undone.status_code == 200, undone.text
     assert await _models() == ["In The Backup", "Only Live"]
 
@@ -417,7 +435,7 @@ async def test_an_archive_restores_its_photos_and_reports_them(client, tmp_path)
 
     staged = (await _upload(client, archive)).json()
     assert (staged["kind"], staged["photos_included"], staged["photos_missing"]) == ("archive", 1, 1)
-    await client.post(f"{_IMPORT}/{staged['token']}/apply")
+    await _apply(client, staged["token"])
 
     assert (settings.upload_dir / "hats" / "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png").read_bytes() == b"PNGDATA"
     assert (settings.upload_dir / "hats" / "thumbs" / "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.webp").read_bytes() == b"THUMB"
@@ -553,7 +571,7 @@ async def test_an_older_database_is_migrated_on_the_way_in(client, tmp_path):
     staged = await _upload(client, backup)
     assert staged.status_code == 200, staged.text
     assert staged.json()["version"] == "2.80.0"
-    await client.post(f"{_IMPORT}/{staged.json()['token']}/apply")
+    await _apply(client, staged.json()["token"])
     assert await _models() == ["From 2.80"]
 
 
@@ -642,7 +660,7 @@ async def test_nothing_is_replaced_while_a_photo_is_being_analyzed(client, tmp_p
     assert resp.status_code == 409
     assert "being analyzed" in resp.json()["detail"]
     assert await _models() == ["Busy"]
-    assert not list(backup_service._backup_dir().glob(f"{database_import.SNAPSHOT_PREFIX}*"))
+    assert not list(backup_service.backup_dir().glob(f"{database_import.SNAPSHOT_PREFIX}*"))
 
 
 async def test_nothing_is_replaced_while_a_request_runs_the_pipeline_itself(client, tmp_path):
@@ -707,7 +725,7 @@ async def test_a_write_during_the_photo_restore_is_in_the_undo_copy(file_client,
 
     result = await _import(file_client, archive)
 
-    copy = sqlite3.connect(backup_service._backup_dir() / result["snapshot"])
+    copy = sqlite3.connect(backup_service.backup_dir() / result["snapshot"])
     try:
         rooms = {r[0] for r in copy.execute("SELECT name FROM rooms")}
     finally:
@@ -727,7 +745,7 @@ async def test_no_other_writer_can_commit_between_the_copy_and_the_swap(
     async with engine.connect() as conn:
         await conn.exec_driver_sql("VACUUM INTO ?", (str(backup),))
     live = Path(engine.url.database)
-    real_snapshot = database_import._snapshot_file_sync
+    real_snapshot = database_import._copy_live_file_sync
     outcome = {}
 
     def snapshot_then_try_a_write(path):
@@ -743,7 +761,7 @@ async def test_no_other_writer_can_commit_between_the_copy_and_the_swap(
             conn.close()
         return name
 
-    monkeypatch.setattr(database_import, "_snapshot_file_sync", snapshot_then_try_a_write)
+    monkeypatch.setattr(database_import, "_copy_live_file_sync", snapshot_then_try_a_write)
 
     await _import(file_client, backup)
 
@@ -764,7 +782,7 @@ async def test_a_stale_or_discarded_token_applies_nothing(client, tmp_path):
 async def test_staging_a_second_file_drops_the_first(client, tmp_path):
     backup = await _snapshot_to(tmp_path / "backup.db")
     first = (await _upload(client, backup)).json()
-    first_spool = database_import._staged.spool
+    first_spool = database_import._waiting.spool
     second = (await _upload(client, backup)).json()
 
     assert not first_spool.exists(), "an abandoned preview left its copy on the data volume"
@@ -778,11 +796,14 @@ async def test_a_restore_point_is_looked_up_never_joined_onto_a_path(client, tmp
 
 
 async def test_restore_points_list_archives_and_snapshots_only(client):
-    root = backup_service._backup_dir()
+    root = backup_service.backup_dir()
     for name in (
         "headroom-backup-2026-10-17T06-42-01Z.tar.gz",
         "pre-upgrade-2.84.0-to-2.84.1-2026-10-17T23-31-04Z.db",
+        "pre-import-2026-10-18T06-47-41Z.db",
+        "pre-photo-relink-2026-10-17.db",
         "headroom-backup-2026-10-18T06-42-01Z.tar.gz.partial",
+        "pre-import-2026-10-18T06-50-00Z.db.partial",
         ".last-fingerprint",
         "notes.txt",
     ):
@@ -790,7 +811,9 @@ async def test_restore_points_list_archives_and_snapshots_only(client):
     names = {p["name"]: p["kind"] for p in (await client.get("/api/admin/database/restore-points")).json()}
     assert names == {
         "headroom-backup-2026-10-17T06-42-01Z.tar.gz": "archive",
-        "pre-upgrade-2.84.0-to-2.84.1-2026-10-17T23-31-04Z.db": "snapshot",
+        "pre-upgrade-2.84.0-to-2.84.1-2026-10-17T23-31-04Z.db": "pre_upgrade",
+        "pre-import-2026-10-18T06-47-41Z.db": "pre_import",
+        "pre-photo-relink-2026-10-17.db": "snapshot",
     }
 
 
@@ -806,7 +829,7 @@ async def test_the_upload_streams_past_the_ordinary_body_cap(client, tmp_path, m
     assert backup.stat().st_size > 1024
     resp = await _upload(client, backup)
     assert resp.status_code == 200, resp.text
-    assert database_import._staged.spool.is_relative_to(backup_service._backup_dir())
+    assert database_import._waiting.spool.is_relative_to(backup_service.backup_dir())
 
 
 async def test_the_import_endpoint_declares_its_own_ceiling():
@@ -821,7 +844,7 @@ async def test_an_upload_larger_than_the_room_left_refuses(client, tmp_path, mon
     resp = await _upload(client, backup)
     assert resp.status_code == 400
     assert "room for" in resp.json()["detail"]
-    assert not list((backup_service._backup_dir() / ".spool").iterdir()), "a refused upload left a file"
+    assert not list((backup_service.backup_dir() / ".spool").iterdir()), "a refused upload left a file"
 
 
 async def test_an_import_needs_a_login(anon_client, tmp_path):

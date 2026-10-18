@@ -3,10 +3,12 @@
 #
 #   ./scripts/import-database.sh headroom-backup-<time>.tar.gz
 #   ./scripts/import-database.sh old-headroom.db --yes
+#   ./scripts/import-database.sh --list
+#   ./scripts/import-database.sh --restore-point pre-upgrade-<…>.db
 #
 # The same import as Settings → Upkeep → Import a database, from the host —
-# for a new machine set up from an old one's backup, or an archive too big to
-# send from a phone. It:
+# for a new machine set up from an old one's backup, an archive too big to
+# send from a phone, or a server whose app will not start. It:
 #
 #   1. shows what the file holds and what it would replace (the app keeps
 #      running meanwhile);
@@ -15,32 +17,48 @@
 #      volume, and starts the app again — its boot re-queues anything the
 #      imported database left pending — then waits until it is healthy.
 #
-# The file is streamed in on stdin, so nothing has to be copied into the
-# volume first. The collection it replaces is saved as
-# `/data/backups/pre-import-<time>.db`, which is importable the same way:
-# that is the undo. This install's account, passkeys, share links and
-# settings stay as they are.
+# A FILE on this machine is streamed in on stdin, so nothing has to be copied
+# into the volume first. `--restore-point NAME` imports a file already in the
+# volume's backups folder (`--list` shows them: the nightly archives and the
+# copies taken before each upgrade and import). The collection it replaces is
+# saved as `/data/backups/pre-import-<time>.db`, which is importable the same
+# way: that is the undo. This install's account, passkeys, share links, API
+# keys, model and off-site backup stay as they are.
 #
 # Compose overlays come from COMPOSE_FILE in .env (`scripts/upgrade.sh`
 # records them), so the app stops and starts with the same front door.
 set -euo pipefail
 
 FILE=""
+POINT=""
 YES=0
-for arg in "$@"; do
-  case "$arg" in
+LIST=0
+while [ $# -gt 0 ]; do
+  case "$1" in
     -y|--yes) YES=1 ;;
+    --list) LIST=1 ;;
+    --restore-point)
+      [ $# -ge 2 ] || { echo "--restore-point needs a name (see --list)" >&2; exit 1; }
+      POINT="$2"; shift ;;
     -h|--help) awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; exit 0 ;;
-    -*) echo "Unknown option: $arg (try --help)" >&2; exit 1 ;;
+    -*) echo "Unknown option: $1 (try --help)" >&2; exit 1 ;;
     *)
       [ -z "$FILE" ] || { echo "One file at a time (try --help)" >&2; exit 1; }
-      FILE="$arg" ;;
+      FILE="$1" ;;
   esac
+  shift
 done
-[ -n "$FILE" ] || { echo "Usage: $0 FILE [--yes]   (try --help)" >&2; exit 1; }
-[ -f "$FILE" ] && [ -r "$FILE" ] || { echo "Cannot read $FILE" >&2; exit 1; }
-# Absolute before the cd below, so a relative path still names the same file.
-FILE="$(cd "$(dirname "$FILE")" && pwd)/$(basename "$FILE")"
+if [ "$LIST" -eq 0 ]; then
+  if [ -z "$FILE" ] && [ -z "$POINT" ]; then
+    echo "Usage: $0 FILE | --restore-point NAME | --list  [--yes]   (try --help)" >&2; exit 1
+  fi
+  [ -z "$FILE" ] || [ -z "$POINT" ] || { echo "A FILE or --restore-point, not both" >&2; exit 1; }
+fi
+if [ -n "$FILE" ]; then
+  [ -f "$FILE" ] && [ -r "$FILE" ] || { echo "Cannot read $FILE" >&2; exit 1; }
+  # Absolute before the cd below, so a relative path still names the same file.
+  FILE="$(cd "$(dirname "$FILE")" && pwd)/$(basename "$FILE")"
+fi
 
 # upgrade.sh's helpers: the compose-file bookkeeping and the health wait.
 # Sourcing it defines functions and runs nothing.
@@ -54,14 +72,33 @@ cd "$REPO_DIR"
 # The import, in a throwaway container with the app's image, volume and
 # environment. `run` gives it a generated name (the service's container_name
 # is the app's), `--no-deps` leaves Caddy alone, `-T` passes stdin through.
+# It inherits the service's healthcheck too, which it never answers — so it
+# is labeled out of autoheal's watch, or the autoheal overlay would restart
+# it as "unhealthy" a couple of minutes into a long import.
 importer() {
-  docker compose run --rm --no-deps -T headroom python -m headroom.import_database "$@"
+  docker compose run --rm --no-deps -T --label headroom.autoheal=false \
+    headroom python -m headroom.import_database "$@"
+}
+
+# The source, as the importer takes it: the file on stdin, or a name it
+# looks up in the volume's backups folder itself.
+from_source() {
+  if [ -n "$POINT" ]; then
+    importer "$@" --restore-point "$POINT" < /dev/null
+  else
+    importer "$@" - < "$FILE"
+  fi
 }
 
 ensure_compose_files
 
-log "Reading $(basename "$FILE")..."
-importer --preview - < "$FILE" || die "Nothing was imported."
+if [ "$LIST" -eq 1 ]; then
+  importer --list < /dev/null
+  exit 0
+fi
+
+log "Reading ${POINT:-$(basename "$FILE")}..."
+from_source --preview || die "Nothing was imported."
 
 if [ "$YES" -ne 1 ]; then
   # `|| answer=""`: `read` fails at end of input, and under `set -e` a closed
@@ -87,7 +124,7 @@ start_again() {
 trap start_again EXIT
 
 status=0
-importer --yes - < "$FILE" || status=$?
+from_source --yes || status=$?
 start_again
 trap - EXIT
 wait_until_healthy

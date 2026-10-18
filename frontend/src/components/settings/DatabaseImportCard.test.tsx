@@ -37,7 +37,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocked.listRestorePoints.mockResolvedValue([
     point('headroom-backup-2026-10-17T06-42-01Z.tar.gz'),
-    point('pre-upgrade-2.84.0-to-2.84.1-2026-10-17T23-31-04Z.db', 'snapshot'),
+    point('pre-upgrade-2.84.0-to-2.84.1-2026-10-17T23-31-04Z.db', 'pre_upgrade'),
   ]);
   mocked.getStagedImport.mockResolvedValue(null);
 });

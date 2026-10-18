@@ -37,8 +37,12 @@ machine's setup. No schema change.
 - **`scripts/import-database.sh FILE`** does the same for a Docker install
   from the server's terminal — for a file too big to send from a phone. It
   previews the file, asks, stops the app, imports, and starts the app again.
+  `--list` and `--restore-point NAME` import a backup already on the server,
+  for when the app itself will not start.
 - **`./scripts/setup.sh --import FILE`** sets up a new bare-metal machine
-  from an old one's backup.
+  from an old one's backup; answering "no" leaves the setup itself complete.
+- `./scripts/setup.sh --no-dev` leaves out the Python test tools on a machine
+  that only runs Headroom.
 - An import from the terminal refuses while Headroom is running, and
   Headroom waits to start until an import has finished.
 

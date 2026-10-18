@@ -11,7 +11,7 @@ type Key = readonly unknown[];
  * Naming keys here would be a list that is wrong the day a new one is added;
  * invalidating everything is exactly the size of the change.
  */
-export function invalidateEverything(qc: QueryClient) {
+export function invalidateEveryQuery(qc: QueryClient) {
   return qc.invalidateQueries();
 }
 

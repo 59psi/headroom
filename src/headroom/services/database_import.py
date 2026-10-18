@@ -12,7 +12,7 @@ had no way back at all short of that recipe.
 an upload, a restore point on this server, or a path (the command line) —
 proves it is a readable Headroom database, brings a COPY of it up to this
 version with the same `database_upgrade.upgrade` the boot runs, and returns
-what it holds. That summary is what the confirm dialog shows. `apply` then:
+what it holds. That preview is what the confirm dialog shows. `apply` then:
 
 1. refuses while a photo is being analyzed, re-cut or imported — by the
    worker or inside a request — since a write to hat #12 must not land on a
@@ -65,9 +65,10 @@ import sqlite3
 import tarfile
 import time
 import zlib
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from enum import StrEnum
 from pathlib import Path, PurePosixPath
 
 from sqlalchemy import column, delete, func, insert, select, table, text
@@ -91,6 +92,13 @@ from headroom.models import (
     PasskeyCredential,
     ShareLink,
     User,
+)
+from headroom.schemas.admin import (
+    DatabaseImportPreview,
+    DatabaseImportResult,
+    ImportSourceKind,
+    RestorePointKind,
+    RestorePointRead,
 )
 from headroom.services import (
     activity_service,
@@ -169,8 +177,7 @@ _SERVER_KEYS = frozenset({ca_vault.ROOT_FINGERPRINT_KEY})
 #: database has no row — so an imported row would silently outrank a key this
 #: server was deliberately configured with. And a value the owner removed (an
 #: off-site destination, a revoked key) must stay removed, not come back from
-#: a backup older than the removal. The nightly archive holds the keys: an
-#: upload destination brought back by an import is where they would go.
+#: a backup older than the removal.
 _INSTALL_KEYS = frozenset({
     auth_service.SETUP_SENTINEL_KEY,
     guest_view_service.GUEST_VIEW_KEY,
@@ -182,6 +189,17 @@ _INSTALL_KEYS = frozenset({
     backup_service.UPLOAD_PROVIDER_KEY,
     backup_service.UPLOAD_DESTINATION_KEY,
 })
+
+
+class SettingPolicy(StrEnum):
+    """How an import treats one `app_settings` key."""
+
+    #: The live value, or none at all.
+    keep = "keep"
+    #: The import's value.
+    imported = "import"
+    #: The live value when this install has one, else the import's.
+    prefer_live = "prefer_live"
 
 
 def _collection_keys() -> frozenset[str]:
@@ -197,22 +215,18 @@ def _collection_keys() -> frozenset[str]:
     )
 
 
-def setting_policy(key: str, *, keep_account: bool) -> str:
-    """How an import treats one `app_settings` key.
-
-    `keep` — the live value or none; `import` — the import's; `prefer_live` —
-    the live value when this install has one, else the import's (the tag
-    address, the eBay marketplace: harmless preferences, filled in for an
-    install that never set them). The default is `prefer_live`: a setting
-    nobody classified is far more likely to be configuration than collection.
-    """
+def setting_policy(key: str, *, keep_account: bool) -> SettingPolicy:
+    """The policy for one key. `prefer_live` covers the tag address, the eBay
+    marketplace — harmless preferences, filled in for an install that never
+    set them — and is the default: a setting nobody classified is far more
+    likely to be configuration than collection."""
     if key in _SERVER_KEYS:
-        return "keep"
+        return SettingPolicy.keep
     if key in _INSTALL_KEYS:
-        return "keep" if keep_account else "import"
+        return SettingPolicy.keep if keep_account else SettingPolicy.imported
     if key in _collection_keys():
-        return "import"
-    return "prefer_live"
+        return SettingPolicy.imported
+    return SettingPolicy.prefer_live
 
 
 # --------------------------------------------------------------------------
@@ -220,35 +234,31 @@ def setting_policy(key: str, *, keep_account: bool) -> str:
 # --------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class RestorePoint:
-    """A file on this server an import can start from."""
+def _restore_point_kind(name: str) -> RestorePointKind | None:
+    """What a file in `backups/` is, or None if it is not one to restore."""
+    if backup_service.is_archive_name(name):
+        return RestorePointKind.archive
+    if not name.endswith(".db"):
+        return None
+    if name.startswith(upgrade_guard.SNAPSHOT_PREFIX):
+        return RestorePointKind.pre_upgrade
+    if name.startswith(SNAPSHOT_PREFIX):
+        return RestorePointKind.pre_import
+    return RestorePointKind.snapshot
 
-    name: str
-    #: `archive` — a `headroom-backup-*.tar.gz` (database, and usually photos);
-    #: `snapshot` — a one-file `*.db` copy (`pre-upgrade-*`, `pre-import-*`).
-    kind: str
-    size_bytes: int
-    created_at: datetime
 
-
-def _restore_points_sync() -> list[RestorePoint]:
-    found: list[RestorePoint] = []
-    for path in backup_service._backup_dir().iterdir():
+def _restore_points_sync() -> list[RestorePointRead]:
+    found: list[RestorePointRead] = []
+    for path in backup_service.backup_dir().iterdir():
         # Dotfiles are the scheduler's bookkeeping and `.spool/`; `.partial`
-        # files are writes in progress and fail both suffix tests.
+        # files are writes in progress and are neither kind of name.
         if path.name.startswith(".") or path.is_symlink() or not path.is_file():
             continue
-        if path.name.startswith(backup_service.BACKUP_PREFIX) and path.name.endswith(
-            backup_service.BACKUP_SUFFIX
-        ):
-            kind = "archive"
-        elif path.suffix == ".db":
-            kind = "snapshot"
-        else:
+        kind = _restore_point_kind(path.name)
+        if kind is None:
             continue
         st = path.stat()
-        found.append(RestorePoint(
+        found.append(RestorePointRead(
             name=path.name,
             kind=kind,
             size_bytes=st.st_size,
@@ -258,8 +268,8 @@ def _restore_points_sync() -> list[RestorePoint]:
     return found
 
 
-async def restore_points() -> list[RestorePoint]:
-    """Archives and snapshots in `backups/`, newest first."""
+async def restore_points() -> list[RestorePointRead]:
+    """Archives and database copies in `backups/`, newest first."""
     return await asyncio.to_thread(_restore_points_sync)
 
 
@@ -268,39 +278,11 @@ async def restore_points() -> list[RestorePoint]:
 # --------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class Summary:
-    """What a staged import holds, and what it would replace."""
-
-    token: str
-    source: str
-    from_server: bool
-    #: `archive` (a `.tar.gz`) or `database` (a bare `.db` file).
-    kind: str
-    #: The Headroom version that last ran this database, when it says.
-    version: str | None
-    hats: int
-    disposed_hats: int
-    cases: int
-    rooms: int
-    purchases: int
-    wear_logs: int
-    newest_change_at: datetime | None
-    #: Photo files the archive carries (hats and logo, thumbnails included).
-    photos_included: int
-    #: Hats whose photo is in neither the archive nor this server's uploads —
-    #: they would show no picture after the import.
-    photos_missing: int
-    #: The archive was written by the raw-file fallback and may be torn. It
-    #: passed the integrity check to get this far; the flag says why to look.
-    degraded: bool
-    current_hats: int
-    keeps_account: bool
-
-
 @dataclass
-class _Staged:
-    summary: Summary
+class _StagedImport:
+    """The import waiting for its confirmation, and where its files are."""
+
+    preview: DatabaseImportPreview
     spool: Path
     database: Path
     archive: Path | None
@@ -321,26 +303,34 @@ class _Unpacked:
 
 #: The one staged import. Single-owner app: staging a second file replaces the
 #: first, so an abandoned preview costs one spool directory, never a pile.
-_staged: _Staged | None = None
+_waiting: _StagedImport | None = None
 #: Post-import work (thumbnail and export backfills) — held so a task is never
 #: garbage-collected mid-run, and so a test can wait for it.
 _background: set[asyncio.Task] = set()
 
 
-def _too_big(size: int, room: int) -> str:
-    mb = 1024 * 1024
-    return (
-        f"That file is {size // mb:,} MB and there is room for {max(room, 0) // mb:,} MB "
-        "on the data volume (keeping some free for the app itself)."
-    )
+def _mb(n: int) -> str:
+    return f"{max(n, 0) // (1024 * 1024):,} MB"
+
+
+def _room(path: Path) -> int | None:
+    """Bytes that may be written on the data volume, or None if it can't say."""
+    status = disk.check(path)
+    return None if status.error else status.free_bytes - FREE_SPACE_MARGIN_BYTES
 
 
 def _upload_room(spool: Path) -> int:
-    status = disk.check(spool)
-    if status.error:
-        # Space unknown: fall back to the hard cap rather than refusing.
-        return MAX_UPLOAD_BYTES
-    return min(MAX_UPLOAD_BYTES, status.free_bytes - FREE_SPACE_MARGIN_BYTES)
+    """The most an upload may be: the cap, or less when space is short."""
+    room = _room(spool)
+    # Space unknown: fall back to the hard cap rather than refusing.
+    return MAX_UPLOAD_BYTES if room is None else min(MAX_UPLOAD_BYTES, room)
+
+
+def _too_big(size: int, room: int) -> str:
+    return (
+        f"That file is {_mb(size)} and there is room for {_mb(room)} "
+        "on the data volume (keeping some free for the app itself)."
+    )
 
 
 async def _receive(chunks: AsyncIterable[bytes], target: Path, declared: int | None) -> None:
@@ -370,21 +360,24 @@ async def _receive(chunks: AsyncIterable[bytes], target: Path, declared: int | N
         raise errors.Invalid("The upload was empty.")
 
 
+def _plain_parts(parts: tuple[str, ...]) -> bool:
+    """No empty, `.` or `..` part and no backslash: a path that stays put."""
+    return not any(p in ("", ".", "..") or "\\" in p for p in parts)
+
+
 def _member_parts(name: str) -> tuple[str, ...] | None:
     """An archive member's path parts, or None unless it is a plain `data/…` path.
 
-    Refuses absolute paths, `..`, and macOS AppleDouble `._*` files (a backup
-    re-packed with Finder's `tar` carries `data/._headroom.db`, which is not
-    a database). Extraction never uses the member's own path anyway — files
-    are written to paths this module builds — so this is about what to READ.
+    Also skips macOS AppleDouble `._*` files (a backup re-packed with Finder's
+    `tar` carries `data/._headroom.db`, which is not a database). Extraction
+    never uses the member's own path anyway — files are written to paths this
+    module builds — so this is about what to READ.
     """
     path = PurePosixPath(name)
-    if path.is_absolute():
-        return None
     parts = path.parts
-    if len(parts) < 2 or parts[0] != "data":
+    if path.is_absolute() or len(parts) < 2 or parts[0] != "data":
         return None
-    if any(p in ("", ".", "..") or p.startswith("._") or "\\" in p for p in parts):
+    if not _plain_parts(parts) or any(p.startswith("._") for p in parts):
         return None
     return parts
 
@@ -512,7 +505,7 @@ def _photo_path_ok(value: str) -> bool:
         not path.is_absolute()
         and len(path.parts) >= 2
         and path.parts[0] == "hats"
-        and not any(p in ("", ".", "..") or "\\" in p for p in path.parts)
+        and _plain_parts(path.parts)
         and path.suffix.lower() in _IMAGE_SUFFIXES
     )
 
@@ -520,9 +513,8 @@ def _photo_path_ok(value: str) -> bool:
 def _check_photo_paths_sync(db: Path) -> None:
     """Refuse a database whose photo paths are not ones the app writes.
 
-    The app reads, re-cuts, exports and deletes a hat's files through these
-    paths, and only ever writes relative paths under `hats/` naming an image.
-    Anything else means the file was not written by Headroom, so the whole
+    The app only ever writes relative image paths under `hats/` here. A
+    database holding anything else was not written by Headroom, so the whole
     import is refused before anything else runs on it.
     """
     conn = sqlite3.connect(db)
@@ -590,7 +582,8 @@ def _parse_stamp(value: str | None) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
-def _summarize_sync(db: Path, unpacked: _Unpacked) -> dict:
+def _count_sync(db: Path, unpacked: _Unpacked) -> dict:
+    """What the staged database holds, for the preview."""
     conn = sqlite3.connect(db)
     try:
         def count(sql: str) -> int:
@@ -631,15 +624,16 @@ def _summarize_sync(db: Path, unpacked: _Unpacked) -> dict:
     return counts
 
 
-async def _stage(
+async def _stage_source(
     source: Path,
     spool: Path,
     *,
     name: str,
     from_server: bool,
     session_factory: async_sessionmaker[AsyncSession] | None,
-) -> Summary:
-    global _staged
+) -> DatabaseImportPreview:
+    """Validate, migrate and summarize `source`; make it the waiting import."""
+    global _waiting
     unpacked = await asyncio.to_thread(_unpack_sync, source, spool)
     staged_db = (spool / "incoming.db").resolve()
     version = await asyncio.to_thread(_check_database_sync, unpacked.raw_db, staged_db)
@@ -647,7 +641,7 @@ async def _stage(
     _refuse_newer(version)
     await asyncio.to_thread(_check_photo_paths_sync, staged_db)
     await _upgrade_copy(staged_db)
-    counts = await asyncio.to_thread(_summarize_sync, staged_db, unpacked)
+    counts = await asyncio.to_thread(_count_sync, staged_db, unpacked)
     current, keeps_account = 0, False
     if session_factory is not None:
         async with session_factory() as db:
@@ -655,19 +649,19 @@ async def _stage(
                 select(func.count(Hat.id)).where(Hat.disposed_at.is_(None))
             )).scalar_one()
             keeps_account = await auth_service.user_count(db) > 0
-    summary = Summary(
+    preview = DatabaseImportPreview(
         token=secrets.token_urlsafe(18),
         source=name,
         from_server=from_server,
-        kind="archive" if unpacked.archive is not None else "database",
+        kind=ImportSourceKind.archive if unpacked.archive is not None else ImportSourceKind.database,
         version=version,
         degraded=unpacked.degraded,
         current_hats=current,
         keeps_account=keeps_account,
         **counts,
     )
-    previous, _staged = _staged, _Staged(
-        summary=summary,
+    previous, _waiting = _waiting, _StagedImport(
+        preview=preview,
         spool=spool,
         database=staged_db,
         archive=unpacked.archive,
@@ -676,22 +670,24 @@ async def _stage(
         expires=time.monotonic() + STAGE_TTL_SECONDS,
     )
     if previous is not None:
-        await asyncio.to_thread(backup_service._close_spool_sync, previous.spool)
+        await asyncio.to_thread(backup_service.close_spool_sync, previous.spool)
     logger.info(
-        "Staged an import of %s: %d hats (%s)", name, summary.hats, version or "version unknown"
+        "Staged an import of %s: %d hats (%s)", name, preview.hats, version or "version unknown"
     )
-    return summary
+    return preview
 
 
-async def _staging(build) -> Summary:
+async def _in_new_spool(
+    build: Callable[[Path], Awaitable[DatabaseImportPreview]],
+) -> DatabaseImportPreview:
     """Run `build(spool)` in a fresh spool; drop the spool if it fails."""
-    spool = await asyncio.to_thread(backup_service._open_spool_sync, "headroom-import-")
+    spool = await asyncio.to_thread(backup_service.open_spool_sync, "headroom-import-")
     try:
         return await build(spool)
     except BaseException:
         # Unclaimed first and without I/O, so even a cancellation landing on
         # the deletion leaves it to the next sweep (see `backup_service`).
-        backup_service._release_spool(spool)
+        backup_service.release_spool(spool)
         await asyncio.shield(asyncio.to_thread(shutil.rmtree, spool, True))
         raise
 
@@ -702,43 +698,43 @@ async def stage_upload(
     filename: str | None,
     declared_size: int | None,
     session_factory: async_sessionmaker[AsyncSession] | None,
-) -> Summary:
+) -> DatabaseImportPreview:
     """Stage a file sent as a stream: the browser's raw request body, or stdin."""
     name = Path(filename or "").name[:200] or "uploaded file"
 
-    async def build(spool: Path) -> Summary:
+    async def build(spool: Path) -> DatabaseImportPreview:
         target = spool / "upload"
         await _receive(chunks, target, declared_size)
-        return await _stage(
+        return await _stage_source(
             target, spool, name=name, from_server=False, session_factory=session_factory
         )
 
-    return await _staging(build)
+    return await _in_new_spool(build)
 
 
 async def stage_restore_point(
-    name: str, *, session_factory: async_sessionmaker[AsyncSession]
-) -> Summary:
-    """Stage a backup or snapshot already on this server, by its listed name.
+    name: str, *, session_factory: async_sessionmaker[AsyncSession] | None
+) -> DatabaseImportPreview:
+    """Stage a backup or database copy already on this server, by its listed name.
 
     Looked up in the listing rather than joined onto a path, so a name can
     only ever be one of the files the card showed.
     """
     if name not in {p.name for p in await restore_points()}:
         raise errors.NotFound("There is no backup by that name on this server.")
-    source = backup_service._backup_dir() / name
+    source = backup_service.backup_dir() / name
 
-    async def build(spool: Path) -> Summary:
-        return await _stage(
+    async def build(spool: Path) -> DatabaseImportPreview:
+        return await _stage_source(
             source, spool, name=name, from_server=True, session_factory=session_factory
         )
 
-    return await _staging(build)
+    return await _in_new_spool(build)
 
 
 async def stage_file(
     path: Path, *, session_factory: async_sessionmaker[AsyncSession] | None
-) -> Summary:
+) -> DatabaseImportPreview:
     """Stage a file by path — the command line's door.
 
     `session_factory=None`: there is no live database to compare against yet
@@ -747,46 +743,36 @@ async def stage_file(
     if not path.is_file():
         raise errors.NotFound(f"No such file: {path}")
 
-    async def build(spool: Path) -> Summary:
-        return await _stage(
+    async def build(spool: Path) -> DatabaseImportPreview:
+        return await _stage_source(
             path, spool, name=path.name, from_server=False, session_factory=session_factory
         )
 
-    return await _staging(build)
+    return await _in_new_spool(build)
 
 
-def staged() -> Summary | None:
+def waiting() -> DatabaseImportPreview | None:
     """The import waiting for confirmation, if it has not expired."""
-    current = _staged
+    current = _waiting
     if current is None or time.monotonic() > current.expires:
         return None
-    return current.summary
+    return current.preview
 
 
 async def discard(token: str | None = None) -> bool:
-    """Drop the staged import (only if it is `token`'s, when one is given)."""
-    global _staged
-    current = _staged
-    if current is None or (token is not None and current.summary.token != token):
+    """Drop the waiting import (only if it is `token`'s, when one is given)."""
+    global _waiting
+    current = _waiting
+    if current is None or (token is not None and current.preview.token != token):
         return False
-    _staged = None
-    await asyncio.to_thread(backup_service._close_spool_sync, current.spool)
+    _waiting = None
+    await asyncio.to_thread(backup_service.close_spool_sync, current.spool)
     return True
 
 
 # --------------------------------------------------------------------------
 # applying
 # --------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class Result:
-    source: str
-    hats: int
-    photos_restored: int
-    #: The `pre-import-*.db` copy of what was replaced — a restore point.
-    snapshot: str
-    keeps_account: bool
 
 
 def _plural(n: int, word: str) -> str:
@@ -836,81 +822,55 @@ async def _refuse_if_busy(session_factory: async_sessionmaker[AsyncSession]) -> 
         )
 
 
-def _prune_snapshots_sync(dest_dir: Path) -> None:
-    for stray in dest_dir.glob(f"{SNAPSHOT_PREFIX}*.db.partial"):
-        stray.unlink(missing_ok=True)
-    kept = sorted(
-        dest_dir.glob(f"{SNAPSHOT_PREFIX}*.db"), key=lambda p: p.stat().st_mtime, reverse=True
-    )
-    for old in kept[KEEP_SNAPSHOTS:]:
-        old.unlink(missing_ok=True)
-
-
-def _snapshot_paths() -> tuple[Path, Path]:
-    dest_dir = backup_service._backup_dir()
+def _undo_copy_path() -> Path:
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
-    final = dest_dir / f"{SNAPSHOT_PREFIX}{stamp}.db"
-    partial = final.with_name(final.name + ".partial")
-    partial.unlink(missing_ok=True)
-    return partial, final
+    return backup_service.backup_dir() / f"{SNAPSHOT_PREFIX}{stamp}.db"
 
 
-def _finish_snapshot_sync(partial: Path, final: Path) -> str:
-    """Make the undo copy durable, then give it its name.
-
-    fsynced BEFORE the swap commits: the swap is durable the moment it
-    commits (`synchronous=FULL`), and a power cut that kept the new
-    collection but lost the copy of the old one would make the import
-    unrecoverable — the one thing the copy is for.
-    """
-    disk.sync_replace(partial, final)
-    _prune_snapshots_sync(final.parent)
-    return final.name
-
-
-def _refusal(exc: Exception) -> errors.Conflict:
+def _undo_copy_failed(exc: Exception) -> errors.Conflict:
     return errors.Conflict(
         f"Could not save a copy of the current database first, so nothing was imported ({exc})."
     )
 
 
-def _snapshot_file_sync(live: Path) -> str:
-    """Copy the live database FILE through a read-only connection of its own.
+def _copy_live_file_sync(live: Path) -> str:
+    """The undo copy of a live database FILE, through a read-only connection.
 
     Taken while the swap's connection holds the write lock (see `apply`): in
     WAL a reader proceeds beside a writer, and no other connection can commit
     until the swap does, so the copy is exactly the collection being replaced.
+    fsynced into place (`upgrade_guard.copy_into_place`) before the swap
+    commits — the swap is durable the moment it does, and a power cut that
+    kept it but lost this copy would leave the import without its undo.
     """
-    partial, final = _snapshot_paths()
     try:
-        conn = sqlite3.connect(f"file:{live}?mode=ro", uri=True)
-        try:
-            conn.execute("VACUUM INTO ?", (str(partial),))
-        finally:
-            conn.close()
-        return _finish_snapshot_sync(partial, final)
+        final = upgrade_guard.copy_into_place(live, _undo_copy_path(), read_only=True)
     except Exception as exc:  # a refusal, re-raised as one
-        partial.unlink(missing_ok=True)
-        raise _refusal(exc) from exc
+        raise _undo_copy_failed(exc) from exc
+    upgrade_guard.prune(final.parent, KEEP_SNAPSHOTS, SNAPSHOT_PREFIX)
+    return final.name
 
 
-async def _snapshot_on(conn) -> str:
-    """Copy a database that is not a file (the test suite's in-memory one).
+async def _copy_on_connection(conn) -> str:
+    """The undo copy of a database that is not a file (the test suite's in-memory one).
 
     Only the swap's own connection can see it, so the copy is made there,
     before its transaction begins; nothing else shares that database to
     write in between.
     """
-    partial, final = await asyncio.to_thread(_snapshot_paths)
+    final = await asyncio.to_thread(_undo_copy_path)
+    partial = final.with_name(final.name + ".partial")
     try:
         await conn.exec_driver_sql("VACUUM INTO ?", (str(partial),))
-        return await asyncio.to_thread(_finish_snapshot_sync, partial, final)
+        await asyncio.to_thread(disk.sync_replace, partial, final)
     except Exception as exc:  # a refusal, re-raised as one
         partial.unlink(missing_ok=True)
-        raise _refusal(exc) from exc
+        raise _undo_copy_failed(exc) from exc
+    await asyncio.to_thread(upgrade_guard.prune, final.parent, KEEP_SNAPSHOTS, SNAPSHOT_PREFIX)
+    return final.name
 
 
-def _restore_photos_sync(staged: _Staged) -> int:
+def _restore_photos_sync(staged: _StagedImport) -> int:
     """Write the archive's photos into the upload dir. Returns how many.
 
     Never deletes and never overwrites: a file already on disk is kept,
@@ -922,12 +882,11 @@ def _restore_photos_sync(staged: _Staged) -> int:
     install's: restored only when there is none.
     """
     upload_dir = settings.upload_dir
-    status = disk.check(upload_dir)
-    if not status.error and staged.photo_bytes > status.free_bytes - FREE_SPACE_MARGIN_BYTES:
-        mb = 1024 * 1024
+    room = _room(upload_dir)
+    if room is not None and staged.photo_bytes > room:
         raise errors.Conflict(
-            f"Not enough free space for the photos: they need {staged.photo_bytes // mb:,} MB "
-            f"and {max(status.free_bytes - FREE_SPACE_MARGIN_BYTES, 0) // mb:,} MB can be used."
+            f"Not enough free space for the photos: they need {_mb(staged.photo_bytes)} "
+            f"and {_mb(room)} can be used."
         )
     keep_logo = branding.find_logo() is not None
     wanted = dict(staged.photos)
@@ -941,9 +900,7 @@ def _restore_photos_sync(staged: _Staged) -> int:
             if keep_logo and rel.startswith("branding/"):
                 continue
             dest = safe_join(upload_dir, *rel.split("/"))
-            if dest is None:
-                continue
-            if dest.exists():
+            if dest is None or dest.exists():
                 continue
             source = tar.extractfile(member)
             if source is None:
@@ -1006,9 +963,9 @@ def _merge_settings(
     decided: dict[str, str | None] = {}
     for key in set(live) | set(imported):
         policy = setting_policy(key, keep_account=keep_account)
-        if policy == "keep":
+        if policy is SettingPolicy.keep:
             decided[key] = live.get(key)
-        elif policy == "prefer_live" and live.get(key):
+        elif policy is SettingPolicy.prefer_live and live.get(key):
             decided[key] = live[key]
     # A case number is never issued twice (see `case_service`): the live
     # cases' numbers are released by this import, so they count as given up.
@@ -1087,15 +1044,15 @@ async def apply(
     bind: AsyncEngine,
     session_factory: async_sessionmaker[AsyncSession],
     resume: bool = True,
-) -> Result:
+) -> DatabaseImportResult:
     """Replace the live collection with the staged one (see module doc).
 
     `resume=False` is the command line's: no workers run in that process,
     and the next boot re-queues and backfills anyway.
     """
-    global _staged
-    current = _staged
-    if current is None or current.summary.token != token:
+    global _waiting
+    current = _waiting
+    if current is None or current.preview.token != token:
         raise errors.NotFound("That import is no longer waiting. Choose the file again.")
     if time.monotonic() > current.expires:
         await discard()
@@ -1128,7 +1085,7 @@ async def apply(
                 )
                 try:
                     if live_file is None:
-                        snapshot = await _snapshot_on(conn)
+                        snapshot = await _copy_on_connection(conn)
                     # The write lock, taken BEFORE the copy: from here to the
                     # commit no other connection can commit a write (they wait
                     # out `busy_timeout`), so the copy below is exactly the
@@ -1137,7 +1094,7 @@ async def apply(
                     # the first DELETE — after the copy.
                     await conn.exec_driver_sql("BEGIN IMMEDIATE")
                     if live_file is not None:
-                        snapshot = await asyncio.to_thread(_snapshot_file_sync, live_file)
+                        snapshot = await asyncio.to_thread(_copy_live_file_sync, live_file)
                     await conn.run_sync(_swap_sync, keep_account)
                     await conn.commit()
                 except BaseException:
@@ -1149,14 +1106,14 @@ async def apply(
                     except Exception:  # noqa: BLE001 — a connection left holding the attachment is discarded instead
                         logger.warning("Could not detach the imported database; discarding the connection")
                         await conn.invalidate()
-        if _staged is current:
-            _staged = None
-        await asyncio.to_thread(backup_service._close_spool_sync, current.spool)
+        if _waiting is current:
+            _waiting = None
+        await asyncio.to_thread(backup_service.close_spool_sync, current.spool)
 
-    summary = current.summary
+    preview = current.preview
     logger.warning(
         "Imported %s: %d hats replaced %d; the previous database is %s",
-        summary.source, summary.hats, summary.current_hats, snapshot,
+        preview.source, preview.hats, preview.current_hats, snapshot,
     )
     async with session_factory() as db:
         await activity_service.log_and_commit(
@@ -1165,15 +1122,15 @@ async def apply(
             entity_type="system",
             entity_id=None,
             summary=(
-                f"Imported {summary.source}: {_plural(summary.hats, 'hat')} replaced "
-                f"{summary.current_hats}. The previous database is saved as {snapshot}."
+                f"Imported {preview.source}: {_plural(preview.hats, 'hat')} replaced "
+                f"{preview.current_hats}. The previous database is saved as {snapshot}."
             ),
             details={
-                "source": summary.source,
-                "from_server": summary.from_server,
-                "version": summary.version,
-                "hats": summary.hats,
-                "replaced_hats": summary.current_hats,
+                "source": preview.source,
+                "from_server": preview.from_server,
+                "version": preview.version,
+                "hats": preview.hats,
+                "replaced_hats": preview.current_hats,
                 "photos_restored": restored,
                 "snapshot": snapshot,
                 "kept_account": keep_account,
@@ -1185,9 +1142,9 @@ async def apply(
         task = asyncio.create_task(_backfill_derivatives(session_factory))
         _background.add(task)
         task.add_done_callback(_background.discard)
-    return Result(
-        source=summary.source,
-        hats=summary.hats,
+    return DatabaseImportResult(
+        source=preview.source,
+        hats=preview.hats,
         photos_restored=restored,
         snapshot=snapshot,
         keeps_account=keep_account,

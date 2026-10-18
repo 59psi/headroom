@@ -44,11 +44,6 @@ from headroom.services import (
 
 logger = logging.getLogger(__name__)
 
-#: The `app_settings` primary key that serializes first-run setup. Named once,
-#: in `auth_service`: the recovery path below, the migration guide and a
-#: database import (which keeps this install's account) all refer to it.
-SETUP_SENTINEL_KEY = auth_service.SETUP_SENTINEL_KEY
-
 # Built with the shared route class like every other router, although no
 # service these routes call raises a `DomainError` today: the census in
 # `tests/test_route_layer.py` then covers this module too, instead of carrying
@@ -184,7 +179,7 @@ async def first_run_setup(
     # completed". Clear it, so a box with no owner can be claimed again. The
     # race guard below is unaffected: two racing setups both reach this point,
     # both delete the same stale row, and only one INSERT can win the key.
-    stale = await db.get(AppSetting, SETUP_SENTINEL_KEY)
+    stale = await db.get(AppSetting, auth_service.SETUP_SENTINEL_KEY)
     if stale is not None:
         await db.delete(stale)
         await db.flush()
@@ -192,7 +187,7 @@ async def first_run_setup(
     # is a PRIMARY KEY, so only one concurrent transaction can claim this
     # sentinel — the loser's INSERT collides and rolls back its owner account
     # too, instead of both check-then-inserting two co-equal owners.
-    db.add(AppSetting(key=SETUP_SENTINEL_KEY, value="1"))
+    db.add(AppSetting(key=auth_service.SETUP_SENTINEL_KEY, value="1"))
     try:
         user = await auth_service.create_user(db, data.username, data.password)
     except IntegrityError:

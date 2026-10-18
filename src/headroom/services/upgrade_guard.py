@@ -111,31 +111,51 @@ def snapshot_before_upgrade(db: Path | None, dest_dir: Path, current: str) -> Pa
     versions = f"{_file_part(previous or 'unknown')}-to-{_file_part(current)}"
     name = f"{SNAPSHOT_PREFIX}{versions}-{stamp}.db"
     dest_dir.mkdir(parents=True, exist_ok=True)
-    final = dest_dir / name
-    # Written under a temporary name and renamed into place, as the archives
-    # are: a snapshot cut short by a full disk must never look like a good one.
-    partial = dest_dir / f"{name}.partial"
-    partial.unlink(missing_ok=True)
-    conn = sqlite3.connect(db)
-    try:
-        conn.execute("VACUUM INTO ?", (str(partial),))
-    finally:
-        conn.close()
-    # fsynced into place: the migrations that follow commit durably, and a
-    # power cut that kept them but lost this copy would leave nothing older.
-    disk.sync_replace(partial, final)
+    final = copy_into_place(db, dest_dir / name)
     prune(dest_dir)
     return final
 
 
-def prune(dest_dir: Path, keep: int = KEEP) -> list[Path]:
-    """Delete all but the newest `keep` snapshots (and stray `.partial` files)."""
+def copy_into_place(db: Path, final: Path, *, read_only: bool = False) -> Path:
+    """`VACUUM INTO` a one-file copy of `db`, durably, at `final`.
+
+    Written under a `.partial` name and renamed into place, as the archives
+    are: a copy cut short by a full disk must never look like a good one. And
+    fsynced on the way (`disk.sync_replace`): these copies are taken right
+    before something irreversible commits durably — a migration, an import's
+    swap — and a power cut that kept that but lost the copy would leave
+    nothing older to go back to.
+
+    `read_only` opens the source without write access — for a live database
+    another connection is using (a database import's undo copy). At boot the
+    default is right: a normal connection can recover a WAL a read-only one
+    sometimes cannot (see `snapshot_before_upgrade`).
+    """
+    partial = final.with_name(final.name + ".partial")
+    partial.unlink(missing_ok=True)
+    try:
+        conn = (
+            sqlite3.connect(f"file:{db}?mode=ro", uri=True) if read_only else sqlite3.connect(db)
+        )
+        try:
+            conn.execute("VACUUM INTO ?", (str(partial),))
+        finally:
+            conn.close()
+        disk.sync_replace(partial, final)
+    except BaseException:
+        partial.unlink(missing_ok=True)
+        raise
+    return final
+
+
+def prune(dest_dir: Path, keep: int = KEEP, prefix: str = SNAPSHOT_PREFIX) -> list[Path]:
+    """Delete all but the newest `keep` `<prefix>*.db` copies (and stray `.partial`s)."""
     removed: list[Path] = []
-    for stray in dest_dir.glob(f"{SNAPSHOT_PREFIX}*.db.partial"):
+    for stray in dest_dir.glob(f"{prefix}*.db.partial"):
         stray.unlink(missing_ok=True)
         removed.append(stray)
     snapshots = sorted(
-        dest_dir.glob(f"{SNAPSHOT_PREFIX}*.db"), key=lambda p: p.stat().st_mtime, reverse=True
+        dest_dir.glob(f"{prefix}*.db"), key=lambda p: p.stat().st_mtime, reverse=True
     )
     for old in snapshots[keep:]:
         old.unlink(missing_ok=True)

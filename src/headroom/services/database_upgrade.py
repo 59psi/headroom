@@ -133,7 +133,7 @@ async def upgrade(
         try:
             written = await asyncio.to_thread(
                 upgrade_guard.snapshot_before_upgrade,
-                upgrade_guard.sqlite_file(bind.url), backup_service._backup_dir(), running,
+                upgrade_guard.sqlite_file(bind.url), backup_service.backup_dir(), running,
             )
         except Exception:  # a failed safety copy must not stop the boot; logged with traceback
             logger.exception("Could not snapshot the database before upgrading to %s", running)

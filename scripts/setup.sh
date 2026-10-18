@@ -7,6 +7,8 @@
 #                                      # (for the `docker compose up` path)
 #   ./scripts/setup.sh --no-docker     # skip the Docker engine install
 #   ./scripts/setup.sh --skip-build    # skip the production SPA build
+#   ./scripts/setup.sh --no-dev        # leave out the Python dev tools (pytest,
+#                                      # ruff) — a machine that only RUNS it
 #   ./scripts/setup.sh --import FILE   # then replace the (empty) collection
 #                                      # with a backup's: a .tar.gz archive or
 #                                      # a .db file — moving to a new machine
@@ -40,6 +42,7 @@ set -euo pipefail
 
 INSTALL_DOCKER=1
 BUILD_SPA=1
+DEV_TOOLS=1
 DOCKER_ONLY=0
 IMPORT_FILE=""
 while [ $# -gt 0 ]; do
@@ -47,6 +50,7 @@ while [ $# -gt 0 ]; do
     --docker-only) DOCKER_ONLY=1 ;;
     --no-docker)  INSTALL_DOCKER=0 ;;
     --skip-build) BUILD_SPA=0 ;;
+    --no-dev)     DEV_TOOLS=0 ;;
     --import)
       [ $# -ge 2 ] || { echo "--import needs a file (try --help)"; exit 1; }
       IMPORT_FILE="$2"; shift ;;
@@ -336,7 +340,14 @@ ensure_npm   # after ensure_node — a fresh Node install brings its own npm
 [ "$INSTALL_DOCKER" -eq 1 ] && ensure_docker
 
 log "Installing Python dependencies (uv fetches the .python-version Python if needed)..."
-uv sync
+# The dev group (pytest, ruff…) by default: this script also sets up a
+# development checkout. `--no-dev` is the production shape — the image builds
+# `uv sync --frozen --no-dev` for the same reason.
+if [ "$DEV_TOOLS" -eq 1 ]; then
+  uv sync
+else
+  uv sync --no-dev
+fi
 
 log "Installing frontend dependencies..."
 # `npm ci`, not `npm install`: install can rewrite package-lock.json (the
@@ -360,7 +371,14 @@ if [ -n "$IMPORT_FILE" ]; then
   log "Importing $(basename "$IMPORT_FILE")..."
   # Asks before it replaces anything, and saves what it replaces as
   # backups/pre-import-<time>.db. Stop a running server first.
-  uv run python -m headroom.import_database "$IMPORT_FILE"
+  #
+  # Not fatal: answering "no", or a refusal (a running server, a file that is
+  # not a backup), ends the IMPORT, not the setup — under `set -e` it used to
+  # skip the build stamp, the git hooks and the "how to run it" lines below.
+  if ! uv run python -m headroom.import_database "$IMPORT_FILE"; then
+    warn "The import did not happen (see above). Setup itself is complete;"
+    warn "  run it again with:  uv run python -m headroom.import_database \"$IMPORT_FILE\""
+  fi
 fi
 
 echo ""

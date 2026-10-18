@@ -174,6 +174,55 @@ def docker_tree(tmp_path):
     return run
 
 
+#: Every import runs in a one-off container labeled out of autoheal's watch:
+#: it inherits a healthcheck it never answers.
+_RUN = (
+    "compose run --rm --no-deps -T --label headroom.autoheal=false "
+    "headroom python -m headroom.import_database"
+)
+
+
+async def test_the_script_imports_a_backup_already_on_the_server(docker_tree):
+    """The way back when the app will not start: a file in the volume's
+    backups folder, by name — nothing to copy out of the volume first."""
+    result, calls = docker_tree("--restore-point", "pre-upgrade-2.83.2-to-2.83.4-x.db", "--yes")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    point = "--restore-point pre-upgrade-2.83.2-to-2.83.4-x.db <0 bytes>"
+    assert calls == [
+        f"{_RUN} --preview {point}",
+        "compose stop headroom",
+        f"{_RUN} --yes {point}",
+        "compose start headroom",
+    ], calls
+
+
+async def test_the_script_lists_the_servers_backups_and_changes_nothing(docker_tree):
+    result, calls = docker_tree("--list")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == [f"{_RUN} --list <0 bytes>"], calls
+
+
+async def test_the_command_line_lists_and_imports_a_restore_point(client, tmp_path):
+    backup = await _backup_with_a_hat(client, tmp_path / "backup.db", "From The Folder")
+    live = tmp_path / "server" / "headroom.db"
+    (live.parent / "backups").mkdir(parents=True)
+    name = "pre-upgrade-2.83.2-to-2.83.4-2026-10-17T21-21-20Z.db"
+    (live.parent / "backups" / name).write_bytes(backup.read_bytes())
+
+    listed = _cli(live, "--list")
+    assert listed.returncode == 0, listed.stderr.decode()
+    assert name.encode() in listed.stdout and b"pre-upgrade" in listed.stdout
+
+    result = _cli(live, "--yes", "--restore-point", name)
+    assert result.returncode == 0, result.stderr.decode()
+    conn = sqlite3.connect(live)
+    try:
+        assert [r[0] for r in conn.execute("SELECT model_name FROM hats")] == ["From The Folder"]
+    finally:
+        conn.close()
+
+
 async def test_the_script_previews_then_stops_imports_and_starts_the_app(docker_tree, tmp_path):
     backup = tmp_path / "backup.tar.gz"
     backup.write_bytes(b"x" * 1234)
@@ -181,7 +230,7 @@ async def test_the_script_previews_then_stops_imports_and_starts_the_app(docker_
     result, calls = docker_tree(str(backup), "--yes")
 
     assert result.returncode == 0, result.stdout + result.stderr
-    run = "compose run --rm --no-deps -T headroom python -m headroom.import_database"
+    run = _RUN
     assert calls == [
         f"{run} --preview - <1234 bytes>",
         "compose stop headroom",

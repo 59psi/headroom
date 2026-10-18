@@ -477,7 +477,8 @@ Prereqs: git + curl. The setup script installs everything else it needs —
 uv, Python, Node, backend and frontend deps — via Homebrew on macOS and
 apt/dnf on Linux. It pulls the same versions the Docker image runs
 (**Python 3.14** via the `.python-version` pin, **Node 26** on a fresh
-install), so bare metal doesn't drift from production. The package itself
+Linux install; Homebrew installs its current `node`, which the range below
+accepts), so bare metal doesn't drift from production. The package itself
 still supports Python 3.12+ if you bring your own interpreter.
 
 An existing Node is kept only if `npm ci` will actually run on it:
@@ -501,7 +502,7 @@ refresh it after every pull — see
 
 ```bash
 git clone https://github.com/59psi/headroom.git && cd headroom
-./scripts/setup.sh --no-docker   # drop the flag to also install a Docker engine
+./scripts/setup.sh --no-docker   # drop the flag to also install a Docker engine; add --no-dev where it only runs
 uv run uvicorn headroom.app:app --host 0.0.0.0 --port 8000
 ```
 
@@ -525,7 +526,7 @@ cd frontend && npm run dev
 ```bash
 ./scripts/upgrade.sh --tz America/Los_Angeles   # Docker; --tz once, it is remembered
 # — or, bare metal —
-git pull --ff-only && ./scripts/setup.sh --no-docker   # then restart uvicorn
+git pull --ff-only && ./scripts/setup.sh --no-docker --no-dev   # then restart uvicorn
 ```
 
 Bare metal leaves the database to the app: on its first start after an
@@ -538,7 +539,7 @@ new one:
 
 ```bash
 ./scripts/import-database.sh headroom-backup-<time>.tar.gz   # Docker, once it is running
-./scripts/setup.sh --no-docker --import headroom-backup-<time>.tar.gz   # bare metal
+./scripts/setup.sh --no-docker --no-dev --import headroom-backup-<time>.tar.gz   # bare metal
 ```
 
 Or sign in on the new install and use Settings → Upkeep → Import a database.

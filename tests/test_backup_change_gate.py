@@ -145,7 +145,7 @@ async def test_a_second_cycle_with_no_changes_writes_nothing(monkeypatch):
     async def _write(keep, fingerprint=None):
         calls.append(fingerprint)
         backup_service._write_fingerprint_sync(fingerprint)  # what the real one does
-        return backup_service._backup_dir() / "fake.tar.gz"
+        return backup_service.backup_dir() / "fake.tar.gz"
 
     monkeypatch.setattr(backup_service, "write_scheduled_backup", _write)
     monkeypatch.setattr(backup_service, "_seconds_since_newest_backup_sync", lambda: None)

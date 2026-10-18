@@ -151,9 +151,15 @@ class BackupUploadTestResult(BaseModel):
 
 
 class RestorePointKind(StrEnum):
-    """A scheduled archive (database + photos) or a one-file database snapshot."""
+    """What a file in `backups/` is — decided by the server, from its name."""
 
+    #: A `headroom-backup-*.tar.gz`: the database, and usually the photos.
     archive = "archive"
+    #: A one-file copy taken before an upgrade migrated the database.
+    pre_upgrade = "pre_upgrade"
+    #: A one-file copy of a collection an import replaced — its undo.
+    pre_import = "pre_import"
+    #: Any other one-file database copy someone left in `backups/`.
     snapshot = "snapshot"
 
 

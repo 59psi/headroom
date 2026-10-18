@@ -680,7 +680,7 @@ async def test_the_backup_scheduler_boots_writes_a_backup_and_resolves_its_uploa
 
         assert health.last_error is None, health.last_error
         assert health.last_success_at is not None, health.last_skip_reason
-        assert list(backup_service._backup_dir().glob("headroom-backup-*.tar.gz")), (
+        assert list(backup_service.backup_dir().glob("headroom-backup-*.tar.gz")), (
             "the first cycle recorded success and wrote nothing"
         )
         assert health.last_upload_ok is None, (
@@ -820,7 +820,7 @@ async def test_the_tls_watch_reports_a_served_chain_from_another_authority(
 def _pre_upgrade_snapshots():
     from headroom.services import backup_service
 
-    return sorted(backup_service._backup_dir().glob(f"{upgrade_guard.SNAPSHOT_PREFIX}*.db"))
+    return sorted(backup_service.backup_dir().glob(f"{upgrade_guard.SNAPSHOT_PREFIX}*.db"))
 
 
 async def _recorded_version(factory):

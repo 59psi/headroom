@@ -50,7 +50,7 @@ docker compose up --build -d
 
 ```bash
 git clone https://github.com/59psi/headroom.git && cd headroom
-./scripts/setup.sh --no-docker     # installs uv/Node/deps, builds the SPA
+./scripts/setup.sh --no-docker --no-dev   # installs uv/Node/deps, builds the SPA
 uv run uvicorn headroom.app:app --host 0.0.0.0 --port 8000
 ```
 
@@ -364,14 +364,19 @@ database lists every archive and one-file snapshot in `backups/` (the
 button, and takes a `.tar.gz` or `.db` from the device too. From a terminal:
 
 ```bash
-./scripts/import-database.sh headroom-backup-<timestamp>.tar.gz    # Docker
+./scripts/import-database.sh headroom-backup-<timestamp>.tar.gz    # Docker: a file on this machine
+./scripts/import-database.sh --list                                # Docker: what /data/backups holds
+./scripts/import-database.sh --restore-point pre-upgrade-<…>.db    # Docker: one of those, by name
 uv run python -m headroom.import_database headroom-backup-<timestamp>.tar.gz   # bare metal, server stopped
 ```
 
 The script previews the file while the app runs, asks, stops the app, runs
-the import in a one-off container on the same volume (the file is streamed in
-on stdin, so nothing is copied into the volume first), starts the app again
-and waits for it to report healthy. Every route works the same way:
+the import in a one-off container on the same volume (a file from this
+machine is streamed in on stdin, so nothing is copied into the volume first;
+`--restore-point` reads one already there — the way back when the app itself
+will not start), starts the app again and waits for it to report healthy.
+The one-off container is labeled out of the autoheal overlay's watch. Every
+route works the same way:
 
 - **Nothing changes before you confirm.** The file is validated (an archive
   must hold a database; the database must pass `PRAGMA integrity_check`, be
@@ -778,7 +783,7 @@ you'll land on the first-run setup screen.
 ```bash
 ./scripts/upgrade.sh             # Docker — the whole upgrade, one command
 # — or, bare metal —
-git pull --ff-only && ./scripts/setup.sh --no-docker   # re-sync deps + rebuild SPA, then restart uvicorn
+git pull --ff-only && ./scripts/setup.sh --no-docker --no-dev   # re-sync deps + rebuild SPA, then restart uvicorn
 ```
 
 Bare metal has no pull of its own: `setup.sh` installs and builds whatever

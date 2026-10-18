@@ -132,3 +132,59 @@ async def test_only_the_newest_three_snapshots_are_kept(tmp_path):
         "pre-upgrade-2.74.0-to-2.75.0-x.db",
     ]
     assert archive.exists()
+
+
+# ---- durability ---------------------------------------------------------- #
+
+
+async def test_a_copy_is_on_disk_before_it_takes_its_name(tmp_path, monkeypatch):
+    """`disk.sync_replace`: fsync the FILE, rename, fsync the DIRECTORY — in
+    that order. A rename alone can reach the card before the bytes it names,
+    leaving a complete-looking empty copy after a power cut."""
+    from headroom.utils import disk
+
+    partial = tmp_path / "copy.db.partial"
+    final = tmp_path / "copy.db"
+    partial.write_bytes(b"the copy")
+    opened: dict[int, str] = {}
+    events: list[tuple[str, bool, bool]] = []
+    real_open = os.open
+
+    def recording_open(path, flags, *args):
+        fd = real_open(path, flags, *args)
+        opened[fd] = os.path.basename(os.fspath(path))
+        return fd
+
+    def recording_fsync(fd):
+        events.append((opened.get(fd, "?"), partial.exists(), final.exists()))
+
+    monkeypatch.setattr(disk.os, "open", recording_open)
+    monkeypatch.setattr(disk.os, "fsync", recording_fsync)
+
+    disk.sync_replace(partial, final)
+
+    assert events == [
+        ("copy.db.partial", True, False),   # the bytes, before the name
+        (tmp_path.name, False, True),       # the name, after the rename
+    ]
+    assert final.read_bytes() == b"the copy"
+
+
+async def test_the_pre_upgrade_copy_is_made_durable(tmp_path, monkeypatch):
+    """The migrations after it commit durably; the copy must be on disk first."""
+    from headroom.utils import disk
+
+    db = tmp_path / "headroom.db"
+    _make_db(db, version="2.80.0")
+    synced = []
+    real = disk.sync_replace
+
+    def recording(partial, final):
+        synced.append(final.name)
+        real(partial, final)
+
+    monkeypatch.setattr(disk, "sync_replace", recording)
+
+    snap = upgrade_guard.snapshot_before_upgrade(db, tmp_path / "backups", "2.81.1")
+
+    assert synced == [snap.name]

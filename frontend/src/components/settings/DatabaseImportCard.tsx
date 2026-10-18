@@ -1,11 +1,11 @@
-import { useRef, useState } from 'react';
+import { useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   applyImport, discardImport, getStagedImport, listRestorePoints, stageImportUpload, stageRestorePoint,
 } from '../../api/settings';
 import type { DatabaseImportPreview, RestorePointRead } from '../../types';
-import { formatBytes, plural, timeAgo } from '../../lib/format';
-import { invalidateEverything } from '../../lib/invalidate';
+import { absoluteTime, formatBytes, plural, timeAgo } from '../../lib/format';
+import { invalidateEveryQuery } from '../../lib/invalidate';
 import { qk } from '../../lib/queryKeys';
 import { ErrorNote } from '../common/ErrorNote';
 import { useConfirm } from '../ui/Dialogs';
@@ -13,21 +13,18 @@ import { Panel } from '../ui/Panel';
 import { Skeleton } from '../ui/Skeleton';
 import { StatusPill } from '../ui/StatusPill';
 import { useToast } from '../ui/Toast';
+import { ShowAllToggle, useShowAll } from './ShowAllToggle';
 
 /** Listed before "Show all": the newest few are the ones anybody restores. */
 const POINTS_SHOWN = 4;
 
-function absolute(iso: string | null | undefined): string | undefined {
-  return iso ? new Date(iso).toLocaleString() : undefined;
-}
-
-/** What a file in `backups/` is, in words — its name says why it exists. */
-function describePoint(p: RestorePointRead): string {
-  if (p.kind === 'archive') return 'Full backup';
-  if (p.name.startsWith('pre-import-')) return 'Saved before an import';
-  if (p.name.startsWith('pre-upgrade-')) return 'Saved before an upgrade';
-  return 'Database copy';
-}
+/** What a file in `backups/` is, in words. The server decides the kind. */
+const POINT_LABELS: Record<RestorePointRead['kind'], string> = {
+  archive: 'Full backup',
+  pre_upgrade: 'Saved before an upgrade',
+  pre_import: 'Saved before an import',
+  snapshot: 'Database copy',
+};
 
 function PointList({
   points, busy, onUse,
@@ -36,11 +33,10 @@ function PointList({
   busy: boolean;
   onUse: (name: string) => void;
 }) {
-  const [showAll, setShowAll] = useState(false);
+  const { shown, toggle } = useShowAll(points, POINTS_SHOWN);
   if (points.length === 0) {
     return <p className="hr-upkeep-note">No backups on this server yet.</p>;
   }
-  const shown = showAll ? points : points.slice(0, POINTS_SHOWN);
   return (
     <div className="hr-upkeep-snapshots">
       <span className="hr-eyebrow">On this server</span>
@@ -51,8 +47,8 @@ function PointList({
             <span className="hr-import-point-text">
               <span className="hr-upkeep-file-name" title={p.name}>{p.name}</span>
               <span className="hr-upkeep-file-meta">
-                {describePoint(p)}{' · '}
-                <time dateTime={p.created_at} title={absolute(p.created_at)}>{timeAgo(p.created_at)}</time>
+                {POINT_LABELS[p.kind]}{' · '}
+                <time dateTime={p.created_at} title={absoluteTime(p.created_at)}>{timeAgo(p.created_at)}</time>
                 {' · '}{formatBytes(p.size_bytes)}
               </span>
             </span>
@@ -68,16 +64,7 @@ function PointList({
           </li>
         ))}
       </ul>
-      {points.length > POINTS_SHOWN && (
-        <button
-          type="button"
-          className="btn btn-sm btn-outline-secondary hr-upkeep-more"
-          aria-expanded={showAll}
-          onClick={() => setShowAll(v => !v)}
-        >
-          {showAll ? 'Show fewer' : `Show all ${points.length}`}
-        </button>
-      )}
+      <ShowAllToggle {...toggle} />
     </div>
   );
 }
@@ -94,7 +81,7 @@ function Preview({ p }: { p: DatabaseImportPreview }) {
         {p.newest_change_at ? (
           <>
             {'. Newest change '}
-            <time dateTime={p.newest_change_at} title={absolute(p.newest_change_at)}>
+            <time dateTime={p.newest_change_at} title={absoluteTime(p.newest_change_at)}>
               {timeAgo(p.newest_change_at)}
             </time>
           </>
@@ -187,7 +174,7 @@ export function DatabaseImportCard() {
       );
       // Every list, count and detail in the cache is about a collection that
       // is gone — this card's own restore points included (the copy is new).
-      void invalidateEverything(qc);
+      void invalidateEveryQuery(qc);
     },
   });
 

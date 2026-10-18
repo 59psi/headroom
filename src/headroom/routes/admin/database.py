@@ -33,7 +33,7 @@ async def list_restore_points():
 @router.get("/database/import", response_model=DatabaseImportPreview | None)
 async def staged_import():
     """The import waiting for confirmation, if any — a reloaded card resumes it."""
-    return database_import.staged()
+    return database_import.waiting()
 
 
 async def _body(request: Request) -> AsyncIterator[bytes]:
@@ -55,7 +55,7 @@ async def _body(request: Request) -> AsyncIterator[bytes]:
 
 
 @router.post("/database/import", response_model=DatabaseImportPreview)
-@limits.streams_body(database_import.MAX_UPLOAD_BYTES)
+@limits.streams_body
 async def stage_upload(
     request: Request,
     filename: str | None = Query(None, max_length=255, description="Shown in the preview only"),

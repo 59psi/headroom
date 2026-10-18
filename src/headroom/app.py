@@ -435,7 +435,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 except Exception as exc:  # noqa: BLE001 — a dead task must not abort shutdown
                     # A task that already died holds its exception, and `await`
                     # re-raises it here. Only CancelledError used to be caught,
-                    # so one dead loop (e.g. the backup loop's `_backup_dir()`
+                    # so one dead loop (e.g. the backup loop's `backup_dir()`
                     # mkdir failing on a read-only /data — it runs outside that
                     # loop's own try) aborted the whole shutdown: the import and
                     # analysis workers were never stopped and mDNS never sent

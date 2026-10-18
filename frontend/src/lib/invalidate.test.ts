@@ -4,7 +4,7 @@ import {
   analysisViewKeys,
   hatViewKeys,
   invalidateAll,
-  invalidateEverything,
+  invalidateEveryQuery,
   invalidateHatViews,
   invalidateHatVocabulary,
   invalidatePurchaseDerived,
@@ -113,13 +113,13 @@ describe('invalidatePurchaseDerived', () => {
   });
 });
 
-describe('invalidateEverything', () => {
+describe('invalidateEveryQuery', () => {
   it('reaches every query, in every area — a database import replaces them all', async () => {
     const keys = [
       qk.hats(), qk.hat(7), qk.cases(), qk.rooms(), qk.meta.colors(),
       qk.admin.backups(), qk.admin.restorePoints(), qk.settings.logo(),
     ];
-    const got = await reached(keys, invalidateEverything);
+    const got = await reached(keys, invalidateEveryQuery);
     expect(got.filter(([, invalidated]) => !invalidated)).toEqual([]);
   });
 });
