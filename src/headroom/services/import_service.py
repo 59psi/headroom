@@ -544,8 +544,18 @@ async def start_worker(session_factory=None) -> None:
     global _queue, _worker_task
     _queue = asyncio.Queue()
     _worker_task = asyncio.create_task(_worker_loop())
-    # Heal crash-stranded state, then enqueue everything left 'queued'
-    # (including items just reset from 'processing' by the boot sweep).
+    await requeue_stranded()
+
+
+async def requeue_stranded() -> None:
+    """Heal crash-stranded state, then enqueue everything left 'queued'.
+
+    Including items just reset from 'processing' by the sweep. At boot, and
+    after a database import: the imported jobs are rows this process's
+    in-memory queue has never seen. A no-op when no worker is draining.
+    """
+    if _queue is None:
+        return
     await _recover_on_boot()
     async with _sessions() as db:
         result = await db.execute(

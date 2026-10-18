@@ -6,19 +6,21 @@ about something else (the new feature, the overlay flags). And the migrations
 that run on the first boot of a new version are exactly the ones that cannot
 be undone by reverting the image: 2.81.0 rebuilt the whole `hats` table.
 
-So the app takes the backup itself. Before `init_db` touches the schema, the
-lifespan compares the version it is about to run with the one recorded by the
-last successful boot (`last_booted_version` in `app_settings`); when they
+So the app takes the backup itself. Before `init_db` touches the schema,
+`database_upgrade.upgrade` (the boot's sequence, and the command-line
+import's) compares the version it is about to run with the one recorded by
+the last successful run (`last_booted_version` in `app_settings`); when they
 differ it writes a one-file copy of the database next to the scheduled
 archives, as `backups/pre-upgrade-<from>-to-<to>-<UTC time>.db`. The version
-is recorded only after migrations and the one-time repairs succeed, so a boot
+is recorded only after migrations and the one-time repairs succeed, so a run
 that dies half-way snapshots again on the next attempt rather than trusting a
 record of an upgrade that never finished.
 
 What it deliberately is not: a replacement for the scheduled archives (it has
-the database only — photos are not changed by a migration) or a restore
-mechanism. Restoring one is the documented recipe: stop the app, copy the file
-over `/data/headroom.db`, remove `headroom.db-wal` and `headroom.db-shm`.
+the database only — photos are not changed by a migration). Restoring one is
+a database import (`services/database_import`: Settings → Upkeep → Import a
+database lists these snapshots), which saves the collection it replaces
+first.
 """
 
 from __future__ import annotations
@@ -29,6 +31,8 @@ import sqlite3
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+
+from headroom.utils import disk
 
 logger = logging.getLogger(__name__)
 
@@ -107,29 +111,51 @@ def snapshot_before_upgrade(db: Path | None, dest_dir: Path, current: str) -> Pa
     versions = f"{_file_part(previous or 'unknown')}-to-{_file_part(current)}"
     name = f"{SNAPSHOT_PREFIX}{versions}-{stamp}.db"
     dest_dir.mkdir(parents=True, exist_ok=True)
-    final = dest_dir / name
-    # Written under a temporary name and renamed into place, as the archives
-    # are: a snapshot cut short by a full disk must never look like a good one.
-    partial = dest_dir / f"{name}.partial"
-    partial.unlink(missing_ok=True)
-    conn = sqlite3.connect(db)
-    try:
-        conn.execute("VACUUM INTO ?", (str(partial),))
-    finally:
-        conn.close()
-    partial.replace(final)
+    final = copy_into_place(db, dest_dir / name)
     prune(dest_dir)
     return final
 
 
-def prune(dest_dir: Path, keep: int = KEEP) -> list[Path]:
-    """Delete all but the newest `keep` snapshots (and stray `.partial` files)."""
+def copy_into_place(db: Path, final: Path, *, read_only: bool = False) -> Path:
+    """`VACUUM INTO` a one-file copy of `db`, durably, at `final`.
+
+    Written under a `.partial` name and renamed into place, as the archives
+    are: a copy cut short by a full disk must never look like a good one. And
+    fsynced on the way (`disk.sync_replace`): these copies are taken right
+    before something irreversible commits durably — a migration, an import's
+    swap — and a power cut that kept that but lost the copy would leave
+    nothing older to go back to.
+
+    `read_only` opens the source without write access — for a live database
+    another connection is using (a database import's undo copy). At boot the
+    default is right: a normal connection can recover a WAL a read-only one
+    sometimes cannot (see `snapshot_before_upgrade`).
+    """
+    partial = final.with_name(final.name + ".partial")
+    partial.unlink(missing_ok=True)
+    try:
+        conn = (
+            sqlite3.connect(f"file:{db}?mode=ro", uri=True) if read_only else sqlite3.connect(db)
+        )
+        try:
+            conn.execute("VACUUM INTO ?", (str(partial),))
+        finally:
+            conn.close()
+        disk.sync_replace(partial, final)
+    except BaseException:
+        partial.unlink(missing_ok=True)
+        raise
+    return final
+
+
+def prune(dest_dir: Path, keep: int = KEEP, prefix: str = SNAPSHOT_PREFIX) -> list[Path]:
+    """Delete all but the newest `keep` `<prefix>*.db` copies (and stray `.partial`s)."""
     removed: list[Path] = []
-    for stray in dest_dir.glob(f"{SNAPSHOT_PREFIX}*.db.partial"):
+    for stray in dest_dir.glob(f"{prefix}*.db.partial"):
         stray.unlink(missing_ok=True)
         removed.append(stray)
     snapshots = sorted(
-        dest_dir.glob(f"{SNAPSHOT_PREFIX}*.db"), key=lambda p: p.stat().st_mtime, reverse=True
+        dest_dir.glob(f"{prefix}*.db"), key=lambda p: p.stat().st_mtime, reverse=True
     )
     for old in snapshots[keep:]:
         old.unlink(missing_ok=True)

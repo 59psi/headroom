@@ -257,16 +257,20 @@ async def _run_inline(
     forever. One definition: on failure, roll back, record exactly what the
     worker would have (`analysis_queue.record_failure` — the same function,
     so the two paths cannot disagree again), and commit that.
+
+    Counted while it runs (`analysis_queue.running_inline`), so a database
+    import waits for it as it waits for the worker.
     """
-    try:
-        await step
-        await db.commit()
-    except Exception as exc:
-        logger.exception("Inline %s failed for hat=%s: %s", what, hat_id, exc)
-        await db.rollback()
-        hat = await hat_service.get_hat(db, hat_id)
-        analysis_queue.record_failure(hat, exc, cutout_only=cutout_only)
-        await db.commit()
+    async with analysis_queue.running_inline():
+        try:
+            await step
+            await db.commit()
+        except Exception as exc:
+            logger.exception("Inline %s failed for hat=%s: %s", what, hat_id, exc)
+            await db.rollback()
+            hat = await hat_service.get_hat(db, hat_id)
+            analysis_queue.record_failure(hat, exc, cutout_only=cutout_only)
+            await db.commit()
 
 
 @router.post("/{hat_id:int}/reanalyze", response_model=HatRead)
@@ -311,7 +315,8 @@ async def reanalyze_hat(hat_id: int, db: AsyncSession = Depends(get_db)):
 
     # No key: local fallback only. The hat was never marked pending, so a
     # failure here cannot strand it; the 400 below is decided by attempting it.
-    applied = await hat_analysis_pipeline.reanalyze_existing_photo(db, hat, photo_path)
+    async with analysis_queue.running_inline():
+        applied = await hat_analysis_pipeline.reanalyze_existing_photo(db, hat, photo_path)
     if not applied:
         raise HTTPException(
             status_code=400,

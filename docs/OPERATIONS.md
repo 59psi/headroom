@@ -50,12 +50,20 @@ docker compose up --build -d
 
 ```bash
 git clone https://github.com/59psi/headroom.git && cd headroom
-./scripts/setup.sh --no-docker     # installs uv/Node/deps, inits DB, builds the SPA
+./scripts/setup.sh --no-docker --no-dev   # installs uv/Node/deps, builds the SPA
 uv run uvicorn headroom.app:app --host 0.0.0.0 --port 8000
 ```
 
+The app creates (and later migrates) its database when it starts — setup
+leaves it alone, so an upgrade's pre-migration copy (§5) is taken of the
+database as the old version left it. Moving from another install? Add
+`--import headroom-backup-<time>.tar.gz` (or a `.db`) to the setup line: it
+shows what the file holds and asks before replacing anything.
+
 State lives in the project directory: `headroom.db`, `uploads/`, and
-`backups/` (sibling of the uploads dir). Run it under systemd / launchd /
+`backups/` (sibling of the uploads dir), plus an empty `.headroom.lock` the
+app holds while it runs (§4: an import from the terminal will not run beside
+it; in Docker it is `/data/.headroom.lock`). Run it under systemd / launchd /
 tmux as you prefer; the app has no supervisor of its own.
 
 ### Development
@@ -350,8 +358,72 @@ use it before upgrades or before experimenting. The archive is staged under
 RAM under the shipped compose file), so it needs free space on the volume
 roughly the size of the archive.
 
-**Restore** — archive contents are prefixed `data/` (`data/headroom.db`,
-`data/uploads/…`). Docker:
+**Import a database** — the usual way back. Settings → Upkeep → Import a
+database lists every archive and one-file snapshot in `backups/` (the
+`pre-upgrade-*.db` and `pre-import-*.db` copies included) with a **Use**
+button, and takes a `.tar.gz` or `.db` from the device too. From a terminal:
+
+```bash
+./scripts/import-database.sh headroom-backup-<timestamp>.tar.gz    # Docker: a file on this machine
+./scripts/import-database.sh --list                                # Docker: what /data/backups holds
+./scripts/import-database.sh --restore-point pre-upgrade-<…>.db    # Docker: one of those, by name
+uv run python -m headroom.import_database headroom-backup-<timestamp>.tar.gz   # bare metal, server stopped
+```
+
+The script previews the file while the app runs, asks, stops the app, runs
+the import in a one-off container on the same volume (a file from this
+machine is streamed in on stdin, so nothing is copied into the volume first;
+`--restore-point` reads one already there — the way back when the app itself
+will not start), starts the app again and waits for it to report healthy.
+The one-off container is labeled out of the autoheal overlay's watch. Every
+route works the same way:
+
+- **Nothing changes before you confirm.** The file is validated (an archive
+  must hold a database; the database must pass `PRAGMA integrity_check`, be
+  a Headroom one, and keep every photo path in the photo folder; an archive
+  restores only files named the way the app names its photos and logo), a
+  copy is brought up to this version with the same
+  migrations and one-time repairs a boot runs, and you see what it holds —
+  hats, cases, purchases, photos, and how many hats would have no picture. A
+  database from a newer Headroom is refused until this server is upgraded.
+- **The collection it replaces is saved first**, as
+  `backups/pre-import-<UTC time>.db` (the newest five are kept). It is a
+  restore point like any other: importing it is the undo. If that copy
+  cannot be written, nothing is imported.
+- **Photos first, then rows.** An archive's photos are written into the
+  upload directory before the database that points at them; a file already
+  there is never deleted or overwritten (a re-cut since the backup keeps its
+  newer cutout), so the undo has every picture it points at. Then the write
+  lock is taken, the undo copy is made and fsynced, and the rows are swapped
+  in one transaction on the app's own database connection — every reader sees
+  the old collection or the new one, never a mix, and no write can land
+  between the copy and the swap.
+- **What stays:** this install's account and password, passkeys, sessions,
+  share links, guest-browsing switch, CA fingerprint, API keys, model and
+  off-site upload — exactly as they are, set or not: a key set by
+  environment stays the one in use, and an off-site destination removed
+  since the backup stays removed. Harmless preferences this install never set
+  (the tag address, the eBay marketplace) are filled in from the import. A
+  database with no account yet (a fresh install from the command line) takes
+  the import's account and settings too.
+- **Never beside a running app.** The app holds `<data dir>/.headroom.lock`
+  while it runs; the command-line import refuses while it is held ("stop
+  Headroom first" — the Docker script does that), and an app started during
+  an import (a watchdog's restart, say) waits for it, logging why.
+- **Numbers never go backwards.** Hat ids and case numbers are the larger of
+  the two databases', with the replaced cases' numbers counted as used, so a
+  printed tag never ends up pointing at a different hat or case.
+- **It waits for running work** — a photo being analyzed, cut out or
+  imported — rather than swapping the hats out from under it, and re-queues
+  whatever the imported database left pending.
+- Uploads from the browser are capped at 2 GB and by the free space on the
+  data volume, less 256 MB kept for the app; they stream straight to the
+  volume (not to `/tmp`, which is RAM under the shipped compose file). The
+  certificate authority in a full archive is NOT restored by an import —
+  that is the manual step below.
+
+**Restore by hand** — when the app will not start at all. Archive contents
+are prefixed `data/` (`data/headroom.db`, `data/uploads/…`). Docker:
 
 ```bash
 docker compose down                       # same -f flags you deploy with
@@ -710,9 +782,13 @@ you'll land on the first-run setup screen.
 
 ```bash
 ./scripts/upgrade.sh             # Docker — the whole upgrade, one command
-# — or —
-./scripts/setup.sh --no-docker   # bare metal: re-sync deps + rebuild SPA, then restart uvicorn
+# — or, bare metal —
+git pull --ff-only && ./scripts/setup.sh --no-docker --no-dev   # re-sync deps + rebuild SPA, then restart uvicorn
 ```
+
+Bare metal has no pull of its own: `setup.sh` installs and builds whatever
+the checkout holds. It no longer touches the database either — the restart
+does, after saving the pre-upgrade copy described below.
 
 `scripts/upgrade.sh` is the upgrade checklist as a script, so there is nothing
 to remember between releases. It:
@@ -755,10 +831,12 @@ to remember between releases. It:
   it, to `/data/backups/pre-upgrade-<from>-to-<to>-<UTC time>.db` — before any
   migration runs. The last three are kept. It is the database only (a
   migration never changes photos); the nightly archives remain the full
-  backups. To go back: stop the app, copy the snapshot over
-  `/data/headroom.db`, delete `/data/headroom.db-wal` and
-  `/data/headroom.db-shm`, and start the PREVIOUS version's image — there is
-  no downgrade path for the schema, so the old code needs the old database.
+  backups. To get that data back on THIS version, import the snapshot
+  (Settings → Upkeep → Import a database — §4). To run the previous version
+  again: stop the app, copy the snapshot over `/data/headroom.db`, delete
+  `/data/headroom.db-wal` and `/data/headroom.db-shm`, and start the PREVIOUS
+  version's image — there is no downgrade path for the schema, so the old
+  code needs the old database.
 - Database migrations are **automatic**: `init_db()` runs inline DDL
   migrations at every boot. There is no separate migrate step.
 - **One one-time rebuild to know about.** The first boot of the release that

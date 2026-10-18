@@ -1,14 +1,14 @@
-import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ErrorNote } from '../common/ErrorNote';
 import { listBackups, backupDownloadUrl, getBackupHealth } from '../../api/settings';
 import type { BackupHealthRead, BackupInfo } from '../../types';
-import { formatBytes, plural, timeAgo } from '../../lib/format';
+import { absoluteTime, formatBytes, plural, timeAgo } from '../../lib/format';
 import { qk } from '../../lib/queryKeys';
 import { Panel } from '../ui/Panel';
 import { StatusPill } from '../ui/StatusPill';
 import { Skeleton } from '../ui/Skeleton';
 import { useToast } from '../ui/Toast';
+import { ShowAllToggle, useShowAll } from './ShowAllToggle';
 
 /**
  * Snapshots listed before "Show all". Retention is count-based, so the list
@@ -17,10 +17,6 @@ import { useToast } from '../ui/Toast';
  * ones anybody restores from.
  */
 const SNAPSHOTS_SHOWN = 5;
-
-function absolute(iso: string | null | undefined): string | undefined {
-  return iso ? new Date(iso).toLocaleString() : undefined;
-}
 
 /**
  * The scheduler's state in one word, for the card header.
@@ -84,7 +80,7 @@ function SchedulerStatus({ h, files }: { h: BackupHealthRead; files: BackupInfo[
         <div className="hr-metric">
           <div className="hr-metric-label">Last backup</div>
           <div className="hr-metric-value">
-            <time dateTime={h.last_success_at ?? undefined} title={absolute(h.last_success_at)}>
+            <time dateTime={h.last_success_at ?? undefined} title={absoluteTime(h.last_success_at)}>
               {timeAgo(h.last_success_at)}
             </time>
           </div>
@@ -98,7 +94,7 @@ function SchedulerStatus({ h, files }: { h: BackupHealthRead; files: BackupInfo[
           {checkedSince && (
             <div className="hr-upkeep-metric-sub">
               Checked{' '}
-              <time dateTime={h.last_attempt_at ?? undefined} title={absolute(h.last_attempt_at)}>
+              <time dateTime={h.last_attempt_at ?? undefined} title={absoluteTime(h.last_attempt_at)}>
                 {timeAgo(h.last_attempt_at)}
               </time>
             </div>
@@ -128,7 +124,7 @@ function SchedulerStatus({ h, files }: { h: BackupHealthRead; files: BackupInfo[
 }
 
 function SnapshotList({ files, scheduled }: { files: BackupInfo[]; scheduled: boolean }) {
-  const [showAll, setShowAll] = useState(false);
+  const { shown, toggle } = useShowAll(files, SNAPSHOTS_SHOWN);
   if (files.length === 0) {
     // Said only once the list has LOADED empty — a failed fetch renders its
     // ErrorNote instead, never "nothing here". The promise of a next one is
@@ -140,8 +136,6 @@ function SnapshotList({ files, scheduled }: { files: BackupInfo[]; scheduled: bo
       </p>
     );
   }
-  const shown = showAll ? files : files.slice(0, SNAPSHOTS_SHOWN);
-  const hidden = files.length - shown.length;
   return (
     <div className="hr-upkeep-snapshots">
       <span className="hr-eyebrow">Scheduled snapshots</span>
@@ -151,22 +145,13 @@ function SnapshotList({ files, scheduled }: { files: BackupInfo[]; scheduled: bo
           <li key={b.filename} className="hr-upkeep-file">
             <span className="hr-upkeep-file-name" title={b.filename}>{b.filename}</span>
             <span className="hr-upkeep-file-meta">
-              <time dateTime={b.created_at} title={absolute(b.created_at)}>{timeAgo(b.created_at)}</time>
+              <time dateTime={b.created_at} title={absoluteTime(b.created_at)}>{timeAgo(b.created_at)}</time>
               {' · '}{formatBytes(b.size_bytes)}
             </span>
           </li>
         ))}
       </ul>
-      {files.length > SNAPSHOTS_SHOWN && (
-        <button
-          type="button"
-          className="btn btn-sm btn-outline-secondary hr-upkeep-more"
-          aria-expanded={showAll}
-          onClick={() => setShowAll(v => !v)}
-        >
-          {showAll ? 'Show fewer' : `Show all ${files.length} (${hidden} more)`}
-        </button>
-      )}
+      <ShowAllToggle {...toggle} />
     </div>
   );
 }
@@ -229,7 +214,17 @@ export function BackupsCard() {
               made since the backup straight back into the "restored" copy —
               the restore did not restore. docs/OPERATIONS.md §4 carries the
               same steps with the reasoning. */}
-          <p className="mb-1"><strong>Restoring</strong> (Docker):</p>
+          <p>
+            <strong>Restoring:</strong> use <em>Import a database</em>, the
+            next card down. It takes any snapshot listed here or a file from
+            your device, and saves the current collection first.
+          </p>
+          <p>
+            When the app itself will not start, the same import runs from the
+            server: <code>./scripts/import-database.sh --list</code>, then{' '}
+            <code>--restore-point &lt;name&gt;</code>.
+          </p>
+          <p className="mb-1">Or restore by hand (Docker):</p>
           <ol className="hr-upkeep-restore">
             <li>
               Stop the stack — <code>docker compose down</code>, with the same{' '}

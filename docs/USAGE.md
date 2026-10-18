@@ -45,11 +45,12 @@ queue, recent errors), **Data** (construction audit, re-pricing, frozen
 prices, shared prices, colorway catalog, purchase history, eBay),
 **Sharing** (guest browsing, share links, collection export, inventory
 report, tags, share-to-Headroom), **Device** (trust this device, account,
-LAN discovery, logo) and **Upkeep** (backups, off-site copy, activity log).
+LAN discovery, logo) and **Upkeep** (backups, database import, off-site
+copy, activity log).
 The tab is in the URL (`/settings?tab=data`), so a section can be linked to.
 **Search settings** (above the tabs) finds a card in any section by its name
-or by a word you might use for it — "restore" finds Backups, "anthropic"
-finds the Claude key.
+or by a word you might use for it — "restore" finds Backups and Import a
+database, "anthropic" finds the Claude key.
 
 Every card leads with a one-word status (*Connected*, *Not set*, *Running*,
 *Nothing to do*) so the thing that needs attention stands out; the long
@@ -369,6 +370,18 @@ comes back unassigned.)
   scheduled backups run server-side, and the *Off-site backup* card beside it
   ships each one to a NAS or cloud remote (see
   [OPERATIONS.md §4](OPERATIONS.md#4-backups--restore)).
+- **Import a database** — Settings → Upkeep → *Import a database* puts a
+  backup's collection in place of this one: tap **Use** beside any backup
+  on the server, or **Choose a file…** for a `.tar.gz` archive or `.db`
+  file from your phone or computer. Nothing changes until you have read what
+  the file holds (hats, cases, purchases, photos, and how many hats would
+  have no picture) and tapped **Replace my collection**. The collection it
+  replaces is saved first as `pre-import-<time>.db`, which shows up in the
+  same list — importing it is the undo. Your sign-in, passkeys, share links,
+  API keys, model and off-site backup stay exactly as they are; photos
+  already on the server are never replaced; hat and case numbers never go
+  backwards, so printed tags keep working. A backup from an older version is upgraded on
+  the way in. It waits while photos are being analyzed or imported.
 
 ## 10. Install it like an app
 

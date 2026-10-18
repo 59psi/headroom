@@ -54,7 +54,7 @@ async def test_the_legacy_retention_knob_cannot_switch_pruning_off(monkeypatch, 
 async def test_a_hand_edited_upload_marker_cannot_hydrate_the_wrong_types(
     isolated_upload_dir, monkeypatch
 ):
-    backup_service._backup_dir().mkdir(parents=True, exist_ok=True)
+    backup_service.backup_dir().mkdir(parents=True, exist_ok=True)
     backup_service._upload_state_path().write_text(json.dumps({
         "ok": "yes", "name": 42, "error": ["not", "a", "string"], "successes": "3", "at": "junk",
     }))

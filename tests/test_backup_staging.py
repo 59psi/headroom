@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 import tarfile
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -52,7 +54,7 @@ def _seed_ca(tmp_path, monkeypatch) -> None:
 
 
 def _spool_root() -> Path:
-    return backup_service._backup_dir() / backup_service.SPOOL_DIR_NAME
+    return backup_service.backup_dir() / backup_service.SPOOL_DIR_NAME
 
 
 @pytest.fixture
@@ -113,6 +115,29 @@ async def test_the_database_snapshot_is_staged_on_the_data_volume(
     assert not seen["dest_dir"].exists(), "the snapshot staging was not cleaned up"
 
 
+def _age(path: Path) -> None:
+    """Make a staging entry look as old as a dead process's leftover."""
+    old = time.time() - backup_service.SPOOL_ORPHAN_AGE_SECONDS - 60
+    os.utime(path, (old, old))
+
+
+async def test_another_processs_young_staging_is_left_alone(tmp_path, monkeypatch):
+    """The command-line import stages here while the app runs, in a process
+    whose registrations this one cannot see. Its work is young; a sweep that
+    took every unregistered entry deleted it mid-preview (and the preview's
+    sweep deleted the app's staged import and backups in return)."""
+    _seed_db(tmp_path, monkeypatch)
+    other = _spool_root() / "headroom-import-otherprocess"
+    other.mkdir(parents=True)
+    (other / "upload").write_bytes(b"x" * 1024)
+
+    live = backup_service.open_spool_sync("headroom-stream-")
+    try:
+        assert other.exists(), "a sweep deleted another process's live staging"
+    finally:
+        backup_service.close_spool_sync(live)
+
+
 async def test_staging_a_dead_process_left_behind_is_reclaimed(tmp_path, monkeypatch):
     """A volume, unlike a tmpfs, does not empty itself on restart.
 
@@ -125,18 +150,19 @@ async def test_staging_a_dead_process_left_behind_is_reclaimed(tmp_path, monkeyp
     dead = _spool_root() / "headroom-stream-deadbeef"
     dead.mkdir(parents=True)
     (dead / "backup.tar.gz").write_bytes(b"x" * 1024)
+    _age(dead)
 
-    live = backup_service._open_spool_sync("headroom-stream-")
+    live = backup_service.open_spool_sync("headroom-stream-")
     try:
         assert not dead.exists(), "a dead process's staged archive survived"
         assert live.exists()
 
         # A second, concurrent staging must not sweep the first one away.
-        other = backup_service._open_spool_sync("headroom-snap-")
+        other = backup_service.open_spool_sync("headroom-snap-")
         assert live.exists(), "one live staging directory swept another"
-        backup_service._close_spool_sync(other)
+        backup_service.close_spool_sync(other)
     finally:
-        backup_service._close_spool_sync(live)
+        backup_service.close_spool_sync(live)
     assert not live.exists()
 
 
@@ -163,12 +189,14 @@ async def _run_scheduler_until(done, *, timeout: float = 2.0) -> None:
 
 async def test_the_scheduler_reclaims_dead_staging_at_boot(monkeypatch, _scheduler_health):
     """The scheduler itself, started the way the lifespan starts it: at boot
-    nothing is in flight, so everything under `.spool/` is a dead process's.
+    nothing of its own is in flight, so anything old under `.spool/` is a dead
+    process's.
     (This used to call the sweep function directly, which passed just as well
     with the scheduler never calling it.)"""
     dead = _spool_root() / "headroom-snap-deadbeef"
     dead.mkdir(parents=True)
     (dead / "headroom.db").write_bytes(b"x" * 1024)
+    _age(dead)
     # A recent backup exists, so the first pass writes nothing — the sweep is
     # the only thing that can remove the directory.
     monkeypatch.setattr(backup_service, "_seconds_since_newest_backup_sync", lambda: 60.0)
@@ -195,7 +223,7 @@ async def test_a_data_volume_it_cannot_reach_at_boot_does_not_kill_the_scheduler
         nonlocal attempts
         attempts += 1
 
-    monkeypatch.setattr(backup_service, "_backup_dir", _unreachable)
+    monkeypatch.setattr(backup_service, "backup_dir", _unreachable)
     monkeypatch.setattr(backup_service, "_seconds_since_newest_backup_sync", lambda: None)
     monkeypatch.setattr(backup_service, "_data_fingerprint_sync", lambda: "changed")
     monkeypatch.setattr(backup_service, "_read_fingerprint_sync", lambda: None)
@@ -236,13 +264,13 @@ async def test_the_staged_archive_is_deleted_off_the_event_loop(tmp_path, monkey
 async def test_staging_is_invisible_to_the_backup_inventory(tmp_path, monkeypatch):
     """`.spool/` sits beside the archives; it must never read as one."""
     _seed_db(tmp_path, monkeypatch)
-    live = backup_service._open_spool_sync("headroom-stream-")
+    live = backup_service.open_spool_sync("headroom-stream-")
     try:
         (live / "backup.tar.gz").write_bytes(b"\x1f\x8b")
         assert backup_service._list_backups_sync() == []
         assert backup_service._sweep_partials_sync() == 0
     finally:
-        backup_service._close_spool_sync(live)
+        backup_service.close_spool_sync(live)
 
 
 # ---- what each archive carries ------------------------------------------ #

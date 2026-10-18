@@ -23,6 +23,7 @@ from headroom.routes.admin import (
     catalog,
     config,
     construction,
+    database,
     ebay,
     errors,
     prices,
@@ -35,7 +36,7 @@ router = APIRouter(
 )
 
 for _sub in (
-    errors, backups, activity, reports, ebay, catalog, analysis, construction,
+    errors, backups, database, activity, reports, ebay, catalog, analysis, construction,
     config, prices, repricing,
 ):
     router.include_router(_sub.router)

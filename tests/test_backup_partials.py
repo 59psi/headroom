@@ -30,7 +30,7 @@ def _seed(tmp_path, monkeypatch):
     monkeypatch.setattr(backup_service, "_db_path", lambda: db)
     (settings.upload_dir / "hats").mkdir(parents=True, exist_ok=True)
     (settings.upload_dir / "hats" / "one.png").write_bytes(b"png")
-    backup_service._backup_dir().mkdir(parents=True, exist_ok=True)
+    backup_service.backup_dir().mkdir(parents=True, exist_ok=True)
 
 
 async def test_a_crash_mid_write_leaves_no_archive_under_a_real_name(
@@ -45,7 +45,7 @@ async def test_a_crash_mid_write_leaves_no_archive_under_a_real_name(
         raise PowerCut()
 
     monkeypatch.setattr(backup_service, "_add_db_to_tar", _dies_mid_tar)
-    target = backup_service._backup_dir() / backup_service._timestamped_name()
+    target = backup_service.backup_dir() / backup_service._timestamped_name()
 
     with pytest.raises(PowerCut):
         backup_service._build_tarball_sync(target)
@@ -63,10 +63,10 @@ async def test_a_partial_left_by_a_dead_process_is_invisible_and_swept(
     under its `.partial` name. Nothing may read it as a backup, and the next
     boot removes it."""
     _seed(tmp_path, monkeypatch)
-    real = backup_service._backup_dir() / "headroom-backup-2026-09-01T00-00-00Z.tar.gz"
+    real = backup_service.backup_dir() / "headroom-backup-2026-09-01T00-00-00Z.tar.gz"
     backup_service._build_tarball_sync(real)
     torn = backup_service.partial_path(
-        backup_service._backup_dir() / "headroom-backup-2026-09-06T00-00-00Z.tar.gz"
+        backup_service.backup_dir() / "headroom-backup-2026-09-06T00-00-00Z.tar.gz"
     )
     torn.write_bytes(b"\x1f\x8b" + b"x" * 100)
     # The whole archive is an hour old; the torn one is fresh.
@@ -96,7 +96,7 @@ async def test_while_the_archive_is_being_written_only_the_partial_name_exists(
     from inside the write, from the last step before the archive closes.
     """
     _seed(tmp_path, monkeypatch)
-    target = backup_service._backup_dir() / backup_service._timestamped_name()
+    target = backup_service.backup_dir() / backup_service._timestamped_name()
     seen: dict = {}
 
     def _observe(tar):
@@ -121,7 +121,7 @@ async def test_a_finished_archive_is_whole_and_under_its_final_name(
     isolated_upload_dir, tmp_path, monkeypatch
 ):
     _seed(tmp_path, monkeypatch)
-    target = backup_service._backup_dir() / backup_service._timestamped_name()
+    target = backup_service.backup_dir() / backup_service._timestamped_name()
 
     backup_service._build_tarball_sync(target)
 

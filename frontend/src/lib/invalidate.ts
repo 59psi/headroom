@@ -4,6 +4,18 @@ import { qk } from './queryKeys';
 type Key = readonly unknown[];
 
 /**
+ * Every query — for the one change that touches all of them.
+ *
+ * A database import replaces the collection outright: every hat, case, room,
+ * price, count and history row the cache holds is about data that is gone.
+ * Naming keys here would be a list that is wrong the day a new one is added;
+ * invalidating everything is exactly the size of the change.
+ */
+export function invalidateEveryQuery(qc: QueryClient) {
+  return qc.invalidateQueries();
+}
+
+/**
  * Invalidate several key lists as ONE set — each key once.
  *
  * A mutation that changes two areas (a retry changes the analysis views AND

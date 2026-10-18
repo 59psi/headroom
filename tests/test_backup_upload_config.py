@@ -503,7 +503,7 @@ async def test_test_now_says_so_when_nothing_is_configured(client, monkeypatch, 
     (tmp_path / "bk").mkdir()
     fake = tmp_path / "bk" / backup_service._timestamped_name()
     fake.write_bytes(b"tarball")
-    monkeypatch.setattr(backup_service, "_backup_dir", lambda: tmp_path / "bk")
+    monkeypatch.setattr(backup_service, "backup_dir", lambda: tmp_path / "bk")
     monkeypatch.delenv("HEADROOM_BACKUP_UPLOAD_CMD", raising=False)
     body = (await client.post("/api/admin/backups/upload/test")).json()
     assert body["ok"] is False

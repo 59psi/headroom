@@ -14,6 +14,7 @@ import { InventoryReportCard } from '../components/settings/InventoryReportCard'
 import { CollectionExportCard } from '../components/settings/CollectionExportCard';
 import { OffsiteBackupCard } from '../components/settings/OffsiteBackupCard';
 import { BackupsCard } from '../components/settings/BackupsCard';
+import { DatabaseImportCard } from '../components/settings/DatabaseImportCard';
 import { LogoCard } from '../components/settings/LogoCard';
 import { ColorwayCatalogCard } from '../components/settings/ColorwayCatalogCard';
 import { PurchasesCard } from '../components/settings/PurchasesCard';
@@ -146,6 +147,8 @@ export const SECTIONS: readonly Section[] = [
     icon: <svg {...ICON_PROPS}><path d="M12 3a9 9 0 1 0 9 9" /><path d="M21 3v6h-6" /><path d="M12 7v5l3 2" /></svg>,
     cards: [
       { Card: BackupsCard, name: 'Backups', keywords: 'backup restore download archive' },
+      // "restore" and "undo" lead here too: this is where a backup goes back in.
+      { Card: DatabaseImportCard, name: 'Import a database', keywords: 'import restore undo database backup sqlite migrate move new machine' },
       { Card: OffsiteBackupCard, name: 'Off-site backup', keywords: 'offsite rclone upload cloud backup' },
       // "retention" and "prune": the card's header reports the daily prune.
       { Card: ActivityLogCard, name: 'Recent activity', keywords: 'activity log audit history retention prune' },

@@ -186,7 +186,7 @@ def health() -> BackupHealth:
     return _health
 
 
-def _backup_dir() -> Path:
+def backup_dir() -> Path:
     d = settings.upload_dir.parent / BACKUP_DIR_NAME
     d.mkdir(parents=True, exist_ok=True)
     return d
@@ -373,7 +373,7 @@ def _sweep_partials_sync() -> int:
     """Delete archives a previous process never finished. Returns the count."""
     removed = 0
     try:
-        for p in _backup_dir().iterdir():
+        for p in backup_dir().iterdir():
             if p.is_file() and p.name.endswith(PARTIAL_SUFFIX):
                 p.unlink(missing_ok=True)
                 removed += 1
@@ -402,20 +402,31 @@ def _sweep_partials_sync() -> int:
 # The cost of disk over tmpfs is that a crash no longer cleans up after
 # itself: tmpfs empties on restart, a volume does not. So every staging
 # directory is registered while it is in use, and anything under `.spool/`
-# that is NOT registered belongs to a process that died — it is removed the
-# next time anything is staged, and at scheduler start. Registration and
+# that is NOT registered and older than `SPOOL_ORPHAN_AGE_SECONDS` belongs to
+# a process that died — it is removed the next time anything is staged, and at
+# scheduler start. (Younger and unregistered may be another process's: the
+# command-line import stages here while the app runs.) Registration and
 # creation happen under one lock, so a sweep can never see a directory that
-# exists but is not yet claimed. Process-local by design, like every other
-# counter in this single-process app.
+# exists but is not yet claimed.
 
 SPOOL_DIR_NAME = ".spool"
+
+#: How old an unclaimed staging entry must be before a sweep takes it. "Not
+#: registered in THIS process" stopped meaning "dead" once a second process
+#: could stage here: the command-line import previews a file in a one-off
+#: container while the app runs, and each process's sweep was deleting the
+#: other's live work — a staged web import, a backup's database copy, a
+#: download in progress. Every legitimate use of a spool is minutes long (a
+#: staged import waits an hour at most), so anything older than this is a
+#: leftover, and a dead process's leftovers are still reclaimed, two hours on.
+SPOOL_ORPHAN_AGE_SECONDS = 2 * 60 * 60
 
 _spool_lock = threading.Lock()
 _live_spools: set[Path] = set()
 
 
 def _spool_root() -> Path:
-    root = _backup_dir() / SPOOL_DIR_NAME
+    root = backup_dir() / SPOOL_DIR_NAME
     root.mkdir(parents=True, exist_ok=True)
     return root
 
@@ -432,8 +443,14 @@ def _sweep_dead_spools_locked(root: Path) -> int:
     except OSError as exc:
         logger.warning("Could not sweep backup staging: %s", exc)
         return 0
+    cutoff = time.time() - SPOOL_ORPHAN_AGE_SECONDS
     for entry in entries:
         if entry in _live_spools:
+            continue
+        try:
+            if entry.lstat().st_mtime > cutoff:
+                continue  # possibly another process's, still in use
+        except OSError:
             continue
         if entry.is_dir() and not entry.is_symlink():
             shutil.rmtree(entry, ignore_errors=True)
@@ -468,7 +485,7 @@ def _sweep_dead_spools_sync() -> int:
         return _sweep_dead_spools_locked(root)
 
 
-def _open_spool_sync(prefix: str) -> Path:
+def open_spool_sync(prefix: str) -> Path:
     """A fresh, registered staging directory on the data volume."""
     root = _spool_root()
     with _spool_lock:
@@ -478,26 +495,26 @@ def _open_spool_sync(prefix: str) -> Path:
     return path
 
 
-def _release_spool(path: Path) -> None:
+def release_spool(path: Path) -> None:
     """Unclaim a staging directory. No I/O, so it is safe on the event loop
     and cannot be skipped by a cancellation landing on an await."""
     with _spool_lock:
         _live_spools.discard(path)
 
 
-def _close_spool_sync(path: Path) -> None:
-    _release_spool(path)
+def close_spool_sync(path: Path) -> None:
+    release_spool(path)
     shutil.rmtree(path, ignore_errors=True)
 
 
 @contextmanager
 def _spool(prefix: str) -> Iterator[Path]:
     """Synchronous staging for code already running off the event loop."""
-    path = _open_spool_sync(prefix)
+    path = open_spool_sync(prefix)
     try:
         yield path
     finally:
-        _close_spool_sync(path)
+        close_spool_sync(path)
 
 
 _STREAM_CHUNK = 1024 * 1024
@@ -522,7 +539,7 @@ async def stream_backup(include_uploads: bool = True) -> AsyncGenerator[bytes, N
     `include_uploads=False` is the database-only archive: no photos, and no
     certificate authority either (see `_build_tarball_sync`).
     """
-    spool = await asyncio.to_thread(_open_spool_sync, "headroom-stream-")
+    spool = await asyncio.to_thread(open_spool_sync, "headroom-stream-")
     tmp_path = spool / "backup.tar.gz"
     try:
         await asyncio.to_thread(_build_tarball_sync, tmp_path, include_uploads)
@@ -547,7 +564,7 @@ async def stream_backup(include_uploads: bool = True) -> AsyncGenerator[bytes, N
         # thread, SHIELDED: a disconnect arrives as cancellation, and an
         # unshielded await here would be canceled along with the response,
         # abandoning the cleanup it exists to perform.
-        _release_spool(spool)
+        release_spool(spool)
         await asyncio.shield(asyncio.to_thread(shutil.rmtree, spool, ignore_errors=True))
 
 
@@ -557,10 +574,14 @@ def _timestamped_name(suffix: str = "") -> str:
     return f"{BACKUP_PREFIX}{ts}{extra}{BACKUP_SUFFIX}"
 
 
+def is_archive_name(name: str) -> bool:
+    """A scheduled or downloaded archive's file name (a `.partial` is not one)."""
+    return name.startswith(BACKUP_PREFIX) and name.endswith(BACKUP_SUFFIX)
+
+
 def _list_backups_sync() -> list[Path]:
     return sorted(
-        (p for p in _backup_dir().iterdir()
-         if p.is_file() and p.name.startswith(BACKUP_PREFIX) and p.name.endswith(BACKUP_SUFFIX)),
+        (p for p in backup_dir().iterdir() if p.is_file() and is_archive_name(p.name)),
         key=lambda p: p.stat().st_mtime,
         reverse=True,
     )
@@ -607,7 +628,7 @@ def _fingerprint_path() -> Path:
     would change the thing being measured every time it was written, and
     every cycle would then look like a change. A self-defeating cache.
     """
-    return _backup_dir() / ".last-fingerprint"
+    return backup_dir() / ".last-fingerprint"
 
 
 def _db_file_parts(db: Path) -> list[str]:
@@ -710,7 +731,7 @@ def _upload_state_path() -> Path:
     backup. The fingerprint covers the DB, its WAL and the uploads tree — not
     this directory — so a sidecar here is inert with respect to it.
     """
-    return _backup_dir() / ".last-upload"
+    return backup_dir() / ".last-upload"
 
 
 def _write_upload_state_sync(h: BackupHealth) -> None:
@@ -958,7 +979,7 @@ async def write_scheduled_backup(keep: int, fingerprint: str | None = None) -> P
     NOT fail the local backup — the file is on disk and the path is returned.
     """
     try:
-        target = _backup_dir() / _timestamped_name()
+        target = backup_dir() / _timestamped_name()
         await asyncio.to_thread(_build_tarball_sync, target)
         await asyncio.to_thread(_enforce_retention, keep)
         if fingerprint is not None:

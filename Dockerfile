@@ -17,13 +17,13 @@
 # Stage 1 — Frontend bundle
 # ============================================================ #
 # Declared first so Dependabot sees it (see the note where it is COPYed in).
-FROM ghcr.io/astral-sh/uv:0.12.23 AS uv
+FROM ghcr.io/astral-sh/uv:0.13.0 AS uv
 
 FROM node:26-trixie-slim AS frontend
 # node:26 bundles npm 11.x, which prints a "New major version available" notice
 # on every build. Pin the npm we actually want rather than living with the
 # nag — same convention as the uv pin below. Bump this alongside the base image.
-ARG NPM_VERSION=12.1.0
+ARG NPM_VERSION=12.2.0
 RUN npm install -g "npm@${NPM_VERSION}"
 # npm 12 logs a "notice" line for every script it runs. Warnings and errors
 # still print — this only drops the informational chatter, so a real problem
@@ -85,9 +85,16 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         libgl1 libglib2.0-0 libheif1 tini rsync openssh-client
 
 FROM base AS python-base
+# `UV_PYTHON_DOWNLOADS=never`: the venv is built on THIS image's Python, the
+# one `.python-version` names and CI checks the `FROM` against. The image does
+# not copy `.python-version`, so uv picks an interpreter by itself — and from
+# 0.13 its default is 3.15, which it would download if the image's ever
+# stopped matching `requires-python`. Never: a mismatch fails the build
+# instead of shipping an interpreter nothing else here was tested on.
 ENV UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=1 \
     UV_PROJECT_ENVIRONMENT=/opt/venv \
+    UV_PYTHON_DOWNLOADS=never \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 

@@ -87,6 +87,8 @@ function explicit() {
     last_error: null, last_skip_reason: null, consecutive_failures: 0,
   })),
   backupDownloadUrl: vi.fn(() => '/api/admin/backup'),
+  listRestorePoints: vi.fn(async () => []),
+  getStagedImport: vi.fn(async () => null),
   getBackupUpload: vi.fn<typeof S.getBackupUpload>(async () => ({
     configured: false, provider: null, destination: null, from_environment: false,
     // Providers are OBJECTS. This mock sent `['rclone']` (strings), so
@@ -223,7 +225,7 @@ const SECTION_CARDS: Record<string, string[]> = {
     'Share photos to Headroom',
   ],
   device: ['Account', 'LAN discovery (mDNS)', 'Site logo'],
-  upkeep: ['Backups', 'Off-site backup', 'Recent activity'],
+  upkeep: ['Backups', 'Import a database', 'Off-site backup', 'Recent activity'],
 };
 
 /**
@@ -317,10 +319,11 @@ describe('SettingsPage', () => {
     const { container } = renderWithProviders(<SettingsPage />);
     await screen.findByText('Claude API key');
 
-    // "restore" is nowhere in a title — it is one of the Backups keywords.
+    // "restore" is nowhere in a title — it is a keyword of Backups and of the
+    // import card, the two places a restore starts.
     await user.type(screen.getByRole('searchbox', { name: 'Search settings' }), 'restore');
     expect(await screen.findByRole('heading', { name: 'Upkeep' })).toBeInTheDocument();
-    expect(renderedCards(container)).toEqual(['Backups']);
+    expect(renderedCards(container)).toEqual(['Backups', 'Import a database']);
     // No tab claims to be selected while results from any section are shown.
     expect(document.querySelector('[aria-current]')).toBeNull();
   });

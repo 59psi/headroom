@@ -124,7 +124,7 @@ def _make_display_id(case_type: CaseType, seq: int) -> str:
 #: is "never issued before", with no record needed at issue time — and it
 #: covers cases that predate this record from their first retype or delete.
 #: Only numbers released before the record existed are beyond recovering.
-_RELEASED_KEYS: dict[CaseType, str] = {
+RELEASED_SEQUENCE_KEYS: dict[CaseType, str] = {
     CaseType.archive: "case_seq_released_archive",
     CaseType.daily_wear: "case_seq_released_daily_wear",
 }
@@ -140,7 +140,7 @@ async def _release(db: AsyncSession, case_type: CaseType, seq: int) -> None:
     In the caller's transaction — the number is retired in the same commit
     that takes it off its case, and a save that fails retires nothing.
     """
-    key = _RELEASED_KEYS[case_type]
+    key = RELEASED_SEQUENCE_KEYS[case_type]
     row = await db.get(AppSetting, key)
     if row is None:
         db.add(AppSetting(key=key, value=str(seq)))
@@ -152,7 +152,7 @@ async def get_next_sequence(db: AsyncSession, case_type: CaseType) -> int:
     """The next number for `case_type` — one that has never been issued.
 
     Above both the highest number in use and the highest ever released (see
-    `_RELEASED_KEYS`). Read-then-write with the save that follows: callers
+    `RELEASED_SEQUENCE_KEYS`). Read-then-write with the save that follows: callers
     hold `capacity.placement_lock()`.
     """
     in_use = (
@@ -162,7 +162,7 @@ async def get_next_sequence(db: AsyncSession, case_type: CaseType) -> int:
             )
         )
     ).scalar_one()
-    released = _as_seq(await db.get(AppSetting, _RELEASED_KEYS[case_type]))
+    released = _as_seq(await db.get(AppSetting, RELEASED_SEQUENCE_KEYS[case_type]))
     return max(in_use, released) + 1
 
 
@@ -246,7 +246,7 @@ async def _update_case_locked(
     }
     if data.case_type is not None and data.case_type != case.case_type:
         # The number this case gives up is retired, never handed to another
-        # case — see `_RELEASED_KEYS`.
+        # case — see `RELEASED_SEQUENCE_KEYS`.
         await _release(db, case.case_type, case.sequence_number)
         seq = await get_next_sequence(db, data.case_type)
         case.case_type = data.case_type
@@ -294,7 +294,7 @@ async def delete_case(db: AsyncSession, display_id: str) -> None:
 
 async def _delete_case_locked(db: AsyncSession, display_id: str) -> None:
     case = await get_case_by_display_id(db, display_id)
-    # Its number is retired with it, never re-issued — see `_RELEASED_KEYS`.
+    # Its number is retired with it, never re-issued — see `RELEASED_SEQUENCE_KEYS`.
     await _release(db, case.case_type, case.sequence_number)
     # Detach every hat before deleting, keeping it IN THE ROOM the case was in.
     # Since 2.33 a hat can live in a room with no case, so "unassigned" and

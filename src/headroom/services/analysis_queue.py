@@ -15,7 +15,7 @@ anyway, so extra workers buy nothing and multiply the failure modes.
 Deliberately mirrors `import_service`'s durability rules, because the failure
 modes are identical:
   * the loop survives ANY per-item exception (a bad photo must not kill it)
-  * `_recover_on_boot` re-queues hats stranded in 'pending' by a crash or
+  * `requeue_stranded` re-queues hats stranded in 'pending' by a crash or
     restart, so a power cut on a Pi costs a retry rather than a hat that sits
     "Analyzing…" forever
   * when no worker is running, `enqueue` reports so and the caller runs the
@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -237,9 +239,14 @@ async def _worker_loop() -> None:
         raise
 
 
-async def _recover_on_boot() -> None:
-    """Re-queue hats left 'pending' by a crash or restart."""
-    assert _queue is not None
+async def requeue_stranded() -> None:
+    """Re-queue hats left 'pending' by a crash or restart.
+
+    At boot, and after a database import, whose pending hats this process's
+    in-memory queue has never seen. A no-op when no worker is draining.
+    """
+    if _queue is None:
+        return
     async with _sessions() as db:
         stranded = (await db.execute(
             select(Hat.id).where(Hat.analysis_status == PENDING)
@@ -259,7 +266,7 @@ async def start_worker(session_factory=None) -> None:
     global _queue, _worker_task
     _queue = asyncio.Queue()
     _worker_task = asyncio.create_task(_worker_loop())
-    await _recover_on_boot()
+    await requeue_stranded()
 
 
 async def stop_worker() -> None:
@@ -278,6 +285,29 @@ async def stop_worker() -> None:
     _session_factory = None
 
 
+#: Pipeline runs happening inside a request because no worker drains the
+#: queue (`routes/hats._run_inline`). A database import waits for these as it
+#: waits for the worker: they write to a hat by id, and after a swap that id
+#: belongs to a different hat.
+_inline_running = 0
+
+
+@asynccontextmanager
+async def running_inline() -> AsyncIterator[None]:
+    """Count a pipeline run that is happening in a request, for its duration."""
+    global _inline_running
+    _inline_running += 1
+    try:
+        yield
+    finally:
+        _inline_running -= 1
+
+
+def inline_running() -> int:
+    """How many pipeline runs are in progress inside requests right now."""
+    return _inline_running
+
+
 def queue_depth() -> int:
     """How many hats are waiting. Surfaced by /health/ready."""
     return _queue.qsize() if _queue is not None else 0
@@ -286,12 +316,15 @@ def queue_depth() -> int:
 __all__ = [
     "PENDING",
     "enqueue",
+    "inline_running",
+    "running_inline",
     "start_worker",
     "stop_worker",
     "worker_alive",
     "worker_expected",
     "mark_failed",
     "record_failure",
+    "requeue_stranded",
     "stamp_failure",
     "queue_depth",
 ]

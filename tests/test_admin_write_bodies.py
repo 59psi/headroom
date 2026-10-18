@@ -152,7 +152,7 @@ async def test_test_now_explains_a_broken_destination_instead_of_500ing(
     monkeypatch.delenv("HEADROOM_BACKUP_UPLOAD_CMD", raising=False)
     (tmp_path / "bk").mkdir()
     (tmp_path / "bk" / backup_service._timestamped_name()).write_bytes(b"tarball")
-    monkeypatch.setattr(backup_service, "_backup_dir", lambda: tmp_path / "bk")
+    monkeypatch.setattr(backup_service, "backup_dir", lambda: tmp_path / "bk")
     await _store_a_destination_that_no_longer_validates(db_session)
 
     resp = await client.post("/api/admin/backups/upload/test")

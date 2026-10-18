@@ -36,6 +36,7 @@ from headroom.services import (
 )
 from headroom.services import capacity as capacity_rules
 from headroom.services.color_extraction import normalize_color_name, normalize_hex_name
+from headroom.utils.paths import safe_join
 from headroom.utils.photo import (
     THUMBS_DIR,
     export_derivative_path,
@@ -813,8 +814,11 @@ async def replace_photo(db: AsyncSession, hat_id: int, photo_rel: str) -> Hat:
     if hat.photo_path:
         export_derivative_path(cfg.upload_dir, hat.photo_path).unlink(missing_ok=True)
     for stale in (hat.photo_path, hat.original_path, hat.thumb_path):
-        if stale:
-            (cfg.upload_dir / stale).unlink(missing_ok=True)
+        # Through `safe_join`: these are values from the database, and a
+        # delete stays inside the upload directory whatever they hold.
+        target = safe_join(cfg.upload_dir, stale) if stale else None
+        if target is not None:
+            target.unlink(missing_ok=True)
     hat.original_path = None
     hat.thumb_path = None
     hat.photo_path = photo_rel

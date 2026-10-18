@@ -87,7 +87,18 @@ def _extract_db(archive: Path, into: Path) -> Path:
     """Pull the .db (and its WAL sidecar, if any) out of a backup tarball."""
     with tarfile.open(archive, "r:gz") as tar:
         members = tar.getmembers()
-        member = next((m for m in members if m.name.endswith(".db") and m.isfile()), None)
+        # `data/headroom.db` by name when it is there, and never a macOS
+        # AppleDouble `._*` file: an archive re-packed with Finder's `tar`
+        # carries `data/._headroom.db` FIRST, and taking the first `.db` read
+        # that junk as the database ("file is not a database").
+        candidates = [
+            m for m in members
+            if m.isfile() and m.name.endswith(".db")
+            and not Path(m.name).name.startswith("._")
+        ]
+        member = next((m for m in candidates if m.name == "data/headroom.db"), None) or next(
+            iter(candidates), None
+        )
         if member is None:
             sys.exit(f"No .db file found inside {archive}")
         # `endswith`, not `== "DEGRADED-BACKUP-README.txt"`: the archive stores
