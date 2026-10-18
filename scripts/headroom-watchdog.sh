@@ -11,7 +11,11 @@
 # `docker ps`. See docs/OPERATIONS.md §3 for the systemd units that run this.
 #
 # Usage:  headroom-watchdog.sh [compose-dir]
-# Env:    HEADROOM_HEALTH_URL   (default http://localhost:8000/health/ready)
+# Env:    HEADROOM_HEALTH_URL   (default http://localhost:8000/health/ready —
+#                                which the Let's Encrypt overlay does NOT
+#                                publish: point it at https://<your host>/
+#                                health/ready there, or every poll fails and
+#                                a healthy stack is restarted every third run)
 #         HEADROOM_FAIL_THRESHOLD (default 3 consecutive failures)
 #         HEADROOM_STATE_DIR    (default /var/tmp)
 

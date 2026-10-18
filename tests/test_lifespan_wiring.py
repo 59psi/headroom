@@ -172,7 +172,7 @@ async def _flags(db):
 
     It filtered on `ONE_TIME_FLAGS`, so a repair nobody added to that list
     was invisible to every assertion here: `vocabulary_merged_v2` shipped in
-    `app._ONE_TIME_REPAIRS` with this file still asserting the four before
+    `database_upgrade.ONE_TIME_REPAIRS` with this file still asserting the four before
     it. The repair loop marks each flag `"done"` and nothing else in the app
     stores that value, so this sees whatever the boot actually ran.
     """
@@ -237,6 +237,20 @@ async def test_the_lifespan_boots_and_leaves_no_task_behind(app, boot_db):
     # And `init_db` plus the backfills ran against THIS database.
     async with factory() as db:
         assert set(await _flags(db)) == set(ONE_TIME_FLAGS)
+
+
+async def test_the_app_holds_the_data_directory_for_exactly_as_long_as_it_runs(app):
+    """A command-line import refuses while the app holds the lock, and an app
+    started mid-import waits for it — so the lock must be held from boot to
+    shutdown, and let go at shutdown or the next boot would wait forever."""
+    from headroom.services import instance_lock
+
+    async with await _boot(app):
+        assert instance_lock.try_acquire() is None, "the running app does not hold the data directory"
+        await _settled(app)
+    fd = instance_lock.try_acquire()
+    assert fd is not None, "the app kept the data directory after shutdown"
+    instance_lock.release(fd)
 
 
 async def test_boot_seeds_the_default_branding_into_the_upload_dir(app):
@@ -534,7 +548,7 @@ async def test_the_import_worker_boots_and_heals_a_crash_stranded_item(app, boot
 async def test_the_analysis_worker_boots_and_requeues_a_pending_hat(app, boot_db, client, monkeypatch):
     """`HEADROOM_ANALYSIS_WORKER_ENABLED=true` → worker alive, pending hat picked up.
 
-    A hat left `pending` by a crash is re-queued by `_recover_on_boot`. It has
+    A hat left `pending` by a crash is re-queued by `analysis_queue.requeue_stranded`. It has
     no photo, so the worker marks it failed — that path is tested elsewhere;
     here the point is that it left `pending` at all, which it can only do if
     the worker found it in THIS database and its commit was not rolled back by

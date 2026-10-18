@@ -31,6 +31,11 @@ logger = logging.getLogger(__name__)
 SESSION_COOKIE = "headroom_session"
 SESSION_TTL_DAYS = 30
 
+#: The `app_settings` primary key that serializes first-run setup
+#: (`routes/auth.py`). Part of the account, not the collection: a database
+#: import keeps this install's (`database_import`).
+SETUP_SENTINEL_KEY = "owner_setup_done"
+
 _hasher = PasswordHasher()
 
 # --------------------------- rate limiting ---------------------------- #

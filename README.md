@@ -122,8 +122,9 @@ result, and three independent price signals per hat.
   where the app does, which on a LAN install means your own network. Prices
   are opt-in and off by default.
 - **One-command HTTPS** — a Caddy overlay with automatic Let's Encrypt certs.
-- **Backups** — scheduled rolling tarballs + one-click download; documented
-  restore.
+- **Backups** — scheduled rolling tarballs + one-click download, and an
+  in-app import that puts any of them (or a file from your phone) back, after
+  saving the collection it replaces.
 
 ---
 
@@ -523,9 +524,25 @@ cd frontend && npm run dev
 
 ```bash
 ./scripts/upgrade.sh --tz America/Los_Angeles   # Docker; --tz once, it is remembered
-# — or —
-./scripts/setup.sh --no-docker   # bare metal: re-sync deps + rebuild SPA, then restart uvicorn
+# — or, bare metal —
+git pull --ff-only && ./scripts/setup.sh --no-docker   # then restart uvicorn
 ```
+
+Bare metal leaves the database to the app: on its first start after an
+upgrade it saves a copy of the old database, then migrates it.
+
+### Moving to a new machine
+
+Take a full backup on the old one (Settings → Upkeep → Backups), then on the
+new one:
+
+```bash
+./scripts/import-database.sh headroom-backup-<time>.tar.gz   # Docker, once it is running
+./scripts/setup.sh --no-docker --import headroom-backup-<time>.tar.gz   # bare metal
+```
+
+Or sign in on the new install and use Settings → Upkeep → Import a database.
+Every route shows what the file holds and asks before replacing anything.
 
 `upgrade.sh` does the whole checklist: it remembers your compose overlays in
 `.env` (so neither it nor a bare `docker compose` ever drops them), sets the

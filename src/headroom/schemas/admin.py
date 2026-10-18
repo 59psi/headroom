@@ -150,6 +150,70 @@ class BackupUploadTestResult(BaseModel):
     detail: str
 
 
+class RestorePointKind(StrEnum):
+    """A scheduled archive (database + photos) or a one-file database snapshot."""
+
+    archive = "archive"
+    snapshot = "snapshot"
+
+
+class RestorePointRead(BaseModel):
+    """A file in `backups/` a database import can start from."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    name: str
+    kind: RestorePointKind
+    size_bytes: int
+    created_at: datetime
+
+
+class RestorePointStage(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+
+
+class ImportSourceKind(StrEnum):
+    archive = "archive"
+    database = "database"
+
+
+class DatabaseImportPreview(BaseModel):
+    """A staged import: what it holds, and what it would replace."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    token: str
+    source: str
+    from_server: bool
+    kind: ImportSourceKind
+    version: str | None
+    hats: int
+    disposed_hats: int
+    cases: int
+    rooms: int
+    purchases: int
+    wear_logs: int
+    newest_change_at: datetime | None
+    photos_included: int
+    #: Hats whose photo is in neither the archive nor this server's uploads.
+    photos_missing: int
+    degraded: bool
+    current_hats: int
+    #: This install's account (and sign-in) survives the import.
+    keeps_account: bool
+
+
+class DatabaseImportResult(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    source: str
+    hats: int
+    photos_restored: int
+    #: The `pre-import-*.db` copy of what was replaced — itself a restore point.
+    snapshot: str
+    keeps_account: bool
+
+
 class ActivityRow(BaseModel):
     id: int
     occurred_at: datetime

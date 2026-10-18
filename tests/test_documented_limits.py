@@ -48,6 +48,24 @@ async def test_the_documented_batch_caps_are_the_enforced_ones():
     assert import_service.MAX_FILES_PER_JOB == batch_files
 
 
+_OPERATIONS = (Path(__file__).resolve().parents[1] / "docs" / "OPERATIONS.md").read_text()
+_WORDS = {"three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "ten": 10}
+
+
+async def test_the_documented_database_import_limits_are_the_enforced_ones():
+    from headroom.services import database_import
+
+    caps = re.search(
+        r"capped at (\d+) GB and by the free space on the\s+data volume, less (\d+) MB",
+        _OPERATIONS,
+    )
+    kept = re.search(r"pre-import-<UTC time>\.db` \(the newest (\w+) are kept\)", _OPERATIONS)
+    assert caps and kept, "OPERATIONS §4 no longer states the import limits in the words this test reads"
+    assert database_import.MAX_UPLOAD_BYTES == int(caps.group(1)) * 1024 * _MB
+    assert database_import.FREE_SPACE_MARGIN_BYTES == int(caps.group(2)) * _MB
+    assert database_import.KEEP_SNAPSHOTS == _WORDS[kept.group(1)]
+
+
 async def test_the_documented_retention_is_the_default(monkeypatch):
     m = re.search(r"retention\s+window \((\d+) days by default\)", _USAGE)
     assert m, "USAGE.md no longer states the audit-log retention default"

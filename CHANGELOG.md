@@ -6,6 +6,63 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.85.0] — 2026-10-18
+
+Import a database: put any backup back from the app, a terminal, or a new
+machine's setup. No schema change.
+
+### Added
+
+- **Import a database** — Settings → Upkeep → Import a database. Pick any
+  backup on the server (the nightly archives, and the copies saved before
+  each upgrade) or choose a `.tar.gz` backup or `.db` file from your phone or
+  computer. You see what it holds first — hats, cases, purchases, photos, and
+  how many hats would have no picture — and nothing changes until you tap
+  **Replace my collection**.
+  - The collection it replaces is saved first, as `pre-import-<time>.db`,
+    which appears in the same list: importing it is the undo.
+  - Your sign-in, passkeys, share links, API keys, model and off-site backup
+    stay exactly as they are. Preferences this install never set, like the
+    tag address, are filled in from the import.
+  - Hat and case numbers never go backwards, so printed tags keep pointing at
+    the right hat and case.
+  - A backup from an older version is brought up to date on the way in; one
+    from a newer version is refused until the server is upgraded.
+  - A full backup's photos come with it. Photos already on the server are
+    never deleted or replaced.
+  - It waits while photos are being analyzed or imported, and nothing written
+    while it runs is lost.
+- **`scripts/import-database.sh FILE`** does the same for a Docker install
+  from the server's terminal — for a file too big to send from a phone. It
+  previews the file, asks, stops the app, imports, and starts the app again.
+- **`./scripts/setup.sh --import FILE`** sets up a new bare-metal machine
+  from an old one's backup.
+- An import from the terminal refuses while Headroom is running, and
+  Headroom waits to start until an import has finished.
+
+### Fixed
+
+- **Bare-metal upgrades keep their pre-upgrade copy of the database.**
+  Re-running `setup.sh` migrated the database before the app could save its
+  automatic copy, so the copy was of the already-migrated database. Setup no
+  longer touches the database; the app saves the copy and then migrates it
+  when it starts.
+- The bare-metal update instructions now pull the new code; followed as
+  written, they rebuilt the old one.
+- The automatic copy of the database taken before an upgrade is now forced
+  to disk before the upgrade goes on, so a power cut cannot leave an empty
+  copy beside an upgraded database.
+- `setup.sh` builds the web app with its type check, as the Docker image and
+  CI do, and no longer creates an `uploads` folder the app may not use.
+- `restore-construction.py` finds the database in a backup that was re-packed
+  on a Mac.
+
+### Changed
+
+- The image builds with npm 12.2.0 and uv 0.13.0, and always on its own
+  Python. The first Pi build after this re-downloads Python packages once:
+  uv 0.13 changed its cache format.
+
 ## [2.84.1] — 2026-10-17
 
 ### Fixed

@@ -2,7 +2,8 @@ import { apiFetch } from './client';
 import type {
   ActivityRow, AnalysisQueueStatus, ApiKeyStatus, ApiKeyTestResult,
   BackupHealthRead, BackupInfo, BackupUploadStatus, BackupUploadTestResult, CatalogRefreshStarted,
-  CountRead, EbayCredsStatus, EbayTestResult, GuestViewStatus, ImportJobCreated, ImportJobRead,
+  CountRead, DatabaseImportPreview, DatabaseImportResult, EbayCredsStatus, EbayTestResult,
+  GuestViewStatus, ImportJobCreated, ImportJobRead, RestorePointRead,
   MdnsStatus, ModelOptions, ModelStatus, TlsStatusRead, FrozenPriceRow, PriceReleaseResult, AnalysisFailureGroup,
   RecentError, TagBaseStatus, ConstructionAuditRow, ConstructionClearResult, RepricingStatus,
   ReanalyzeAllResult, AnalysisJobDetail, CatalogStatus, SharedPriceGroup,
@@ -113,6 +114,49 @@ export function listBackups() {
 /** Returns the URL for the on-demand backup download (anchor target). */
 export function backupDownloadUrl(includeUploads = true): string {
   return includeUploads ? '/api/admin/backup' : '/api/admin/backup?include_uploads=false';
+}
+
+// ---- database import ----------------------------------------------------- //
+
+export function listRestorePoints() {
+  return apiFetch<RestorePointRead[]>('/api/admin/database/restore-points');
+}
+
+/** The import waiting for confirmation, or null — a reloaded card resumes it. */
+export function getStagedImport() {
+  return apiFetch<DatabaseImportPreview | null>('/api/admin/database/import');
+}
+
+/**
+ * Stage a backup archive or database file from this device.
+ *
+ * The file is the raw request body, not a form: the server streams it
+ * straight to the data volume, where a multipart upload would be parsed into
+ * the container's RAM-backed /tmp first — and a full archive is hundreds of
+ * megabytes. The name only labels the preview.
+ */
+export function stageImportUpload(file: File) {
+  return apiFetch<DatabaseImportPreview>(
+    `/api/admin/database/import?filename=${encodeURIComponent(file.name)}`,
+    { method: 'POST', body: file, headers: { 'Content-Type': 'application/octet-stream' } },
+  );
+}
+
+export function stageRestorePoint(name: string) {
+  return apiFetch<DatabaseImportPreview>('/api/admin/database/import/restore-point', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  });
+}
+
+export function applyImport(token: string) {
+  return apiFetch<DatabaseImportResult>(
+    `/api/admin/database/import/${encodeURIComponent(token)}/apply`, { method: 'POST' },
+  );
+}
+
+export function discardImport(token: string) {
+  return apiFetch<void>(`/api/admin/database/import/${encodeURIComponent(token)}`, { method: 'DELETE' });
 }
 
 /**

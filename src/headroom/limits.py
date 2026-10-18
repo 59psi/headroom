@@ -118,6 +118,40 @@ def endpoint_streams_files(endpoint: Callable[..., object] | None) -> bool:
     return any(_mentions_upload_file(t) for name, t in hints.items() if name != "return")
 
 
+#: Where `streams_body` records an endpoint's own ceiling.
+_DECLARED_CAP = "__headroom_max_body_bytes__"
+#: Every ceiling `streams_body` has declared — what the pre-routing
+#: Content-Length check must allow a raw stream, before it knows which
+#: endpoint will read it.
+_declared_caps: list[int] = []
+
+
+def streams_body(max_bytes: int):
+    """Mark an endpoint that reads its body as a raw stream, with its own ceiling.
+
+    For a body too large for either cap above that must not pass through
+    multipart parsing — which spools every part to `/tmp`, RAM under the
+    shipped compose file — the database import's archive is the one today.
+    The endpoint reads `request.stream()` and writes it where it belongs; the
+    count below still cuts it off at this ceiling, chosen by the endpoint as
+    every cap here is. A decorator that returns the function unchanged, so
+    FastAPI sees the signature it always did.
+    """
+    def mark(endpoint: Callable[..., object]) -> Callable[..., object]:
+        setattr(endpoint, _DECLARED_CAP, max_bytes)
+        _declared_caps.append(max_bytes)
+        return endpoint
+    return mark
+
+
+def endpoint_cap(endpoint: Callable[..., object] | None, ordinary: int) -> int:
+    """The body ceiling for `endpoint`: declared, multipart, or the ordinary cap."""
+    declared = getattr(endpoint, _DECLARED_CAP, None)
+    if declared is not None:
+        return declared
+    return MULTIPART_MAX_BODY_BYTES if endpoint_streams_files(endpoint) else ordinary
+
+
 class BodySizeLimitMiddleware:
     """Reject request bodies over the cap that applies to their endpoint with a 413.
 
@@ -140,8 +174,15 @@ class BodySizeLimitMiddleware:
         # Before routing the endpoint is unknown, so the declared length can
         # only be checked against the widest cap that COULD apply. A JSON
         # body labeled multipart gets past this line and is caught by the
-        # count below the moment the login route reads it.
-        widest = MULTIPART_MAX_BODY_BYTES if content_type.startswith("multipart/form-data") else ordinary
+        # count below the moment the login route reads it. A raw stream
+        # (`application/octet-stream`) may be headed for a `streams_body`
+        # endpoint, so it is allowed the largest ceiling one declared.
+        if content_type.startswith("multipart/form-data"):
+            widest = MULTIPART_MAX_BODY_BYTES
+        elif content_type.startswith("application/octet-stream"):
+            widest = max([MULTIPART_MAX_BODY_BYTES, *_declared_caps])
+        else:
+            widest = ordinary
         declared = headers.get("content-length")
         if declared is not None:
             try:
@@ -208,11 +249,7 @@ class BodySizeLimitMiddleware:
                     # First read: the router has matched by now and put the
                     # endpoint on this same scope dict, so the cap can be the
                     # one that endpoint deserves.
-                    limit = (
-                        MULTIPART_MAX_BODY_BYTES
-                        if endpoint_streams_files(scope.get("endpoint"))
-                        else ordinary
-                    )
+                    limit = endpoint_cap(scope.get("endpoint"), ordinary)
                 received += len(message.get("body", b""))
                 if received > limit:
                     refused = True

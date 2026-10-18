@@ -26,6 +26,7 @@ disk, and on a 16 GB card it fires far too late to act on.
 
 from __future__ import annotations
 
+import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -122,3 +123,25 @@ def check(path: Path) -> DiskStatus:
         free_bytes=usage.free,
         total_bytes=usage.total,
     )
+
+
+def sync_replace(partial: Path, final: Path) -> None:
+    """Put a fully written file in place durably: fsync it, rename, fsync the dir.
+
+    In that order. A rename alone is atomic against a crash of this process
+    but not against a power cut — the rename can reach the card while the
+    bytes it points at have not, leaving a complete-looking, empty file. For
+    the safety copies (`pre-upgrade-*.db`, `pre-import-*.db`) that is the one
+    failure that matters: a copy that reads fine and holds nothing.
+    """
+    fd = os.open(partial, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    partial.replace(final)
+    dir_fd = os.open(final.parent, os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)

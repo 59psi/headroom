@@ -136,6 +136,10 @@ export const qk = {
     backups: () => ['admin', 'backups'] as const,
     backupHealth: () => ['admin', 'backup-health'] as const,
     backupUpload: () => ['admin', 'backup-upload'] as const,
+    /** Archives and snapshots a database import can start from. */
+    restorePoints: () => ['admin', 'restore-points'] as const,
+    /** The import waiting for confirmation, if any. */
+    stagedImport: () => ['admin', 'staged-import'] as const,
     /** Recent bulk imports. SIBLING of `importJob` — invalidate both. */
     importJobs: () => ['admin', 'import-jobs'] as const,
     importJob: (id: number | null) => ['admin', 'import-job', id] as const,

@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from headroom.models.hat import ResaleScope
-from headroom.schemas.admin import AnalysisJobStatus
+from headroom.schemas.admin import AnalysisJobStatus, ImportSourceKind, RestorePointKind
 from headroom.schemas.case import CaseType
 from headroom.schemas.hat import AnalysisStage, AnalysisStatus, ColorTier, DisposedVia
 from headroom.schemas.import_job import ImportItemStatus, ImportJobStatus
@@ -40,6 +40,8 @@ _UNIONS: list[tuple[str, str, type[StrEnum]]] = [
     ("ImportJobRead", "status", ImportJobStatus),
     ("AnalysisJobRead", "status", AnalysisJobStatus),
     ("AnalysisJobHat", "analysis_status", AnalysisStatus),
+    ("RestorePointRead", "kind", RestorePointKind),
+    ("DatabaseImportPreview", "kind", ImportSourceKind),
 ]
 
 

@@ -23,7 +23,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from headroom.config import settings
@@ -202,6 +202,25 @@ def abandon_recut(hat: Hat) -> bool:
     return True
 
 
+def recut_in_progress():
+    """The SQL condition for "this hat is being re-cut right now".
+
+    The state `HatRead` keys on: stage `cutout`, the photo pointing at the
+    original, and not a full (pending) analysis. One definition, for the boot
+    sweep below and for a database import, which must not swap the
+    collection out from under a cut that is still running.
+    """
+    return and_(
+        Hat.analysis_stage == STAGE_CUTOUT,
+        Hat.original_path.is_not(None),
+        Hat.photo_path == Hat.original_path,
+        or_(
+            Hat.analysis_status.is_(None),
+            Hat.analysis_status != AnalysisStatus.pending.value,
+        ),
+    )
+
+
 async def abandon_interrupted_recuts(db: AsyncSession) -> int:
     """At boot, put every hat a restart caught mid-re-cut back on its cutout.
 
@@ -215,19 +234,7 @@ async def abandon_interrupted_recuts(db: AsyncSession) -> int:
     two seconds, forever. Pending hats are left to that boot sweep, which runs
     them in full. Every boot, whichever way analysis runs. Returns the count.
     """
-    stranded = (
-        await db.execute(
-            select(Hat).where(
-                Hat.analysis_stage == STAGE_CUTOUT,
-                Hat.original_path.is_not(None),
-                Hat.photo_path == Hat.original_path,
-                or_(
-                    Hat.analysis_status.is_(None),
-                    Hat.analysis_status != AnalysisStatus.pending.value,
-                ),
-            )
-        )
-    ).scalars().all()
+    stranded = (await db.execute(select(Hat).where(recut_in_progress()))).scalars().all()
     restored = sum(1 for hat in stranded if abandon_recut(hat))
     if restored:
         await db.commit()

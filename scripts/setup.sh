@@ -7,14 +7,19 @@
 #                                      # (for the `docker compose up` path)
 #   ./scripts/setup.sh --no-docker     # skip the Docker engine install
 #   ./scripts/setup.sh --skip-build    # skip the production SPA build
+#   ./scripts/setup.sh --import FILE   # then replace the (empty) collection
+#                                      # with a backup's: a .tar.gz archive or
+#                                      # a .db file — moving to a new machine
 #
 # Installs (only what's missing — safe to re-run):
 #   * uv        — brew on macOS, otherwise the official Astral installer
 #   * Node      — brew on macOS, NodeSource on apt/dnf Linux. Accepts an
 #                 existing Node that every locked package's `engines`
 #                 accepts: 22.22.2+ on the 22 line, 24.15+ on the 24 line, or
-#                 26+ (jsdom 30's range; 23, 25 and early 24 are refused);
-#                 a FRESH install gets 26, matching the Docker image.
+#                 26+ (jsdom 30's range; 23, 25 and early 24 are refused).
+#                 A FRESH Linux install gets 26, matching the Docker image;
+#                 Homebrew installs its current `node`, which any release in
+#                 that range satisfies.
 #   * Docker    — WITHOUT Docker Desktop:
 #                   macOS: docker CLI + compose + buildx + colima (brew)
 #                   Linux: Docker Engine via get.docker.com (apt & dnf distros)
@@ -22,24 +27,46 @@
 #                 Docker image); pyproject still supports >=3.12 if you bring
 #                 your own.
 #
+# It does not create or migrate the database. The app does that when it
+# starts, AFTER saving a copy of a database an older version left (see
+# `services/database_upgrade.py`) — a migration here ran first and left that
+# copy nothing older to save. `--import` is the exception, and it runs the
+# app's own upgrade sequence, copy included.
+#
+# Updating a bare-metal install: `git pull --ff-only`, re-run this with
+# `--no-docker`, then restart the server.
+#
 set -euo pipefail
 
 INSTALL_DOCKER=1
 BUILD_SPA=1
 DOCKER_ONLY=0
-for arg in "$@"; do
-  case "$arg" in
+IMPORT_FILE=""
+while [ $# -gt 0 ]; do
+  case "$1" in
     --docker-only) DOCKER_ONLY=1 ;;
     --no-docker)  INSTALL_DOCKER=0 ;;
     --skip-build) BUILD_SPA=0 ;;
+    --import)
+      [ $# -ge 2 ] || { echo "--import needs a file (try --help)"; exit 1; }
+      IMPORT_FILE="$2"; shift ;;
+    --import=*)   IMPORT_FILE="${1#--import=}" ;;
     # Print the leading comment block itself. A hardcoded line range silently
     # truncates the moment the header grows — which is exactly what happened.
     -h|--help)    awk 'NR>1 && !/^#/{exit} NR>1{sub(/^# ?/,""); print}' "$0"; exit 0 ;;
-    *) echo "Unknown option: $arg (try --help)"; exit 1 ;;
+    *) echo "Unknown option: $1 (try --help)"; exit 1 ;;
   esac
+  shift
 done
 [ "$DOCKER_ONLY" -eq 1 ] && [ "$INSTALL_DOCKER" -eq 0 ] \
   && { echo "--docker-only and --no-docker are mutually exclusive"; exit 1; }
+[ "$DOCKER_ONLY" -eq 1 ] && [ -n "$IMPORT_FILE" ] \
+  && { echo "--import is for a bare-metal install; for Docker use scripts/import-database.sh"; exit 1; }
+if [ -n "$IMPORT_FILE" ]; then
+  [ -f "$IMPORT_FILE" ] && [ -r "$IMPORT_FILE" ] || { echo "Cannot read $IMPORT_FILE"; exit 1; }
+  # Absolute now: the run below changes to the project root first.
+  IMPORT_FILE="$(cd "$(dirname "$IMPORT_FILE")" && pwd)/$(basename "$IMPORT_FILE")"
+fi
 
 log()  { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33mWARN\033[0m %s\n' "$*"; }
@@ -149,7 +176,7 @@ node_range() {
 # does — the exact drift this script exists to prevent. Keep NPM_MIN_MAJOR and
 # NPM_INSTALL in step with the Dockerfile when either moves.
 NPM_MIN_MAJOR=12
-NPM_INSTALL="12.1.0"
+NPM_INSTALL="12.2.0"
 
 npm_ok() {
   [[ $(npm --version 2>/dev/null) =~ ^([0-9]+) ]] || return 1
@@ -317,15 +344,23 @@ log "Installing frontend dependencies..."
 # both build from that lockfile.
 (cd frontend && npm ci)
 
-log "Creating upload directories..."
-mkdir -p uploads/hats uploads/branding
-
-log "Initializing database..."
-uv run python -c "import asyncio; from headroom.database import init_db; asyncio.run(init_db())"
+# No database step and no upload folders: the app makes both when it starts
+# (and `HEADROOM_UPLOAD_DIR` may not be `./uploads` at all). This used to run
+# `init_db` here, which migrated an existing database before the app could
+# save the pre-upgrade copy it promises — see the header.
 
 if [ "$BUILD_SPA" -eq 1 ]; then
   log "Building the production SPA (skip with --skip-build)..."
-  (cd frontend && npx vite build)
+  # `npm run build` (`tsc -b && vite build`), as the Dockerfile and CI build
+  # it: a bare `vite build` skips the type check and ships what it fails.
+  (cd frontend && npm run build)
+fi
+
+if [ -n "$IMPORT_FILE" ]; then
+  log "Importing $(basename "$IMPORT_FILE")..."
+  # Asks before it replaces anything, and saves what it replaces as
+  # backups/pre-import-<time>.db. Stop a running server first.
+  uv run python -m headroom.import_database "$IMPORT_FILE"
 fi
 
 echo ""

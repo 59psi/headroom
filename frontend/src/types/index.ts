@@ -459,6 +459,48 @@ export interface BackupInfo {
   created_at: string;
 }
 
+/** A file in `backups/` an import can start from. Mirrors `RestorePointRead`. */
+export interface RestorePointRead {
+  name: string;
+  /** A scheduled archive (database + photos) or a one-file database copy. */
+  kind: 'archive' | 'snapshot';
+  size_bytes: number;
+  created_at: string;
+}
+
+/** A staged database import. Mirrors `DatabaseImportPreview` in schemas/admin.py. */
+export interface DatabaseImportPreview {
+  token: string;
+  source: string;
+  from_server: boolean;
+  kind: 'archive' | 'database';
+  /** The Headroom version that last ran it, when it says. */
+  version: string | null;
+  hats: number;
+  disposed_hats: number;
+  cases: number;
+  rooms: number;
+  purchases: number;
+  wear_logs: number;
+  newest_change_at: string | null;
+  photos_included: number;
+  /** Hats whose photo is in neither the file nor this server's uploads. */
+  photos_missing: number;
+  degraded: boolean;
+  current_hats: number;
+  keeps_account: boolean;
+}
+
+/** Mirrors `DatabaseImportResult`. */
+export interface DatabaseImportResult {
+  source: string;
+  hats: number;
+  photos_restored: number;
+  /** The `pre-import-*.db` copy of what was replaced — itself a restore point. */
+  snapshot: string;
+  keeps_account: boolean;
+}
+
 /** One hat waiting in the analysis queue. Mirrors `PendingHat` in schemas/admin.py. */
 export interface PendingHat {
   id: number;

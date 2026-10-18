@@ -229,7 +229,14 @@ export function BackupsCard() {
               made since the backup straight back into the "restored" copy —
               the restore did not restore. docs/OPERATIONS.md §4 carries the
               same steps with the reasoning. */}
-          <p className="mb-1"><strong>Restoring</strong> (Docker):</p>
+          <p>
+            <strong>Restoring:</strong> use <em>Import a database</em>, the
+            next card down. It takes any snapshot listed here or a file from
+            your device, and saves the current collection first.
+          </p>
+          <p className="mb-1">
+            When the app itself will not start, restore by hand (Docker):
+          </p>
           <ol className="hr-upkeep-restore">
             <li>
               Stop the stack — <code>docker compose down</code>, with the same{' '}

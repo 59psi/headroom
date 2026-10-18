@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 import tarfile
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -113,6 +115,29 @@ async def test_the_database_snapshot_is_staged_on_the_data_volume(
     assert not seen["dest_dir"].exists(), "the snapshot staging was not cleaned up"
 
 
+def _age(path: Path) -> None:
+    """Make a staging entry look as old as a dead process's leftover."""
+    old = time.time() - backup_service.SPOOL_ORPHAN_AGE_SECONDS - 60
+    os.utime(path, (old, old))
+
+
+async def test_another_processs_young_staging_is_left_alone(tmp_path, monkeypatch):
+    """The command-line import stages here while the app runs, in a process
+    whose registrations this one cannot see. Its work is young; a sweep that
+    took every unregistered entry deleted it mid-preview (and the preview's
+    sweep deleted the app's staged import and backups in return)."""
+    _seed_db(tmp_path, monkeypatch)
+    other = _spool_root() / "headroom-import-otherprocess"
+    other.mkdir(parents=True)
+    (other / "upload").write_bytes(b"x" * 1024)
+
+    live = backup_service._open_spool_sync("headroom-stream-")
+    try:
+        assert other.exists(), "a sweep deleted another process's live staging"
+    finally:
+        backup_service._close_spool_sync(live)
+
+
 async def test_staging_a_dead_process_left_behind_is_reclaimed(tmp_path, monkeypatch):
     """A volume, unlike a tmpfs, does not empty itself on restart.
 
@@ -125,6 +150,7 @@ async def test_staging_a_dead_process_left_behind_is_reclaimed(tmp_path, monkeyp
     dead = _spool_root() / "headroom-stream-deadbeef"
     dead.mkdir(parents=True)
     (dead / "backup.tar.gz").write_bytes(b"x" * 1024)
+    _age(dead)
 
     live = backup_service._open_spool_sync("headroom-stream-")
     try:
@@ -163,12 +189,14 @@ async def _run_scheduler_until(done, *, timeout: float = 2.0) -> None:
 
 async def test_the_scheduler_reclaims_dead_staging_at_boot(monkeypatch, _scheduler_health):
     """The scheduler itself, started the way the lifespan starts it: at boot
-    nothing is in flight, so everything under `.spool/` is a dead process's.
+    nothing of its own is in flight, so anything old under `.spool/` is a dead
+    process's.
     (This used to call the sweep function directly, which passed just as well
     with the scheduler never calling it.)"""
     dead = _spool_root() / "headroom-snap-deadbeef"
     dead.mkdir(parents=True)
     (dead / "headroom.db").write_bytes(b"x" * 1024)
+    _age(dead)
     # A recent backup exists, so the first pass writes nothing — the sweep is
     # the only thing that can remove the directory.
     monkeypatch.setattr(backup_service, "_seconds_since_newest_backup_sync", lambda: 60.0)

@@ -77,3 +77,75 @@ async def test_docker_only_does_not_announce_an_engine_that_is_not_there(cli_wit
     assert result.returncode != 0, out
     assert "Docker engine ready" not in out
     assert "isn't reachable" in out
+
+
+@pytest.fixture
+def stubbed_setup(tmp_path):
+    """The real setup.sh in a scratch tree, every tool it runs a stub that
+    records its arguments. It `cd`s to its own parent, so nothing it does can
+    reach this checkout."""
+    tree = tmp_path / "tree"
+    (tree / "scripts").mkdir(parents=True)
+    (tree / "frontend").mkdir()
+    (tree / "scripts" / "setup.sh").write_bytes(SETUP.read_bytes())
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    calls = tmp_path / "calls.log"
+    record = f'echo "$(basename "$0") $*" >> "{calls}"'
+    _stub(bindir, "uv", record)
+    _stub(bindir, "node", "echo v26.12.0")
+    _stub(bindir, "npm", f'if [ "$1" = --version ]; then echo 12.2.0; exit 0; fi\n{record}')
+    _stub(bindir, "npx", record)
+    _stub(bindir, "git", "exit 128")  # "not a git checkout": no build stamp
+    env = {**os.environ, "PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}"}
+
+    def run(*args: str) -> tuple[subprocess.CompletedProcess, str]:
+        result = subprocess.run(
+            ["bash", str(tree / "scripts" / "setup.sh"), "--no-docker", *args],
+            capture_output=True, text=True, env=env, check=False,
+        )
+        return result, calls.read_text() if calls.exists() else ""
+
+    return tree, run
+
+
+async def test_setup_leaves_the_database_to_the_app(stubbed_setup):
+    """setup.sh ran `init_db` itself, so re-running it to upgrade bare metal
+    migrated the database before the app could save the pre-upgrade copy it
+    promises: the boot that followed snapshotted an already-migrated file."""
+    tree, run = stubbed_setup
+    result, calls = run()
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "init_db" not in calls and "python -c" not in calls, calls
+    assert not (tree / "uploads").exists(), "setup made ./uploads, which HEADROOM_UPLOAD_DIR may not be"
+
+
+async def test_setup_builds_the_spa_the_way_the_image_does(stubbed_setup):
+    """`npm run build` is `tsc -b && vite build`; a bare `vite build` skipped
+    the type check the Dockerfile and CI both run."""
+    _, run = stubbed_setup
+    result, calls = run()
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "npm run build" in calls, calls
+    assert "vite build" not in calls.replace("npm run build", ""), calls
+
+
+async def test_setup_imports_a_backup_through_the_apps_own_import(stubbed_setup, tmp_path):
+    backup = tmp_path / "old-headroom.db"
+    backup.write_bytes(b"SQLite format 3\x00")
+    _, run = stubbed_setup
+    result, calls = run("--import", str(backup))
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"uv run python -m headroom.import_database {backup}" in calls, calls
+
+
+async def test_setup_refuses_an_import_it_cannot_read(stubbed_setup, tmp_path):
+    _, run = stubbed_setup
+    result, calls = run("--import", str(tmp_path / "missing.db"))
+
+    assert result.returncode != 0
+    assert "Cannot read" in result.stdout + result.stderr
+    assert calls == "", "setup started installing before refusing its arguments"

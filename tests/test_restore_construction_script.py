@@ -69,6 +69,25 @@ async def test_the_documented_stdin_invocation_finds_the_apps_database(backup_an
     assert "Dry run" in out
 
 
+async def test_a_finder_repacked_archive_still_finds_its_database(backup_and_live, tmp_path):
+    """macOS `tar` puts an AppleDouble `data/._headroom.db` FIRST; the
+    script took the first `.db` and failed with "file is not a database"."""
+    archive, live = backup_and_live
+    repacked = tmp_path / "repacked.tar.gz"
+    junk = tmp_path / "appledouble"
+    junk.write_bytes(b"\x00\x05\x16\x07 AppleDouble junk")
+    with tarfile.open(archive) as src, tarfile.open(repacked, "w:gz") as tar:
+        tar.add(junk, arcname="data/._headroom.db")
+        for member in src:
+            tar.addfile(member, src.extractfile(member))
+
+    result = _run_as_documented(repacked, database_url=f"sqlite+aiosqlite:///{live}")
+    out = result.stdout.decode() + result.stderr.decode()
+
+    assert result.returncode == 0, out
+    assert "1 hat(s) differ" in out
+
+
 async def test_apply_writes_to_the_apps_database_and_nothing_else(backup_and_live):
     archive, live = backup_and_live
 

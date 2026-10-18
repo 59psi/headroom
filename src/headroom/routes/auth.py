@@ -44,9 +44,10 @@ from headroom.services import (
 
 logger = logging.getLogger(__name__)
 
-#: The `app_settings` primary key that serializes first-run setup. Named once:
-#: the recovery path below and the migration guide both refer to it.
-SETUP_SENTINEL_KEY = "owner_setup_done"
+#: The `app_settings` primary key that serializes first-run setup. Named once,
+#: in `auth_service`: the recovery path below, the migration guide and a
+#: database import (which keeps this install's account) all refer to it.
+SETUP_SENTINEL_KEY = auth_service.SETUP_SENTINEL_KEY
 
 # Built with the shared route class like every other router, although no
 # service these routes call raises a `DomainError` today: the census in

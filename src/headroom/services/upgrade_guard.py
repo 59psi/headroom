@@ -6,19 +6,21 @@ about something else (the new feature, the overlay flags). And the migrations
 that run on the first boot of a new version are exactly the ones that cannot
 be undone by reverting the image: 2.81.0 rebuilt the whole `hats` table.
 
-So the app takes the backup itself. Before `init_db` touches the schema, the
-lifespan compares the version it is about to run with the one recorded by the
-last successful boot (`last_booted_version` in `app_settings`); when they
+So the app takes the backup itself. Before `init_db` touches the schema,
+`database_upgrade.upgrade` (the boot's sequence, and the command-line
+import's) compares the version it is about to run with the one recorded by
+the last successful run (`last_booted_version` in `app_settings`); when they
 differ it writes a one-file copy of the database next to the scheduled
 archives, as `backups/pre-upgrade-<from>-to-<to>-<UTC time>.db`. The version
-is recorded only after migrations and the one-time repairs succeed, so a boot
+is recorded only after migrations and the one-time repairs succeed, so a run
 that dies half-way snapshots again on the next attempt rather than trusting a
 record of an upgrade that never finished.
 
 What it deliberately is not: a replacement for the scheduled archives (it has
-the database only — photos are not changed by a migration) or a restore
-mechanism. Restoring one is the documented recipe: stop the app, copy the file
-over `/data/headroom.db`, remove `headroom.db-wal` and `headroom.db-shm`.
+the database only — photos are not changed by a migration). Restoring one is
+a database import (`services/database_import`: Settings → Upkeep → Import a
+database lists these snapshots), which saves the collection it replaces
+first.
 """
 
 from __future__ import annotations
@@ -29,6 +31,8 @@ import sqlite3
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+
+from headroom.utils import disk
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +121,9 @@ def snapshot_before_upgrade(db: Path | None, dest_dir: Path, current: str) -> Pa
         conn.execute("VACUUM INTO ?", (str(partial),))
     finally:
         conn.close()
-    partial.replace(final)
+    # fsynced into place: the migrations that follow commit durably, and a
+    # power cut that kept them but lost this copy would leave nothing older.
+    disk.sync_replace(partial, final)
     prune(dest_dir)
     return final
 

@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 import shutil
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -12,16 +12,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom import database
 from headroom.auth import AuthGateMiddleware, SecurityHeadersMiddleware
 from headroom.config import env_choice, env_flag, settings
 from headroom.error_handler import log_unhandled, validation_error
 from headroom.limits import BodySizeLimitMiddleware
-from headroom.models.hat import Hat
 from headroom.routes import api_router
-from headroom.schemas.hat import KNOWN_CONSTRUCTIONS
 from headroom.services import (
     activity_service,
     analysis_queue,
@@ -29,16 +26,13 @@ from headroom.services import (
     background_removal,
     backup_service,
     ca_vault,
-    hat_analysis_pipeline,
+    database_upgrade,
     hat_service,
     import_service,
+    instance_lock,
     mdns_service,
     repricing,
-    retail_pricing,
-    settings_service,
     tls_health,
-    upgrade_guard,
-    vocabulary,
 )
 from headroom.utils import branding
 from headroom.utils.paths import safe_join
@@ -152,53 +146,6 @@ def _warn_if_multiprocess() -> None:
             pass
 
 
-async def _merge_vocabulary_v1(db: AsyncSession) -> int:
-    merged = await vocabulary.merge_case_variants(
-        db, Hat.construction, known=KNOWN_CONSTRUCTIONS
-    )
-    return merged + await vocabulary.merge_case_variants(db, Hat.artist_series)
-
-
-async def _merge_vocabulary_v2(db: AsyncSession) -> int:
-    """v1's merge again, now that the key also folds punctuation — plus colorway.
-
-    `vocabulary`'s key used to fold case and whitespace only, so an install
-    that already ran v1 still holds `A-Game` beside `A Game` (and the colorway
-    field, canonicalized on write since, was never merged at all). Idempotent,
-    so a database v1 already fully merged changes nothing.
-    """
-    merged = await _merge_vocabulary_v1(db)
-    return merged + await vocabulary.merge_case_variants(db, Hat.colorway)
-
-
-#: The one-time data repairs, in the order they run: (flag, repair, log line).
-#: Each runs once per database and is marked done in `app_settings`, so a
-#: restart never repeats one — the difference between repairing a collection
-#: and re-pricing or renaming it daily. One loop, where there were four
-#: hand-copied `if get_setting(...) is None: ...; set_setting(...)` blocks,
-#: each free to forget its own flag. The repairs are looked up on their
-#: modules at CALL time (the lambdas), so a test that patches one reaches it.
-_ONE_TIME_REPAIRS: tuple[tuple[str, Callable[[AsyncSession], Awaitable[int]], str], ...] = (
-    # Collapse case/whitespace variants of the free-text vocabulary fields
-    # ("Neon"/"NEON"/"neon" -> one collection). Canonicalization only covers
-    # writes, so values that predate it, or arrived by import, need this once.
-    ("vocabulary_merged_v1", lambda db: _merge_vocabulary_v1(db),
-     "Merged %d case-variant vocabulary value(s)"),
-    ("retail_prices_v2", lambda db: retail_pricing.backfill_retail_prices(db),
-     "Re-priced %d hat(s) from the melin retail table "
-     "(the old prompt anchors were years stale)"),
-    ("model_names_split_v1", lambda db: hat_analysis_pipeline.backfill_split_model_names(db),
-     "Split a leaked colorway out of %d model name(s) — the tool schema had no "
-     "colorway field, so Claude appended it to the one field every match gates on"),
-    # Normalize general_color onto the curated palette so the color filter
-    # chips behave consistently.
-    ("color_names_normalized_v1", lambda db: hat_service.normalize_existing_colors(db),
-     "Normalized general_color on %d existing hat colors"),
-    ("vocabulary_merged_v2", lambda db: _merge_vocabulary_v2(db),
-     "Merged %d spelling-variant vocabulary value(s) (punctuation and colorway)"),
-)
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     _configure_logging()
@@ -223,56 +170,25 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     factory = app.state.session_factory
     bind = app.state.engine
 
-    # "Take a backup first", done by the app rather than asked of a person:
-    # on the first boot of a new version, a copy of the database exactly as
-    # the previous version left it, before anything below migrates it (see
-    # `upgrade_guard`). Best-effort — a snapshot that fails is logged loudly
-    # and the boot goes on, because an app that refuses to start over its own
-    # safety copy is down for a reason nobody can see, and the nightly
-    # archives are still there.
-    running = upgrade_guard.running_version()
-    try:
-        snapshot = await asyncio.to_thread(
-            upgrade_guard.snapshot_before_upgrade,
-            upgrade_guard.sqlite_file(bind.url), backup_service._backup_dir(), running,
-        )
-    except Exception:  # a failed safety copy must not stop the boot; logged with traceback
-        logger.exception("Could not snapshot the database before upgrading to %s", running)
-    else:
-        if snapshot is not None:
-            logger.info("Snapshotted the database before upgrading to %s: %s", running, snapshot)
+    # The data directory is this process's for as long as it runs — before the
+    # first read of the database. An import from the command line holds the
+    # same lock while it swaps the collection, and an app started meanwhile
+    # (a watchdog's restart, say) waits here for it rather than running beside
+    # it (see `instance_lock`). Released last, after the WAL checkpoint.
+    lock_fd = await asyncio.to_thread(instance_lock.acquire_waiting)
 
-    await database.init_db(bind=bind, session_factory=factory)
+    # Snapshot (on a version change), migrate, repair, record the version —
+    # in that order, and the same sequence an import runs on its incoming
+    # copy (see `database_upgrade`).
+    await database_upgrade.upgrade(bind, factory)
 
     async with factory() as db:
-        for flag, repair, done_message in _ONE_TIME_REPAIRS:
-            if await settings_service.get_setting(db, flag) is not None:
-                continue
-            changed = await repair(db)
-            await settings_service.set_setting(db, flag, "done")
-            if changed:
-                logger.info(done_message, changed)
         if await auth_service.user_count(db) == 0:
             logger.warning(
                 "No user accounts exist yet — open the app to create the "
                 "owner account (first-run setup). All data routes require "
                 "login until then."
             )
-        # Every boot, not once: a re-cut the last shutdown cut short is left
-        # showing its uncut original as "cutting out" forever, and only boot
-        # can tell — nothing is running yet. Before the workers start, so a
-        # re-cut queued after boot is never mistaken for a stranded one.
-        abandoned = await hat_analysis_pipeline.abandon_interrupted_recuts(db)
-        if abandoned:
-            logger.info(
-                "Put %d hat(s) back on their cutout — a re-cut was interrupted "
-                "by the last shutdown", abandoned,
-            )
-        # Last, after migrations and every repair got through: the version
-        # this database is now fully upgraded to. Recorded any earlier, a boot
-        # that died half-way would be taken for a finished upgrade and the next
-        # attempt would skip its snapshot.
-        await settings_service.set_setting(db, upgrade_guard.LAST_BOOTED_KEY, running)
 
     # The login verifies an unknown username against a placeholder argon2
     # hash, so a wrong name costs what a wrong password does (see
@@ -546,6 +462,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 await stop()
             except Exception as exc:  # noqa: BLE001 — each stop is independent cleanup
                 logger.warning("Shutdown step %s failed: %s", stop.__qualname__, exc)
+        instance_lock.release(lock_fd)
 
 
 def _safe_spa_path(full_path: str) -> Path | None:

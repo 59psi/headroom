@@ -402,13 +402,24 @@ def _sweep_partials_sync() -> int:
 # The cost of disk over tmpfs is that a crash no longer cleans up after
 # itself: tmpfs empties on restart, a volume does not. So every staging
 # directory is registered while it is in use, and anything under `.spool/`
-# that is NOT registered belongs to a process that died — it is removed the
-# next time anything is staged, and at scheduler start. Registration and
+# that is NOT registered and older than `SPOOL_ORPHAN_AGE_SECONDS` belongs to
+# a process that died — it is removed the next time anything is staged, and at
+# scheduler start. (Younger and unregistered may be another process's: the
+# command-line import stages here while the app runs.) Registration and
 # creation happen under one lock, so a sweep can never see a directory that
-# exists but is not yet claimed. Process-local by design, like every other
-# counter in this single-process app.
+# exists but is not yet claimed.
 
 SPOOL_DIR_NAME = ".spool"
+
+#: How old an unclaimed staging entry must be before a sweep takes it. "Not
+#: registered in THIS process" stopped meaning "dead" once a second process
+#: could stage here: the command-line import previews a file in a one-off
+#: container while the app runs, and each process's sweep was deleting the
+#: other's live work — a staged web import, a backup's database copy, a
+#: download in progress. Every legitimate use of a spool is minutes long (a
+#: staged import waits an hour at most), so anything older than this is a
+#: leftover, and a dead process's leftovers are still reclaimed, two hours on.
+SPOOL_ORPHAN_AGE_SECONDS = 2 * 60 * 60
 
 _spool_lock = threading.Lock()
 _live_spools: set[Path] = set()
@@ -432,8 +443,14 @@ def _sweep_dead_spools_locked(root: Path) -> int:
     except OSError as exc:
         logger.warning("Could not sweep backup staging: %s", exc)
         return 0
+    cutoff = time.time() - SPOOL_ORPHAN_AGE_SECONDS
     for entry in entries:
         if entry in _live_spools:
+            continue
+        try:
+            if entry.lstat().st_mtime > cutoff:
+                continue  # possibly another process's, still in use
+        except OSError:
             continue
         if entry.is_dir() and not entry.is_symlink():
             shutil.rmtree(entry, ignore_errors=True)

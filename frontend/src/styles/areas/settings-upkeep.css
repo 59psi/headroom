@@ -409,3 +409,33 @@ p.hr-upkeep-bad-text {
   font-size: 0.7rem;
   overflow-wrap: anywhere;
 }
+
+/* ----- Import a database ------------------------------------------- */
+
+/* A restore point: its name and what it is stacked on the left, its "Use"
+   button on the right — centered on the pair, not on the first line's
+   baseline the plain snapshot rows use. Only from 480px: below it the shared
+   rule stacks the row and stretches the button to the full width, the tap
+   target a phone wants — and this rule, later in the file, would undo that. */
+@media (min-width: 480px) {
+  .hr-import-point { align-items: center; }
+}
+
+.hr-import-point-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+/* The staged file's name: the thing being confirmed, so it reads at full
+   ink, and wraps anywhere — a backup name has no break a phone can use. */
+.hr-import-source {
+  margin: 0.35rem 0 0.4rem;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.hr-import-preview { margin-top: 0.25rem; }
