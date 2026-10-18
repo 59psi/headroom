@@ -6,6 +6,20 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.85.2] — 2026-10-18
+
+SQLAlchemy 2.1. No schema change, nothing to do on upgrade.
+
+### Changed
+
+- **SQLAlchemy 2.1** (2.1.4, from 2.0.54). It had been held at 2.0 because
+  four tests failed on 2.1 — the test suite's shared in-memory database, not
+  Headroom: each test runs on its own event loop, and 2.1 ties a connection
+  to the first loop that waits on it. The tests now start each run on a
+  fresh connection. Headroom itself runs one event loop per process, so
+  nothing about how it uses the database changes. The image installs
+  prebuilt wheels for it on the Pi (arm64) as before.
+
 ## [2.85.1] — 2026-10-18
 
 Fixes from a review of the last two days' releases — purchase matching,
