@@ -61,7 +61,9 @@ database as the old version left it. Moving from another install? Add
 shows what the file holds and asks before replacing anything.
 
 State lives in the project directory: `headroom.db`, `uploads/`, and
-`backups/` (sibling of the uploads dir). Run it under systemd / launchd /
+`backups/` (sibling of the uploads dir), plus an empty `.headroom.lock` the
+app holds while it runs (§4: an import from the terminal will not run beside
+it; in Docker it is `/data/.headroom.lock`). Run it under systemd / launchd /
 tmux as you prefer; the app has no supervisor of its own.
 
 ### Development
@@ -372,8 +374,10 @@ on stdin, so nothing is copied into the volume first), starts the app again
 and waits for it to report healthy. Every route works the same way:
 
 - **Nothing changes before you confirm.** The file is validated (an archive
-  must hold a database; the database must pass `PRAGMA integrity_check` and be
-  a Headroom one), a copy is brought up to this version with the same
+  must hold a database; the database must pass `PRAGMA integrity_check`, be
+  a Headroom one, and keep every photo path in the photo folder; an archive
+  restores only files named the way the app names its photos and logo), a
+  copy is brought up to this version with the same
   migrations and one-time repairs a boot runs, and you see what it holds —
   hats, cases, purchases, photos, and how many hats would have no picture. A
   database from a newer Headroom is refused until this server is upgraded.

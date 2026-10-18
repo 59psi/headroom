@@ -28,8 +28,10 @@ machine's setup. No schema change.
     the right hat and case.
   - A backup from an older version is brought up to date on the way in; one
     from a newer version is refused until the server is upgraded.
-  - A full backup's photos come with it. Photos already on the server are
-    never deleted or replaced.
+  - A full backup's photos come with it — only files named the way Headroom
+    names its photos and logo. Photos already on the server are never
+    deleted or replaced. A file whose photo locations are not Headroom's is
+    refused.
   - It waits while photos are being analyzed or imported, and nothing written
     while it runs is lost.
 - **`scripts/import-database.sh FILE`** does the same for a Docker install

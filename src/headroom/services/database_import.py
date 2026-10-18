@@ -136,6 +136,17 @@ _GZIP_MAGIC = b"\x1f\x8b"
 #: The upload subtrees an archive may restore. Anything else under
 #: `data/uploads/` is ignored rather than written somewhere the app never reads.
 _PHOTO_DIRS = ("hats", "branding")
+#: The image extensions an upload may carry (`photo.validate_image_content_type`
+#: admits these types; `generate_filename` keeps the upload's suffix).
+_IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif")
+#: Exactly the files the app writes, and nothing else, may be restored from an
+#: archive: a uuid4-hex photo in `hats/`, its WebP thumbnail and export
+#: derivative, and the site logo. Any other file in an archive is ignored.
+_RESTORABLE = re.compile(
+    r"hats/(?:(?:thumbs|export)/[0-9a-f]{32}\.webp"
+    r"|[0-9a-f]{32}(?:" + "|".join(re.escape(s) for s in _IMAGE_SUFFIXES) + r"))"
+    r"|branding/logo(?:" + "|".join(re.escape(s) for s in branding.LOGO_SUFFIXES) + r")"
+)
 _COPY_CHUNK = 1024 * 1024
 
 #: Tables that are this install's access, not the collection (see module doc).
@@ -390,8 +401,7 @@ def _unpack_archive_sync(archive: Path, raw_dir: Path) -> _Unpacked:
     photo_bytes = 0
     degraded = False
     # A member's declared size is the most tar will write for it, so checking
-    # it first bounds the extraction: a gzip of zeros declaring a 50 GB
-    # "database" is refused here instead of filling the data volume.
+    # it first bounds the extraction by the room left on the data volume.
     room = _upload_room(raw_dir)
     try:
         with tarfile.open(archive, mode="r:gz") as tar:
@@ -415,8 +425,10 @@ def _unpack_archive_sync(archive: Path, raw_dir: Path) -> _Unpacked:
                     elif leaf == "DEGRADED-BACKUP-README.txt":
                         degraded = True
                 elif len(parts) >= 4 and parts[1] == "uploads" and parts[2] in _PHOTO_DIRS:
-                    photos.append((member.name, "/".join(parts[2:])))
-                    photo_bytes += member.size
+                    rel = "/".join(parts[2:])
+                    if _RESTORABLE.fullmatch(rel):
+                        photos.append((member.name, rel))
+                        photo_bytes += member.size
     except (tarfile.TarError, EOFError, gzip.BadGzipFile, zlib.error) as exc:
         raise errors.Invalid(
             f"That archive could not be read ({exc}). Is the download complete?"
@@ -491,6 +503,43 @@ def _check_database_sync(raw: Path, dest: Path) -> str | None:
     except sqlite3.DatabaseError as exc:
         raise errors.Invalid(f"That file is not a readable database ({exc}).") from exc
     return version
+
+
+def _photo_path_ok(value: str) -> bool:
+    """A path the app could have written: relative, under `hats/`, an image."""
+    path = PurePosixPath(value)
+    return (
+        not path.is_absolute()
+        and len(path.parts) >= 2
+        and path.parts[0] == "hats"
+        and not any(p in ("", ".", "..") or "\\" in p for p in path.parts)
+        and path.suffix.lower() in _IMAGE_SUFFIXES
+    )
+
+
+def _check_photo_paths_sync(db: Path) -> None:
+    """Refuse a database whose photo paths are not ones the app writes.
+
+    The app reads, re-cuts, exports and deletes a hat's files through these
+    paths, and only ever writes relative paths under `hats/` naming an image.
+    Anything else means the file was not written by Headroom, so the whole
+    import is refused before anything else runs on it.
+    """
+    conn = sqlite3.connect(db)
+    try:
+        rows = conn.execute(
+            "SELECT id, photo_path, original_path, thumb_path FROM hats"
+        ).fetchall()
+    finally:
+        conn.close()
+    for hat_id, *paths in rows:
+        for value in paths:
+            if value and not _photo_path_ok(value):
+                raise errors.Invalid(
+                    f"That database points hat #{hat_id}'s photo at {value!r}, outside "
+                    "the photo folder — Headroom never writes a path like that, so this "
+                    "file was not written by it. Nothing was imported."
+                )
 
 
 def _version_key(version: str | None) -> tuple[int, int, int] | None:
@@ -596,6 +645,7 @@ async def _stage(
     version = await asyncio.to_thread(_check_database_sync, unpacked.raw_db, staged_db)
     await asyncio.to_thread(shutil.rmtree, spool / "raw", True)
     _refuse_newer(version)
+    await asyncio.to_thread(_check_photo_paths_sync, staged_db)
     await _upgrade_copy(staged_db)
     counts = await asyncio.to_thread(_summarize_sync, staged_db, unpacked)
     current, keeps_account = 0, False

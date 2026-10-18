@@ -406,21 +406,21 @@ async def test_an_archive_restores_its_photos_and_reports_them(client, tmp_path)
     pictured = await _hat(client, "Pictured")
     pictureless = await _hat(client, "Pictureless")
     async with conftest.test_session_factory() as db:
-        (await db.get(Hat, pictured)).photo_path = "hats/abc.png"
-        (await db.get(Hat, pictureless)).photo_path = "hats/gone.png"
+        (await db.get(Hat, pictured)).photo_path = "hats/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png"
+        (await db.get(Hat, pictureless)).photo_path = "hats/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.png"
         await db.commit()
     backup = await _snapshot_to(tmp_path / "backup.db")
     archive = _archive(tmp_path / "headroom-backup.tar.gz", backup, {
-        "hats/abc.png": b"PNGDATA",
-        "hats/thumbs/abc.webp": b"THUMB",
+        "hats/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png": b"PNGDATA",
+        "hats/thumbs/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.webp": b"THUMB",
     })
 
     staged = (await _upload(client, archive)).json()
     assert (staged["kind"], staged["photos_included"], staged["photos_missing"]) == ("archive", 1, 1)
     await client.post(f"{_IMPORT}/{staged['token']}/apply")
 
-    assert (settings.upload_dir / "hats" / "abc.png").read_bytes() == b"PNGDATA"
-    assert (settings.upload_dir / "hats" / "thumbs" / "abc.webp").read_bytes() == b"THUMB"
+    assert (settings.upload_dir / "hats" / "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png").read_bytes() == b"PNGDATA"
+    assert (settings.upload_dir / "hats" / "thumbs" / "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.webp").read_bytes() == b"THUMB"
 
 
 async def test_a_photo_already_on_disk_is_never_overwritten(client, tmp_path):
@@ -429,15 +429,15 @@ async def test_a_photo_already_on_disk_is_never_overwritten(client, tmp_path):
     lose a picture the undo copy still points at."""
     hat_id = await _hat(client, "Re-cut Since")
     async with conftest.test_session_factory() as db:
-        (await db.get(Hat, hat_id)).photo_path = "hats/same.png"
+        (await db.get(Hat, hat_id)).photo_path = "hats/cccccccccccccccccccccccccccccccc.png"
         await db.commit()
     backup = await _snapshot_to(tmp_path / "backup.db")
-    archive = _archive(tmp_path / "older.tar.gz", backup, {"hats/same.png": b"OLDER-CUT"})
-    (settings.upload_dir / "hats" / "same.png").write_bytes(b"the newer cut")
+    archive = _archive(tmp_path / "older.tar.gz", backup, {"hats/cccccccccccccccccccccccccccccccc.png": b"OLDER-CUT"})
+    (settings.upload_dir / "hats" / "cccccccccccccccccccccccccccccccc.png").write_bytes(b"the newer cut")
 
     await _import(client, archive)
 
-    assert (settings.upload_dir / "hats" / "same.png").read_bytes() == b"the newer cut"
+    assert (settings.upload_dir / "hats" / "cccccccccccccccccccccccccccccccc.png").read_bytes() == b"the newer cut"
 
 
 async def test_an_archive_never_writes_outside_the_photo_folders(client, tmp_path):
@@ -454,6 +454,71 @@ async def test_an_archive_never_writes_outside_the_photo_folders(client, tmp_pat
     assert not (tmp_path / "escaped-too.txt").exists()
     assert not (settings.upload_dir / "elsewhere").exists()
     assert not (settings.upload_dir / "hats" / "absolute.png").exists()
+
+
+@pytest.mark.parametrize("bad", [
+    "../outside.db",
+    "/abs/photo.jpg",
+    "hats/../../outside.db",
+    "branding/logo.png",
+    "hats/notes.txt",
+])
+async def test_a_photo_path_the_app_never_writes_refuses_the_import(client, tmp_path, bad):
+    """The app only writes relative image paths under `hats/`; a database
+    holding anything else was not written by it and is refused whole."""
+    hat_id = await _hat(client, "Odd Path")
+    backup = await _snapshot_to(tmp_path / "backup.db")
+    conn = sqlite3.connect(backup)
+    conn.execute("UPDATE hats SET original_path = ? WHERE id = ?", (bad, hat_id))
+    conn.commit()
+    conn.close()
+
+    resp = await _upload(client, backup)
+
+    assert resp.status_code == 400, resp.text
+    assert "outside the photo folder" in resp.json()["detail"]
+
+
+async def test_an_archive_restores_only_files_shaped_like_the_apps_own(client, tmp_path):
+    """Only files named the way the app names its own are restored; anything
+    else in an archive is ignored."""
+    hexname = "0123456789abcdef0123456789abcdef"
+    backup = await _snapshot_to(tmp_path / "backup.db")
+    archive = _archive(tmp_path / "mixed.tar.gz", backup, {
+        f"hats/{hexname}.png": b"real photo",
+        f"hats/thumbs/{hexname}.webp": b"real thumb",
+        f"hats/export/{hexname}.webp": b"real export",
+        "hats/page.html": b"<script src=x.js></script>",
+        "hats/x.js": b"alert(1)",
+        f"hats/{hexname}.svg": b"<svg onload=alert(1)>",
+        "hats/thumbs/not-hex.webp": b"x",
+        "branding/evil.js": b"alert(1)",
+    })
+
+    await _import(client, archive)
+
+    hats = settings.upload_dir / "hats"
+    written = sorted(str(p.relative_to(settings.upload_dir)) for p in hats.rglob("*") if p.is_file())
+    assert written == [
+        f"hats/{hexname}.png", f"hats/export/{hexname}.webp", f"hats/thumbs/{hexname}.webp",
+    ]
+    assert not (settings.upload_dir / "branding" / "evil.js").exists()
+
+
+async def test_replacing_a_photo_never_deletes_outside_the_upload_dir(client, tmp_path):
+    """The delete half of the same door: a stray path in a hat row must not
+    take a file outside the uploads with it when the photo is replaced."""
+    from headroom.services import hat_service
+
+    precious = settings.upload_dir.parent / "precious.db"
+    precious.write_bytes(b"do not delete")
+    hat_id = await _hat(client, "Stray Path")
+    async with conftest.test_session_factory() as db:
+        (await db.get(Hat, hat_id)).original_path = "../precious.db"
+        await db.commit()
+        await hat_service.replace_photo(db, hat_id, "hats/new.png")
+
+    assert precious.read_bytes() == b"do not delete"
 
 
 async def test_a_finder_appledouble_file_is_not_taken_for_the_database(client, tmp_path):
@@ -535,8 +600,7 @@ async def test_an_archive_database_bigger_than_the_room_left_is_not_extracted(
     client, tmp_path, monkeypatch
 ):
     """The database inside an archive is bounded like an upload: its declared
-    size is checked before a byte is written, so a tiny gzip that inflates to
-    a huge "database" cannot fill the data volume during staging."""
+    size is checked against the room left before a byte is written."""
     backup = await _snapshot_to(tmp_path / "backup.db")
     archive = _archive(tmp_path / "big.tar.gz", backup)
     # Room for the upload itself (a few KB), not for what it unpacks to.
@@ -628,7 +692,7 @@ async def test_a_write_during_the_photo_restore_is_in_the_undo_copy(file_client,
     backup = tmp_path / "file-backup.db"
     async with engine.connect() as conn:
         await conn.exec_driver_sql("VACUUM INTO ?", (str(backup),))
-    archive = _archive(tmp_path / "with-photo.tar.gz", backup, {"hats/p.png": b"x"})
+    archive = _archive(tmp_path / "with-photo.tar.gz", backup, {"hats/dddddddddddddddddddddddddddddddd.png": b"x"})
     live = Path(engine.url.database)
     real_restore = database_import._restore_photos_sync
 

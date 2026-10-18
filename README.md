@@ -562,7 +562,8 @@ command again.
 boot of a new version copies the database to
 `/data/backups/pre-upgrade-<from>-to-<to>-<time>.db`, then `init_db()` applies
 inline SQLite migrations. There's no separate migrate step and no downgrade
-path — the snapshot is how you go back. Your data always survives a rebuild:
+path — the snapshot is how you go back: Settings → Upkeep → Import a database
+lists it with a **Use** button. Your data always survives a rebuild:
 the database and photos live in the `headroom-data` volume, not the image.
 
 The footer shows the running version — compare against the
