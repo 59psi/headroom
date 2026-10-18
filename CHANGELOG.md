@@ -6,6 +6,22 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.85.3] — 2026-10-18
+
+Open-source Docker only. No schema change, nothing to do on upgrade.
+
+### Changed
+
+- **`./scripts/setup.sh` installs your distribution's open-source Docker on
+  Linux** — `docker.io` (with `docker-cli`, Compose v2 and `docker-buildx`
+  where the distribution has them) via apt, or `moby-engine` via dnf. It used
+  to run Docker Inc.'s `get.docker.com` script, which installs Docker Inc.'s
+  own packages. macOS is unchanged (colima and the Homebrew CLI); Docker
+  Desktop was never used.
+- It now warns when Docker Compose is older than 2.24.4 — the first release
+  that reads the compose overlays — including on a machine where Docker was
+  already installed. Debian 13 and Ubuntu 24.04 ship a new enough one.
+
 ## [2.85.2] — 2026-10-18
 
 SQLAlchemy 2.1. No schema change, nothing to do on upgrade.
