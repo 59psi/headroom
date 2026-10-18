@@ -22,9 +22,11 @@
 #                 A FRESH Linux install gets 26, matching the Docker image;
 #                 Homebrew installs its current `node`, which any release in
 #                 that range satisfies.
-#   * Docker    — WITHOUT Docker Desktop:
+#   * Docker    — open source only (never Docker Desktop, never get.docker.com,
+#                 never Docker Inc.'s own packages):
 #                   macOS: docker CLI + compose + buildx + colima (brew)
-#                   Linux: Docker Engine via get.docker.com (apt & dnf distros)
+#                   Linux: the distribution's Docker (Moby) packages — apt
+#                          (docker.io …) or dnf (moby-engine …)
 #   * Python    — handled by uv itself. `.python-version` pins 3.14 (same as the
 #                 Docker image); pyproject still supports >=3.12 if you bring
 #                 your own.
@@ -252,18 +254,74 @@ ensure_node() {
 }
 
 # ------------------------------------------------------------------ #
-# Docker engine — deliberately NOT Docker Desktop.
+# Docker engine — open source only. Never Docker Desktop, never get.docker.com,
+# never Docker Inc.'s packages (docker-ce, containerd.io).
 #   macOS: docker CLI + compose/buildx plugins + colima (lightweight VM)
-#   Linux: native Docker Engine via Docker's official install script
+#   Linux: the distribution's own Docker (Moby) packages
 # ------------------------------------------------------------------ #
 #: 1 once `docker info` has answered — the DAEMON, not merely the CLI. Read by
 #: the --docker-only path, which must not print "ready" over a dead engine.
 DOCKER_READY=0
 
+#: The compose files need Compose 2.24.4 or newer: the overlays reset the base
+#: file's ports with the `!override` tag, which older Compose rejects.
+COMPOSE_MIN=2.24.4
+
+# The version apt would install for a package, or nothing when it has none.
+apt_candidate() {
+  apt-cache policy "$1" 2>/dev/null | awk '$1 == "Candidate:" && $2 != "(none)" { print $2 }'
+}
+
+# The distribution's Docker. Debian 13 ships the engine, CLI, Compose v2 and
+# buildx as separate packages; Ubuntu names Compose v2 `docker-compose-v2`;
+# Debian 12's `docker-compose` is the retired Python v1, which cannot read
+# these compose files, so it is left out and `compose_ok` says what is missing.
+install_distro_docker() {
+  if command -v apt-get &>/dev/null; then
+    $SUDO apt-get update
+    local pkgs=(docker.io)
+    [ -n "$(apt_candidate docker-cli)" ] && pkgs+=(docker-cli)
+    if [ -n "$(apt_candidate docker-compose-v2)" ]; then
+      pkgs+=(docker-compose-v2)
+    elif [[ "$(apt_candidate docker-compose)" =~ ^([0-9]+:)?2\. ]]; then
+      pkgs+=(docker-compose)
+    fi
+    [ -n "$(apt_candidate docker-buildx)" ] && pkgs+=(docker-buildx)
+    log "Installing the distribution's Docker packages: ${pkgs[*]}"
+    $SUDO apt-get install -y "${pkgs[@]}"
+  elif command -v dnf &>/dev/null; then
+    log "Installing the distribution's Docker packages: moby-engine docker-compose docker-buildx"
+    $SUDO dnf install -y moby-engine docker-compose docker-buildx
+  else
+    warn "No apt or dnf here — install your distribution's open-source Docker (Moby) packages, then re-run."
+    return 1
+  fi
+}
+
+# Is `docker compose` new enough for these compose files? Versions read
+# `2.26.1`, `v2.24.4` or a distribution's `2.26.1-4`.
+compose_ok() {
+  local version
+  version="$(docker compose version --short 2>/dev/null)" || return 1
+  version="${version#v}"
+  version="${version%%[-+]*}"
+  [ -n "$version" ] && printf '%s\n%s\n' "$COMPOSE_MIN" "$version" | sort -C -V
+}
+
+# Said for an engine found already running too: an old Compose there fails
+# only at `docker compose up`, on a tag it cannot read.
+warn_if_compose_old() {
+  command -v docker &>/dev/null || return 0
+  compose_ok && return 0
+  warn "Docker Compose $COMPOSE_MIN or newer is needed for these compose files; this one is"
+  warn "  '$(docker compose version --short 2>/dev/null || echo missing)'. Debian 13 and Ubuntu 24.04 ship one."
+}
+
 ensure_docker() {
   if docker info &>/dev/null; then
     log "Docker is already installed and running — leaving it alone."
     DOCKER_READY=1
+    warn_if_compose_old
     return 0
   fi
 
@@ -286,8 +344,7 @@ ensure_docker() {
     fi
   elif [ "$OS" = "Linux" ]; then
     if ! command -v docker &>/dev/null; then
-      log "Installing Docker Engine via get.docker.com (apt/dnf aware)..."
-      run_remote_installer "https://get.docker.com" $SUDO sh
+      install_distro_docker || return 0
     fi
     command -v systemctl &>/dev/null && $SUDO systemctl enable --now docker || true
     _user="${USER:-$(id -un)}"
@@ -296,7 +353,7 @@ ensure_docker() {
       warn "Added $_user to the docker group — log out/in (or run 'newgrp docker') before using docker without sudo."
     fi
   else
-    warn "Unsupported OS '$OS' for automatic Docker install — see https://docs.docker.com/engine/install/"
+    warn "Unsupported OS '$OS' for automatic Docker install — install its open-source Docker (Moby) packages."
     return 0
   fi
 
@@ -310,8 +367,9 @@ ensure_docker() {
     warn "Docker is installed but the daemon isn't reachable yet — see notes above"
     warn "  (a fresh docker-group membership needs a new login; 'docker info' shows why)."
   else
-    warn "Docker did not install — see https://docs.docker.com/engine/install/"
+    warn "Docker did not install — install your distribution's open-source Docker (Moby) packages."
   fi
+  warn_if_compose_old
 }
 
 # Everything above defines; everything below runs. Sourcing the file stops

@@ -19,9 +19,14 @@ docker compose up --build -d
 - The container runs as a non-root user, serves on port **8000**, and stores
   all state (database, photos, backups) in the `headroom-data` named volume
   mounted at `/data`.
-- The Docker engine installed by the setup script is **not Docker Desktop**:
-  colima + docker CLI + compose/buildx via Homebrew on macOS, native Docker
-  Engine via Docker's official script on apt/dnf Linux.
+- The Docker engine installed by the setup script is **open source only** —
+  not Docker Desktop, not Docker Inc.'s own packages: colima + docker CLI +
+  compose/buildx via Homebrew on macOS, and on Linux the distribution's
+  Docker (Moby) packages via apt (`docker.io`, with `docker-cli`, Compose v2
+  and `docker-buildx` where the distribution has them) or dnf
+  (`moby-engine`). The compose files need **Compose 2.24.4 or newer**
+  (Debian 13 and Ubuntu 24.04 ship one); the script warns when it is older
+  or missing.
 - **Internet-facing with HTTPS**: point DNS at the host, open 80/443, then
 
   ```bash

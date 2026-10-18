@@ -231,9 +231,12 @@ git clone https://github.com/59psi/headroom.git && cd headroom
 docker compose up --build
 ```
 
-Step 2 installs a complete, Docker-Desktop-free engine:
+Step 2 installs a complete, open-source engine — no Docker Desktop, nothing
+from Docker Inc.'s own repository:
 [colima](https://github.com/abiosoft/colima) + docker CLI + compose/buildx
-via Homebrew on macOS, native Docker Engine via apt/dnf on Linux. If
+via Homebrew on macOS, your distribution's Docker (Moby) packages via apt or
+dnf on Linux. The compose files need Compose 2.24.4 or newer (Debian 13 and
+Ubuntu 24.04 ship one), and the script warns when yours is older. If
 `docker info` already works on your machine it changes nothing. It only
 reports the engine ready once `docker info` answers; if it still can't reach
 the engine when it finishes, it says why and exits non-zero. **Linux:**
