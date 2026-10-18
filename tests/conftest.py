@@ -274,6 +274,13 @@ async def setup_db():
     yield
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
+    # A fresh connection for the next test. Each test runs on its own event
+    # loop, and SQLAlchemy 2.1's asyncio connector binds a connection's
+    # internal lock to the first loop that waits on it — so the one shared
+    # in-memory connection, reused, failed any later test whose background
+    # task and request met on it ("bound to a different event loop"). The
+    # tables are gone by now anyway; the app runs one loop per process.
+    await test_engine.dispose()
 
 
 @pytest.fixture
