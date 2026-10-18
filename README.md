@@ -331,22 +331,27 @@ app advertises `https://headroom.local` over mDNS, and the passkey identity
 (`HEADROOM_RP_ID` / `HEADROOM_ORIGIN`) is set to the LAN name automatically.
 
 **2. Get Caddy's root certificate onto the device.** Easiest way — on the
-device itself, open the Pi's address followed by
+device itself, open the Pi's address on port 8000 followed by
 `/api/public/ca-certificate`. By IP address, which always works:
 
 ```
-https://10.0.111.4/api/public/ca-certificate
+http://10.0.111.4:8000/api/public/ca-certificate
 ```
 
-(Use your Pi's own IP. Safari warns once, because the device doesn't trust
-the certificate yet — that is what you are installing. Continue past it.)
-Or, by name, without the warning:
+(Use your Pi's own IP. Port 8000 is the app itself, past Caddy, so there is
+no certificate to warn about.) Or by name, where `.local` resolves:
 
 ```
 http://headroom.local:8000/api/public/ca-certificate
 ```
 
-Both serve the **root** certificate with the right content type, so iOS
+`https://10.0.111.4/api/public/ca-certificate` works too, but only once the
+IP is in `HEADROOM_SITE_ADDRESSES` (see *Reaching it from off the LAN*,
+below) — by default Caddy answers only to `headroom.local`, and a connection
+by IP fails the handshake. There, Safari warns once, because the device
+doesn't trust the certificate yet; that is what you are installing.
+
+Each serves the **root** certificate with the right content type, so iOS
 offers to install it directly. It's also linked from **Settings → Device
 → Trust this device**, which only appears when a local CA exists.
 
@@ -670,7 +675,7 @@ Data → Re-pricing; neither spends a Claude call.
 | `HEADROOM_REPRICING_INTERVAL_HOURS` / `_DELAY_SECONDS` / `_BATCH_LIMIT` | `24` / `1.0` / `0` | Sweep cadence, pause between hats, cap per sweep (`0` = all) |
 | `HEADROOM_MDNS_INTERFACE` | _(detected LAN IP)_ | Interface the mDNS responder binds; an IPv4 address pins one NIC and is the address advertised (no AAAA then); `all` restores all-interfaces |
 | `HEADROOM_IMPORT_WORKER_ENABLED` | `true` | Bulk-import background worker |
-| `HEADROOM_ANALYSIS_WORKER_ENABLED` | `true` | Photo-analysis background worker (off ⇒ the upload route runs the pipeline inline) |
+| `HEADROOM_ANALYSIS_WORKER_ENABLED` | `true` | Photo-analysis background worker (off ⇒ the upload route runs the pipeline inline, and the cutout library is not compiled at boot — the first upload waits for it, about two minutes on a Pi) |
 | `HEADROOM_ACTIVITY_LOG_RETENTION_DAYS` | `90` | Audit rows kept (pruned daily) |
 | `HEADROOM_MDNS_ENABLED` | `true` | Advertise `headroom.local` on the LAN (Docker: stack `docker-compose.mdns.yml`, or `docker-compose.https-lan.yml` for passkey-grade HTTPS) |
 | `HEADROOM_MDNS_HOSTNAME` | `headroom` | A bare host label (`hats`, never `hats.local`) — resolves as `<label>.local`; anything else is refused at startup and shown on Settings |
@@ -788,7 +793,8 @@ src/headroom/
     ├── google_vision.py         # fallback brand via logo detection
     ├── melin_recap.py           # live resale median (Sharetribe public API)
     ├── repricing.py             # nightly re-price sweep, no Claude call
-    ├── catalog_service.py       # colorway harvest + purchase matching
+    ├── catalog_service.py       # colorway harvest, picker + validator
+    ├── purchase_service.py      # receipt import, matching + linking
     ├── search_service.py        # text search + color-family search
     ├── auth_service.py          # argon2, sessions, rate limiting
     ├── passkey_service.py       # WebAuthn ceremonies

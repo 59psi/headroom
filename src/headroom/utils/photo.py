@@ -3,7 +3,7 @@ import logging
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
-from pathlib import Path
+from pathlib import Path, PurePath, PurePosixPath
 
 import pillow_heif
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -182,6 +182,32 @@ def make_thumbnail(source_path: Path, dest_path: Path) -> Path | None:
         source_path, dest_path,
         dimension=THUMB_DIMENSION, quality=80, method=4, what="Thumbnail",
     )
+
+
+def is_cutout(photo: str | PurePath) -> bool:
+    """Whether a stored photo is a cutout: rembg's output is the only PNG.
+
+    Uploads are normalized to JPEG (`process_image`) before anything else
+    sees them, so the suffix is the marker — the one the pipeline skips a cut
+    on, the fallback reads colors by, and `HatRead` reports to the page.
+    """
+    return PurePosixPath(photo).suffix.lower() == ".png"
+
+
+def recut_source(original_path: str | None, photo_path: str | None) -> str | None:
+    """What a re-cut starts from: the retained original, or — for a hat whose
+    cut never happened — the uncut photo itself. None when there is neither:
+    re-segmenting a cutout eats its alpha, so a PNG is never a source.
+
+    A failed upload cut keeps the JPEG as the photo and records no original;
+    that JPEG is exactly what a re-cut needs. `POST /recut` and `HatRead`'s
+    `can_recut` both ask this, so the button and the endpoint agree.
+    """
+    if original_path:
+        return original_path
+    if photo_path and not is_cutout(photo_path):
+        return photo_path
+    return None
 
 
 def export_derivative_path(upload_dir: Path, photo_rel: str) -> Path:

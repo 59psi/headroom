@@ -35,6 +35,7 @@ from headroom.services import (
     backup_service,
     hat_analysis_pipeline,
     hat_service,
+    purchase_service,
     retail_pricing,
     settings_service,
     upgrade_guard,
@@ -92,6 +93,10 @@ ONE_TIME_REPAIRS: tuple[tuple[str, Callable[[AsyncSession], Awaitable[int]], str
      "Normalized general_color on %d existing hat colors"),
     ("vocabulary_merged_v2", lambda db: _merge_vocabulary_v2(db),
      "Merged %d spelling-variant vocabulary value(s) (punctuation and colorway)"),
+    # A reseller's "(RARE)" / "NEW WITH TAGS" read as part of a receipt
+    # colorway before 2.85.1, and copied onto hats by their links.
+    ("sales_tag_colorways_v1", lambda db: purchase_service.strip_sales_tag_colorways(db),
+     "Took a seller's sales tag off %d purchase colorway(s)"),
 )
 
 

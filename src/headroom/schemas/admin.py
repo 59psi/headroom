@@ -470,6 +470,21 @@ class ReanalyzeAllResult(BaseModel):
     job: AnalysisJobRead | None = None
 
 
+class SuspectReason(StrEnum):
+    """The rule that rules a hat out for a receipt (`purchase_service._veto`)."""
+
+    #: The receipt's model is not this hat's.
+    model = "model"
+    #: The hat's construction (Hydro, Thermal…) contradicts the title's.
+    construction = "construction"
+    #: The hat names a series the receipt never mentions.
+    series = "series"
+    #: Both state a colorway and they differ (and no own price vouches).
+    colorway = "colorway"
+    #: Both state a size and they differ.
+    size = "size"
+
+
 class LinkedHat(BaseModel):
     """The hat a purchase is linked to, as the review list shows it: enough to
     put its photo and its own record beside the receipt."""
@@ -481,6 +496,10 @@ class LinkedHat(BaseModel):
     model_name: str | None = None
     artist_series: str | None = None
     colorway: str | None = None
+    #: With construction, what a size or construction `suspect_reason`
+    #: compares — so the page can name both values.
+    size: str | None = None
+    construction: str | None = None
     photo_path: str | None = None
     thumb_path: str | None = None
 
@@ -509,9 +528,11 @@ class PurchaseRead(BaseModel):
     link_confirmed_at: datetime | None = None
     #: The linked hat (`Purchase.hat`, loaded with the row).
     hat: LinkedHat | None = None
-    #: A matcher-made link its corrected rules reject (`catalog_service.
-    #: is_suspect`) — listed for review. Set by the list route.
+    #: A matcher-made link its corrected rules reject (`purchase_service.
+    #: suspect_reason`) — listed for review. Set by the routes.
     suspect: bool = False
+    #: Which rule rejects it, so the page can say why instead of guessing.
+    suspect_reason: SuspectReason | None = None
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -522,11 +543,19 @@ class PurchaseRead(BaseModel):
         return naming.is_accessory(self.item_title)
 
 
-#: What a pick-list row says about one candidate pairing. `fits`: the matcher's
-#: own rules accept it. `score`: its score when they do, a looser resemblance
-#: when they do not (ranked after every fitting row). `agrees`: the fields that
-#: visibly match — model, series, colorway, size, price.
-MatchAgreement = Literal["model", "series", "colorway", "size", "price"]
+class MatchAgreement(StrEnum):
+    """A field a purchase and a hat visibly agree on — a pick-list row's "why".
+
+    A pick-list row says, about one candidate pairing: `fits` (the matcher's
+    own rules accept it), `score` (its score when they do, a looser
+    resemblance when they do not — ranked after every fitting row) and
+    `agrees` (these)."""
+
+    model = "model"
+    series = "series"
+    colorway = "colorway"
+    size = "size"
+    price = "price"
 
 
 class HatOption(BaseModel):
@@ -927,7 +956,7 @@ class MatchProposal(BaseModel):
     """One proposed purchase → hat link.
 
     Both the matcher and the import PREVIEW build this through the one
-    `catalog_service._proposal`, so every row carries `size` and
+    `purchase_service._proposal`, so every row carries `size` and
     `sets_colorway`. What still differs is provenance: the matcher names the
     purchase row (`purchase_id`), the preview scores transient rows with no id
     and says which half of the click each row is (`already_on_record`).

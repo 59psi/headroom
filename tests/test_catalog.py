@@ -50,7 +50,7 @@ async def test_the_harvest_calls_through_the_melin_recap_seam(monkeypatch):
     real one when this file was collected: the harvest then bypassed the stub
     and only the socket-level refusal kept it off the live marketplace.
     """
-    from headroom.services import catalog_service, melin_recap
+    from headroom.services import melin_recap
 
     calls: list[dict] = []
 
@@ -88,7 +88,6 @@ async def test_a_category_whose_write_fails_does_not_take_the_rest_with_it(
     category run at all — without it every one after the failure raised
     `PendingRollbackError` and the run lost the categories it had not reached."""
     from headroom.models.catalog import ColorwayEntry
-    from headroom.services import catalog_service
 
     _pages(monkeypatch, {"odysea": ["Odysea - Moss"], "coast": ["Coast - Sand"]})
     real_sweep = catalog_service._sweep_category
@@ -117,7 +116,6 @@ async def test_a_started_harvest_runs_against_the_apps_database(client, monkeypa
     the app's session factory, which is what this test can see the result in.
     """
     from headroom.routes.admin import catalog as catalog_routes
-    from headroom.services import catalog_service
 
     _pages(monkeypatch, {"aGame": ["A-Game Hydro - Navy", "A-Game Hydro - Bone"]})
 
@@ -154,7 +152,6 @@ async def test_a_second_harvest_is_refused_while_one_is_in_flight(client):
 
     Reachable by ordinary use: the card re-enables as soon as the 202 lands.
     """
-    from headroom.services import catalog_service
 
     assert catalog_service.claim_harvest() is True
     try:
@@ -258,7 +255,7 @@ async def test_match_respects_colorway_disagreement(client, db_session):
 
 
 async def test_normalize_size_maps_order_line_spellings():
-    from headroom.services.catalog_service import normalize_size
+    from headroom.services.naming import normalize_size
 
     assert normalize_size("Classic") == "classic"
     assert normalize_size("X-Large") == "x_large"
@@ -670,10 +667,10 @@ async def test_unmatching_a_missing_purchase_is_a_domain_refusal(db_session):
     """The service says "no such purchase" in domain terms and the route layer
     answers 404 (the HTTP half is asserted below). It raised `HTTPException`
     itself, a web reply from a function that is not an endpoint."""
-    from headroom.services import catalog_service, errors
+    from headroom.services import errors, purchase_service
 
     with pytest.raises(errors.NotFound):
-        await catalog_service.unmatch_purchase(db_session, 999999)
+        await purchase_service.unmatch_purchase(db_session, 999999)
 
 
 async def test_unmatch_is_idempotent_and_404s_on_a_missing_row(client, db_session):
@@ -745,7 +742,6 @@ async def test_one_failing_category_does_not_abandon_the_rest(db_session, monkey
     that it stopped early. A catalog missing two thirds of its models looked
     exactly like a complete one.
     """
-    from headroom.services import catalog_service
     from headroom.services.melin_recap import MelinRecapError
 
     calls: list[str] = []
@@ -778,14 +774,14 @@ async def test_a_one_size_beanie_is_headwear_not_an_accessory():
     on the shelf flagged "look like accessories (travel cases, gift cards)"
     in the preview. The shape in the title is the tell."""
     from headroom.models.catalog import Purchase
-    from headroom.services import catalog_service
+    from headroom.services import purchase_service
 
     beanie = Purchase(item_title="Journey Beanie - Black", model_name="Journey Beanie", size=None)
-    assert catalog_service._looks_like_headwear(beanie, hats=[]) is True
+    assert purchase_service._looks_like_headwear(beanie, hats=[]) is True
     case = Purchase(item_title="3 Hat Travel Case", model_name="3 Hat Travel Case", size=None)
-    assert catalog_service._looks_like_headwear(case, hats=[]) is False
+    assert purchase_service._looks_like_headwear(case, hats=[]) is False
     card = Purchase(item_title="Gift Card", model_name="Gift Card", size=None)
-    assert catalog_service._looks_like_headwear(card, hats=[]) is False
+    assert purchase_service._looks_like_headwear(card, hats=[]) is False
 
 
 async def test_a_harvest_that_loses_every_category_says_so(client, db_session, monkeypatch):
@@ -794,7 +790,7 @@ async def test_a_harvest_that_loses_every_category_says_so(client, db_session, m
     "Harvest finished — the counts above are current" over zero entries.
     The failures were in a result dict the background task hands to nobody.
     """
-    from headroom.services import catalog_service, melin_recap
+    from headroom.services import melin_recap
     from headroom.services.melin_recap import MelinRecapError
 
     async def dead(params):
@@ -818,7 +814,6 @@ async def test_a_harvest_that_loses_every_category_says_so(client, db_session, m
 
 
 async def test_a_partial_harvest_names_the_categories_it_lost(client, db_session, monkeypatch):
-    from headroom.services import catalog_service
     from headroom.services.melin_recap import MelinRecapError
 
     async def flaky(params):
@@ -856,7 +851,6 @@ async def test_isolation_covers_any_failure_not_just_the_marketplace_one(
     not matter, so naming a realistic one would test the same narrowness again
     one step further out.
     """
-    from headroom.services import catalog_service
 
     calls: list[str] = []
 
@@ -886,7 +880,6 @@ async def test_a_canceled_harvest_stops_rather_than_becoming_a_failed_category(
     sweep would carry on to the next category, and a stopping container would
     report itself as one flaky category rather than stopping.
     """
-    from headroom.services import catalog_service
 
     calls: list[str] = []
 
@@ -905,7 +898,6 @@ async def test_a_canceled_harvest_stops_rather_than_becoming_a_failed_category(
 async def test_a_transient_page_failure_is_retried(db_session, monkeypatch):
     """These are 429s and 502s, not permanent conditions — one retry saves the
     whole category."""
-    from headroom.services import catalog_service
     from headroom.services.melin_recap import MelinRecapError
 
     attempts = {"n": 0}
@@ -937,7 +929,6 @@ async def test_catalog_stats_counts_the_catalog_not_a_page_of_autocomplete(
     indistinguishable from a harvest that genuinely found 25.
     """
     from headroom.models.catalog import ColorwayEntry
-    from headroom.services import catalog_service
 
     for i in range(40):
         db_session.add(ColorwayEntry(
@@ -1105,14 +1096,14 @@ async def test_the_preview_predicts_a_multi_line_import_exactly(client):
 
 
 async def test_identical_model_names_score_highest():
-    from headroom.services.catalog_service import MODEL_EXACT, _model_tier
+    from headroom.services.purchase_service import MODEL_EXACT, _model_tier
 
     assert _model_tier("Trenches Icon Hydro", "Trenches Icon Hydro") == MODEL_EXACT
 
 
 async def test_a_generic_hat_name_matches_a_specific_purchase():
     """The ~120-unit case. The receipt knows the sub-line; the photo does not."""
-    from headroom.services.catalog_service import MODEL_CONTAINED, _model_tier
+    from headroom.services.purchase_service import MODEL_CONTAINED, _model_tier
 
     for hat, purchase in [
         ("Odysea Hydro", "Odysea Packable Hydro"),
@@ -1125,7 +1116,7 @@ async def test_a_generic_hat_name_matches_a_specific_purchase():
 
 async def test_exact_always_outranks_contained():
     """So a subset match only ever picks up what nothing better claimed."""
-    from headroom.services.catalog_service import MODEL_CONTAINED, MODEL_EXACT
+    from headroom.services.purchase_service import MODEL_CONTAINED, MODEL_EXACT
 
     assert MODEL_EXACT > MODEL_CONTAINED
 
@@ -1137,7 +1128,7 @@ async def test_the_subset_direction_is_not_symmetric():
     not happen — and it would let one generic receipt line claim any specific
     hat in the family.
     """
-    from headroom.services.catalog_service import _model_tier
+    from headroom.services.purchase_service import _model_tier
 
     assert _model_tier("Trenches Icon Mill Pinya", "Trenches Icon") is None
     assert _model_tier("Odysea Packable Hydro", "Odysea Hydro") is None
@@ -1145,14 +1136,14 @@ async def test_the_subset_direction_is_not_symmetric():
 
 async def test_hyphens_do_not_defeat_the_comparison():
     """`A-Game` and `A Game` are one product line; `X - Camo` is `X Camo`."""
-    from headroom.services.catalog_service import MODEL_EXACT, _model_tier
+    from headroom.services.purchase_service import MODEL_EXACT, _model_tier
 
     assert _model_tier("A-Game Hydro", "A Game Hydro") == MODEL_EXACT
     assert _model_tier("Trenches Thermal - Camo", "Trenches Thermal Camo") == MODEL_EXACT
 
 
 async def test_unrelated_models_never_match():
-    from headroom.services.catalog_service import _model_tier
+    from headroom.services.purchase_service import _model_tier
 
     assert _model_tier("Odysea Hydro", "Trenches Thermal") is None
     assert _model_tier("", "Trenches Hydro") is None
@@ -1161,7 +1152,7 @@ async def test_unrelated_models_never_match():
 
 async def test_a_travel_case_never_matches_a_hat():
     """78 units of it in the real history — accessories must stay unmatched."""
-    from headroom.services.catalog_service import _model_tier
+    from headroom.services.purchase_service import _model_tier
 
     assert _model_tier("Trenches Icon Hydro", "3 Hat Travel Case") is None
 
@@ -1181,7 +1172,7 @@ def _maximum_matching(purchases, hats) -> int:
     maximum possible, and that claim was measured once in a throwaway script.
     A number nobody can reproduce is a rumor.
     """
-    from headroom.services.catalog_service import _match_score
+    from headroom.services.purchase_service import _match_score
 
     edges = {
         i: [j for j, h in enumerate(hats) if _match_score(p, h) is not None]
@@ -1219,7 +1210,7 @@ async def test_matching_achieves_the_maximum_possible(client, db_session):
     why the ordering could rot without any test noticing.
     """
     from headroom.models.catalog import Purchase
-    from headroom.services.catalog_service import match_purchases_to_hats
+    from headroom.services.purchase_service import match_purchases_to_hats
 
     # Classic first, so it is also the tie-break winner for the sizeless line.
     await _hat_with(client, db_session, size="classic", model="A-Game Hydro")
@@ -1264,7 +1255,7 @@ async def test_the_preview_predicts_what_importing_actually_does(client, db_sess
     wrote 144 hat prices.
     """
     from headroom.models.catalog import Purchase
-    from headroom.services.catalog_service import (
+    from headroom.services.purchase_service import (
         import_purchases,
         match_purchases_to_hats,
         preview_import,
@@ -1303,7 +1294,7 @@ async def test_the_preview_predicts_what_importing_actually_does(client, db_sess
 
 from headroom.models.catalog import Purchase
 from headroom.models.hat import Hat
-from headroom.services import catalog_service
+from headroom.services import catalog_service, purchase_service
 
 
 def _hat(**kw):
@@ -1337,7 +1328,7 @@ async def test_a_construction_in_the_colorway_half_does_not_rule_the_hat_out():
                size="classic", purchase_price=200.0)
     hat.colors = []
 
-    assert catalog_service._match_score(purchase, hat) is not None
+    assert purchase_service._match_score(purchase, hat) is not None
 
 
 async def test_a_price_typed_off_the_receipt_outweighs_a_colorway_typo():
@@ -1361,8 +1352,8 @@ async def test_a_price_typed_off_the_receipt_outweighs_a_colorway_typo():
                     size="classic", purchase_price=None)
     unpriced.colors = []
 
-    assert catalog_service._match_score(purchase, priced) is not None
-    assert catalog_service._match_score(purchase, unpriced) is None, (
+    assert purchase_service._match_score(purchase, priced) is not None
+    assert purchase_service._match_score(purchase, unpriced) is None, (
         "without the corroborating price, two disagreeing colorways still veto"
     )
 
@@ -1378,7 +1369,7 @@ async def test_a_contradicting_construction_still_rules_a_hat_out():
     thermal = _hat(model_name="A-Game Thermal", construction="Thermal", size="classic")
     thermal.colors = []
 
-    assert catalog_service._match_score(purchase, thermal) is None
+    assert purchase_service._match_score(purchase, thermal) is None
 
 
 async def test_the_assignment_is_maximum_not_merely_greedy():
@@ -1398,7 +1389,7 @@ async def test_the_assignment_is_maximum_not_merely_greedy():
     classic.colors = []
     small.colors = []
 
-    assigned = catalog_service.assign_purchases([generic, specific], [classic, small])
+    assigned = purchase_service.assign_purchases([generic, specific], [classic, small])
 
     assert len(assigned) == 2, (
         "both purchases are satisfiable at once — the generic line must give "
@@ -1431,7 +1422,7 @@ async def test_the_best_evidenced_purchase_wins_a_contended_hat():
 
     # `vague` FIRST, so file order favors the wrong answer — the arrangement
     # that produced a $999 cost basis where $79 was provable.
-    assigned = catalog_service.assign_purchases([vague, exact], [hat])
+    assigned = purchase_service.assign_purchases([vague, exact], [hat])
 
     assert len(assigned) == 1, "only one purchase can have the one hat"
     assert id(exact) in assigned, (
@@ -1544,7 +1535,7 @@ async def test_reading_the_backlog_writes_nothing_even_in_one_session(client, db
     the next `commit()` on that session flushes a match nobody applied.
     """
     from headroom.models.hat import Hat
-    from headroom.services import catalog_service
+    from headroom.services import purchase_service
 
     hat_id = await _hat_named(client, db_session, "Odysea Hydro")
     await client.post(
@@ -1557,7 +1548,7 @@ async def test_reading_the_backlog_writes_nothing_even_in_one_session(client, db
     db_session.expire_all()
     assert (await db_session.get(Hat, hat_id)).colorway is None
 
-    unclaimed = await catalog_service.unclaimed_from_purchases(db_session)
+    unclaimed = await purchase_service.unclaimed_from_purchases(db_session)
     assert unclaimed["colorways"] == 1, "there is something to offer"
 
     # The dangerous moment: anything the preview mutated would flush HERE.
@@ -1714,7 +1705,6 @@ async def test_an_accent_is_a_spelling_on_both_halves(client, db_session):
     catalog it came from. Both read names through `naming` now — and the SQL
     pre-filter, which cannot fold an accent, lets accented names through to
     the token test instead of silently dropping them."""
-    from headroom.services import catalog_service
     from headroom.services.catalog_service import is_real_product
 
     await _catalog(db_session, [
@@ -1773,7 +1763,7 @@ async def test_a_hat_goes_to_the_better_purchase_when_the_holder_cannot_move():
     both hats, which P2 is not. Before `substitute` existed this returned 910
     and reported it as a fixpoint.
     """
-    from headroom.services.catalog_service import _improve_by_swapping
+    from headroom.services.purchase_service import _improve_by_swapping
 
     p1, p2, p3 = _Node("P1"), _Node("P2"), _Node("P3")
     h1, h2 = _Node("hat1"), _Node("hat2")
@@ -1807,7 +1797,7 @@ async def test_a_three_way_rotation_is_the_documented_blind_spot():
     If someone adds a rotation move, this test failing is the correct
     outcome — update it to assert 300.
     """
-    from headroom.services.catalog_service import _improve_by_swapping
+    from headroom.services.purchase_service import _improve_by_swapping
 
     p1, p2, p3 = _Node("P1"), _Node("P2"), _Node("P3")
     h1, h2, h3 = _Node("hat1"), _Node("hat2"), _Node("hat3")
@@ -1838,7 +1828,7 @@ async def test_local_search_never_costs_a_link_or_a_point():
     """
     import random
 
-    from headroom.services.catalog_service import _improve_by_swapping
+    from headroom.services.purchase_service import _improve_by_swapping
 
     rng = random.Random(20260904)
     for trial in range(400):

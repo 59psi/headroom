@@ -45,16 +45,16 @@ async def test_two_imports_of_one_file_at_once_do_not_double_the_rows(file_clien
     yield here so the window is a certainty rather than a matter of timing;
     the lock around the route is what closes it (remove the lock and this
     writes four rows)."""
-    from headroom.services import catalog_service
+    from headroom.services import purchase_service
 
-    real = catalog_service._units_to_add
+    real = purchase_service._units_to_add
 
     async def slow(*args, **kwargs):
         result = await real(*args, **kwargs)
         await asyncio.sleep(0.05)
         return result
 
-    monkeypatch.setattr(catalog_service, "_units_to_add", slow)
+    monkeypatch.setattr(purchase_service, "_units_to_add", slow)
     two = {**LINE, "quantity": 2}
     responses = await asyncio.gather(*[
         file_client.post("/api/admin/purchases/import", json={"items": [two]}) for _ in range(2)

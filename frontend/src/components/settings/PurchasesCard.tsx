@@ -1,11 +1,11 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  confirmPurchaseLink, importPurchases, listPurchases, previewImport, rematchPurchases,
-  unlinkSuspectPurchases, unmatchAllPurchases, unmatchPurchase,
+  importPurchases, listPurchases, previewImport, rematchPurchases,
+  unlinkSuspectPurchases, unmatchAllPurchases,
 } from '../../api/purchases';
-import type { ImportPreview, PurchaseRead } from '../../types';
+import type { ImportPreview, LinkedHat, PurchaseRead } from '../../types';
 import { plural } from '../../lib/format';
 import { invalidateHatViews, invalidatePurchaseDerived } from '../../lib/invalidate';
 import { useHatLabels } from '../../lib/labels';
@@ -20,7 +20,9 @@ import { StatusPill } from '../ui/StatusPill';
 import { Skeleton } from '../ui/Skeleton';
 import { useToast } from '../ui/Toast';
 import { useConfirm } from '../ui/Dialogs';
-import { LinkHatDialog, receiptLine } from '../purchases/LinkHatDialog';
+import { LinkHatDialog } from '../purchases/LinkHatDialog';
+import { receiptLine, suspectWhy } from '../purchases/receipt';
+import { useKeepLink, useUnlinkPurchase } from '../purchases/usePurchaseLinks';
 
 const KEY = qk.admin.purchases();
 
@@ -51,7 +53,7 @@ function readItems(text: string): Record<string, unknown>[] {
 
 /** The prompt handed to Claude or ChatGPT to turn an inbox into importable JSON.
  *
- * Every field name here is one `catalog_service` actually reads
+ * Every field name here is one `purchase_service` actually reads
  * (`_line_fields`, `_units_to_add`, and the `Purchase(...)` construction) —
  * notably `order_date`, not `purchased_at`. A prompt that names a field the
  * importer ignores fails silently: the import succeeds, the data is simply
@@ -106,6 +108,131 @@ function EmailPromptDisclosure() {
     </details>
   );
 }
+
+/** What a row needs from the card: how to label a size, and the actions. */
+interface RowContext {
+  sizeLabel: (v: string) => string;
+  onLink: (p: PurchaseRead) => void;
+  onKeep: (p: PurchaseRead) => void;
+  onUnlink: (p: PurchaseRead) => void;
+  keeping: boolean;
+  unlinking: boolean;
+}
+
+type RowProps = { row: PurchaseRead; ctx: RowContext };
+
+/** The shape every row shares: optional thumbnail, the receipt title over a
+ *  second line, and the row's actions to the right. */
+function RowShell({ row, thumb, sub, actions }: {
+  row: PurchaseRead; thumb?: ReactNode; sub: ReactNode; actions?: ReactNode;
+}) {
+  return (
+    <li>
+      <span className="hr-row-title">
+        {thumb}
+        <span className="hr-row-text">
+          {row.item_title}
+          <span className="hr-row-sub">{sub}</span>
+        </span>
+      </span>
+      <span className="hr-row-aside">{actions}</span>
+    </li>
+  );
+}
+
+function HatLink({ hat }: { hat: LinkedHat }) {
+  return <Link to={`/hats/${hat.id}`}>{hatName(hat)}</Link>;
+}
+
+/** A link to check: the hat's photo beside the receipt, and why it is flagged. */
+function CheckRow({ row, ctx }: RowProps) {
+  const hat = row.hat;
+  return (
+    <RowShell
+      row={row}
+      thumb={hat && (hat.photo_path || hat.thumb_path
+        ? <img className="hr-pick-thumb" src={tileSrc(hat)} alt="" loading="lazy" />
+        : <span className="hr-pick-thumb" aria-hidden="true" />)}
+      sub={hat ? <>On <HatLink hat={hat} />. {suspectWhy(row, ctx.sizeLabel)}</> : receiptLine(row, ctx.sizeLabel)}
+      actions={
+        <>
+          <button
+            type="button"
+            className="btn btn-outline-secondary btn-sm"
+            aria-label={`Keep ${row.item_title} on ${hat ? hatName(hat) : 'its hat'}`}
+            disabled={ctx.keeping}
+            onClick={() => ctx.onKeep(row)}
+          >
+            Keep
+          </button>
+          <button
+            type="button"
+            className="btn btn-outline-danger btn-sm"
+            aria-label={`Unlink ${row.item_title} and clear what it copied`}
+            disabled={ctx.unlinking}
+            onClick={() => ctx.onUnlink(row)}
+          >
+            Unlink
+          </button>
+        </>
+      }
+    />
+  );
+}
+
+function NeedsRow({ row, ctx }: RowProps) {
+  return (
+    <RowShell
+      row={row}
+      sub={receiptLine(row, ctx.sizeLabel)}
+      actions={
+        <button type="button" className="btn btn-outline-secondary btn-sm" onClick={() => ctx.onLink(row)}>
+          Link to hat…
+        </button>
+      }
+    />
+  );
+}
+
+function LinkedRow({ row, ctx }: RowProps) {
+  return (
+    <RowShell
+      row={row}
+      sub={row.hat
+        ? <>On <HatLink hat={row.hat} /> · {receiptLine(row, ctx.sizeLabel)}</>
+        : receiptLine(row, ctx.sizeLabel)}
+      actions={
+        <>
+          <button type="button" className="btn btn-outline-secondary btn-sm" onClick={() => ctx.onLink(row)}>
+            Change…
+          </button>
+          <button
+            type="button"
+            className="btn btn-outline-secondary btn-sm"
+            aria-label={`Unlink ${row.item_title} from its hat`}
+            disabled={ctx.unlinking}
+            onClick={() => ctx.onUnlink(row)}
+          >
+            Unlink
+          </button>
+        </>
+      }
+    />
+  );
+}
+
+function AccessoryRow({ row, ctx }: RowProps) {
+  return <RowShell row={row} sub={receiptLine(row, ctx.sizeLabel)} />;
+}
+
+/** One row component per tab, in place of a `view ===` test in each of a
+ *  row's three slots. */
+const ROWS: Record<View, (props: RowProps) => ReactNode> = {
+  check: CheckRow,
+  needs: NeedsRow,
+  linked: LinkedRow,
+  accessories: AccessoryRow,
+};
 
 export function PurchasesCard() {
   const qc = useQueryClient();
@@ -172,15 +299,12 @@ export function PurchasesCard() {
     },
   });
 
-  // "Keep" in the review list: you vouch for the link, and it is never listed
-  // as one to check again.
-  const keepMut = useMutation({
-    mutationFn: confirmPurchaseLink,
-    onSuccess: () => {
-      toast.success('Kept — it won’t be flagged again');
-      invalidatePurchaseDerived(qc);
-    },
-  });
+  // "Keep" in the review list, and one row's Unlink — shared with the hat
+  // page's Purchase panel (`usePurchaseLinks`). One row at a time is the undo
+  // a single wrong link needs: `unmatch-all` was once the only undo here, so
+  // fixing one row meant unlinking every purchase and re-running the matcher.
+  const keepMut = useKeepLink();
+  const { unlink, mutation: unlinkOneMut } = useUnlinkPurchase();
 
   const unlinkSuspectMut = useMutation({
     mutationFn: unlinkSuspectPurchases,
@@ -201,43 +325,6 @@ export function PurchasesCard() {
       );
       invalidatePurchaseDerived(qc);
       void invalidateHatViews(qc);
-    },
-  });
-
-  // One row at a time — the undo a single wrong link needs. `unmatch-all`
-  // was the only undo the card offered, so fixing one row meant unlinking
-  // every purchase and re-running the matcher over the whole collection.
-  //
-  // Optimistic: the row drops its link the instant it is pressed. The server's
-  // answer is predictable (it unlinks exactly that purchase), and a failure
-  // restores the cached list. The hat id is captured BEFORE the optimistic
-  // write, because afterwards the cache no longer knows which hat it was.
-  //
-  // `clearCopied` is the review list's Unlink: you have looked at the hat and
-  // the receipt and said the link was wrong, so the colorway, price and date
-  // it copied go too — even on links too old to have recorded their writes.
-  const unmatchOneMut = useMutation({
-    mutationFn: ({ purchaseId, clearCopied }: { purchaseId: number; clearCopied: boolean }) =>
-      unmatchPurchase(purchaseId, { clearCopied }),
-    onMutate: async ({ purchaseId }) => {
-      await qc.cancelQueries({ queryKey: KEY });
-      const previous = qc.getQueryData<PurchaseRead[]>(KEY);
-      const hatId = previous?.find(r => r.id === purchaseId)?.hat_id ?? undefined;
-      qc.setQueryData<PurchaseRead[]>(KEY, list =>
-        list?.map(r => (r.id === purchaseId ? { ...r, hat_id: null, hat: null, suspect: false } : r)));
-      return { previous, hatId };
-    },
-    onError: (_err, _id, ctx) => {
-      if (ctx?.previous) qc.setQueryData(KEY, ctx.previous);
-    },
-    onSuccess: (result, _id, ctx) => {
-      toast.success('Purchase unlinked');
-      void invalidateHatViews(qc, result.hat_id ?? ctx?.hatId);
-    },
-    // The list refetch on failure too — the rollback restored a snapshot —
-    // and with it everything else matching feeds.
-    onSettled: () => {
-      invalidatePurchaseDerived(qc);
     },
   });
 
@@ -304,6 +391,7 @@ export function PurchasesCard() {
     check: toCheck, needs: needsHat, linked: linkedRows, accessories,
   };
   const shown = showAll ? piles[view] : piles[view].slice(0, ROW_LIMIT);
+  const ViewRow = ROWS[view];
   const busy = previewMut.isPending || importMut.isPending;
   // The one primary action per card: picking a file, until a preview is up —
   // then confirming that preview is the thing to do, and picking another file
@@ -492,7 +580,7 @@ export function PurchasesCard() {
 
       <ErrorNote
         className="mt-3"
-        of={[purchases, previewMut, importMut, rematchMut, unmatchMut, unmatchOneMut, keepMut, unlinkSuspectMut]}
+        of={[purchases, previewMut, importMut, rematchMut, unmatchMut, unlinkOneMut, keepMut, unlinkSuspectMut]}
       />
 
       {rows.length > 0 && (
@@ -536,75 +624,20 @@ export function PurchasesCard() {
               {view === 'needs' ? 'Every hat purchase is linked.' : 'Nothing here.'}
             </p>
           ) : (
-            <ul className="hr-sd-rows is-stacked mt-2">
+            <ul className="hr-rows is-stacked mt-2">
               {shown.map(r => (
-                <li key={r.id}>
-                  <span className="hr-sd-row-title">
-                    {view === 'check' && r.hat && (
-                      r.hat.photo_path || r.hat.thumb_path
-                        ? <img className="hr-pick-thumb" src={tileSrc(r.hat)} alt="" loading="lazy" />
-                        : <span className="hr-pick-thumb" aria-hidden="true" />
-                    )}
-                    <span className="hr-sd-row-text">
-                      {r.item_title}
-                      <span className="hr-sd-row-sub">
-                        {view === 'check' && r.hat ? (
-                          <>
-                            On <Link to={`/hats/${r.hat.id}`}>{hatName(r.hat)}</Link>
-                            {r.hat.artist_series && <> — series &ldquo;{r.hat.artist_series}&rdquo;</>}
-                          </>
-                        ) : view === 'linked' && r.hat ? (
-                          <>On <Link to={`/hats/${r.hat.id}`}>{hatName(r.hat)}</Link> · {receiptLine(r, labels.size)}</>
-                        ) : receiptLine(r, labels.size)}
-                      </span>
-                    </span>
-                  </span>
-                  <span className="hr-sd-row-aside">
-                    {view === 'needs' && (
-                      <button type="button" className="btn btn-outline-secondary btn-sm" onClick={() => setLinking(r)}>
-                        Link to hat…
-                      </button>
-                    )}
-                    {view === 'check' && (
-                      <>
-                        <button
-                          type="button"
-                          className="btn btn-outline-secondary btn-sm"
-                          aria-label={`Keep ${r.item_title} on ${r.hat ? hatName(r.hat) : 'its hat'}`}
-                          disabled={keepMut.isPending}
-                          onClick={() => keepMut.mutate(r.id)}
-                        >
-                          Keep
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-outline-danger btn-sm"
-                          aria-label={`Unlink ${r.item_title} and clear what it copied`}
-                          disabled={unmatchOneMut.isPending}
-                          onClick={() => unmatchOneMut.mutate({ purchaseId: r.id, clearCopied: true })}
-                        >
-                          Unlink
-                        </button>
-                      </>
-                    )}
-                    {view === 'linked' && (
-                      <>
-                        <button type="button" className="btn btn-outline-secondary btn-sm" onClick={() => setLinking(r)}>
-                          Change…
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-outline-secondary btn-sm"
-                          aria-label={`Unlink ${r.item_title} from its hat`}
-                          disabled={unmatchOneMut.isPending}
-                          onClick={() => unmatchOneMut.mutate({ purchaseId: r.id, clearCopied: false })}
-                        >
-                          Unlink
-                        </button>
-                      </>
-                    )}
-                  </span>
-                </li>
+                <ViewRow
+                  key={r.id}
+                  row={r}
+                  ctx={{
+                    sizeLabel: labels.size,
+                    onLink: setLinking,
+                    onKeep: p => keepMut.mutate(p.id),
+                    onUnlink: p => void unlink(p),
+                    keeping: keepMut.isPending,
+                    unlinking: unlinkOneMut.isPending,
+                  }}
+                />
               ))}
             </ul>
           )}

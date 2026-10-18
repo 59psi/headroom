@@ -245,10 +245,9 @@ ARG REMBG_MODEL=isnet-general-use
 # On the `/tmp` tmpfs, NOT the `/data` volume, although that means paying the
 # compile (about two minutes on a Pi) once per container start — the app does
 # it in the background at boot (`background_removal.warm_up`). The cache is
-# compiled machine code that numba loads and runs. On the volume, anything
-# able to write as the app could leave code there that every later boot
-# executes, upgrades included, which is exactly the persistence the read-only
-# root above exists to deny. A tmpfs dies with the container.
+# compiled machine code that numba loads and runs, and this image keeps every
+# piece of code the app runs either root-owned (above) or gone at the next
+# start. A tmpfs dies with the container; the volume does not.
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH" \

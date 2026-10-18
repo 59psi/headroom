@@ -1,29 +1,17 @@
 import { useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { hatsForPurchase, linkPurchase } from '../../api/purchases';
+import { useQuery } from '@tanstack/react-query';
+import { hatsForPurchase } from '../../api/purchases';
 import { Modal } from '../common/Modal';
 import { ErrorNote } from '../common/ErrorNote';
 import { Skeleton } from '../ui/Skeleton';
-import { useToast } from '../ui/Toast';
 import { qk } from '../../lib/queryKeys';
-import { invalidateHatViews, invalidatePurchaseDerived } from '../../lib/invalidate';
 import { useHatLabels } from '../../lib/labels';
 import { hatName } from '../../lib/placement';
 import { tileSrc } from '../../lib/photo';
-import { formatDateOnly } from '../../lib/dates';
-import { money } from '../../lib/valuation';
-import type { HatOption, PurchaseRead } from '../../types';
+import type { PurchaseRead } from '../../types';
 import { LinkConfirm, PickList, type PickRow } from './PickList';
-
-/** One receipt line, as the dialogs headline it: date · price · size. */
-export function receiptLine(p: PurchaseRead, sizeLabel: (v: string) => string): string {
-  return [
-    p.order_date && formatDateOnly(p.order_date),
-    p.price != null && money(p.price),
-    p.size && sizeLabel(p.size),
-    p.order_ref && `order ${p.order_ref}`,
-  ].filter(Boolean).join(' · ');
-}
+import { receiptLine } from './receipt';
+import { useLinkPurchase } from './usePurchaseLinks';
 
 /**
  * "Which hat is this?" — link one purchase to the hat you choose.
@@ -34,8 +22,6 @@ export function receiptLine(p: PurchaseRead, sizeLabel: (v: string) => string): 
  * them apart) are exactly why you are choosing.
  */
 export function LinkHatDialog({ purchase, onClose }: { purchase: PurchaseRead; onClose: () => void }) {
-  const qc = useQueryClient();
-  const toast = useToast();
   const labels = useHatLabels();
   const [chosenId, setChosenId] = useState<number | null>(null);
   const [useReceiptColorway, setUseReceiptColorway] = useState(false);
@@ -46,23 +32,11 @@ export function LinkHatDialog({ purchase, onClose }: { purchase: PurchaseRead; o
   const chosen = options.data?.options.find(o => o.hat_id === chosenId) ?? null;
   const takenByOther = chosen != null
     && chosen.linked_purchase_id != null && chosen.linked_purchase_id !== purchase.id;
+  // Different by the server's own "same name" rule (`agrees`), not a
+  // lowercase compare that called "Black/Gum" and "black gum" two colorways.
   const colorwayDiffers = !!(chosen && purchase.colorway && chosen.colorway
-    && purchase.colorway.toLowerCase() !== chosen.colorway.toLowerCase());
-
-  const link = useMutation({
-    mutationFn: (hat: HatOption) => linkPurchase(purchase.id, {
-      hat_id: hat.hat_id,
-      replace: takenByOther,
-      receipt_colorway: colorwayDiffers && useReceiptColorway,
-    }),
-    onSuccess: (result, hat) => {
-      toast.success(`Linked to ${hatName(hat)}`);
-      invalidatePurchaseDerived(qc);
-      void invalidateHatViews(qc, result.hat_id);
-      if (result.moved_from_hat_id != null) void invalidateHatViews(qc, result.moved_from_hat_id);
-      onClose();
-    },
-  });
+    && !chosen.agrees.includes('colorway'));
+  const link = useLinkPurchase(onClose);
 
   const rows: PickRow[] = (options.data?.options ?? []).map(o => ({
     id: o.hat_id,
@@ -87,7 +61,15 @@ export function LinkHatDialog({ purchase, onClose }: { purchase: PurchaseRead; o
         type="button"
         className="btn btn-primary"
         disabled={link.isPending}
-        onClick={() => link.mutate(chosen)}
+        onClick={() => link.mutate({
+          purchaseId: purchase.id,
+          link: {
+            hat_id: chosen.hat_id,
+            replace: takenByOther,
+            receipt_colorway: colorwayDiffers && useReceiptColorway,
+          },
+          done: `Linked to ${hatName(chosen)}`,
+        })}
       >
         {link.isPending ? 'Linking…' : `Link to ${hatName(chosen)}`}
       </button>

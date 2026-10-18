@@ -141,7 +141,7 @@ export function ConstructionAuditCard() {
           sideways and clipped the one button in each row. The counts ride
           under the value as one line, which is how they are read anyway. */}
       {!!data?.length && (
-        <ul className="hr-sd-rows">
+        <ul className="hr-rows">
           {data.map(row => {
             const checking = dryRun.isPending && dryRun.variables?.value === row.construction;
             return (

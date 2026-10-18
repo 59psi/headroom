@@ -12,12 +12,14 @@ and the receipt's colorway reaching the picker and the analyzer's validator.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from sqlalchemy import select
 from sqlalchemy import update as sa_update
 
 from headroom.models import Hat, Purchase
-from headroom.services import catalog_service
+from headroom.services import catalog_service, naming, purchase_service
 
 pytestmark = pytest.mark.anyio
 
@@ -67,7 +69,7 @@ async def test_a_leading_the_is_ignored_on_either_side(client):
 
 
 async def test_the_same_line_with_and_without_the_is_an_exact_model_match():
-    assert catalog_service._model_tier("Shore Hydro", "The Shore Hydro") == catalog_service.MODEL_EXACT
+    assert purchase_service._model_tier("Shore Hydro", "The Shore Hydro") == purchase_service.MODEL_EXACT
 
 
 # ---- re-importing an export of the same history ---------------------------- #
@@ -113,8 +115,68 @@ async def test_a_separated_colorway_is_still_read_from_the_title(client):
     assert rows["R9"]["colorway"] == "Bone"
 
 
+@pytest.mark.parametrize(("title", "colorway"), [
+    # 2.84.1 only stopped a tag being read as the WHOLE colorway; after a
+    # separator it still rode along.
+    ("Melin Trenches Icon Hydro - Black (RARE)", "Black"),
+    ("MELIN Odysea Hydro - Navy NEW WITH TAGS", "Navy"),
+    ("Melin A-Game Hydro - RARE", None),
+    # A real colorway is left whole, brackets included.
+    ("Trenches Hydro - Moonbeam (Pirate Black)", "Moonbeam (Pirate Black)"),
+    ("Odysea Hydro - Rare Earth Green", "Rare Earth Green"),
+])
+async def test_a_sellers_tag_comes_off_a_separated_colorway(client, title, colorway):
+    rows = await _import(client, {"item_title": title, "order_ref": "T1", "quantity": 1})
+    assert rows["T1"]["colorway"] == colorway
+
+
+async def test_a_stated_colorway_loses_its_tags_too(client):
+    rows = await _import(client, {
+        "item_title": "Odysea Hydro", "colorway": "Sage (NWT)", "order_ref": "T2", "quantity": 1,
+    })
+    assert rows["T2"]["colorway"] == "Sage"
+
+
+async def test_the_repair_cleans_old_tagged_colorways_and_their_copies(db_session):
+    """Rows imported before the fix: the receipt's colorway, the hat colorway
+    its link copied, and the link's record of that write — so an unlink still
+    reverts exactly what was written. A hat the owner has since recolored is
+    left alone."""
+    copied = Hat(condition="new", size="classic", style="odysea", model_name="Odysea Hydro",
+                 colorway="Black (RARE)")
+    bare = Hat(condition="new", size="classic", style="odysea", model_name="Odysea Hydro",
+               colorway="RARE")
+    recolored = Hat(condition="new", size="classic", style="odysea", model_name="Odysea Hydro",
+                    colorway="Navy")
+    db_session.add_all([copied, bare, recolored])
+    await db_session.flush()
+    rows = [
+        Purchase(item_title="Odysea Hydro - Black (RARE)", model_name="Odysea Hydro",
+                 colorway="Black (RARE)", quantity=1, hat_id=copied.id,
+                 match_writes=json.dumps({"colorway": "Black (RARE)", "purchase_price": 89.0})),
+        Purchase(item_title="Odysea Hydro - RARE", model_name="Odysea Hydro",
+                 colorway="RARE", quantity=1, hat_id=bare.id,
+                 match_writes=json.dumps({"colorway": "RARE"})),
+        Purchase(item_title="Odysea Hydro - Navy (RARE)", model_name="Odysea Hydro",
+                 colorway="Navy (RARE)", quantity=1, hat_id=recolored.id),
+    ]
+    db_session.add_all(rows)
+    await db_session.commit()
+
+    assert await purchase_service.strip_sales_tag_colorways(db_session) == 3
+
+    for row in (*rows, copied, bare, recolored):
+        await db_session.refresh(row)
+    assert [p.colorway for p in rows] == ["Black", None, "Navy"]
+    assert (copied.colorway, bare.colorway, recolored.colorway) == ("Black", None, "Navy")
+    assert json.loads(rows[0].match_writes) == {"colorway": "Black", "purchase_price": 89.0}
+    assert json.loads(rows[1].match_writes) == {}
+    # Idempotent: a second run (an imported backup that already had it) changes nothing.
+    assert await purchase_service.strip_sales_tag_colorways(db_session) == 0
+
+
 async def test_a_resellers_cl_size_reads_as_classic():
-    assert catalog_service.normalize_size("CL") == "classic"
+    assert naming.normalize_size("CL") == "classic"
 
 
 # ---- what the matcher must NOT link on its own ----------------------------- #
@@ -180,12 +242,14 @@ async def test_a_link_the_corrected_rules_reject_is_listed_as_suspect(client, db
     pid, _ = await _legacy_wrong_link(client, db_session)
     row = next(p for p in (await client.get("/api/admin/purchases")).json() if p["id"] == pid)
     assert row["suspect"] is True
+    # The rule that rejects it, so the page names the field rather than guessing.
+    assert row["suspect_reason"] == "series"
 
 
 async def test_the_hat_page_list_flags_its_suspect_link_too(client, db_session):
     pid, hat_id = await _legacy_wrong_link(client, db_session)
     linked = (await client.get(f"/api/admin/purchases/for-hat/{hat_id}")).json()["linked"]
-    assert [(p["id"], p["suspect"]) for p in linked] == [(pid, True)]
+    assert [(p["id"], p["suspect"], p["suspect_reason"]) for p in linked] == [(pid, True, "series")]
 
 
 async def test_keeping_a_link_stops_it_being_suspect(client, db_session):
@@ -399,6 +463,47 @@ async def test_linking_logs_who_made_the_link(client, db_session):
     await client.post(f"/api/admin/purchases/{rows['R1']['id']}/link", json={"hat_id": hat_id})
     kinds = (await db_session.execute(select(ActivityLog.kind))).scalars().all()
     assert "purchase.linked" in kinds
+
+
+async def test_a_link_that_replaces_moves_or_reconfirms_is_on_record(client, db_session):
+    """Replacing a hat's purchase and moving one off another hat each revert
+    fields on a hat, and re-choosing the hat a purchase is on vouches for it
+    — all three were silent in the activity log."""
+    from headroom.models import ActivityLog
+
+    a = await _new_hat(client, "Odysea Hydro")
+    rows = await _import(client, _line("Odysea Hydro - Navy", "R1", price=79.0))
+    b = await _new_hat(client, "Odysea Hydro")
+    first = rows["R1"]["id"]
+    rows = await _import(client, _line("Odysea Hydro - Sage", "R2", price=69.0))
+    second = rows["R2"]["id"]
+    await client.post(f"/api/admin/purchases/{second}/unmatch")
+
+    async def kinds_for(pid):
+        rows = (await db_session.execute(
+            select(ActivityLog.kind, ActivityLog.details)
+            .where(ActivityLog.entity_type == "purchase", ActivityLog.entity_id == pid)
+            .order_by(ActivityLog.id)
+        )).all()
+        return [(kind, json.loads(details or "{}")) for kind, details in rows]
+
+    # Move: R1 goes from hat a to hat b.
+    assert (await client.post(f"/api/admin/purchases/{first}/link", json={"hat_id": b})).status_code == 200
+    moved = [d for k, d in await kinds_for(first) if k == "purchase.unmatched"]
+    assert moved and moved[-1]["hat_id"] == a and moved[-1]["moved_to_hat_id"] == b
+
+    # Replace: R2 takes hat b from R1.
+    resp = await client.post(f"/api/admin/purchases/{second}/link", json={"hat_id": b, "replace": True})
+    assert resp.status_code == 200, resp.text
+    replaced = [d for k, d in await kinds_for(first) if k == "purchase.unmatched"]
+    assert replaced[-1]["hat_id"] == b and replaced[-1]["replaced_by_purchase_id"] == second
+
+    # Re-confirm: an unvouched link re-chosen from the picker.
+    await db_session.execute(sa_update(Purchase).where(Purchase.id == second).values(link_confirmed_at=None))
+    await db_session.commit()
+    before = [k for k, _ in await kinds_for(second)].count("purchase.confirmed")
+    assert (await client.post(f"/api/admin/purchases/{second}/link", json={"hat_id": b})).status_code == 200
+    assert [k for k, _ in await kinds_for(second)].count("purchase.confirmed") == before + 1
 
 
 async def test_linking_unknown_rows_is_not_found(client):

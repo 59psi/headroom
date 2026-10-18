@@ -6,6 +6,57 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.85.1] — 2026-10-18
+
+Fixes from a review of the last two days' releases — purchase matching,
+receipt colorways, and photos whose background was never removed. No schema
+change; one repair runs once at first start.
+
+### Fixed
+
+- **Purchase matching takes less on faith.**
+  - A hat whose series shares only a word like "the" or "melin" with a
+    receipt is no longer taken for that receipt's hat — "Melin x Hawaii
+    (Explore The Unexplored)" against "The Shore Hydro - Black".
+  - A price that a link copied onto its hat no longer counts as evidence for
+    that same link. A Navy hat holding a Black receipt at that receipt's own
+    price is now listed to check, and the pick list no longer says "price" is
+    a reason a hat fits the receipt it got its price from.
+  - Colorways and sizes compare as names: "Black/Gum" and "black gum" are one
+    colorway, where they used to rule a hat out.
+- **A seller's sales tag is not a colorway.** "NEW WITH TAGS", "(RARE)",
+  "NWT" and the like are dropped from a receipt's colorway, whether it came
+  after a dash in the title or was stated on its own. A repair that runs once
+  cleans tags already stored, on receipts and on the hats they were copied to.
+- **A background that could not be removed now says so.** A failed cutout is
+  recorded in the activity log, and the hat page says the photo still has its
+  background, beside the button that removes it.
+- The README gave `https://<ip>/api/public/ca-certificate` as the way to get
+  the LAN certificate that always works; it works only once the IP is in
+  `HEADROOM_SITE_ADDRESSES`. It now leads with
+  `http://<ip>:8000/api/public/ca-certificate`, which always does.
+
+### Changed
+
+- **"To check" says why.** Each suspect link — in the *To check* list of
+  Settings → Data → Purchase history, and on the hat page — names the field
+  that rules it out: model, construction, series, colorway or size. It used
+  to blame the series every time.
+- **Unlink asks first** when it would also clear the colorway, price and date
+  a suspect link copied onto its hat.
+- Replacing a hat's purchase, moving a purchase to another hat, and choosing
+  again the hat a purchase is already on are now in the activity log.
+- The link dialogs offer to use the receipt's colorway only when it really
+  differs from the hat's.
+- `HEADROOM_ANALYSIS_WORKER_ENABLED=false` is documented as also skipping the
+  boot warm-up of background removal.
+
+### Internal
+
+- The purchase code moved out of `catalog_service` (melin's colorway catalog)
+  into its own `purchase_service`; `naming` now holds the size and model-name
+  readings both use.
+
 ## [2.85.0] — 2026-10-18
 
 Import a database: put any backup back from the app, a terminal, or a new

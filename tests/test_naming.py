@@ -47,10 +47,11 @@ async def test_one_rule_for_same_name_across_matcher_vocabulary_and_duplicates()
 
 
 async def test_both_services_read_a_name_the_same_way():
-    # Both services read names with `naming` directly — their wrappers
-    # (`catalog_service._model_tokens`, `melin_recap.model_tokens`) are gone —
-    # so this is checked by behavior: punctuation and a fullwidth letter in
-    # the product name must not stop the hat matching it.
+    # Both services read names with `naming` directly — their own wrappers
+    # (`catalog_service._model_tokens`, `melin_recap.model_tokens`) are gone,
+    # and the matcher's receipt-spelling fold is `naming.model_tokens` — so
+    # this is checked by behavior: punctuation and a fullwidth letter in the
+    # product name must not stop the hat matching it.
     listing = melin_recap.Listing(
         title="", price=50.0, condition=None, size=None,
         product='Odysea Hydro "Have More Fun" - Ｂlack',

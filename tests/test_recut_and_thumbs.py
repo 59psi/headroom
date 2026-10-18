@@ -130,6 +130,9 @@ async def test_upload_keeps_the_original_and_makes_a_thumbnail(client, fake_cuto
     assert (settings.upload_dir / body["original_path"]).exists()
     assert body["thumb_path"], "gallery thumbnail missing"
     assert (settings.upload_dir / body["thumb_path"]).exists()
+    # The page's photo rules come from the server: a cutout, re-cuttable.
+    assert body["photo_is_cutout"] is True
+    assert body["can_recut"] is True
 
 
 async def test_recut_requires_an_original(client):
@@ -138,10 +141,25 @@ async def test_recut_requires_an_original(client):
         "/api/hats", json={"condition": "new", "size": "classic", "style": "eagle"}
     )
     hat_id = created.json()["id"]
+    assert created.json()["can_recut"] is False
+    assert created.json()["photo_is_cutout"] is False
 
     resp = await client.post(f"/api/hats/{hat_id}/recut")
     assert resp.status_code == 400
     assert "re-upload" in resp.json()["detail"].lower()
+
+
+async def test_a_failed_cut_is_on_record_not_only_in_the_log(client):
+    """From 2.79.0 every cut failed for weeks: analysis read "ok" and the only
+    trace was an ERROR log line. A failed cut now leaves an activity row (and
+    the hat page says the photo still has its background)."""
+    body = await _hat_with_photo(client)  # conftest's stub: the cut produces nothing
+
+    rows = (await client.get("/api/admin/activity-log", params={"limit": 50})).json()
+    failed = [r for r in rows if r["kind"] == "photo.cutout_failed"]
+
+    assert [r["entity_id"] for r in failed] == [body["id"]]
+    assert "background could not be removed" in failed[0]["summary"]
 
 
 async def test_a_photo_whose_cutout_failed_can_still_be_cut(client, monkeypatch):
@@ -153,6 +171,9 @@ async def test_a_photo_whose_cutout_failed_can_still_be_cut(client, monkeypatch)
     hat_id = body["id"]
     uncut = body["photo_path"]
     assert uncut.endswith(".jpg") and body["original_path"] is None
+    # So the page offers the cut, labeled as a first cut.
+    assert body["can_recut"] is True
+    assert body["photo_is_cutout"] is False
 
     monkeypatch.setattr(
         "headroom.services.background_removal.remove_background", _fake_remove
@@ -179,6 +200,9 @@ async def test_a_cutout_with_no_original_is_still_refused(client, db_session, fa
         sa_update(Hat).where(Hat.id == body["id"]).values(original_path=None)
     )
     await db_session.commit()
+    # The page offers no button the route would refuse.
+    hat = (await client.get(f"/api/hats/{body['id']}")).json()
+    assert hat["can_recut"] is False and hat["photo_is_cutout"] is True
 
     resp = await client.post(f"/api/hats/{body['id']}/recut")
     assert resp.status_code == 400

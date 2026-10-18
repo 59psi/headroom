@@ -247,9 +247,9 @@ describe('PurchasesCard', () => {
 
 const HAT_7 = {
   id: 7, display_id: 'A-001-01', model_name: 'Trenches Hydro', artist_series: 'Have More Fun',
-  colorway: null, photo_path: null, thumb_path: null,
+  colorway: null, size: 'small', construction: 'HYDRO', photo_path: null, thumb_path: null,
 };
-const BASE = { link_confirmed_at: null, suspect: false, accessory: false, hat: null };
+const BASE = { link_confirmed_at: null, suspect: false, suspect_reason: null, accessory: false, hat: null };
 const LINKED = [
   { ...BASE, id: 1, order_ref: 'A', order_date: null, item_title: 'Trenches Hydro', price: 79, hat_id: 7, hat: HAT_7 },
   { ...BASE, id: 2, order_ref: 'B', order_date: null, item_title: 'Travel case', price: 40, hat_id: null, accessory: true },
@@ -260,7 +260,7 @@ const UNLINKED_HAT = {
 };
 const SUSPECT = {
   ...BASE, id: 4, order_ref: 'D', order_date: null, item_title: 'Odysea 23XI Hydro - White Speed Camo',
-  price: 89, hat_id: 7, hat: HAT_7, suspect: true,
+  price: 89, hat_id: 7, hat: HAT_7, suspect: true, suspect_reason: 'series',
 };
 
 /** Open one of the list's tabs, by its visible name. */
@@ -398,7 +398,21 @@ describe('PurchasesCard — checking the links earlier matching made', () => {
     renderWithProviders(<PurchasesCard />);
     expect(await screen.findByText('Odysea 23XI Hydro - White Speed Camo')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'A-001-01' })).toHaveAttribute('href', '/hats/7');
-    expect(screen.getByText(/series “Have More Fun”/)).toBeInTheDocument();
+    expect(screen.getByText(/“Have More Fun” is nowhere on the receipt/)).toBeInTheDocument();
+  });
+
+  it('says which field rules each link out, not always the series', async () => {
+    route({
+      '/api/admin/purchases': [
+        { ...SUSPECT, size: 'classic', suspect_reason: 'size' },
+        { ...SUSPECT, id: 5, item_title: 'Trenches Thermal', model_name: 'Trenches Thermal', suspect_reason: 'model' },
+      ],
+    });
+    renderWithProviders(<PurchasesCard />);
+    expect(await screen.findByText(/The receipt says .*classic.*, and the hat says .*small/i)).toBeInTheDocument();
+    expect(screen.getByText(/The receipt is for “Trenches Thermal”, and this hat is “Trenches Hydro”/))
+      .toBeInTheDocument();
+    expect(screen.queryByText(/nowhere on the receipt/)).toBeNull();
   });
 
   it('keeps a link you vouch for', async () => {
@@ -409,11 +423,14 @@ describe('PurchasesCard — checking the links earlier matching made', () => {
     await waitFor(() => expect(callsTo('/purchases/4/confirm')).toHaveLength(1));
   });
 
-  it('unlinking one clears what it copied onto the hat', async () => {
+  it('unlinking one asks, then clears what it copied onto the hat', async () => {
     const user = userEvent.setup();
     route({ '/api/admin/purchases': [...LINKED, SUSPECT] });
     renderWithProviders(<PurchasesCard />);
     await user.click(await screen.findByRole('button', { name: /^Unlink Odysea 23XI .* clear what it copied/ }));
+    const dialog = await screen.findByRole('alertdialog');
+    expect(callsTo('/purchases/4/unmatch')).toHaveLength(0);
+    await user.click(within(dialog).getByRole('button', { name: 'Unlink' }));
     await waitFor(() => expect(callsTo('/purchases/4/unmatch?clear_copied=true')).toHaveLength(1));
   });
 
@@ -481,6 +498,23 @@ describe('PurchasesCard — linking a purchase to the hat you choose', () => {
     expect(JSON.parse(String((init as RequestInit).body))).toEqual({
       hat_id: 9, replace: false, receipt_colorway: true,
     });
+  });
+
+  it('offers no colorway choice when the server reads the two as one name', async () => {
+    const user = userEvent.setup();
+    route({
+      '/purchases/3/hats': {
+        ...OPTIONS,
+        purchase: { ...UNLINKED_HAT, colorway: 'Black/Gum' },
+        options: [{ ...OPTIONS.options[0], colorway: 'black gum', agrees: ['model', 'colorway', 'size'] }],
+      },
+      '/api/admin/purchases': [...LINKED, { ...UNLINKED_HAT, colorway: 'Black/Gum' }],
+    });
+    renderWithProviders(<PurchasesCard />);
+    await user.click(await screen.findByRole('button', { name: 'Link to hat…' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Which hat is this?' });
+    await user.click(await within(dialog).findByRole('button', { name: /A-002-03/ }));
+    expect(within(dialog).queryByRole('checkbox')).toBeNull();
   });
 
   it('choosing a hat that already has a purchase says so, and replaces it', async () => {

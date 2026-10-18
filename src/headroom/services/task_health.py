@@ -14,7 +14,7 @@ its upload half to disk because that half answers a question about the world
 rather than about this process. Both distinctions were learned from real
 failures and are written down where they apply. Hoisting the four fields they
 happen to share would put pressure on those differences to be flattened into
-the shared thing, which is the failure `catalog_service._by_scarcity` records
+the shared thing, which is the failure `purchase_service._by_scarcity` records
 in reverse — a shape kept alive past its meaning. A third caller is not enough
 evidence for an abstraction that would have to carry three sets of exceptions.
 """

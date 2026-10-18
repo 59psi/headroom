@@ -12,7 +12,7 @@ import reports success, and nothing anywhere says a field was discarded. It was
 `purchased_at` in the first draft of this feature, caught only by reading the
 parser.
 
-So: every field the prompt promises must be one `catalog_service` reads, and
+So: every field the prompt promises must be one `purchase_service` reads, and
 the required one must be the one the parser requires.
 """
 
@@ -31,7 +31,7 @@ CARD = (
 )
 SERVICE = (
     Path(__file__).resolve().parents[1]
-    / "src/headroom/services/catalog_service.py"
+    / "src/headroom/services/purchase_service.py"
 )
 
 
