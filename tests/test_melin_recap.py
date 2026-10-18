@@ -749,7 +749,7 @@ async def test_a_stated_construction_vetoes_a_rival_product(monkeypatch):
     """melin sells Icon Hydro and Icon Thermal as different goods at different
     prices. Measured on the real collection, without this veto a hat matched
     `Trenches Icon Thermal - Military` and moved $82.50 to $65.00 on one
-    listing of the wrong product. Same veto `catalog_service` already applies.
+    listing of the wrong product. Same veto `purchase_service` already applies.
     """
     from headroom.services.melin_recap import fetch_resale_stats
 
@@ -841,7 +841,7 @@ async def test_hydro_and_hydrolite_veto_each_other(monkeypatch):
 
 
 async def test_a_product_naming_no_construction_contradicts_nothing(monkeypatch):
-    """Veto on CONTRADICTION, not absence — the test `catalog_service` applies.
+    """Veto on CONTRADICTION, not absence — the test `purchase_service` applies.
 
     `Trenches Icon - Denim` is the case that discriminates BOTH halves of this
     fix at once, and picking a plain color here would have pinned neither:
@@ -1037,13 +1037,13 @@ async def test_listing_sizes_read_the_same_vocabulary_as_order_lines(raw, expect
     "Extra Large" and "x_large" sized an order line but left a listing
     unsized, so those listings dropped out of every size-matched comparison.
     """
-    from headroom.services import catalog_service
+    from headroom.services import naming
     from headroom.services.melin_recap import _listing_facts
 
     facts = _listing_facts(_listing("A-Game Hydro - Red", 8000, size=raw))
 
     assert facts.size == expected
-    assert facts.size == catalog_service.normalize_size(raw)
+    assert facts.size == naming.normalize_size(raw)
 
 
 # ---- malformed rows ------------------------------------------------------- #

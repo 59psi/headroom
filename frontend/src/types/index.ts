@@ -103,6 +103,10 @@ export interface HatRead {
   photo_path: string | null;
   original_path: string | null;
   thumb_path: string | null;
+  /** The photo has had its background removed. */
+  photo_is_cutout: boolean;
+  /** A re-cut has something to start from — what `POST /recut` accepts. */
+  can_recut: boolean;
   condition: string;
   date_last_worn: string | null;
   wear_count: number;
@@ -710,9 +714,14 @@ export interface LinkedHat {
   model_name: string | null;
   artist_series: string | null;
   colorway: string | null;
+  size: string | null;
+  construction: string | null;
   photo_path: string | null;
   thumb_path: string | null;
 }
+
+/** The rule that rules a hat out for a receipt (`purchase_service._veto`). */
+export type SuspectReason = 'model' | 'construction' | 'series' | 'colorway' | 'size';
 
 export interface PurchaseRead {
   id: number;
@@ -730,6 +739,8 @@ export interface PurchaseRead {
   link_confirmed_at: string | null;
   /** A matcher-made link its corrected rules reject — listed to check. */
   suspect: boolean;
+  /** Which rule rejects it — the field the receipt and the hat disagree on. */
+  suspect_reason: SuspectReason | null;
   /** The linked hat, when there is one. */
   hat: LinkedHat | null;
   /** A travel case, gift card or other non-hat line. */

@@ -122,10 +122,10 @@ async def test_numba_caches_on_the_tmpfs_and_nowhere_that_persists():
     numba writes beside the source unless `NUMBA_CACHE_DIR` says otherwise,
     and refuses to compile at all when it cannot write — every cutout failed
     from 2.79.0 to 2.83.1 that way. Writable, then, but not persistent: the
-    cache is compiled code that numba loads and runs, so on the `/data`
-    volume it would be a place to leave code that every later boot executes —
-    the persistence the read-only root denies. The compose tmpfs is the one
-    location that is both writable and gone at the next start.
+    cache is compiled code that numba loads and runs, and the image keeps all
+    code the app runs either root-owned or gone at the next start. The
+    compose tmpfs is the one location that is both writable and gone at the
+    next start; the `/data` volume is not.
     """
     env = " ".join(args for keyword, args in runtime_stage() if keyword == "ENV")
     match = re.search(r"\bNUMBA_CACHE_DIR=(\S+)", env)

@@ -30,6 +30,7 @@ import './styles/areas/settings-sharing.css';
 import './styles/areas/settings-device.css';
 import './styles/areas/settings-upkeep.css';
 import './styles/areas/hat-pages.css';
+import './styles/areas/purchases.css';
 import './styles/areas/collection-pages.css';
 import './styles/areas/cases-rooms.css';
 import './styles/areas/shell.css';

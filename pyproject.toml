@@ -2,7 +2,7 @@
 license = "AGPL-3.0-or-later"
 license-files = ["LICENSE"]
 name = "headroom"
-version = "2.85.0"
+version = "2.85.1"
 description = "Headroom — AI-powered hat collection tracker"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -81,6 +81,13 @@ dev = [
 # lowering this globally. Kept first in the table: a supply-chain scanner that
 # reads only the table's opening block reported it missing while it sat lower.
 exclude-newer = "7 days"
+# ...but NOT for the crypto stack. The cooldown exists to dodge freshly
+# published malicious packages; for cryptography a fresh release is usually the
+# *security fix* itself, and waiting a week is the wrong trade. Concretely:
+# cryptography 50.0.0 (the Bleichenbacher-oracle fix) landed inside the window,
+# and a plain `uv lock` kept silently reverting to the vulnerable 49.0.0.
+# pyopenssl rides along because <26.4 caps cryptography at <50.
+exclude-newer-package = { cryptography = false, pyopenssl = false }
 
 # Floor a TRANSITIVE dep without making it a direct one. rembg depends on
 # `pymatting>=1.1.14`, and 1.1.14 declares only `numba!=0.49.0` — no lower
@@ -90,14 +97,6 @@ exclude-newer = "7 days"
 # rules that out. Flooring rembg instead wouldn't help: its own floor is
 # 1.1.14.
 constraint-dependencies = ["pymatting>=1.1.15"]
-
-# ...but NOT for the crypto stack. The cooldown exists to dodge freshly
-# published malicious packages; for cryptography a fresh release is usually the
-# *security fix* itself, and waiting a week is the wrong trade. Concretely:
-# cryptography 50.0.0 (the Bleichenbacher-oracle fix) landed inside the window,
-# and a plain `uv lock` kept silently reverting to the vulnerable 49.0.0.
-# pyopenssl rides along because <26.4 caps cryptography at <50.
-exclude-newer-package = { cryptography = false, pyopenssl = false }
 
 [build-system]
 requires = ["hatchling"]

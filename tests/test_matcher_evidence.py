@@ -29,7 +29,7 @@ from sqlalchemy import select
 from headroom.models.catalog import Purchase
 from headroom.models.hat import Hat
 from headroom.models.hat_color import HatColor
-from headroom.services import catalog_service
+from headroom.services import purchase_service
 
 pytestmark = pytest.mark.anyio
 
@@ -101,7 +101,7 @@ async def test_a_stated_series_in_the_title_decides_a_contended_hat(client, db_s
               model="Trenches Icon Hydro", size="classic", colorway="Links Camo", price=79.0)
     await db_session.commit()
 
-    result = await catalog_service.match_purchases_to_hats(db_session)
+    result = await purchase_service.match_purchases_to_hats(db_session)
 
     assert result["matched"] == 1
     assert await _price_of(client, hat) == 79.0, (
@@ -124,7 +124,7 @@ async def test_a_color_read_off_the_photo_decides_a_contended_hat(client, db_ses
               model="Odysea Hydro", size="classic", colorway="Black", price=79.0)
     await db_session.commit()
 
-    result = await catalog_service.match_purchases_to_hats(db_session)
+    result = await purchase_service.match_purchases_to_hats(db_session)
 
     assert result["matched"] == 1
     assert await _price_of(client, hat) == 79.0, (
@@ -151,7 +151,7 @@ async def test_an_exact_price_decides_between_otherwise_identical_receipts(clien
               model="A-Game Hydro", size="classic", price=79.0)
     await db_session.commit()
 
-    result = await catalog_service.match_purchases_to_hats(db_session)
+    result = await purchase_service.match_purchases_to_hats(db_session)
 
     assert result["matched"] == 1
     assert await _linked_to(db_session, hat) == [79.0], (
@@ -199,7 +199,7 @@ async def test_the_best_evidenced_receipt_wins_even_after_kuhns_displaces_it(cli
               model="Trenches Icon Hydro", size="small", price=85.0)
     await db_session.commit()
 
-    result = await catalog_service.match_purchases_to_hats(db_session)
+    result = await purchase_service.match_purchases_to_hats(db_session)
 
     assert result["matched"] == 2, "two hats, two links — cardinality must be maximum"
     assert await _price_of(client, classic) == 79.0, (
@@ -238,7 +238,7 @@ async def test_a_stripped_exact_match_beats_a_mere_prefix_for_the_same_receipt(c
               model="Eagle Mill Union", size="classic", price=129.0)
     await db_session.commit()
 
-    result = await catalog_service.match_purchases_to_hats(db_session)
+    result = await purchase_service.match_purchases_to_hats(db_session)
 
     assert result["matched"] == 1
     assert await _price_of(client, line_hat) == 129.0, (
@@ -258,7 +258,7 @@ async def test_a_literal_exact_match_beats_a_stripped_one(client, db_session):
               model="Eagle Mill Union", size="classic", price=129.0)
     await db_session.commit()
 
-    await catalog_service.match_purchases_to_hats(db_session)
+    await purchase_service.match_purchases_to_hats(db_session)
 
     assert await _price_of(client, exact_hat) == 129.0
     assert await _price_of(client, stripped_hat) is None
@@ -281,7 +281,7 @@ async def test_an_exact_model_outranks_a_contained_one_carrying_the_series(clien
               model="Trenches Icon Hydro", size="classic", colorway="Camo", price=79.0)
     await db_session.commit()
 
-    await catalog_service.match_purchases_to_hats(db_session)
+    await purchase_service.match_purchases_to_hats(db_session)
 
     assert await _price_of(client, product_hat) == 79.0, (
         "a generic family match plus a series bonus beat the product the receipt names"
@@ -306,7 +306,7 @@ async def test_an_owner_stated_series_outranks_a_color_word(client, db_session):
               model="Trenches Icon Hydro", size="classic", colorway="Links Black", price=89.0)
     await db_session.commit()
 
-    await catalog_service.match_purchases_to_hats(db_session)
+    await purchase_service.match_purchases_to_hats(db_session)
 
     assert await _price_of(client, series_hat) == 89.0, (
         "a color word read off a photo outranked a series the owner stated"
@@ -329,7 +329,7 @@ async def test_the_preview_names_every_field_that_agreed(client, db_session):
     """
     await _hat(client, db_session, model="A-Game Hydro", colorway="Black", size="small")
 
-    preview = await catalog_service.preview_import(db_session, [
+    preview = await purchase_service.preview_import(db_session, [
         {"item_title": "A-Game Hydro - Black", "size": "Small", "price": 79.0},
     ])
 

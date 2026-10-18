@@ -18,7 +18,13 @@ from pathlib import Path
 import pytest
 
 from headroom.models.hat import ResaleScope
-from headroom.schemas.admin import AnalysisJobStatus, ImportSourceKind, RestorePointKind
+from headroom.schemas.admin import (
+    AnalysisJobStatus,
+    ImportSourceKind,
+    MatchAgreement,
+    RestorePointKind,
+    SuspectReason,
+)
 from headroom.schemas.case import CaseType
 from headroom.schemas.hat import AnalysisStage, AnalysisStatus, ColorTier, DisposedVia
 from headroom.schemas.import_job import ImportItemStatus, ImportJobStatus
@@ -45,6 +51,15 @@ _UNIONS: list[tuple[str, str, type[StrEnum]]] = [
 ]
 
 
+#: (TS type alias, the enum it must match) — vocabularies the TypeScript
+#: names once and reuses (`agrees: MatchAgreement[]`), which the per-field
+#: check above would skip as naming no values.
+_ALIASES: list[tuple[str, type[StrEnum]]] = [
+    ("MatchAgreement", MatchAgreement),
+    ("SuspectReason", SuspectReason),
+]
+
+
 def _ts_field(interface: str, field: str) -> str:
     src = _TYPES.read_text()
     block = re.search(rf"export interface {interface}\b[^{{]*\{{(.*?)\n\}}", src, re.S)
@@ -61,6 +76,13 @@ async def test_a_typescript_union_names_exactly_the_servers_values(interface, fi
     if not literals:
         pytest.skip(f"{interface}.{field} is typed `{ts.strip()}` — nothing to drift")
     assert literals == {e.value for e in enum}, f"{interface}.{field}: TS {sorted(literals)}"
+
+
+@pytest.mark.parametrize(("alias", "enum"), _ALIASES)
+async def test_a_typescript_alias_names_exactly_the_servers_values(alias, enum):
+    found = re.search(rf"^export type {alias} =([^;]+);", _TYPES.read_text(), re.M)
+    assert found, f"type {alias} not found in types/index.ts"
+    assert set(re.findall(r"'([^']*)'", found.group(1))) == {e.value for e in enum}
 
 
 async def test_the_stage_vocabulary_is_the_pipelines():

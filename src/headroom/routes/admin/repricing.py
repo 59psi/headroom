@@ -115,7 +115,7 @@ async def run_repricing_all(request: Request):
 
     The mistake was that blocking was the only option offered, so re-pricing
     everything meant pressing a button repeatedly or waiting for the 24h
-    scheduler. Same shape as the bug `catalog_service.unclaimed_from_purchases`
+    scheduler. Same shape as the bug `purchase_service.unclaimed_from_purchases`
     documents — a useful operation reachable only from inside a bigger one.
 
     So this answers 202 and runs uncapped in the background, the same shape as

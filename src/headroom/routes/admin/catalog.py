@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from headroom.database import get_db
+from headroom.models.catalog import Purchase
 from headroom.routes import _background
 from headroom.routes._api import DomainErrorRoute
 from headroom.schemas.admin import (
@@ -27,7 +28,7 @@ from headroom.schemas.admin import (
     UnmatchAllResult,
     UnmatchOneResult,
 )
-from headroom.services import catalog_service, locks, melin_recap
+from headroom.services import catalog_service, locks, melin_recap, purchase_service
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,15 @@ router = APIRouter(route_class=DomainErrorRoute)
 
 #: In-flight harvests, held strongly — see `_background.launch`.
 _running_harvests: set[asyncio.Task] = set()
+
+
+def _for_review(purchase: Purchase) -> PurchaseRead:
+    """A purchase as the review surfaces show it: a suspect link flagged, and
+    the rule that rejects it named (`purchase_service.suspect_reason`)."""
+    reason = purchase_service.suspect_reason(purchase)
+    return PurchaseRead.model_validate(purchase).model_copy(
+        update={"suspect": reason is not None, "suspect_reason": reason}
+    )
 
 
 @router.get("/colorways/status", response_model=CatalogStatus)
@@ -123,23 +133,20 @@ async def import_purchases(
     before it.
     """
     if dry_run:
-        return await catalog_service.preview_import(db, data.items)
+        return await purchase_service.preview_import(db, data.items)
     # One import at a time. The dedupe counts rows already on record, so two
     # imports of the same file running together each saw none and wrote
     # every line twice (measured: qty 2 → 4 rows, both requests 200). The
     # matcher that follows mutates hats and is not reentrant either.
     async with locks.loop_lock("purchase-import"):
-        result = await catalog_service.import_purchases(db, data.items)
-        match = await catalog_service.match_purchases_to_hats(db)
+        result = await purchase_service.import_purchases(db, data.items)
+        match = await purchase_service.match_purchases_to_hats(db)
     return {**result, **match}
 
 
 @router.get("/purchases", response_model=list[PurchaseRead])
 async def list_purchases(db: AsyncSession = Depends(get_db)):
-    return [
-        PurchaseRead.model_validate(p).model_copy(update={"suspect": catalog_service.is_suspect(p)})
-        for p in await catalog_service.list_purchases(db)
-    ]
+    return [_for_review(p) for p in await purchase_service.list_purchases(db)]
 
 
 @router.post("/purchases/unlink-suspect", response_model=UnmatchAllResult)
@@ -148,7 +155,7 @@ async def unlink_suspect(db: AsyncSession = Depends(get_db)):
     its hat — the bulk "these were all wrong" from the review list. Links
     the owner made or kept are never suspect, so never touched."""
     async with locks.loop_lock("purchase-import"):
-        return await catalog_service.unlink_suspect_purchases(db)
+        return await purchase_service.unlink_suspect_purchases(db)
 
 
 # Registered BEFORE `{purchase_id}` for the same reason `unmatch-all` is: a
@@ -162,7 +169,7 @@ async def unclaimed_from_purchases(db: AsyncSession = Depends(get_db)):
     or a newly analyzed `model_name` creates pairs nothing looks at again. This
     is what makes that backlog visible instead of leaving it to be guessed at.
     """
-    return UnclaimedFromPurchases(**await catalog_service.unclaimed_from_purchases(db))
+    return UnclaimedFromPurchases(**await purchase_service.unclaimed_from_purchases(db))
 
 
 @router.post("/purchases/match", response_model=MatchResult)
@@ -173,7 +180,7 @@ async def rematch_purchases(
 
     `?dry_run=true` returns the proposed links without writing them.
     """
-    return await catalog_service.match_purchases_to_hats(db, dry_run=dry_run)
+    return await purchase_service.match_purchases_to_hats(db, dry_run=dry_run)
 
 
 # `unmatch-all` rather than `/purchases/unmatch`, and it is registered BEFORE
@@ -187,7 +194,7 @@ async def unmatch_all(db: AsyncSession = Depends(get_db)):
     expensive part, and what was wrong is the matching, not the orders.
     Re-run `/purchases/match` afterwards to redo it.
     """
-    return await catalog_service.unmatch_all_purchases(db)
+    return await purchase_service.unmatch_all_purchases(db)
 
 
 @router.get("/purchases/for-hat/{hat_id}", response_model=PurchasesForHat)
@@ -195,14 +202,8 @@ async def purchases_for_hat(hat_id: int, db: AsyncSession = Depends(get_db)):
     """The purchase linked to a hat, and every hat purchase it could be
     linked to instead — best fit first. For the hat page, which flags a
     suspect link the same way the review list does."""
-    result = await catalog_service.purchases_for_hat(db, hat_id)
-    return {
-        **result,
-        "linked": [
-            PurchaseRead.model_validate(p).model_copy(update={"suspect": catalog_service.is_suspect(p)})
-            for p in result["linked"]
-        ],
-    }
+    result = await purchase_service.purchases_for_hat(db, hat_id)
+    return {**result, "linked": [_for_review(p) for p in result["linked"]]}
 
 
 @router.get("/purchases/{purchase_id}/hats", response_model=HatsForPurchase)
@@ -210,7 +211,7 @@ async def hats_for_purchase(purchase_id: int, db: AsyncSession = Depends(get_db)
     """Every hat a purchase could be linked to, best fit first — the ones the
     matcher's rules accept, then the rest by resemblance. Ranked, not
     filtered: the right hat is sometimes one those rules rule out."""
-    return await catalog_service.hats_for_purchase(db, purchase_id)
+    return await purchase_service.hats_for_purchase(db, purchase_id)
 
 
 @router.post("/purchases/{purchase_id}/link", response_model=PurchaseLinkResult)
@@ -223,7 +224,7 @@ async def link_purchase(
     hats, and must not interleave with a hand-made one.
     """
     async with locks.loop_lock("purchase-import"):
-        return await catalog_service.link_purchase(
+        return await purchase_service.link_purchase(
             db, purchase_id, data.hat_id,
             replace=data.replace, receipt_colorway=data.receipt_colorway,
         )
@@ -232,7 +233,7 @@ async def link_purchase(
 @router.post("/purchases/{purchase_id}/confirm", response_model=PurchaseRead)
 async def confirm_link(purchase_id: int, db: AsyncSession = Depends(get_db)):
     """The owner vouches for a link — "Keep" in the review list."""
-    return await catalog_service.confirm_link(db, purchase_id)
+    return await purchase_service.confirm_link(db, purchase_id)
 
 
 @router.post("/purchases/{purchase_id}/unmatch", response_model=UnmatchOneResult)
@@ -247,4 +248,4 @@ async def unmatch_one(
     owner rejecting a link from the review list: for a link old enough to
     have no record of its writes, the receipt's own values are taken as them.
     """
-    return await catalog_service.unmatch_purchase(db, purchase_id, clear_copied=clear_copied)
+    return await purchase_service.unmatch_purchase(db, purchase_id, clear_copied=clear_copied)

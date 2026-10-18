@@ -152,7 +152,7 @@ describe('HatDetailPage — a write lands on the hat it was started for', () => 
 
   function renderTwoHats() {
     mocked.getHat.mockImplementation(async id =>
-      hatFixture({ id, display_id: `A-001-${id}`, original_path: 'orig.jpg', photo_path: 'p.png' }));
+      hatFixture({ id, display_id: `A-001-${id}`, original_path: 'orig.jpg', photo_path: 'p.png', photo_is_cutout: true, can_recut: true }));
     return renderWithProviders(
       <>
         <GoToHat13 />
@@ -202,20 +202,28 @@ describe('HatDetailPage — cutting out the background', () => {
     // no original. The button used to key on `original_path` alone, so that
     // hat had no way to get a cutout short of re-taking the photo.
     const user = userEvent.setup();
-    mocked.recutHat.mockResolvedValue(hatFixture({ id: 7, photo_path: 'hats/a.png', original_path: 'hats/a.jpg' }));
-    renderPage(hatFixture({ id: 7, photo_path: 'hats/a.jpg', original_path: null }));
+    mocked.recutHat.mockResolvedValue(hatFixture({ id: 7, photo_path: 'hats/a.png', original_path: 'hats/a.jpg', photo_is_cutout: true, can_recut: true }));
+    renderPage(hatFixture({ id: 7, photo_path: 'hats/a.jpg', original_path: null, photo_is_cutout: false, can_recut: true }));
 
     await user.click(await screen.findByRole('button', { name: /Cut out background/ }));
     expect(mocked.recutHat).toHaveBeenCalledWith(7);
   });
 
   it('says "Redo" once there is a cutout', async () => {
-    renderPage(hatFixture({ id: 8, photo_path: 'hats/b.png', original_path: 'hats/b.jpg' }));
+    renderPage(hatFixture({ id: 8, photo_path: 'hats/b.png', original_path: 'hats/b.jpg', photo_is_cutout: true, can_recut: true }));
     expect(await screen.findByRole('button', { name: /Redo cutout/ })).toBeInTheDocument();
+    expect(screen.queryByText(/still has its background/)).not.toBeInTheDocument();
+  });
+
+  it('says so when a photo still has its background', async () => {
+    // From 2.79.0 every cut failed for weeks with analysis reading "ok" —
+    // the button label was the only sign. The page says it in words now.
+    renderPage(hatFixture({ id: 10, photo_path: 'hats/d.jpg', original_path: null, photo_is_cutout: false, can_recut: true, analysis_status: 'ok' }));
+    expect(await screen.findByText(/This photo still has its background/)).toBeInTheDocument();
   });
 
   it('offers no cut for a cutout that kept no original', async () => {
-    renderPage(hatFixture({ id: 9, display_id: 'A-001-9', photo_path: 'hats/c.png', original_path: null }));
+    renderPage(hatFixture({ id: 9, display_id: 'A-001-9', photo_path: 'hats/c.png', original_path: null, photo_is_cutout: true, can_recut: false }));
     expect(await screen.findByRole('heading', { level: 1, name: 'A-001-9' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /cutout|Cut out/i })).not.toBeInTheDocument();
   });

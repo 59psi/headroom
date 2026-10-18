@@ -9,6 +9,7 @@ from pydantic import (
     BeforeValidator,
     ConfigDict,
     Field,
+    computed_field,
     field_validator,
     model_validator,
 )
@@ -29,6 +30,7 @@ from headroom.schemas.common import (
     StyleDescriptor,
     clean_text,
 )
+from headroom.utils import photo as photo_utils
 
 _NON_WORD = re.compile(r"[^a-z0-9]+")
 
@@ -615,6 +617,22 @@ class HatRead(NewPriceFields, ResaleFields, EbayComps, DispositionFields):
 
     created_at: datetime
     updated_at: datetime
+
+    # The page's photo rules, stated by the server that owns them rather than
+    # re-derived in the browser from a file suffix (`lib/photo.isCutout` was
+    # a TypeScript copy of `is_cutout`, and the button's condition a copy of
+    # the route's).
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def photo_is_cutout(self) -> bool:
+        """The photo has had its background removed (`utils.photo.is_cutout`)."""
+        return bool(self.photo_path) and photo_utils.is_cutout(self.photo_path)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def can_recut(self) -> bool:
+        """`POST /recut` has something to start from (`utils.photo.recut_source`)."""
+        return photo_utils.recut_source(self.original_path, self.photo_path) is not None
 
     @model_validator(mode="after")
     def _stage_only_while_running(self) -> "HatRead":

@@ -31,12 +31,10 @@ import httpx
 from headroom.config import settings
 from headroom.schemas.hat import constructions_in
 
-# `catalog_service` imports this module too (the category map, the query
-# primitive), and that is fine at the top of both: each reads the other only
-# inside functions, never while loading, so either may be imported first —
-# checked in every order the app can load them. The listing sizes read its
-# `normalize_size` (see `_listing_facts`).
-from headroom.services import catalog_service, naming
+# Listing sizes are read with `naming.normalize_size`, the one size reading
+# order lines use too (see `_listing_facts`). It lived in `catalog_service`,
+# which imports THIS module, so the two imported each other; now neither does.
+from headroom.services import naming
 
 logger = logging.getLogger(__name__)
 
@@ -329,7 +327,7 @@ _CONDITION_MAP: dict[str, str] = {
     "fair": "worn",
 }
 
-# Marketplace sizes are read with `catalog_service.normalize_size`, the same
+# Marketplace sizes are read with `naming.normalize_size`, the same
 # vocabulary order lines go through. This module kept a second, smaller map of
 # its own, and the two disagreed: "sm", "standard" (the pre-2.0 name for
 # classic), "Extra Large" and "x_large" all sized a receipt but left a listing
@@ -397,7 +395,7 @@ def _listing_facts(li: object) -> Listing | None:
         # way would let a vocabulary addition quietly inflate valuations.
         # A condition that is ABSENT stays None — unknown, not worn.
         _CONDITION_MAP.get(raw_condition, "worn" if raw_condition else None),
-        catalog_service.normalize_size(_text(pub.get("size"))),
+        naming.normalize_size(_text(pub.get("size"))),
         _text(pub.get("shopifyProductName")) or None,
     )
 
@@ -426,7 +424,7 @@ def _rival_construction(product: str, construction: str | None) -> bool:
     leaving it blank, the exact inversion of the point.
 
     **It vetoes on CONTRADICTION, not on absence** — the same test
-    `catalog_service._match_score` applies. A product whose model half names no
+    `purchase_service._match_score` applies. A product whose model half names no
     construction at all contradicts nothing; only a *different* one does.
     """
     if not construction:

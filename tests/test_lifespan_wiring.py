@@ -70,6 +70,7 @@ ONE_TIME_FLAGS = (
     "model_names_split_v1",
     "color_names_normalized_v1",
     "vocabulary_merged_v2",
+    "sales_tag_colorways_v1",
 )
 
 _SESSION_ID = "boot-test-session"

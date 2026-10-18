@@ -30,8 +30,12 @@ function route(handlers: Record<string, unknown>) {
 const callsTo = (needle: string) => fetchMock.mock.calls.filter(([p]) => String(p).includes(needle));
 
 const BASE = {
-  link_confirmed_at: null, suspect: false, accessory: false, hat: null,
+  link_confirmed_at: null, suspect: false, suspect_reason: null, accessory: false, hat: null,
   model_name: null, size: 'classic', quantity: 1, source: 'email',
+};
+const HAT_76 = {
+  id: 76, display_id: 'A-030-02', model_name: 'Trenches Icon Hydro', artist_series: 'Have More Fun',
+  colorway: 'Misty Trails', size: 'small', construction: 'HYDRO', photo_path: null, thumb_path: null,
 };
 const RECEIPT: PurchaseRead = {
   ...BASE, id: 21, order_ref: '2124958', order_date: '2026-09-09T00:00:00Z',
@@ -65,18 +69,55 @@ describe('HatPurchasePanel', () => {
     await waitFor(() => expect(callsTo('/purchases/21/unmatch')).toHaveLength(1));
   });
 
-  it('flags a suspect link, and its Unlink clears what it copied', async () => {
+  it('flags a suspect link, and its Unlink asks, then clears what it copied', async () => {
     const user = userEvent.setup();
-    route({ '/purchases/for-hat/76': { linked: [{ ...RECEIPT, hat_id: 76, suspect: true }], options: [] } });
+    route({
+      '/purchases/for-hat/76': {
+        linked: [{ ...RECEIPT, hat_id: 76, hat: HAT_76, suspect: true, suspect_reason: 'series' }], options: [],
+      },
+    });
     renderWithProviders(<HatPurchasePanel hat={hatFixture({ id: 76, artist_series: 'Have More Fun' })} />);
     expect(await screen.findByText(/“Have More Fun” is nowhere on the receipt/)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /^Unlink Trenches Icon Hydro - Misty Trails/ }));
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog).toHaveTextContent(/colorway, price and purchase date .* are cleared too/);
+    expect(callsTo('/purchases/21/unmatch')).toHaveLength(0);
+    await user.click(within(dialog).getByRole('button', { name: 'Unlink' }));
     await waitFor(() => expect(callsTo('/purchases/21/unmatch?clear_copied=true')).toHaveLength(1));
+  });
+
+  it('a canceled rejection leaves the link alone', async () => {
+    const user = userEvent.setup();
+    route({
+      '/purchases/for-hat/76': {
+        linked: [{ ...RECEIPT, hat_id: 76, hat: HAT_76, suspect: true, suspect_reason: 'series' }], options: [],
+      },
+    });
+    renderWithProviders(<HatPurchasePanel hat={hatFixture({ id: 76 })} />);
+    await user.click(await screen.findByRole('button', { name: /^Unlink Trenches Icon Hydro - Misty Trails/ }));
+    await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(callsTo('/purchases/21/unmatch')).toHaveLength(0);
+  });
+
+  it('names the field that rules the link out — not always the series', async () => {
+    route({
+      '/purchases/for-hat/76': {
+        linked: [{ ...RECEIPT, hat_id: 76, hat: HAT_76, suspect: true, suspect_reason: 'size' }], options: [],
+      },
+    });
+    renderWithProviders(<HatPurchasePanel hat={hatFixture({ id: 76, artist_series: 'Have More Fun' })} />);
+    expect(await screen.findByText(/The receipt says .*classic.*, and the hat says .*small/i)).toBeInTheDocument();
+    expect(screen.queryByText(/nowhere on the receipt/)).toBeNull();
   });
 
   it('keeps a suspect link you vouch for', async () => {
     const user = userEvent.setup();
-    route({ '/purchases/for-hat/76': { linked: [{ ...RECEIPT, hat_id: 76, suspect: true }], options: [] } });
+    route({
+      '/purchases/for-hat/76': {
+        linked: [{ ...RECEIPT, hat_id: 76, hat: HAT_76, suspect: true, suspect_reason: 'series' }], options: [],
+      },
+    });
     renderWithProviders(<HatPurchasePanel hat={hatFixture({ id: 76 })} />);
     await user.click(await screen.findByRole('button', { name: /^Keep Trenches Icon Hydro - Misty Trails/ }));
     await waitFor(() => expect(callsTo('/purchases/21/confirm')).toHaveLength(1));

@@ -26,7 +26,7 @@ import { isNotFound } from '../api/client';
 import { costOf, money, moneyPrecise, valueHat } from '../lib/valuation';
 import { caseTypeName } from '../lib/caseTypes';
 import { formatDateOnly } from '../lib/dates';
-import { isCutout, uploadUrl } from '../lib/photo';
+import { uploadUrl } from '../lib/photo';
 import { useWearLog } from '../lib/useWearLog';
 import { HatPurchasePanel } from '../components/purchases/HatPurchasePanel';
 import type { HatRead } from '../types';
@@ -455,13 +455,12 @@ export function HatDetailPage() {
                     {reanalyzeMut.isPending ? '↻ Analyzing…' : '↻ Reanalyze'}
                   </button>
                 )}
-                {/* Offered when there is something to cut from: the retained
-                    original, or a photo that was never cut (its upload's
-                    cutout failed, so it IS the original). Hats analyzed
-                    before originals were retained have neither, and the
-                    stored cutout can never be re-segmented — doing so eats
-                    the alpha and trims the bill a little more each pass. */}
-                {(data.original_path || (data.photo_path && !isCutout(data.photo_path))) && (
+                {/* Offered when there is something to cut from — the server's
+                    `can_recut`, the same rule `POST /recut` applies: the
+                    retained original, or a photo that was never cut (its
+                    upload's cutout failed, so it IS the original). Never the
+                    stored cutout: re-segmenting eats the alpha. */}
+                {data.can_recut && (
                   <button
                     type="button"
                     className="btn btn-outline-secondary"
@@ -471,12 +470,20 @@ export function HatDetailPage() {
                   >
                     {recutMut.isPending || recutting
                       ? '✂ Cutting out…'
-                      : isCutout(data.photo_path) ? '✂ Redo cutout' : '✂ Cut out background'}
+                      : data.photo_is_cutout ? '✂ Redo cutout' : '✂ Cut out background'}
                   </button>
                 )}
               </div>
               {data.photo_path && (
                 <p className="hr-hero-note" id="hat-reanalyze-keeps">{REANALYZE_KEEPS}</p>
+              )}
+              {/* Said, not left to a button label: from 2.79.0 every cut failed
+                  for weeks, analysis read "ok", and only the label changed. */}
+              {data.photo_path && !data.photo_is_cutout
+                && data.analysis_status !== 'pending' && !recutting && (
+                <p className="hr-hero-note" role="status">
+                  This photo still has its background — ✂ Cut out background removes it.
+                </p>
               )}
 
               <div className="hr-wear-line">

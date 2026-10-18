@@ -1,16 +1,15 @@
 import { useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { linkPurchase, purchasesForHat } from '../../api/purchases';
+import { useQuery } from '@tanstack/react-query';
+import { purchasesForHat } from '../../api/purchases';
 import { Modal } from '../common/Modal';
 import { ErrorNote } from '../common/ErrorNote';
 import { Skeleton } from '../ui/Skeleton';
-import { useToast } from '../ui/Toast';
 import { qk } from '../../lib/queryKeys';
-import { invalidateHatViews, invalidatePurchaseDerived } from '../../lib/invalidate';
 import { useHatLabels } from '../../lib/labels';
-import type { HatRead, PurchaseOption } from '../../types';
+import type { HatRead } from '../../types';
 import { LinkConfirm, PickList, type PickRow } from './PickList';
-import { receiptLine } from './LinkHatDialog';
+import { receiptLine } from './receipt';
+import { useLinkPurchase } from './usePurchaseLinks';
 
 /**
  * "Which purchase was this hat?" — the same link, chosen from the hat's side.
@@ -19,8 +18,6 @@ import { receiptLine } from './LinkHatDialog';
  * wrong is the reason this exists.
  */
 export function LinkPurchaseDialog({ hat, onClose }: { hat: HatRead; onClose: () => void }) {
-  const qc = useQueryClient();
-  const toast = useToast();
   const labels = useHatLabels();
   const [chosenId, setChosenId] = useState<number | null>(null);
   const [useReceiptColorway, setUseReceiptColorway] = useState(false);
@@ -30,23 +27,11 @@ export function LinkPurchaseDialog({ hat, onClose }: { hat: HatRead; onClose: ()
   });
   const current = options.data?.linked[0] ?? null;
   const chosen = options.data?.options.find(o => o.id === chosenId) ?? null;
+  // Different by the server's own "same name" rule (`agrees`) — see
+  // `LinkHatDialog`.
   const colorwayDiffers = !!(chosen && chosen.colorway && hat.colorway
-    && chosen.colorway.toLowerCase() !== hat.colorway.toLowerCase());
-
-  const link = useMutation({
-    mutationFn: (purchase: PurchaseOption) => linkPurchase(purchase.id, {
-      hat_id: hat.id,
-      replace: current != null,
-      receipt_colorway: colorwayDiffers && useReceiptColorway,
-    }),
-    onSuccess: result => {
-      toast.success('Purchase linked');
-      invalidatePurchaseDerived(qc);
-      void invalidateHatViews(qc, hat.id);
-      if (result.moved_from_hat_id != null) void invalidateHatViews(qc, result.moved_from_hat_id);
-      onClose();
-    },
-  });
+    && !chosen.agrees.includes('colorway'));
+  const link = useLinkPurchase(onClose);
 
   const rows: PickRow[] = (options.data?.options ?? []).map(p => ({
     id: p.id,
@@ -75,7 +60,15 @@ export function LinkPurchaseDialog({ hat, onClose }: { hat: HatRead; onClose: ()
         type="button"
         className="btn btn-primary"
         disabled={link.isPending}
-        onClick={() => link.mutate(chosen)}
+        onClick={() => link.mutate({
+          purchaseId: chosen.id,
+          link: {
+            hat_id: hat.id,
+            replace: current != null,
+            receipt_colorway: colorwayDiffers && useReceiptColorway,
+          },
+          done: 'Purchase linked',
+        })}
       >
         {link.isPending ? 'Linking…' : 'Link this purchase'}
       </button>

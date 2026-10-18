@@ -734,6 +734,81 @@
   .hr-seg-btn { transition: none; }
 }
 
+/* ----- Row list ---------------------------------------------------- */
+/* A divided list of one-line rows: text on the left, actions on the right.
+   Shared by Settings cards and the hat page's Purchase panel, so it lives
+   with the primitives rather than in one area's sheet. */
+.hr-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.hr-rows > li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-height: 44px;
+  padding: 0.35rem 0;
+  border-top: 1px solid var(--border-soft);
+  font-size: var(--fs-sm);
+}
+
+.hr-rows > li:first-child { border-top: 0; }
+
+.hr-row-title {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
+/* One line, ellipsized: the full title is the link's text and the Unlink
+   button's accessible name, so nothing is lost to the truncation. */
+.hr-row-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hr-row-aside {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex: none;
+}
+
+/* Purchase rows: the receipt title IS the evidence — "Trenches Mossy Oak
+   Hydro - Bottomland" cut to "… - B…" hides the colorway being judged — so
+   these rows wrap instead of truncating, and the actions drop below the text
+   when a phone has no room beside it. */
+.hr-rows.is-stacked > li {
+  flex-wrap: wrap;
+}
+
+.hr-rows.is-stacked .hr-row-title {
+  flex: 1 1 15rem;
+}
+
+.hr-rows.is-stacked .hr-row-text {
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.hr-rows.is-stacked .hr-row-aside {
+  margin-left: auto;
+}
+
+/* A purchase row's second line: the receipt (date · price · size), or which
+   hat it is on. */
+.hr-row-sub {
+  display: block;
+  color: var(--text-secondary);
+}
+
 /* ----- Setting row -------------------------------------------------- */
 .hr-setting-row {
   display: grid;

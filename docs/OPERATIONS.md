@@ -125,7 +125,7 @@ meant to change, and the log says which.
 | `HEADROOM_ORIGIN` | `http://localhost:8000` | Full origin for passkey verification. Set automatically by the HTTPS overlay |
 | `HEADROOM_HTTP_TIMEOUT` | `30.0` | Outbound HTTP to Claude, Google Vision and Melin Recap. eBay uses its own fixed 10–12 s timeouts |
 | `HEADROOM_REMBG_MODEL` | `isnet-general-use` | Bare metal only. **Docker: build time only** — set the `REMBG_MODEL` build arg and rebuild (`REMBG_MODEL=u2netp docker compose up -d --build`); this variable is not forwarded, because the image cannot download a model at runtime. See §7 Raspberry Pi |
-| `HEADROOM_ANALYSIS_WORKER_ENABLED` | `true` | Queue photo analysis off the request. Off = run it inline (slow uploads) |
+| `HEADROOM_ANALYSIS_WORKER_ENABLED` | `true` | Queue photo analysis off the request. Off = run it inline (slow uploads), and no boot warm-up of the cutout library — the first upload compiles it (~2 min on a Pi) |
 | `HEADROOM_REMBG_CONCURRENCY` | `1` | Concurrent background-removal inferences. Both workers reach rembg, and one inference is a 179 MB model plus a full-resolution decode — the app's largest allocation, so `1` inside a 1 GB container |
 | `HEADROOM_REPRICING_ENABLED` | `true` | Nightly re-pricing of every melin hat against live Melin Recap asks — independent of analysis, no Claude call. Off = prices move only when you press *Re-price now* / *Re-price all* in Settings → Data |
 | `HEADROOM_REPRICING_INTERVAL_HOURS` | `24` | Sweep cadence (floor 0.25) |

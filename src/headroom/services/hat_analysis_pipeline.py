@@ -42,6 +42,7 @@ from headroom.services import (
     claude_analysis,
     color_extraction,
     ebay_service,
+    errors,
     google_vision,
     hat_service,
     melin_recap,
@@ -53,8 +54,10 @@ from headroom.services import (
 from headroom.utils.photo import (
     THUMBS_DIR,
     export_derivative_path,
+    is_cutout,
     make_export_image_async,
     make_thumbnail_async,
+    recut_source,
 )
 
 logger = logging.getLogger(__name__)
@@ -156,14 +159,34 @@ async def finalize_hat_photo(
     return hat
 
 
-def is_cutout(photo_rel: str) -> bool:
-    """Whether a stored photo is a cutout: rembg's output is the only PNG.
+def begin_recut(hat: Hat) -> Path:
+    """Point a hat at what its re-cut starts from and mark the cut running.
+    Returns that file. Caller commits, then queues the cut (`cutout_only`).
 
-    Uploads are normalized to JPEG before anything else sees them, so the
-    suffix is the marker — the same one `_cut_and_derive` skips on and the
-    fallback reads colors by.
+    The source is `recut_source`: the retained original, or — for a hat whose
+    cut never happened — the uncut photo, recorded as the original here. An
+    upload whose rembg failed keeps the JPEG as its photo and records no
+    original, and `POST /recut` used to answer that hat with "re-upload the
+    photo" while the page hid the button, so a failed cutout could only be
+    fixed by taking the picture again. Every cutout failed that way for six
+    weeks (the read-only venv, see the Dockerfile's `NUMBA_CACHE_DIR`).
+
+    Pointing `photo_path` back at the original is what makes the page show
+    the cut in progress (`HatRead._stage_only_while_running`).
     """
-    return PurePosixPath(photo_rel).suffix.lower() == ".png"
+    source = recut_source(hat.original_path, hat.photo_path)
+    if source is None:
+        raise errors.Invalid(
+            "No original was kept for this hat — it was analyzed before"
+            " originals were retained. Re-upload the photo instead."
+        )
+    path = settings.upload_dir / source
+    if not path.exists():
+        raise errors.NotFound("Original photo missing on disk")
+    hat.original_path = source
+    hat.photo_path = source
+    hat.analysis_stage = STAGE_CUTOUT
+    return path
 
 
 def _recut_target(original_rel: str) -> str:
@@ -265,7 +288,7 @@ async def _cut_and_derive(
     # pass. That is the progressive fading — each Reanalyze made it worse.
     t_rembg = 0.0
     canonical_path = processed_jpeg_path
-    if processed_jpeg_path.suffix.lower() != ".png":
+    if not is_cutout(processed_jpeg_path):
         await _publish_stage(db, hat.id, STAGE_CUTOUT)
         t_rembg0 = time.monotonic()
         cutout_target = photo_dir / processed_jpeg_path.stem
@@ -273,8 +296,20 @@ async def _cut_and_derive(
             processed_jpeg_path, cutout_target
         )
         t_rembg = time.monotonic() - t_rembg0
-        if recut and (transparent_path is None or not transparent_path.exists()):
-            return None
+        if transparent_path is None or not transparent_path.exists():
+            # On record, not only in the log: from 2.79.0 every cut failed for
+            # weeks and the app said nothing — analysis reported "ok" and the
+            # only trace was an ERROR line nobody reads. The hat page also says
+            # when a photo still has its background.
+            await activity_service.log_activity(
+                db, kind="photo.cutout_failed", entity_type="hat", entity_id=hat.id,
+                summary=(
+                    f"Hat #{hat.id}: the background could not be removed"
+                    + ("; it keeps the cutout it had" if recut else "; the photo is shown as taken")
+                ),
+            )
+            if recut:
+                return None
         if transparent_path is not None and transparent_path.exists():
             # Keep the JPEG rather than deleting it. It is the ONLY thing a
             # re-cut can work from: the cutout can't be re-segmented (that path
@@ -583,7 +618,7 @@ async def run_fallback_analysis(
     that did not happen.
     """
     colors = []
-    if photo_path.suffix.lower() == ".png":
+    if is_cutout(photo_path):
         try:
             colors = await asyncio.to_thread(color_extraction.extract_hat_colors, photo_path)
         except Exception as exc:  # noqa: BLE001 — fallback must never break uploads
