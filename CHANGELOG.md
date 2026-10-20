@@ -6,6 +6,20 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.85.4] — 2026-10-19
+
+`headroom.local` survives a reboot. No schema change, nothing to do on
+upgrade.
+
+### Fixed
+
+- **`headroom.local` could stay silent after the server rebooted.** Headroom
+  looked for its LAN address once, at startup; when Docker started it a few
+  seconds before the network had its IPv4 route, it found none and never
+  advertised the name — Settings → Device → LAN discovery (mDNS) read "Not
+  advertising" until the app was restarted. It now keeps looking and
+  advertises as soon as an address appears.
+
 ## [2.85.3] — 2026-10-18
 
 Open-source Docker only. No schema change, nothing to do on upgrade.

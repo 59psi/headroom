@@ -58,6 +58,7 @@ a far worse failure than one wasted round trip.
 
 import asyncio
 import ipaddress
+import itertools
 import logging
 import re
 import socket
@@ -288,6 +289,18 @@ _ip: str | None = None
 _ipv6: str | None = None
 _error: str | None = None
 
+#: Looks again for a LAN address while there is none. A boot race, not a
+#: misconfiguration: on the owner's new Pi (2026-10-19) the interface came up
+#: at 20:35:03, Docker started the app at :05, and at :09 the kernel still had
+#: no IPv4 route — NetworkManager calls a dual-stack link "activated" once
+#: EITHER family is ready. The app looked once, gave up, and `headroom.local`
+#: stayed silent until someone restarted the container.
+_retry_task: asyncio.Task | None = None
+
+#: Seconds between those looks: quick at first, since a boot race settles in
+#: seconds, then every 30 s for as long as it takes.
+_RETRY_DELAYS: tuple[float, ...] = (2, 5, 10, 30)
+
 
 def mdns_enabled() -> bool:
     return env_flag("HEADROOM_MDNS_ENABLED")
@@ -476,8 +489,9 @@ def _lan_ipv6() -> str | None:
 
 
 async def start_mdns() -> None:
-    """Register the mDNS advertisement. Call once from the app lifespan."""
-    global _aiozc, _ip, _ipv6, _error
+    """Register the mDNS advertisement. Call once from the app lifespan; with
+    no LAN address yet it retries in the background (`_retry_until_addressed`)."""
+    global _aiozc, _ip, _ipv6, _error, _retry_task
     if not mdns_enabled() or _aiozc is not None:
         return
     # Refused rather than repaired: the LAN-HTTPS overlay appends `.local` to
@@ -496,8 +510,10 @@ async def start_mdns() -> None:
         return
     ip = pinned or _lan_ip()
     if ip is None:
-        logger.warning("mDNS: no LAN address found — not advertising")
-        _error = "no LAN address found"
+        _error = "no LAN address found yet — retrying"
+        if _retry_task is None:
+            logger.warning("mDNS: no LAN address found yet — will advertise as soon as one appears")
+            _retry_task = asyncio.create_task(_retry_until_addressed())
         return
     ipv6 = None if pinned else _lan_ipv6()
     host, port = mdns_hostname(), mdns_port()
@@ -568,9 +584,28 @@ async def start_mdns() -> None:
                 )
 
 
+async def _retry_until_addressed() -> None:
+    """Wait for a LAN address, then advertise (`_retry_task`)."""
+    global _retry_task
+    delays = itertools.chain(_RETRY_DELAYS, itertools.repeat(_RETRY_DELAYS[-1]))
+    try:
+        for delay in delays:
+            await asyncio.sleep(delay)
+            if _lan_ip() is not None:
+                break
+    finally:
+        _retry_task = None
+    logger.info("mDNS: a LAN address appeared — advertising")
+    await start_mdns()
+
+
 async def stop_mdns() -> None:
     """Withdraw the advertisement (sends goodbye packets) and close sockets."""
-    global _aiozc, _ip, _ipv6, _nsec_transport
+    global _aiozc, _ip, _ipv6, _nsec_transport, _retry_task
+    # A pending look for an address would otherwise advertise after shutdown.
+    if _retry_task is not None:
+        _retry_task.cancel()
+        _retry_task = None
     # Closed first and unconditionally: it binds 5353, and leaving it open
     # across a restart is what makes the next bind fail.
     if _nsec_transport is not None:

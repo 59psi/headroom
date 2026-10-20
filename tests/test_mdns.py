@@ -5,6 +5,8 @@ helpers and the disabled path; `start_mdns()` must be a no-op when
 HEADROOM_MDNS_ENABLED is false (conftest sets it for the whole suite).
 """
 
+import asyncio
+
 import pytest
 
 from headroom.services import mdns_service
@@ -216,6 +218,43 @@ async def _capture_registration(monkeypatch, *, ipv4, ipv6, interface=None, nsec
     monkeypatch.setattr(zasync, "AsyncZeroconf", _FakeAIOZC)
     await mdns_service.start_mdns()
     return captured
+
+
+async def test_a_boot_without_an_address_yet_advertises_once_one_appears(monkeypatch):
+    """The owner's new Pi, 2026-10-19: rebooted, the app started seconds before
+    the interface had its IPv4 route, looked for an address once, found none
+    and never advertised again — `headroom.local` silent until a restart. It
+    now keeps looking and advertises as soon as an address appears."""
+    addresses = iter([None, None, "10.0.111.6"])
+    monkeypatch.setattr(mdns_service, "_RETRY_DELAYS", (0.01,))
+    first_ip = next(addresses)
+    captured = await _capture_registration(monkeypatch, ipv4=first_ip, ipv6=None)
+    try:
+        assert "info" not in captured, "nothing to advertise yet"
+        assert "retrying" in mdns_service.mdns_status()["error"]
+        monkeypatch.setattr(mdns_service, "_lan_ip", lambda: next(addresses, "10.0.111.6"))
+        for _ in range(200):
+            if mdns_service.mdns_status()["advertising"]:
+                break
+            await asyncio.sleep(0.01)
+        status = mdns_service.mdns_status()
+        assert status["advertising"], status
+        assert status["ip"] == "10.0.111.6" and status["error"] is None
+        assert captured["info"].parsed_addresses() == ["10.0.111.6"]
+    finally:
+        await mdns_service.stop_mdns()
+
+
+async def test_stopping_cancels_a_pending_look_for_an_address(monkeypatch):
+    """Shutdown while still waiting must not advertise afterwards."""
+    monkeypatch.setattr(mdns_service, "_RETRY_DELAYS", (0.01,))
+    captured = await _capture_registration(monkeypatch, ipv4=None, ipv6=None)
+    await mdns_service.stop_mdns()
+    monkeypatch.setattr(mdns_service, "_lan_ip", lambda: "10.0.111.6")
+    await asyncio.sleep(0.1)
+
+    assert "info" not in captured
+    assert not mdns_service.mdns_status()["advertising"]
 
 
 def _address_answer_names(info):
