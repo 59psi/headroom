@@ -15,7 +15,7 @@ dependencies = [
     "python-multipart",
     "Pillow",
     "pillow-heif",
-    "anthropic>=1.12.0",
+    "anthropic>=1.17.0",
     # Declared, not inherited. `ebay_service`, `google_vision` and
     # `melin_recap` all `import httpx` directly, but it was only ever present
     # as a transitive of `anthropic` — so the day anthropic stops depending on
@@ -40,7 +40,7 @@ dependencies = [
     # the `model_` namespace, which is what lets the schemas carry fields like
     # `model_name` with no `protected_namespaces=()` opt-out
     # (`tests/test_route_layer.py::test_no_schema_trips_pydantics_protected_namespace`).
-    "pydantic>=2.10",
+    "pydantic>=2.14.1",
     "rembg[cpu]>=2.0.85",
     "onnxruntime",
     "argon2-cffi>=25.1.0",
