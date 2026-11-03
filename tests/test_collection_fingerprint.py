@@ -97,7 +97,11 @@ async def test_a_sweep_whose_listing_count_moved_but_not_its_price_is_not_a_chan
     assert collection_fingerprint.digest(_path(engine)) == before
 
 
-async def test_a_sweep_that_moved_a_price_is_a_change(file_engine, monkeypatch):
+async def test_a_sweep_that_moved_a_price_is_not_a_change(file_engine, monkeypatch):
+    """As of 2.86.0 a scraped median is DERIVED market data, not owner content,
+    so even a moved price does not open the gate. The nightly sweep drifts
+    prices on its own; counting that as a change made KEEP=5 cover five days of
+    drift instead of five real edits — the erosion the gate exists to stop."""
     engine, factory = file_engine
     await _seed_hat(factory)
     before = collection_fingerprint.digest(_path(engine))
@@ -110,7 +114,51 @@ async def test_a_sweep_that_moved_a_price_is_a_change(file_engine, monkeypatch):
     monkeypatch.setenv("HEADROOM_REPRICING_DELAY_SECONDS", "0")
     await repricing.reprice_once(factory)
 
-    assert collection_fingerprint.digest(_path(engine)) != before
+    async with factory() as db:
+        priced = (await db.execute(text("SELECT resale_price FROM hats"))).scalar_one()
+    assert priced == 95.0, "the premise: the sweep really did move the stored price"
+    assert collection_fingerprint.digest(_path(engine)) == before
+
+
+async def test_moved_ebay_comps_are_not_a_change(file_engine):
+    """eBay avg/median/listing-count are scraped comps that drift with the
+    market, like the melin median — excluded for the same reason (2.86.0)."""
+    engine, factory = file_engine
+    hat_id = await _seed_hat(factory)
+    async with factory() as db:
+        hat = await db.get(Hat, hat_id)
+        hat.ebay_avg_price = 70.0
+        hat.ebay_median_price = 68.0
+        hat.ebay_listing_count = 12
+        await db.commit()
+    before = collection_fingerprint.digest(_path(engine))
+
+    async with factory() as db:
+        hat = await db.get(Hat, hat_id)
+        hat.ebay_avg_price = 74.5
+        hat.ebay_median_price = 71.0
+        hat.ebay_listing_count = 15
+        await db.commit()
+
+    assert collection_fingerprint.digest(_path(engine)) == before
+
+
+async def test_a_manual_resale_price_edit_does_not_open_the_gate(file_engine):
+    """The documented trade-off: a hand-entered price shares `resale_price`,
+    now excluded, so it rides into the next backup a real edit triggers rather
+    than writing one by itself. A non-price owner edit still opens the gate
+    (see `test_a_real_edit_is_a_change`)."""
+    engine, factory = file_engine
+    hat_id = await _seed_hat(factory)
+    before = collection_fingerprint.digest(_path(engine))
+
+    async with factory() as db:
+        hat = await db.get(Hat, hat_id)
+        hat.resale_price = 123.0
+        hat.resale_price_scope = "manual"
+        await db.commit()
+
+    assert collection_fingerprint.digest(_path(engine)) == before
 
 
 async def test_bookkeeping_and_a_checkpoint_are_not_changes(file_engine):

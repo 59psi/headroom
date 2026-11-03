@@ -19,11 +19,26 @@ covered five DAYS rather than five changes — each "restatement of the newest
 one" evicting a real historical snapshot, the pattern the gate exists to stop.
 
 So this digests the ROWS instead: every mapped table's content, minus the
-tables and columns that are the app's own bookkeeping. A checkpoint moves no
-rows; a sweep that re-priced nothing changes only excluded columns (the
-consult stamp, and the listing count the price's label quotes); a price that
-DID move changes `resale_price`, which is included. Reading a few
-thousand rows is milliseconds, cheap beside the tarball it decides about.
+tables and columns that are the app's own bookkeeping OR a scraped market
+figure. A checkpoint moves no rows; a login writes only excluded tables; and —
+the change in 2.86.0 — a re-pricing sweep now moves nothing the gate counts,
+whether or not a median moved.
+
+Scraped resale/eBay prices are DERIVED, not owner data: they are regenerated
+from a live marketplace on every sweep and drift night to night on their own,
+so treating a moved median as "the collection changed" made the nightly sweep
+(on by default) reopen the gate almost every night — a KEEP=5 window covering
+five days of price drift instead of five real edits to the shelf, which is the
+exact erosion this gate exists to stop. A restore does not need last night's
+median; it needs your hats, cases, wears, purchases and the prices you entered
+by hand. So the whole scraped-price surface is excluded (see EXCLUDED_COLUMNS),
+and only owner-driven content opens the gate. (Trade-off: a *manual* resale
+price, which shares the `resale_price` column, no longer opens the gate on its
+own either — it rides into the next backup a real edit triggers. Prices are
+reproducible from the market; the rest is not.)
+
+Reading a few thousand rows is milliseconds, cheap beside the tarball it
+decides about.
 
 Synchronous on purpose: the gate runs in a worker thread, and this opens its
 own read-only engine rather than borrowing the app's async one. Statements are
@@ -57,17 +72,39 @@ EXCLUDED_TABLES: frozenset[str] = frozenset({
     "import_job_items",
 })
 
-#: Columns rewritten on rows whose content did not change. Everything else in
-#: a table is content, including the prices a sweep does move.
+#: Columns rewritten on rows whose content did not change, OR that hold a
+#: scraped market figure that drifts on its own. Everything else in a table is
+#: owner-driven content.
 EXCLUDED_COLUMNS: dict[str, frozenset[str]] = {
-    # "When the marketplace was last asked" — stamped on every consult,
-    # whatever the answer. And the resale price's source LABEL, which the
-    # same consult rewrites with the listing count ("median of 8 live …
-    # listings"): that count moves with every listing that comes or goes on a
-    # live marketplace, median unchanged, so a sweep that moved no price still
-    # opened the gate most nights. The price and its scope are content and
-    # stay in; a moved price is a change.
-    "hats": frozenset({"resale_checked_at", "ebay_checked_at", "resale_price_source"}),
+    # The whole scraped-price surface, melin and eBay alike. These are DERIVED
+    # from a live marketplace on every re-pricing sweep (on by default, nightly)
+    # and move night to night with no owner action, so counting them as "the
+    # collection changed" made the gate reopen almost every night — the days-
+    # not-changes window this gate exists to prevent. A restore reproduces them
+    # from the market; it does not need last night's median.
+    #
+    #   resale_checked_at / ebay_checked_at  — "when the marketplace was last asked"
+    #   resale_price_source                  — the label, e.g. "median of 8 live listings"
+    #                                          (its count churns as listings come and go)
+    #   resale_price / resale_price_scope    — the melin median and whether it was
+    #                                          matched by model or by category
+    #   ebay_avg_price / ebay_median_price / ebay_listing_count — the eBay comps
+    #
+    # A MANUAL resale price lives in `resale_price` too, so excluding the column
+    # means a hand-entered price no longer opens the gate on its own — it is
+    # captured by the next backup a real edit triggers. Owner data that is not a
+    # scraped price (notes, condition, disposition, cost basis, wears, slots…)
+    # all stays IN and still opens the gate. See the module docstring.
+    "hats": frozenset({
+        "resale_checked_at",
+        "ebay_checked_at",
+        "resale_price_source",
+        "resale_price",
+        "resale_price_scope",
+        "ebay_avg_price",
+        "ebay_median_price",
+        "ebay_listing_count",
+    }),
     # A counter every passkey login increments.
     "passkey_credentials": frozenset({"sign_count"}),
 }

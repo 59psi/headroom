@@ -122,9 +122,10 @@ result, and three independent price signals per hat.
   where the app does, which on a LAN install means your own network. Prices
   are opt-in and off by default.
 - **One-command HTTPS** — a Caddy overlay with automatic Let's Encrypt certs.
-- **Backups** — scheduled rolling tarballs + one-click download, and an
-  in-app import that puts any of them (or a file from your phone) back, after
-  saving the collection it replaces.
+- **Backups** — scheduled rolling tarballs (written only when the collection
+  actually changed, not on nightly market-price drift) + one-click download,
+  and an in-app import that puts any of them (or a file from your phone) back,
+  after saving the collection it replaces.
 
 ---
 

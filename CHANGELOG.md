@@ -6,6 +6,43 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [2.86.0] — 2026-11-03
+
+Scheduled backups stop firing on market-price drift, and a dependency refresh.
+No schema change, nothing to do on upgrade.
+
+### Changed
+
+- **A scheduled backup is no longer written just because a scraped price
+  moved.** The backup change-gate used to treat the melin median and eBay
+  comps as collection content, so the nightly re-pricing sweep — which rewrites
+  those figures from a live marketplace, and they drift on their own — reopened
+  the gate almost every night. With `HEADROOM_BACKUP_KEEP=5` that meant five
+  backups covered five *days of price drift* instead of five real edits to the
+  shelf, quietly evicting the snapshot from the day you actually changed
+  something. The scraped-price columns (`resale_price`, `resale_price_scope`,
+  `resale_price_source`, `ebay_avg_price`, `ebay_median_price`,
+  `ebay_listing_count`, and the last-checked stamps) are now excluded from the
+  gate, so only owner-driven content — hats, cases, wears, purchases, notes,
+  disposition — triggers a backup. Prices are reproducible from the market; a
+  restore needs your collection, not last night's median.
+  - **Trade-off:** a *manually entered* resale price shares the `resale_price`
+    column, so it no longer writes a backup on its own. It rides into the next
+    backup that a real edit triggers. On-demand backup (Settings → Upkeep)
+    always captures the current state regardless.
+
+### Dependencies
+
+- Backend (`uv.lock` + `requirements.txt`): the minor-and-patch group —
+  including `pydantic` 2.14.1, `sqlalchemy` 2.1.6, `starlette` 1.10.0,
+  `uvicorn` 0.54.0, `onnxruntime` 1.31.1, `numpy` 2.5.4 — plus `certifi`
+  2026.10.23, `pyasn1` 0.6.5 and `cbor2` 6.1.5. No major bumps (`pillow` stays
+  on 12.x).
+- Frontend (`package.json` + `package-lock.json`): patch-level bumps to React
+  19.3.1, `@tanstack/react-query` 5.104.5, `react-router` 8.5.0, Vite 8.3.4,
+  Vitest 5.0.5, oxlint 1.89.0, jsdom 30.1.3, and `undici` 8.12.3.
+- Image/CI: `ghcr.io/astral-sh/uv` 0.13.4, `astral-sh/setup-uv` v10.3.0.
+
 ## [2.85.4] — 2026-10-19
 
 `headroom.local` survives a reboot. No schema change, nothing to do on

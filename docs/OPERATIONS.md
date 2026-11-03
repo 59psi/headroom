@@ -332,15 +332,27 @@ protecting: on an untouched collection, a daily tarball re-reads every photo,
 wears the card, and evicts a real historical snapshot from a fixed-size window
 to store a restatement of the newest one. Change is judged from the
 collection's **rows** — every table except the app's own bookkeeping (audit
-log, sessions, job queues) and what is rewritten on unchanged rows (when a
-price was last *checked*, the listing count its label quotes, `updated_at`)
-— plus the size and mtime of every
+log, sessions, job queues), the scraped-price columns (see below), and
+`updated_at` — plus the size and mtime of every
 file under uploads and (when `HEADROOM_BACKUP_INCLUDE_CA` is on) Caddy's CA
 files, so a regenerated authority triggers a backup too. So a nightly
-re-pricing sweep that moved no price, a restart, a login or the daily prune is
-not a change; a price that did move is. (If the database cannot be read, the
-gate falls back to the database file's size and mtime and logs that it did —
-an extra backup is the safe failure.) The marker recording the last backed-up
+re-pricing sweep, a restart, a login or the daily prune is not a change.
+
+**As of 2.86.0 a moved market price is not a change either.** Scraped resale
+and eBay figures (`resale_price`, `resale_price_scope`, `resale_price_source`,
+`ebay_avg_price`, `ebay_median_price`, `ebay_listing_count`, and the last-
+*checked* stamps) are **derived market data**: the nightly re-pricing sweep
+rewrites them from a live marketplace and they drift on their own, so counting
+them made the sweep reopen the gate almost every night — `HEADROOM_BACKUP_KEEP`
+snapshots then spanned that many *days of drift* instead of that many real
+edits to the shelf. They are excluded from the gate now, so only owner-driven
+content (hats, cases, wears, purchases, notes, disposition…) triggers a
+backup. A restore reproduces prices from the market; it cannot reproduce your
+collection. Trade-off: a **manually entered** resale price shares the
+`resale_price` column, so it no longer writes a backup on its own — it is
+captured by the next backup a real edit triggers. (If the database cannot be
+read, the gate falls back to the database file's size and mtime and logs that
+it did — an extra backup is the safe failure.) The marker recording the last backed-up
 state is a file in `backups/`, never a row in the database — the database is
 part of what it measures.
 

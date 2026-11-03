@@ -117,7 +117,10 @@ async def test_a_real_edit_still_opens_the_gate(file_engine, monkeypatch):
 
     async with factory() as db:
         hat = await db.get(Hat, hat_id)
-        hat.resale_price = 95.0
+        # An owner edit, NOT a scraped price: as of 2.86.0 `resale_price` is
+        # excluded as derived market data, so a real change has to be something
+        # a restore would actually need back.
+        hat.owner_notes = "found at the swap meet"
         await db.commit()
 
     assert backup_service._data_fingerprint_sync() != before

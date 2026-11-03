@@ -17,7 +17,7 @@
 # Stage 1 — Frontend bundle
 # ============================================================ #
 # Declared first so Dependabot sees it (see the note where it is COPYed in).
-FROM ghcr.io/astral-sh/uv:0.13.0 AS uv
+FROM ghcr.io/astral-sh/uv:0.13.4 AS uv
 
 FROM node:26-trixie-slim AS frontend
 # node:26 bundles npm 11.x, which prints a "New major version available" notice
