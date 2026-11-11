@@ -40,13 +40,13 @@ dependencies = [
     # the `model_` namespace, which is what lets the schemas carry fields like
     # `model_name` with no `protected_namespaces=()` opt-out
     # (`tests/test_route_layer.py::test_no_schema_trips_pydantics_protected_namespace`).
-    "pydantic>=2.10",
+    "pydantic>=2.14.2",
     "rembg[cpu]>=2.0.85",
     "onnxruntime",
     "argon2-cffi>=25.1.0",
     "webauthn>=3.0.1",
     "qrcode>=8.2",
-    "zeroconf>=0.151.5",
+    "zeroconf>=0.153.0",
 ]
 
 [dependency-groups]
