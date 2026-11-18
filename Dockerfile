@@ -17,7 +17,7 @@
 # Stage 1 — Frontend bundle
 # ============================================================ #
 # Declared first so Dependabot sees it (see the note where it is COPYed in).
-FROM ghcr.io/astral-sh/uv:0.13.0 AS uv
+FROM ghcr.io/astral-sh/uv:0.13.9 AS uv
 
 FROM node:26-trixie-slim AS frontend
 # node:26 bundles npm 11.x, which prints a "New major version available" notice
@@ -65,7 +65,7 @@ RUN npx tsc -b --noEmit && npx vite build
 # One base for both Python stages: the image tag and the native-lib list each
 # lived in two places, so adding a lib for a new dep to only the builder used to
 # build clean and then fail on import at container start.
-FROM python:3.14-slim-trixie AS base
+FROM python:3.15-slim-trixie AS base
 # rembg + Pillow + onnxruntime need these; tini is the runtime init.
 # Cache mounts, so a cold rebuild does not re-download the same debs.
 # `docker-clean` is Debian's hook that deletes them straight after install,
